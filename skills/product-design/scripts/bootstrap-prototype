@@ -1,0 +1,57 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  echo "Usage: bootstrap-prototype --template web|mobile --dest /absolute/path" >&2
+}
+
+template=web
+dest=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --template)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      template=$2
+      shift 2
+      ;;
+    --dest)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      dest=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+case "$template" in
+  web|mobile) ;;
+  *) echo "Unknown template: $template" >&2; exit 2 ;;
+esac
+
+[ -n "$dest" ] || { usage; exit 2; }
+case "$dest" in
+  /*) ;;
+  *) echo "Destination must be an absolute path." >&2; exit 2 ;;
+esac
+
+if [ -e "$dest" ]; then
+  echo "Refusing to replace existing destination: $dest" >&2
+  exit 1
+fi
+
+script_dir=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P)
+source_dir="$script_dir/../assets/templates/$template"
+[ -d "$source_dir" ] || { echo "Missing template: $source_dir" >&2; exit 1; }
+
+mkdir -p "$dest"
+cp -R "$source_dir/." "$dest/"
+echo "Created $template Product Design prototype at $dest"
+echo "Next: cd '$dest' && npm install && npm run dev"

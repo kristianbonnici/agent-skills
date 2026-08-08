@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P)
+repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd)
+browser_bin="$repo_root/runtime/playwright/node_modules/.bin/playwright-cli"
+
+if [ ! -x "$browser_bin" ]; then
+  echo "Product Design browser runtime is not installed." >&2
+  echo "Run: $repo_root/scripts/bootstrap --dependencies" >&2
+  exit 1
+fi
+
+project_name=$(basename "${PWD:-project}" | tr -cd '[:alnum:]_-' | cut -c1-32)
+session=${PRODUCT_DESIGN_BROWSER_SESSION:-product-design-${project_name:-project}}
+
+exec "$browser_bin" "-s=$session" "$@"

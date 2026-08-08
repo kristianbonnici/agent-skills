@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+. "$repo_root/install/product-design-source.env"
+
+latest=$(git ls-remote "$UPSTREAM_REPOSITORY" HEAD | awk '{print $1}')
+[ -n "$latest" ] || { echo "Could not resolve upstream HEAD." >&2; exit 1; }
+
+echo "Behavioral reference: $UPSTREAM_REPOSITORY/$UPSTREAM_PATH"
+echo "Reference plugin version: $REFERENCE_PLUGIN_VERSION"
+echo "Recorded upstream commit: $UPSTREAM_COMMIT"
+echo "Current upstream commit:  $latest"
+
+if [ "$latest" = "$UPSTREAM_COMMIT" ]; then
+  echo "Upstream reference is current."
+else
+  echo "Upstream changed. Review behavior and licensing manually; do not overwrite the portable skill automatically."
+  exit 2
+fi

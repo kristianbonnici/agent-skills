@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+test_home=$(mktemp -d "${TMPDIR:-/tmp}/agent-skills-test.XXXXXX")
+trap 'rm -rf "$test_home"' EXIT HUP INT TERM
+
+HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
+HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
+
+test -L "$test_home/.config/opencode/skills/product-design"
+test -L "$test_home/.config/opencode/commands/product-design.md"
+test -L "$test_home/.factory/skills/product-design"
+test -f "$test_home/.gemini/config/skills/product-design/SKILL.md"
+test -f "$test_home/.gemini/config/skills/product-design/scripts/browser"
+test ! -e "$test_home/.agents/skills/product-design"
+test ! -e "$test_home/.codex/skills/product-design"
+
+HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
+test ! -e "$test_home/.config/opencode/skills/product-design"
+test ! -e "$test_home/.factory/skills/product-design"
+test ! -e "$test_home/.gemini/config/skills/product-design"
+
+echo "bootstrap-test: passed"

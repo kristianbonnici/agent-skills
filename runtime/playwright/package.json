@@ -1,0 +1,8 @@
+{
+  "name": "agent-skills-product-design-browser",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@playwright/cli": "0.1.18"
+  }
+}

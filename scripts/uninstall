@@ -1,0 +1,66 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+manifest="$repo_root/install/links.tsv"
+host=all
+dry_run=0
+
+usage() {
+  echo "Usage: uninstall [--all | --host HOST] [--dry-run]" >&2
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all) host=all; shift ;;
+    --host) [ "$#" -ge 2 ] || { usage; exit 2; }; host=$2; shift 2 ;;
+    --dry-run) dry_run=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+expand_target() {
+  case "$1" in
+    '~'/*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+remove_link() {
+  remove_source=$1
+  remove_target=$2
+  if [ ! -L "$remove_target" ]; then
+    [ ! -e "$remove_target" ] || echo "KEEP unmanaged path: $remove_target" >&2
+    return
+  fi
+  [ "$(readlink "$remove_target")" = "$remove_source" ] || { echo "KEEP foreign link: $remove_target" >&2; return; }
+  if [ "$dry_run" -eq 1 ]; then
+    echo "DRY RUN: rm $remove_target"
+  else
+    rm "$remove_target"
+  fi
+  echo "REMOVED $remove_target"
+}
+
+while IFS=$(printf '\t') read -r row_host mode source target; do
+  case "$row_host" in ''|'#'*) continue ;; esac
+  [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
+  source_path="$repo_root/$source"
+  target_path=$(expand_target "$target")
+  case "$mode" in
+    link) remove_link "$source_path" "$target_path" ;;
+    adapter)
+      adapter_source=$source_path
+      adapter_target=$target_path
+      for name in SKILL.md agents references scripts assets; do
+        [ -e "$adapter_source/$name" ] || continue
+        remove_link "$adapter_source/$name" "$adapter_target/$name"
+      done
+      if [ -d "$adapter_target" ] && [ -z "$(find "$adapter_target" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+        if [ "$dry_run" -eq 1 ]; then echo "DRY RUN: rmdir $adapter_target"; else rmdir "$adapter_target"; fi
+      fi
+      ;;
+  esac
+done < "$manifest"

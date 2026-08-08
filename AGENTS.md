@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository is the canonical source for personal agent skills. Skills here are shared across local agent tools by symlink or adapter directories.
+This repository is the canonical source for personal agent skills. Skills here are shared across local agent tools by symlink or adapter directories declared in `install/links.tsv`.
 
 Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~/.agents`, `~/.antigravity`, `~/.antigravity-ide`, and `~/.gemini` are installation targets only.
 
@@ -11,6 +11,10 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 - `skills/<skill-name>/SKILL.md` contains the required skill instructions and YAML frontmatter.
 - `skills/<skill-name>/agents/` contains optional platform-facing metadata such as `openai.yaml`.
 - `skills/<skill-name>/references/` contains supporting reference files loaded only when needed.
+- `adapters/` contains host-only command or metadata files.
+- `install/links.tsv` is the source of truth for host exposure and install destinations.
+- `runtime/` contains pinned dependencies shared by portable skills.
+- `scripts/` contains idempotent installation and verification commands.
 
 ## Editing Rules
 
@@ -21,58 +25,31 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 - Keep detailed examples and long reference material in `references/`.
 - Do not put secrets, API keys, tokens, private credentials, or machine-local credentials in this repo.
 - Use lowercase hyphenated skill folder names.
+- Keep mutable state, private screenshots, user context, caches, and credentials outside this repository.
+- Record dependency versions and upstream behavioral references explicitly.
 
-## Symlink Rules
+## Installation Rules
 
-Codex locations can use full directory symlinks:
-
-```text
-~/.agents/skills/<skill-name> -> ~/Developer/agent-skills/skills/<skill-name>
-~/.codex/skills/<skill-name> -> ~/Developer/agent-skills/skills/<skill-name>
-```
-
-Antigravity and Antigravity IDE should use adapter directories when broad compatibility matters:
-
-```text
-~/.antigravity/skills/<skill-name>/
-~/.antigravity-ide/skills/<skill-name>/
-```
-
-Inside each adapter directory, symlink the skill contents:
-
-```text
-SKILL.md -> ~/Developer/agent-skills/skills/<skill-name>/SKILL.md
-agents -> ~/Developer/agent-skills/skills/<skill-name>/agents
-references -> ~/Developer/agent-skills/skills/<skill-name>/references
-```
-
-Maintain these compatibility adapter paths when troubleshooting Antigravity discovery:
-
-```text
-~/.gemini/antigravity/skills/<skill-name>/
-~/.gemini/antigravity-ide/skills/<skill-name>/
-~/.gemini/config/skills/<skill-name>/
-```
-
-Antigravity CLI can use a full directory symlink:
-
-```text
-~/.gemini/antigravity-cli/skills/<skill-name> -> ~/Developer/agent-skills/skills/<skill-name>
-```
-
-After changing symlinks or skill metadata, restart the target app or open a new conversation so skills are reindexed.
+- Add or change installation mappings in `install/links.tsv`; do not maintain copy-paste installation snippets.
+- Use `scripts/bootstrap` to create or repair links and `scripts/uninstall` to remove them.
+- Full-directory links are preferred. Use `adapter` mode only for hosts that cannot discover a symlinked skill directory.
+- Never expose `skills/product-design` through `~/.agents/skills` or `~/.codex/skills`. It is an OpenCode/Factory/Antigravity compatibility implementation; Codex must use the official Product Design plugin.
+- After changing links or skill metadata, restart the target app or open a new conversation so skills are reindexed.
 
 ## Verification
 
-Before saying a skill is installed, check that `SKILL.md` exists through the target path. For example:
+Before saying a skill is installed, run:
 
 ```bash
+./scripts/doctor --all
+./tests/bootstrap-test
 ```
 
-Use `readlink` to confirm symlinks point back to this repo.
+The doctor must confirm Product Design is absent from Codex discovery paths.
 
 ## Git Hygiene
 
 - Commit source skill changes in this repo.
 - Avoid committing OS metadata, generated caches, logs, or local app state.
 - Keep install locations out of Git; only the canonical skill source belongs here.
+- Commit lockfiles for pinned runtimes; do not commit `node_modules`, browser caches, or generated prototypes.

@@ -1,0 +1,105 @@
+#!/bin/sh
+set -u
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+manifest="$repo_root/install/links.tsv"
+host=all
+failures=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all) host=all; shift ;;
+    --host) [ "$#" -ge 2 ] || exit 2; host=$2; shift 2 ;;
+    -h|--help) echo "Usage: doctor [--all | --host HOST]"; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+pass() { echo "PASS $*"; }
+fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
+
+expand_target() {
+  case "$1" in
+    '~'/*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+check_link() {
+  check_source=$1
+  check_target=$2
+  if [ -L "$check_target" ] && [ "$(readlink "$check_target")" = "$check_source" ]; then
+    pass "$check_target"
+  else
+    fail "$check_target is missing or points elsewhere"
+  fi
+}
+
+while IFS=$(printf '\t') read -r row_host mode source target; do
+  case "$row_host" in ''|'#'*) continue ;; esac
+  [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
+  source_path="$repo_root/$source"
+  target_path=$(expand_target "$target")
+  case "$mode" in
+    link) check_link "$source_path" "$target_path" ;;
+    adapter)
+      adapter_source=$source_path
+      adapter_target=$target_path
+      for name in SKILL.md agents references scripts assets; do
+        [ -e "$adapter_source/$name" ] || continue
+        check_link "$adapter_source/$name" "$adapter_target/$name"
+      done
+      ;;
+  esac
+done < "$manifest"
+
+for forbidden in "$HOME/.agents/skills/product-design" "$HOME/.codex/skills/product-design"; do
+  if [ -e "$forbidden" ] || [ -L "$forbidden" ]; then
+    fail "portable Product Design must not be exposed to Codex: $forbidden"
+  else
+    pass "Codex isolation: $forbidden absent"
+  fi
+done
+
+command -v python3 >/dev/null 2>&1 && pass "python3 available" || fail "python3 missing"
+command -v node >/dev/null 2>&1 && pass "node available" || fail "node missing"
+command -v npm >/dev/null 2>&1 && pass "npm available" || fail "npm missing"
+
+browser_bin="$repo_root/runtime/playwright/node_modules/.bin/playwright-cli"
+if [ -x "$browser_bin" ]; then
+  version=$($browser_bin --version 2>/dev/null || true)
+  case "$version" in *0.1.18*) pass "Playwright CLI $version" ;; *) fail "unexpected Playwright CLI version: $version" ;; esac
+else
+  fail "Product Design browser runtime is not installed"
+fi
+
+if [ "$host" = all ] || [ "$host" = opencode ]; then
+  if command -v opencode >/dev/null 2>&1; then
+    if opencode debug skill 2>/dev/null | grep -q 'product-design'; then
+      pass "OpenCode discovers product-design"
+    else
+      fail "OpenCode does not discover product-design"
+    fi
+  else
+    fail "OpenCode CLI missing"
+  fi
+fi
+
+if [ "$host" = all ] || [ "$host" = factory ]; then
+  command -v droid >/dev/null 2>&1 && pass "Factory Droid available" || fail "Factory Droid missing"
+fi
+
+if [ "$host" = all ] || [ "$host" = antigravity ]; then
+  if [ -d "/Applications/Antigravity.app" ] || [ -d "/Applications/Antigravity IDE.app" ] || [ -x "$HOME/.antigravity-ide/antigravity-ide/bin/antigravity-ide" ]; then
+    pass "Google Antigravity available"
+  else
+    fail "Google Antigravity installation not found"
+  fi
+fi
+
+if [ "$failures" -gt 0 ]; then
+  echo "$failures check(s) failed." >&2
+  exit 1
+fi
+echo "All checks passed."

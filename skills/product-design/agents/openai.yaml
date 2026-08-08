@@ -1,0 +1,6 @@
+interface:
+  display_name: "Product Design"
+  short_description: "Explore, audit, prototype, and QA product experiences"
+  default_prompt: "Use $product-design to explore, audit, prototype, or QA this product experience."
+policy:
+  allow_implicit_invocation: false

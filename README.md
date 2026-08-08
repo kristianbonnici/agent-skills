@@ -1,142 +1,112 @@
 # Agent Skills
 
-Private source repo for personal agent skills used across Codex, Antigravity, Antigravity IDE, and related tools.
+Canonical, version-controlled source for personal agent skills and the adapters that install them into supported hosts.
 
-The repo root is:
+The repository owns skill behavior, host mappings, dependency pins, and verification. Paths under `~/.config/opencode`, `~/.factory`, `~/.agents`, `~/.codex`, `~/.antigravity`, and `~/.gemini` are generated installation targets.
 
-```text
-/Users/kristianbonnici/Developer/agent-skills
+## New-machine setup
+
+Clone the repository at any path, then run:
+
+```bash
+./scripts/bootstrap --all
+./scripts/doctor --all
 ```
 
-## Repository Layout
+The scripts resolve the repository root relative to themselves. They do not depend on a username or a fixed `~/Developer` location.
+
+Install one host only:
+
+```bash
+./scripts/bootstrap --host opencode
+./scripts/bootstrap --host factory
+```
+
+Preview changes without writing:
+
+```bash
+./scripts/bootstrap --all --dry-run
+```
+
+Bootstrap is idempotent. It repairs managed symlinks but refuses to overwrite real files or directories it does not own.
+
+## Repository layout
 
 ```text
 agent-skills/
-|-- AGENTS.md
-|-- README.md
-|-- .gitignore
-`-- skills/
-        |-- SKILL.md
-        |-- agents/
-        |   `-- openai.yaml
-        `-- references/
-            `-- note-patterns.md
+├── skills/                 Canonical host-neutral skills
+├── adapters/               Host-specific commands or metadata
+├── install/links.tsv       Declarative source-to-host mapping
+├── runtime/                Pinned shared tool dependencies
+├── scripts/                Bootstrap, doctor, uninstall, upstream checks
+└── tests/                  Disposable-home integration tests
 ```
 
-`skills/` is the canonical source directory. Tool-specific skill folders should not contain separate copies of these files. They should point back to this repo.
+## Available skills
 
-## Available Skills
+| Skill | Installed into | Purpose |
+|---|---|---|
+| `product-design` | OpenCode, Factory, and Google Antigravity | Research, audit, ideate, prototype, visually QA, and share product experiences. |
 
-| Skill | Purpose |
-|---|---|
+The Product Design compatibility skill is deliberately not linked into `~/.agents/skills` or `~/.codex/skills`. Codex should continue using OpenAI's installed Product Design plugin without a semantically competing personal copy.
 
-## Current Install Links
+## Product Design invocation
 
-The canonical skill lives at:
+OpenCode:
 
 ```text
+/product-design <request>
 ```
 
-Codex uses full directory symlinks:
+Factory Droid:
 
 ```text
-
+/product-design <request>
 ```
 
-Antigravity CLI also works as a full directory symlink:
+Google Antigravity, Antigravity IDE, or Antigravity CLI:
 
 ```text
+Use product-design to <request>
 ```
 
-Antigravity and Antigravity IDE use adapter directories. The skill directory itself is real, while its contents are symlinks back to the canonical repo. This avoids scanners that miss or ignore a symlinked skill directory:
+OpenCode uses the checked-in command adapter at `adapters/opencode/commands/product-design.md`. Factory exposes the canonical skill as a slash command directly. Antigravity discovers the skill from its global `~/.gemini/config/skills/` location and can activate it from an explicit mention or matching request.
 
-```text
-
-```
-
-Compatibility paths are also maintained for Gemini-backed Antigravity installs:
-
-```text
-```
-
-These are adapter directories with symlinked `SKILL.md`, `agents`, and `references`.
-
-## Recreate Links
-
-Run this from anywhere to repair the current setup:
+Both hosts use a repository-pinned Playwright CLI runtime and isolated in-memory browser sessions. Reinstall only the runtime dependencies with:
 
 ```bash
-
-link_dir() {
-  dest="$1"
-  mkdir -p "$(dirname "$dest")"
-  if [ -L "$dest" ]; then
-    rm "$dest"
-  elif [ -e "$dest" ]; then
-    echo "Refusing to replace existing path: $dest" >&2
-    return 1
-  fi
-  ln -s "$CANONICAL" "$dest"
-}
-
-adapter_dir() {
-  dest="$1"
-  mkdir -p "$dest"
-  for name in SKILL.md agents references; do
-    target="$CANONICAL/$name"
-    link="$dest/$name"
-    if [ -L "$link" ]; then
-      rm "$link"
-    elif [ -e "$link" ]; then
-      echo "Refusing to replace existing path: $link" >&2
-      return 1
-    fi
-    ln -s "$target" "$link"
-  done
-}
-
-
+./scripts/bootstrap --dependencies
 ```
 
-After changing links, restart the target app or start a fresh conversation so it reindexes skills.
-
-## Editing Workflow
-
-Edit the canonical files only:
+Mutable Product Design context is shared between compatible hosts at:
 
 ```text
-/Users/kristianbonnici/Developer/agent-skills/skills/<skill-name>/SKILL.md
+${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/product-design/
 ```
 
-Then commit the change in this repo:
+That state is intentionally outside Git. The repository reproduces behavior and wiring, not private screenshots, URLs, or product context.
+
+## Maintenance
+
+Edit canonical files under `skills/` and commit them here. Do not edit installed symlink targets.
+
+Run the local checks before committing:
 
 ```bash
-cd /Users/kristianbonnici/Developer/agent-skills
-git status
-git add skills/<skill-name>
-git commit -m "Update <skill-name> skill"
+./tests/bootstrap-test
+./scripts/doctor --all
 ```
 
-Do not edit files inside `~/.codex`, `~/.agents`, `~/.antigravity`, `~/.antigravity-ide`, or `~/.gemini` unless repairing symlinks. Those locations are installation targets, not sources of truth.
+Check whether the upstream Product Design behavioral reference changed:
 
-## Skill Format
-
-Each skill folder should contain:
-
-```text
-skills/<skill-name>/
-|-- SKILL.md
-|-- agents/
-`-- references/
+```bash
+./scripts/check-product-design-upstream
 ```
 
-`SKILL.md` must include YAML frontmatter:
+The portable workflow is independently written. The upstream checker is review-only and never copies or overwrites files automatically.
 
-```yaml
----
-name: skill-name
-description: Clear description of what the skill does and when agents should use it.
----
+Remove managed links without touching unrelated files:
+
+```bash
+./scripts/uninstall --all
 ```
-
-Keep descriptions specific. Agents use the description to decide whether to load the full skill.

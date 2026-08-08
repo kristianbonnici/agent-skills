@@ -1,0 +1,119 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+manifest="$repo_root/install/links.tsv"
+
+host=all
+dry_run=0
+install_links=1
+install_dependencies=1
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies]
+       bootstrap --dependencies [--dry-run]
+
+Hosts: opencode, factory, codex, antigravity, antigravity-ide, antigravity-cli
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all) host=all; shift ;;
+    --host)
+      [ "$#" -ge 2 ] || { usage; exit 2; }
+      host=$2
+      shift 2
+      ;;
+    --dry-run) dry_run=1; shift ;;
+    --skip-dependencies) install_dependencies=0; shift ;;
+    --dependencies) install_links=0; install_dependencies=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+expand_target() {
+  case "$1" in
+    '~'/*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+run() {
+  if [ "$dry_run" -eq 1 ]; then
+    printf 'DRY RUN:'
+    printf ' %s' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
+}
+
+link_one() {
+  link_source=$1
+  link_target=$2
+  run mkdir -p "$(dirname -- "$link_target")"
+  if [ -L "$link_target" ]; then
+    current=$(readlink "$link_target")
+    if [ "$current" = "$link_source" ]; then
+      echo "OK $link_target"
+      return
+    fi
+    run rm "$link_target"
+  elif [ -e "$link_target" ]; then
+    echo "Refusing to replace existing path: $link_target" >&2
+    return 1
+  fi
+  run ln -s "$link_source" "$link_target"
+  echo "LINK $link_target -> $link_source"
+}
+
+adapter_one() {
+  adapter_source=$1
+  adapter_target=$2
+  if [ -L "$adapter_target" ]; then
+    echo "Refusing adapter directory symlink: $adapter_target" >&2
+    return 1
+  fi
+  if [ -e "$adapter_target" ] && [ ! -d "$adapter_target" ]; then
+    echo "Refusing non-directory adapter path: $adapter_target" >&2
+    return 1
+  fi
+  run mkdir -p "$adapter_target"
+  for name in SKILL.md agents references scripts assets; do
+    [ -e "$adapter_source/$name" ] || continue
+    link_one "$adapter_source/$name" "$adapter_target/$name"
+  done
+}
+
+selected_product_design=0
+if [ "$install_links" -eq 1 ]; then
+  while IFS=$(printf '\t') read -r row_host mode source target; do
+    case "$row_host" in ''|'#'*) continue ;; esac
+    [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
+    source_path="$repo_root/$source"
+    target_path=$(expand_target "$target")
+    [ -e "$source_path" ] || { echo "Missing source: $source_path" >&2; exit 1; }
+    case "$mode" in
+      link) link_one "$source_path" "$target_path" ;;
+      adapter) adapter_one "$source_path" "$target_path" ;;
+      *) echo "Unknown manifest mode: $mode" >&2; exit 1 ;;
+    esac
+    case "$source" in skills/product-design*) selected_product_design=1 ;; esac
+  done < "$manifest"
+fi
+
+if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_product_design" -eq 1 ] || [ "$host" = all ]; }; then
+  command -v node >/dev/null 2>&1 || { echo "Node.js 18+ is required for Product Design browser capture." >&2; exit 1; }
+  command -v npm >/dev/null 2>&1 || { echo "npm is required for Product Design browser capture." >&2; exit 1; }
+  if [ "$dry_run" -eq 1 ]; then
+    echo "DRY RUN: npm ci --prefix $repo_root/runtime/playwright"
+  else
+    npm ci --prefix "$repo_root/runtime/playwright" --no-audit --no-fund
+  fi
+fi
+
+echo "Bootstrap complete. Restart installed hosts so they reindex skills."
