@@ -16,18 +16,55 @@ Start with the instructions and sources of truth closest to the working director
 
 Prefer targeted searches and representative file reads over indiscriminate repository dumps. Safe diagnostics may populate ignored caches or build outputs, but must not edit tracked files, install dependencies, rewrite lockfiles, or repair the project. Use only executables already present in the repository or system. Do not use auto-download or ephemeral-install commands such as `npx -y`, `npm exec` when the package is absent, `pnpm dlx`, `yarn dlx`, `bunx`, `uvx`, or equivalent package runners during discovery.
 
+## Portfolio Framing
+
+Frame the portfolio before generating candidates. Record:
+
+- The user's requested lens, categories, and exclusions
+- The current project phase or phases, such as exploration, validation, prototype, implementation, production, or optimization
+- Explicitly locked decisions and the source that records each one
+- Drafts, hypotheses, exploratory concepts, candidates, deferred work, and rejected directions
+- Active or recently completed work that changes prerequisites or creates collision risk
+- The nearest unresolved questions or blockers on the current critical path
+- Decisions that remain with the user, a founder, customers, domain experts, or another authority
+
+Do not assume the most complete or heavily documented area is the current priority. Repository size, missing tests, TODOs, and available validation commands are discovery signals, not evidence that work should happen now.
+
+If the project contains materially different domains and the user's lens cannot be inferred from the request, current conversation, source-of-truth documents, or active work, ask one concise framing question before expensive discovery. If proceeding with an assumption is reasonable, state it visibly and return fewer tasks rather than spanning unrelated domains.
+
 ## Candidate Generation
 
-Generate more candidates than requested, using only domains supported by evidence. Candidate families can include:
+Generate more candidates than requested within the chosen portfolio lens, using only domains supported by evidence. Candidate families can include:
 
-- Correctness, reliability, test depth, type safety, or migration work
-- Architecture, maintainability, dependency reduction, or build and CI improvements
-- Performance, rendering, accessibility, browser compatibility, or developer experience
-- Documentation, onboarding, operational runbooks, or reproducible evaluation systems
-- Product design, design-system consistency, visual QA, brand systems, content systems, or social production workflows
-- Research, benchmarking, data quality, automation, or tooling that leaves a reviewable artifact
+- Evidence gathering, experiments, research, or prototypes that resolve the next important uncertainty
+- Product, design, content, business, or technical work already supported by the project's current phase and explicit decisions
+- Implementation, migration, or architecture work whose prerequisites and ownership are already settled
+- Reliability, performance, accessibility, automation, documentation, testing, or CI work when explicitly requested or when it removes a demonstrated critical-path blocker
 
-Do not propose generic tasks such as "improve tests" or "refactor the codebase." Tie each candidate to named paths, observed behavior, an existing gap, or a reproducible signal.
+Do not propose generic tasks such as "improve tests" or "refactor the codebase." Tie each candidate to named paths, observed behavior, an existing gap, or a reproducible signal. Also explain how its output will be used now. A durable artifact with no present consumer is not automatically valuable.
+
+## Priority and Readiness Gate
+
+A ready-now task must satisfy all of the following:
+
+- It directly advances the user's requested lens, resolves the nearest blocking uncertainty, or removes a demonstrated blocker on that path.
+- Its prerequisites are already satisfied or are entirely inside the task without requiring a prior product, policy, architecture, customer, scientific, legal, or commercial decision.
+- Its output remains useful even if unresolved downstream choices change.
+- It respects recorded lifecycle states and does not silently promote a draft, hypothesis, exploratory concept, or candidate into committed execution.
+- It does not replace customer evidence, expert review, founder judgment, or product authority with agent confidence.
+- It is preferable now to preserving the option and revisiting it after more evidence.
+
+Reject or defer candidates that exhibit any of these patterns unless the user explicitly requests them:
+
+- Building architecture, product flows, production code, schemas, or operating plans around exploratory requirements
+- Choosing an entire technology ecosystem when only one or two near-term choices are forced
+- Turning a research concept into a conformance suite, framework adoption, or implementation before usefulness and ownership are established
+- Producing maintenance, validation, catalog, documentation, or CI work because the repository can verify it rather than because it blocks current progress
+- Making a strategic or commercial decision from desk research when upstream customer, market, expert, or founder input is still outstanding
+- Preparing follow-on work whose required upstream task is active, incomplete, or not yet accepted
+- Creating a future-proof system for hypothetical scale, integrations, compliance, or operations not required by the current phase
+
+Keep worthwhile but not-ready candidates in a short deferred list. Name the unmet prerequisite and the observable trigger for reconsideration. Do not score them as ready, place them in an execution wave, or provide a runnable prompt.
 
 ## Autonomy Gate
 
@@ -39,29 +76,21 @@ A task is autonomous only when all of the following are true:
 - Necessary tools, runtimes, and credentials are already available, or the task explicitly avoids the missing dependency.
 - The work can remain reviewable and reversible until the user chooses to merge, publish, deploy, delete, message, or otherwise affect an external system.
 
-Reject or narrow candidates that require stakeholder taste, unresolved policy, production credentials, purchases, irreversible data changes, or external approval. A research task may replace an implementation task when it can resolve uncertainty without crossing those boundaries.
+Reject or narrow candidates that require stakeholder taste, unresolved policy, production credentials, purchases, irreversible data changes, or external approval. A research task may prepare options, evidence, and a recommendation when it can resolve uncertainty without crossing those boundaries, but it must preserve who owns the final decision and must not encode an unaccepted choice into architecture or implementation.
 
 ## Long-Horizon Sufficiency Gate
 
-A task is long-horizon only when the complete success condition contains enough useful, sequential work to plausibly reach the user's requested lower bound on the recommended model and execution mode. A broad-looking objective, large repository, high reasoning setting, or expensive model is not sizing evidence.
+A task is long-horizon only when the ready-now objective naturally contains enough useful work to plausibly reach the user's requested lower bound on the recommended model and execution mode. Apply the priority and readiness gate first. A broad-looking objective, large repository, high reasoning setting, expensive model, or long checklist is not sizing evidence.
 
 Substantiate the workload with project-specific evidence such as:
 
 - The number and diversity of concrete artifacts, packages, components, workflows, environments, or datasets that must be inspected or changed
-- Multiple necessary phases that each leave a reviewable artifact or independently validated checkpoint
+- Intrinsically necessary phases that each leave a reviewable artifact or independently validated checkpoint
 - Known setup, execution, benchmark, render, browser, migration, or test-matrix costs that cannot be safely parallelized away
 - Edge cases, negative cases, compatibility surfaces, or adversarial scenarios already implied by the project
 - Comparable completed Codex tasks when the user supplies or references their elapsed time, configuration, scope, and outcome
 
-Define bounded **required depth lanes** when they are necessary to make the objective complete. Examples include exhaustive inventory, core implementation, adversarial or negative testing, cross-environment validation, performance or visual QA, integration and reproducibility, and an independent review-and-remediation pass. Use only lanes supported by project evidence. Every lane must be required for success, not optional filler.
-
-If the core objective is likely to finish below the requested lower bound, choose one of these outcomes:
-
-1. Combine it with closely related work that shares the same objective, evidence, and validation surface.
-2. Deepen it with bounded required lanes that close real project gaps.
-3. Reject it as undersized and select another candidate.
-
-Never enlarge a task with unrelated cleanup, arbitrary file or test quotas, repeated validation that adds no evidence, deliberate waiting, or instructions to keep working merely to consume time. If the repository does not support enough properly sized candidates, return fewer tasks and explain the sizing evidence gap.
+Reject naturally short work. Never enlarge a task with exhaustive inventories, unrelated cleanup, arbitrary file or test quotas, speculative edge cases, repeated validation that adds no evidence, deliberate waiting, or instructions to keep working merely to consume time. If the repository does not support enough naturally sized candidates, return fewer tasks and explain the sizing gap.
 
 ## Runtime Calibration
 
@@ -70,33 +99,46 @@ For every surviving candidate, report:
 - A wall-clock range whose lower bound is plausible for the complete workload on the recommended configuration
 - Confidence: **low**, **medium**, or **high**
 - A short calibration basis naming the dominant work units and any comparable completed runs
-- The minimum substantive workload and required depth lanes that must all be completed
+- The natural substantive workload and required work items that must all be completed
 
 Use low confidence when no comparable agent history exists, the work depends on unknown baseline failures, or external tool latency dominates. Avoid narrow hour ranges when confidence is low. Give directly comparable completed Codex runs more weight than human engineering estimates, issue labels, repository size, or intuition. Treat actual elapsed time and token usage as calibration evidence only when the completed scope and model configuration are also known. If a comparable prior task finished far below the proposed lower bound, do not reuse that range unless the new required workload contains clearly additional sequential work commensurate with the gap.
 
 Reasoning effort and runtime are separate. Higher reasoning can improve difficult decisions, while Ultra or other parallel delegation can reduce wall-clock time. Do not increase either setting to make a task appear longer. Size the work itself for the requested horizon, and state that elapsed time remains an estimate rather than a guarantee.
+
+Do not deepen a candidate merely to satisfy duration. Combine candidates only when their parts already form one necessary program with the same current objective, consumer, maturity level, and validation surface, and the combined task would still be preferable if no horizon had been requested. Required work items are optional structure, not a quota; include only work intrinsically necessary for success.
 
 ## Scoring
 
 Score each candidate from 1–5 on:
 
 - **Value:** expected improvement to the project or workflow
+- **Critical-path relevance:** directness of its contribution to the current portfolio lens
+- **Readiness:** strength of prerequisite, maturity, timing, and ownership evidence
 - **Evidence:** strength and specificity of the observed need
 - **Autonomy:** ability to proceed without user intervention
 - **Verifiability:** quality of the validation loop and stopping condition
-- **Long-horizon sufficiency:** strength of the evidence that completing every required lane plausibly reaches the requested lower bound
+- **Natural long-horizon sufficiency:** strength of the evidence that the uninflated objective plausibly reaches the requested lower bound
 - **Parallel safety:** ability to run alongside the other selected tasks
 
-Also score **risk** and **unresolved dependencies** from 1–5. Compare candidates with:
+Also score these penalties from 0–5:
+
+- **Risk:** potential harm or costly rework despite safeguards
+- **Unresolved dependencies:** prerequisites not fully controlled by the task
+- **Prematurity:** distance between current maturity and the state the task assumes
+- **Assumption load:** important choices the task would have to invent
+- **Support detour:** effort spent improving machinery rather than advancing the requested outcome
+
+Compare candidates with:
 
 ```text
-value + evidence + autonomy + verifiability + long-horizon sufficiency + parallel safety
-- risk - unresolved dependencies
+value + critical-path relevance + readiness + evidence + autonomy
++ verifiability + natural long-horizon sufficiency + parallel safety
+- risk - unresolved dependencies - prematurity - assumption load - support detour
 ```
 
-Use the calculation to discipline comparisons, not to imply false precision. Exclude every candidate with autonomy, verifiability, or long-horizon sufficiency below 4. Prefer a diverse, high-value portfolio when candidates have comparable scores.
+Use the calculation to discipline comparisons, not to imply false precision. Exclude every candidate with critical-path relevance, readiness, autonomy, verifiability, or natural long-horizon sufficiency below 4. A high total cannot override a failed gate. Prefer a focused portfolio over artificial diversity when current priorities are narrow.
 
-At the default balanced risk tolerance, do not reject a candidate merely because it is broad, cross-cutting, or technically difficult. Prefer ambitious migrations, architectural improvements, and repo-wide quality work when they have strong evidence, isolated execution, reversible checkpoints, and a convincing validation loop. Use risk to strengthen the worktree strategy, checkpoints, and validation rather than automatically shrinking the objective. Reserve conservative selection for users who request low-risk work or for repositories where rollback and verification are weak.
+At the default balanced risk tolerance, consider ambitious or cross-cutting work only after it clears readiness and critical-path gates. Reversibility and verification mitigate execution risk; they do not cure prematurity. During exploration or validation phases, prefer information gain, option preservation, and bounded experiments over architecture, exhaustive stack selection, or production machinery. Reserve conservative selection for users who request low-risk work or for repositories where rollback and verification are weak.
 
 ## Configuration Selection
 
@@ -119,4 +161,4 @@ Record each candidate's likely write surface and shared resources before selecti
 - Connected documents, production systems, publishing accounts, and external records must have at most one writer unless the task explicitly provides safe partitioning.
 - Read-heavy exploration, audits, benchmarks, and summarization are preferred parallel companions.
 
-Create a first wave containing at least the requested maximum concurrency when enough compatible tasks exist. If that is impossible, state the maximum safe concurrency and the concrete collision or dependency that prevents the requested width. Put dependent or conflicting work in later waves.
+Create a first wave containing up to the requested maximum concurrency using only ready-now tasks. Never promote deferred or lower-value work merely to fill a concurrency slot. State the maximum useful safe width and the concrete readiness, collision, or dependency constraints that prevent a wider wave.

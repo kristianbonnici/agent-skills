@@ -2,44 +2,59 @@
 
 Use this format to make the portfolio comparable at a glance and every proposal runnable without another planning conversation.
 
+## 0. Portfolio Framing
+
+State the selection context before listing tasks:
+
+- **Portfolio lens:** the user-requested or explicitly stated assumption
+- **Current phase:** the maturity state relevant to this portfolio
+- **Locked decisions:** only choices supported by an authoritative project source or explicit user statement
+- **Active work:** tasks or changes that affect priority, readiness, or collision risk
+- **Nearest critical-path questions:** the uncertainties or blockers ready work should address
+- **Deferred boundaries:** areas that remain premature or outside the requested lens
+
 ## 1. Portfolio Summary
 
-Start with a compact table containing one row per task:
+Use a compact table containing only ready-now tasks:
 
-| ID | Task | Why now | Horizon / confidence | Long-horizon score | Value | Autonomy | Write surface | Model | Reasoning / mode | Wave |
-|---|---|---|---|---:|---:|---:|---|---|---|---:|
+| ID | Task | Why now | Readiness evidence | Horizon / confidence | Critical path | Natural horizon | Write surface | Model | Reasoning / mode | Wave |
+|---|---|---|---|---|---:|---:|---|---|---|---:|
 
-Use calibrated ranges rather than false precision. `Why now` must name the strongest project signal, not a generic benefit. A low-confidence range must be visibly labeled.
+Use calibrated ranges rather than false precision. `Why now` must explain why doing the task now is better than preserving the option for later. `Readiness evidence` must name satisfied prerequisites, not merely a repository gap. A low-confidence range must be visibly labeled.
 
 ## 2. Concurrency Plan
 
-List safe execution waves and explain only material constraints:
+List safe execution waves for ready-now tasks and explain only material constraints:
 
 - Which tasks may start together
 - Whether each task needs a separate worktree, the current checkout, or a read-only environment
 - Shared files, lockfiles, generated outputs, services, ports, accounts, or other collision surfaces
 - Dependencies that force a later wave
 
-If the requested concurrency is unsafe, state the maximum safe width and why.
+If the requested concurrency is unsafe or not useful, state the maximum useful safe width and why. Do not add deferred or lower-priority tasks to fill slots.
 
 ## 3. Full Task Packets
 
-For each task, include the following sections.
+For each ready-now task, include the following sections.
 
 ### Task and rationale
 
 - **Objective:** one outcome
+- **Portfolio lens and current phase:** the context that makes this task relevant
+- **Critical-path contribution:** how the output will be used now and by whom
+- **Prerequisites satisfied:** concrete evidence that the task is ready
+- **Decisions not preempted:** unresolved choices and their owner
 - **Why it matters:** expected project value
+- **Why now instead of later:** timing rationale
 - **Evidence:** concrete paths, symbols, commands, failures, screenshots, or project artifacts
 - **Scope:** allowed work surface
 - **Out of scope:** tempting adjacent work that would make the goal drift
 - **Expected wall-clock horizon:** calibrated range, not a guarantee
 - **Runtime confidence:** low, medium, or high
 - **Calibration basis:** dominant work units, sequential costs, and comparable completed agent runs when available
-- **Minimum substantive workload:** the bounded work that supports the lower estimate
-- **Required depth lanes:** every cohesive, evidence-backed lane that must be completed before success
+- **Natural substantive workload:** only work intrinsically required for the objective
 - **Risks and assumptions:** only material items
-- **Definition of done:** observable completion criteria covering every required depth lane
+- **Definition of done:** observable completion criteria for the natural objective
 
 ### Recommended Codex configuration
 
@@ -70,20 +85,22 @@ Read first:
 Objective:
 <single cohesive outcome>
 
+Readiness boundaries:
+- Current phase: <project maturity relevant to this task>.
+- Locked decisions: <only explicitly accepted choices this task may rely on>.
+- Satisfied prerequisites: <evidence that the work is ready now>.
+- Decisions this task must not make: <unresolved product, founder, customer, expert, policy, architecture, or external choices and their owner>.
+- Deferred adjacent work: <premature follow-on work that must remain untouched>.
+
 Workload contract:
 - Target wall-clock range: <range and confidence>.
 - Calibration basis: <project evidence, work units, sequential costs, and comparable agent history when available>.
-- Minimum substantive workload: <bounded work that supports the lower estimate>.
+- Natural substantive workload: <work intrinsically required for this objective>.
 - This range is a sizing estimate, not a timer. Do not wait, repeat work solely to consume time, or add unrelated scope.
-- Do not stop after the core implementation. Complete every required depth lane and include its validation evidence in the final handoff.
 
-Required depth lanes:
-- <bounded, evidence-backed lane with an observable result>
-- <additional required lane>
-- <continue only as needed to substantiate the requested horizon>
-
-Baseline fallback:
-- <bounded project-specific fallback if existing work has already satisfied or invalidated a lane, or state that no fallback is authorized>
+Required work:
+- <intrinsically necessary work item with an observable result>
+- <additional work item only when required by the objective>
 
 Scope:
 - <allowed paths and systems>
@@ -98,33 +115,46 @@ Constraints and authorization:
 - <task-specific constraints>
 
 Work loop:
-1. Establish the baseline, confirm that the planned workload still exists, and record the current result.
-2. Complete every required depth lane in coherent checkpoints; the core implementation alone is not success.
+1. Establish the baseline, confirm that the readiness assumptions and planned workload still hold, and record the current result.
+2. Complete the required work in coherent checkpoints without broadening into deferred decisions or supporting machinery.
 3. Run the specified validation after each meaningful checkpoint.
-4. Keep a short progress log naming what changed, which lanes are complete, what passed, what remains, and any blocker.
+4. Keep a short progress log naming what changed, what passed, what remains, and any blocker.
 5. If an approach fails, inspect the evidence and try another safe in-scope approach instead of waiting for routine guidance.
-6. If existing work has already satisfied or invalidated a lane, verify that evidence and use only a project-specific fallback explicitly authorized in this prompt. Do not invent unrelated work to preserve the estimate.
+6. If a prerequisite is missing, a maturity assumption is false, or existing work has already satisfied the material objective, do not invent replacement scope to preserve the estimate. Stop and report the changed readiness evidence.
 
 Validation:
 - <exact project commands, visual checks, benchmarks, audits, or artifact checks>
 
 Decision policy:
 - Prefer meaningful forward progress and make evidence-backed, reversible choices when the repository provides enough support.
+- Treat readiness and decision boundaries as hard constraints. A recommendation does not become an accepted decision.
 - Stop and report the blocker only when progress requires missing credentials, an externally consequential action, a destructive operation, or a product/policy decision that would materially change the objective.
 
 Stop conditions:
-- Success: <complete observable end state covering every required depth lane>.
+- Success: <complete observable end state for the natural objective>.
 - Blocked: <specific conditions that genuinely require the user>.
 
 Final handoff:
 - Summarize changes and validation evidence.
-- Report completion evidence for every required depth lane.
+- Report completion evidence for every required work item.
+- Distinguish recommendations from accepted decisions and identify the owner of every unresolved choice.
 - Report elapsed time and token usage when Codex makes them available so future planning can be calibrated.
 - List remaining risks, assumptions, and follow-up work without performing that follow-up.
 ```
 
-Replace every angle-bracketed item with project-specific content. Include enough required lanes to support the requested lower bound, but never add a lane solely to make the task longer. Include validation commands only after confirming they exist or deriving a safe equivalent from project configuration. A read-only task should request a durable report or other reviewable artifact rather than code changes.
+Replace every angle-bracketed item with project-specific content. If the natural required work does not support the requested lower bound, reject the task instead of adding work. Include validation commands only after confirming they exist or deriving a safe equivalent from project configuration. A read-only task should request a durable report or other immediately usable artifact rather than code changes.
 
-## 4. Portfolio Caveats
+## 4. Deferred Candidates
 
-End with only caveats that affect selection or scheduling, such as missing credentials, an unavailable tool, low-confidence runtime calibration, an uncertain build baseline, or unavoidable merge conflicts. State once that ranges are workload estimates rather than guarantees. Do not append generic advice and do not start any task.
+List only worthwhile candidates that failed readiness because a concrete prerequisite is missing. For each, provide:
+
+- Title
+- Why it may matter later
+- Unmet prerequisite or maturity boundary
+- Observable reevaluation trigger
+
+Do not score deferred candidates as selected work, place them in execution waves, estimate them as ready, or provide `/goal` prompts.
+
+## 5. Portfolio Caveats
+
+End with only caveats that affect selection or scheduling, such as missing credentials, an unavailable tool, low-confidence runtime calibration, an uncertain build baseline, unresolved portfolio framing, or unavoidable merge conflicts. State once that ranges are workload estimates rather than guarantees. Do not append generic advice and do not start any task.
