@@ -1,7 +1,7 @@
 interface:
   display_name: "Long-Horizon Task Planner"
   short_description: "Plan autonomous project-specific Codex work"
-  default_prompt: "Use $long-horizon-task-planner to propose six overnight-ready tasks for this project, optimized for four running in parallel, without starting them."
+  default_prompt: "Use $long-horizon-task-planner to propose six calibrated overnight-ready tasks for this project, optimized for four running in parallel, with workload evidence and complete prompts, without starting them."
 
 policy:
   allow_implicit_invocation: true
