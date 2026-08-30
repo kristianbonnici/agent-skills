@@ -16,10 +16,14 @@ test -f "$test_home/.gemini/config/skills/product-design/SKILL.md"
 test -f "$test_home/.gemini/config/skills/product-design/scripts/browser"
 test ! -e "$test_home/.agents/skills/product-design"
 test ! -e "$test_home/.codex/skills/product-design"
+test -L "$test_home/.agents/skills/long-horizon-task-planner"
+test -L "$test_home/.codex/skills/long-horizon-task-planner"
 
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
 test ! -e "$test_home/.config/opencode/skills/product-design"
 test ! -e "$test_home/.factory/skills/product-design"
 test ! -e "$test_home/.gemini/config/skills/product-design"
+test ! -e "$test_home/.agents/skills/long-horizon-task-planner"
+test ! -e "$test_home/.codex/skills/long-horizon-task-planner"
 
 echo "bootstrap-test: passed"

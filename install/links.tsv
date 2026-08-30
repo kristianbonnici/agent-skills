@@ -3,3 +3,5 @@ opencode	link	skills/product-design	~/.config/opencode/skills/product-design
 opencode	link	adapters/opencode/commands/product-design.md	~/.config/opencode/commands/product-design.md
 factory	link	skills/product-design	~/.factory/skills/product-design
 antigravity	adapter	skills/product-design	~/.gemini/config/skills/product-design
+codex	link	skills/long-horizon-task-planner	~/.agents/skills/long-horizon-task-planner
+codex	link	skills/long-horizon-task-planner	~/.codex/skills/long-horizon-task-planner
