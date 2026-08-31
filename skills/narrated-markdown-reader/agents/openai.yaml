@@ -1,0 +1,4 @@
+interface:
+  display_name: "Narrated Markdown Reader"
+  short_description: "Create synchronized audio Markdown read-throughs"
+  default_prompt: "Use $narrated-markdown-reader to create a synchronized audio read-through for this Markdown file."

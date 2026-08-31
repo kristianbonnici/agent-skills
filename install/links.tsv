@@ -5,3 +5,5 @@ factory	link	skills/product-design	~/.factory/skills/product-design
 antigravity	adapter	skills/product-design	~/.gemini/config/skills/product-design
 codex	link	skills/long-horizon-task-planner	~/.agents/skills/long-horizon-task-planner
 codex	link	skills/long-horizon-task-planner	~/.codex/skills/long-horizon-task-planner
+codex	link	skills/narrated-markdown-reader	~/.agents/skills/narrated-markdown-reader
+codex	link	skills/narrated-markdown-reader	~/.codex/skills/narrated-markdown-reader

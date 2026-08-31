@@ -47,6 +47,7 @@ agent-skills/
 | Skill | Installed into | Purpose |
 |---|---|---|
 | `long-horizon-task-planner` | Codex user locations | Propose maturity-aware autonomous task portfolios with calibrated workloads and safe parallel plans. |
+| `narrated-markdown-reader` | Codex user locations | Create and archive synchronized audio read-throughs for Markdown files. |
 | `product-design` | OpenCode, Factory, and Google Antigravity | Research, audit, ideate, prototype, visually QA, and share product experiences. |
 
 The Product Design compatibility skill is deliberately not linked into `~/.agents/skills` or `~/.codex/skills`. Codex should continue using OpenAI's installed Product Design plugin without a semantically competing personal copy.
