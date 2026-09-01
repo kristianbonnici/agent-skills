@@ -38,6 +38,8 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
    - List worthwhile but premature candidates separately with their unmet prerequisite and reevaluation trigger. Do not give them runnable prompts.
    - Cite concrete project evidence for every task.
    - Recommend settings from the models, reasoning levels, modes, permissions, tools, and installed skills actually available in the current Codex environment.
+   - Keep launch-time configuration outside the ready-to-paste prompt. Treat recommendations as advisory unless a setting is explicitly marked required for safety or correctness.
+   - Make every prompt configuration-independent: it must remain coherent if the user chooses a different model, reasoning level, delegation mode, permission mode, project selector, or environment than recommended.
    - Write a complete ready-to-paste `/goal` prompt for each ready-now task, including its workload and readiness boundaries. Replace every placeholder with project-specific content.
 
 4. Stop after presenting the portfolio.
@@ -61,3 +63,5 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
 - Put concurrent write-heavy tasks in separate Git worktrees and disclose shared lockfiles, root configuration, generated assets, external systems, and other likely collision surfaces.
 - Mention another skill only when it is installed and materially improves the task.
 - Full access removes local approval friction; it does not authorize deployment, publishing, deletion, messaging, purchases, or other externally consequential actions.
+- Never copy launch recommendations into the runnable prompt. Model names or slugs, reasoning levels, single-agent or Ultra choices, permission-mode labels, Goal-mode selection, and project or worktree selection belong only in the configuration section.
+- Express actual task authorization and safety boundaries behaviorally inside the prompt. For example, state which files may change and which external actions are forbidden; do not claim that the prompt grants Full access.

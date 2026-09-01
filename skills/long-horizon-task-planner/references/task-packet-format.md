@@ -58,7 +58,7 @@ For each ready-now task, include the following sections.
 
 ### Recommended Codex configuration
 
-Provide exact values for:
+Provide launch-time metadata for the user to select before sending the prompt. These values are advisory unless safety or correctness makes one necessary; label any such value **Required** and explain why. Provide exact values for:
 
 - Project or working directory
 - Environment: current checkout, read-only, or new worktree
@@ -72,9 +72,29 @@ Provide exact values for:
 
 Do not recommend a model, mode, skill, or tool that is unavailable in the current environment. Do not recommend maximum settings merely because the task is long.
 
+Keep this entire configuration outside the ready-to-paste prompt. The user may override any recommendation, so the prompt must not restate or assume it.
+
 ### Ready-to-paste prompt
 
 Write one self-contained prompt in a fenced text block. It must begin with a concrete `/goal` command and fully instantiate this contract:
+
+#### Launch-configuration boundary
+
+The fenced prompt is an execution contract, not a second configuration panel. It must remain correct if the user changes every recommended setting.
+
+Do not put any of the following inside the prompt:
+
+- Model labels, model slugs, or instructions to use a particular model
+- Reasoning-effort labels
+- Single-agent, explicit-subagent, intelligence, delegation, or Ultra-mode selections
+- Permission-mode names such as Full access
+- Goal-mode selection language; the opening `/goal` command is sufficient
+- Instructions to select a project, create or select a worktree, or switch execution environments
+- A `Recommended configuration`, `Project and environment`, or equivalent launch-settings block
+
+Refer to the current execution context neutrally, such as `the active task workspace`. Absolute project and evidence paths may still appear where they identify material to read or constrain the write surface. Safety constraints such as keeping other checkouts read-only may remain because they govern behavior rather than select an environment.
+
+Translate launch capabilities into task semantics. State the exact allowed and forbidden actions instead of asserting a permission mode. Describe the substantive work lanes without telling the agent whether to delegate them. A named installed skill may appear inside the prompt only when invoking that workflow is intrinsically required by the objective; do not repeat it as configuration metadata.
 
 ```text
 /goal Complete <specific objective> without stopping until <verifiable end state>.
@@ -143,6 +163,8 @@ Final handoff:
 ```
 
 Replace every angle-bracketed item with project-specific content. If the natural required work does not support the requested lower bound, reject the task instead of adding work. Include validation commands only after confirming they exist or deriving a safe equivalent from project configuration. A read-only task should request a durable report or other immediately usable artifact rather than code changes.
+
+Before presenting a task packet, compare the fenced prompt with its recommended configuration and remove all duplicated or assumed launch choices. In particular, check for model names or slugs, reasoning labels, mode names, permission labels, worktree-selection instructions, and configuration headings. Confirm that changing the external recommendation would not make any instruction in the prompt contradictory or misleading.
 
 ## 4. Deferred Candidates
 
