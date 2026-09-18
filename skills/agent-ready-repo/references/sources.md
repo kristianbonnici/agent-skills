@@ -8,7 +8,7 @@ Reviewed: 2026-09-18. This skill is an original synthesis, not a vendored copy o
 
 Inspected repository revision: `77e7a3e21469dcbece2558086c8d91657abeaa40`.
 
-The course's lectures 1–12 cover failure diagnosis, repository knowledge, focused instructions, continuity, initialization, scope, evidence of completion, end-to-end verification, observability, and clean handoffs. Lectures 13–14 extend into loops and coordination graphs. This skill adopts the repository lifecycle concerns while keeping orchestration outside its default behavior.
+All 14 English lesson bodies at this revision were read end-to-end for this revision of the skill, including their examples, diagrams as source, caveats, and exercises. The advanced repository pack and its SOPs, initializer/startup playbooks, and selected state/bootstrap/handoff templates were also reviewed. Reading the exercises is not a claim that every course project was executed. See [lesson coverage](lesson-coverage.md) for the specific implementation of each lesson's contribution.
 
 Treat its examples as context-specific proposals. Do not import mandatory filenames, feature counts, instruction line budgets, performance estimates, stack templates, or cleanup commands. In particular, making a handoff clean does not authorize reverting local configuration or user changes. Verify claims about products and performance against primary sources before relying on them.
 
@@ -21,6 +21,9 @@ Treat its examples as context-specific proposals. Do not import mandatory filena
 | [Anthropic: Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps), 2026-03-24 | Evaluate actual outcomes and reconsider scaffolding as capabilities change. | Evaluators, sprint structure, and context resets have conditional value; extra agents are not an unconditional reliability guarantee. |
 | [Anthropic: Effective context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents), 2025-09-29 | Select relevant context and disclose detail progressively; use durable notes when they support continuity. | Broad engineering guidance, not evidence that every new instruction improves task performance. |
 | [AGENTS.md open format](https://agents.md/), reviewed 2026-09-18 | A widely supported Markdown convention for repository-specific agent guidance. | Actual discovery, precedence, imports, and nested-file behavior depend on the host; verify them before proposing host-specific integration. |
+| [Matklad: ARCHITECTURE.md](https://matklad.github.io/2021/02/06/ARCHITECTURE.md.html), 2021-02-06 | A concise physical code map, important boundaries, invariants, and cross-cutting concerns. | Prefer stable relationships over exhaustive inventories; adapt to the repository's existing documentation conventions. |
+| [Anthropic: Building effective agents](https://www.anthropic.com/engineering/building-effective-agents), 2024-12-19 | Simple composable workflows, environmental feedback, explicit stopping conditions, and conditional use of evaluators. | Framework choices and product features change; added orchestration must justify its cost. |
+| [LangGraph: Persistence](https://docs.langchain.com/oss/python/langgraph/persistence), reviewed 2026-09-18 | Checkpoints identify recoverable workflow state and separate executions. | Persistent state alone is not a guarantee that replayed external side effects occur exactly once; no LangGraph dependency is introduced. |
 
 ## Empirical counterweights
 

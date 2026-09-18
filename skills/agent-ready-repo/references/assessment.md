@@ -8,6 +8,24 @@ For a new repository, distinguish decisions still needed from missing implementa
 
 Record command provenance and execution context: what the command invokes, working directory, prerequisites, and the result if run. Inspect wrappers and lifecycle hooks too. Prefer focused, non-interactive checks with a bounded runtime. Stop a hung check and report the limit rather than retrying indefinitely.
 
+## Trace the fresh-session questions
+
+Use the repository and approved accessible records to answer these questions without relying on prior conversation. Cite the route to each answer, not just a filename that appears relevant.
+
+| Question | Evidence to locate |
+|---|---|
+| What is this system for? | Purpose, intended users or consumers, current product constraints |
+| Where would the requested change belong? | Relevant domain/package, entrypoints, boundaries and applicable instructions |
+| How can work start? | Supported setup/start operations, working directories and prerequisites |
+| How is the result judged? | Actual verification commands, assertions and acceptance criteria |
+| What is the current state and next step? | Current task/plan, relevant Git changes, valid evidence and blockers; or an explicit absence of active work |
+
+A missing answer is a discovery gap; choose its durable home using [repository structure](repository-structure.md). An answer that exists but cannot be accessed by the intended agent is an access gap. Do not copy private external records into Git to solve it. An author walkthrough can establish links and facts; label an independent fresh-session trial only when it was actually performed.
+
+## Diagnose before prescribing
+
+Trace one representative failure through task specification, available context, tool operations, runtime environment, verification feedback, and durable state. Identify the earliest supported cause, distinguish downstream symptoms, and propose a check when causation remains uncertain. For example, repeated wrong-package commands may need better routing, while an integration check that cannot distinguish bad output needs a stronger assertion. Adding more prose does not solve both problems.
+
 ## Six assessment areas
 
 | Area | Evidence to inspect | Useful readiness question |
@@ -42,7 +60,7 @@ Lead with the most consequential conclusion and the assessed scope. Scale the re
 
 1. **Current readiness:** What works, what materially obstructs the intended workflow, and what was not verified.
 2. **Findings:** For each actionable issue, include evidence, consequence, smallest useful change, prerequisites, and acceptance checks. Cite exact project paths and commands; keep conjecture visibly separate.
-3. **Ordered action plan:** Group related changes, specify their target surfaces and resulting behavior, and name verification steps. Explain dependency order. An action must be implementable without rediscovering its purpose or guessing its success criteria. Brief findings and actions can share a table to avoid repetition.
+3. **Ordered action plan:** Group related changes, specify their target surfaces and resulting behavior, and name verification steps. For structural work, name the selected repository pattern, map existing artifacts to responsibilities, and show the proposed changes to layout/routing. For operational work, specify the relevant [working contract](working-contracts.md). Explain dependency order. An action must be implementable without rediscovering its purpose or guessing its success criteria. Brief findings and actions can share a table to avoid repetition.
 4. **Deferred work and limits:** Include only meaningful blocked or premature work, the condition for reconsideration, and relevant inspection gaps.
 
 Do not output a synthetic overall percentage or attach numeric grades based on file presence. Do not claim the repository is globally optimal. Provide commands as proposed checks when they have not been run.

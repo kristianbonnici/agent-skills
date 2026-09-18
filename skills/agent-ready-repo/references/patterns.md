@@ -2,6 +2,8 @@
 
 Use only the patterns justified by the assessment. These are decision aids, not a scaffold checklist.
 
+For concrete layouts and artifact placement, use [repository structure](repository-structure.md). For executable acceptance and state/evidence rules, use [working contracts](working-contracts.md). This reference covers how to choose and improve the mechanisms inside that structure.
+
 ## Context that earns its place
 
 Use an entry instruction file for non-obvious commands, constraints, and pointers to authoritative knowledge. Keep stable architectural rationale in the project's established design documentation. Prefer links to restating changing facts such as dependency versions, package inventories, or task status.
@@ -26,6 +28,8 @@ Choose the relevant layer: static checks for structural rules, unit tests for is
 
 Check that verification actually exercises something: test discovery, exit-code propagation, failure handling, and relevant assertions matter more than a green command label. Never swallow a failure or weaken assertions to manufacture success. Keep flakes and unavailable dependencies visible.
 
+Verify a newly introduced gate with both a deliberately bad input and a valid input outside the live project. Prefer semantic lint/test facilities over brittle text searches that miss alternate syntax. Choose expected outcomes before evaluating the implementation, and bind the result to the candidate snapshot.
+
 Provide failure output that identifies the affected invariant and points to a valid repair example when useful. Add architecture checks for stable, repeatedly violated boundaries; do not freeze incidental implementation choices into policy.
 
 ## Runtime visibility
@@ -33,6 +37,8 @@ Provide failure output that identifies the affected invariant and points to a va
 Start with the evidence the agent needs to diagnose the project's actual failures: reproducible commands, useful error output, local logs, health checks, or inspection of resulting data. Prefer existing interfaces.
 
 Recommend structured logs, metrics, traces, or browser inspection only when they resolve an observed visibility gap. Define the behavior to inspect and its acceptance condition before adding tools. Keep credentials and private runtime artifacts out of repository documentation; identify where authorized users can access them without copying their contents.
+
+Separate runtime evidence (what executed, failed, or changed) from process records (scope, decisions, acceptance, result). A useful diagnostic record correlates a task/check with its checkout and workload. Record concise rationale and artifacts, not hidden reasoning or full conversation transcripts. Check startup, readiness, relevant side effects, and shutdown when those phases matter to the defect.
 
 ## Task state and work boundaries
 
