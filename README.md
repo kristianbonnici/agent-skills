@@ -47,6 +47,7 @@ agent-skills/
 | Skill | Installed into | Purpose |
 |---|---|---|
 | `long-horizon-task-planner` | Codex user locations | Propose maturity-aware autonomous task portfolios with calibrated workloads and safe parallel plans. |
+| `agent-ready-repo` | Codex user locations | Audit agent readiness for new, existing, and maintained repositories; apply improvements when explicitly requested. |
 | `narrated-markdown-reader` | Codex user locations | Create and archive synchronized audio read-throughs for Markdown files. |
 | `product-design` | OpenCode, Factory, and Google Antigravity | Research, audit, ideate, prototype, visually QA, and share product experiences. |
 
