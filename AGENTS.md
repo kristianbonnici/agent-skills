@@ -4,7 +4,7 @@
 
 This repository is the canonical source for personal agent skills. Skills here are shared across local agent tools by symlink or adapter directories declared in `install/links.tsv`.
 
-Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~/.agents`, `~/.antigravity`, `~/.antigravity-ide`, and `~/.gemini` are installation targets only.
+Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~/.agents`, `~/.claude/skills`, `~/.antigravity`, `~/.antigravity-ide`, and `~/.gemini` are installation targets only.
 
 ## Repository Structure
 

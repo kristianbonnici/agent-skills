@@ -1,0 +1,7 @@
+interface:
+  display_name: "Remote Session Reporting"
+  short_description: "Show results in chat while the user is away from the computer"
+  default_prompt: "Use $remote-session-reporting: I'm away from my computer, so show me the results in chat."
+
+policy:
+  allow_implicit_invocation: true

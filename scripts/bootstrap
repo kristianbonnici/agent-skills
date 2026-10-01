@@ -15,7 +15,7 @@ usage() {
 Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies]
        bootstrap --dependencies [--dry-run]
 
-Hosts: opencode, factory, codex, antigravity, antigravity-ide, antigravity-cli
+Hosts: opencode, factory, codex, claude, antigravity, antigravity-ide, antigravity-cli
 EOF
 }
 
