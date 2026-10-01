@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent-Ready Repo"
+  short_description: "Assess and improve repositories for agentic work"
+  default_prompt: "Use $agent-ready-repo to audit this repository for agentic work and propose prioritized, evidence-backed improvements without changing project files."
+
+policy:
+  allow_implicit_invocation: true
