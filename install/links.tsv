@@ -12,3 +12,4 @@ codex	link	skills/narrated-markdown-reader	~/.codex/skills/narrated-markdown-rea
 codex	link	skills/remote-session-reporting	~/.agents/skills/remote-session-reporting
 codex	link	skills/remote-session-reporting	~/.codex/skills/remote-session-reporting
 claude	link	skills/remote-session-reporting	~/.claude/skills/remote-session-reporting
+claude	link	skills/long-horizon-task-planner	~/.claude/skills/long-horizon-task-planner
