@@ -158,8 +158,6 @@ Keep the host's default effort unless the task justifies a supported alternative
 
 Claude Code's goal evaluator judges evidence surfaced in the conversation; it does not independently inspect files or run checks. Require completion evidence in the final handoff. A goal condition is limited to 4,000 characters, and `/goal` does not alter permission settings. Workspace trust and hook settings can restrict availability; honor an explicit restriction without modifying those settings. Consult the task-packet reference for the compact prompt format.
 
-Choose the least permissive available setting that permits the task's actual workflow. For unattended work, explain any expected tool approval prompts and recommend only a supported approval mechanism; do not automatically select permission bypass. Keep permission recommendations outside the prompt and preserve the task's behavioral authorization boundaries.
-
 Upstream behavioral references (checked 2026-10-04 against Claude Code 2.1.289): [Claude Code goals](https://code.claude.com/docs/en/goal), [model and effort configuration](https://code.claude.com/docs/en/model-config), and [permission modes](https://code.claude.com/docs/en/permission-modes). Recheck these sources if the target version or exposed controls differ.
 
 ## Parallel Portfolio
