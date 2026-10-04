@@ -88,7 +88,7 @@ Substantiate the workload with project-specific evidence such as:
 - Intrinsically necessary phases that each leave a reviewable artifact or independently validated checkpoint
 - Known setup, execution, benchmark, render, browser, migration, or test-matrix costs that cannot be safely parallelized away
 - Edge cases, negative cases, compatibility surfaces, or adversarial scenarios already implied by the project
-- Comparable completed Codex tasks when the user supplies or references their elapsed time, configuration, scope, and outcome
+- Comparable completed agent tasks when the user supplies or references their host, elapsed time, configuration, scope, and outcome
 
 Reject naturally short work. Never enlarge a task with exhaustive inventories, unrelated cleanup, arbitrary file or test quotas, speculative edge cases, repeated validation that adds no evidence, deliberate waiting, or instructions to keep working merely to consume time. If the repository does not support enough naturally sized candidates, return fewer tasks and explain the sizing gap.
 
@@ -101,9 +101,9 @@ For every surviving candidate, report:
 - A short calibration basis naming the dominant work units and any comparable completed runs
 - The natural substantive workload and required work items that must all be completed
 
-Use low confidence when no comparable agent history exists, the work depends on unknown baseline failures, or external tool latency dominates. Avoid narrow hour ranges when confidence is low. Give directly comparable completed Codex runs more weight than human engineering estimates, issue labels, repository size, or intuition. Treat actual elapsed time and token usage as calibration evidence only when the completed scope and model configuration are also known. If a comparable prior task finished far below the proposed lower bound, do not reuse that range unless the new required workload contains clearly additional sequential work commensurate with the gap.
+Use low confidence when no comparable agent history exists, the work depends on unknown baseline failures, or external tool latency dominates. Avoid narrow hour ranges when confidence is low. Give directly comparable completed agent runs more weight than human engineering estimates, issue labels, repository size, or intuition. Treat actual elapsed time and token usage as calibration evidence only when the completed scope, host, and model configuration are also known. If a comparable prior task finished far below the proposed lower bound, do not reuse that range unless the new required workload contains clearly additional sequential work commensurate with the gap.
 
-Reasoning effort and runtime are separate. Higher reasoning can improve difficult decisions, while Ultra or other parallel delegation can reduce wall-clock time. Do not increase either setting to make a task appear longer. Size the work itself for the requested horizon, and state that elapsed time remains an estimate rather than a guarantee.
+Reasoning effort and runtime are separate. Higher effort can improve difficult decisions, while parallel delegation can reduce wall-clock time. Do not increase either setting to make a task appear longer. Size the work itself for the requested horizon, and state that elapsed time remains an estimate rather than a guarantee.
 
 Do not deepen a candidate merely to satisfy duration. Combine candidates only when their parts already form one necessary program with the same current objective, consumer, maturity level, and validation surface, and the combined task would still be preferable if no horizon had been requested. Required work items are optional structure, not a quota; include only work intrinsically necessary for success.
 
@@ -142,15 +142,25 @@ At the default balanced risk tolerance, consider ambitious or cross-cutting work
 
 ## Configuration Selection
 
-Recommend exact settings that are available in the current Codex client. Apply these roles when the corresponding GPT-5.6 models are available:
+Identify the execution target from the user's request or current host. Use its live capability catalog, session metadata, or documented controls to establish available settings. Do not assume the planning host and execution target have the same capabilities. When exact availability cannot be inspected, state the uncertainty and give a conditional recommendation rather than a fabricated model ID or control.
 
-- **Sol / flagship:** ambiguous, demanding implementation, architecture, difficult debugging, or high-value synthesis
-- **Terra / balanced:** read-heavy exploration, audits, large-file review, test analysis, and moderate implementation
-- **Luna / efficient:** narrow, mechanical, repeatable, or high-volume transformations
+- **Most capable available model:** ambiguous implementation, difficult debugging, architecture, or high-value synthesis
+- **Balanced available model:** read-heavy exploration, audits, test analysis, and moderate implementation
+- **Efficient available model:** narrow, mechanical, repeatable transformations
 
-Use medium reasoning as the balanced default. Use high when the task must trace complex behavior or edge cases, Extra High (`xhigh`) for especially demanding agentic work, and Max only when the expected quality gain justifies the additional time and usage. Recommend Ultra only when the task divides into useful independent subagent lanes; otherwise recommend a single agent at the appropriate reasoning level. Recalculate the wall-clock range when parallel lanes are recommended because concurrency may shorten elapsed time.
+Keep the host's default effort unless the task justifies a supported alternative. Higher effort must offer an expected quality gain for difficult decisions. Recommend delegation only for useful independent lanes, using controls exposed by the target host. Recalculate the wall-clock range when parallel lanes may shorten elapsed time.
 
-Use `/goal` for the persistent execution loop. Recommend read-only permissions for audits, workspace write for ordinary implementation when sufficient, and Full access only when the validated workflow needs network access, dependency installation, browser or system tooling, or writes beyond the workspace.
+### Host-specific controls
+
+- **Codex:** use the current client or harness catalog for selectable models, reasoning levels, permission settings, and delegation. Use native `/goal` for persistent execution. Recommend Ultra only if that client exposes it and independent lanes justify it; do not assume every Codex host has that control.
+- **Claude Code:** use the session's available models or `/model` catalog and its supported effort and permission controls. Model aliases resolve by provider and can change; do not hard-code a model version from memory. Use native `/goal <condition>` for persistent execution. Do not recommend Codex model slugs, Ultra, or Codex permission labels. Recommend Claude subagents or teams only when available and justified by independent work.
+- **Other hosts:** verify the supported controls and persistent-execution mechanism. If unavailable or unknown, provide a plain task prompt and disclose the persistence limitation.
+
+Claude Code's goal evaluator judges evidence surfaced in the conversation; it does not independently inspect files or run checks. Require completion evidence in the final handoff. A goal condition is limited to 4,000 characters, and `/goal` does not alter permission settings. Workspace trust and hook settings can restrict availability; honor an explicit restriction without modifying those settings. Consult the task-packet reference for the compact prompt format.
+
+Choose the least permissive available setting that permits the task's actual workflow. For unattended work, explain any expected tool approval prompts and recommend only a supported approval mechanism; do not automatically select permission bypass. Keep permission recommendations outside the prompt and preserve the task's behavioral authorization boundaries.
+
+Upstream behavioral references (checked 2026-10-04 against Claude Code 2.1.289): [Claude Code goals](https://code.claude.com/docs/en/goal), [model and effort configuration](https://code.claude.com/docs/en/model-config), and [permission modes](https://code.claude.com/docs/en/permission-modes). Recheck these sources if the target version or exposed controls differ.
 
 ## Parallel Portfolio
 
