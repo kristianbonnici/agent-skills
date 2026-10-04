@@ -34,6 +34,9 @@ ENV/
 *.log
 *.sqlite
 
+# Playwright CLI session output (page snapshots, console logs)
+.playwright-cli/
+
 # Local configurations / credentials
 .env.local
 .env.*.local

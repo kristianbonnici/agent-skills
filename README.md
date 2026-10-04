@@ -47,6 +47,7 @@ agent-skills/
 | Skill | Installed into | Purpose |
 |---|---|---|
 | `long-horizon-task-planner` | Codex user locations | Propose maturity-aware autonomous task portfolios with calibrated workloads and safe parallel plans. |
+| `long-horizon-orchestrator` | Codex and Claude Code user locations | Run approved long tasks as separate agents (T3 threads on any provider, or native subagents), get woken when they finish, route by capacity and strengths, merge reviewed work, and report in plain language with a run diagram. |
 | `agent-ready-repo` | Codex user locations | Audit agent readiness for new, existing, and maintained repositories; apply improvements when explicitly requested. |
 | `narrated-markdown-reader` | Codex user locations | Create and archive synchronized audio read-throughs for Markdown files. |
 | `remote-session-reporting` | Codex and Claude Code user locations | Show results in chat (screenshots, pasted text, check summaries) while the user follows a session remotely. |

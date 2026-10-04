@@ -1,11 +1,17 @@
 ---
 name: long-horizon-task-planner
-description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight Codex tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks.
+description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight agent tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks; long-horizon-orchestrator does that.
 ---
 
 # Long-Horizon Task Planner
 
 Produce a reviewable task portfolio. Inspect the current project, but do not change it and do not start any proposed task.
+
+## Agent Host
+
+Use the current agent host as the execution target unless the user names another. State the target and use its available models, effort controls, permissions, delegation, and installed skills. Read the host guidance in [references/discovery-and-ranking.md](references/discovery-and-ranking.md#configuration-selection) before recommending launch settings.
+
+Both Codex and Claude Code support native `/goal`; do not treat it as Codex-only or substitute `/loop` merely because the target is Claude Code. For Claude Code, use a compact, verifiable completion condition within its 4,000-character limit. Honor explicit runtime restrictions without starting a goal to probe support. For another host, verify its persistent-execution command or provide a plain task prompt and disclose that persistence is unverified.
 
 ## Inputs
 
@@ -22,7 +28,7 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
 ## Workflow
 
 1. Ground in the current project.
-   - Read every applicable `AGENTS.md` and relevant project documentation first.
+   - Read every applicable project instruction file, including `AGENTS.md` and `CLAUDE.md` when present, and relevant project documentation first.
    - Identify the current project phase, explicit decisions, lifecycle statuses, active work, nearest open questions, deferred areas, and unmet prerequisites before treating repository gaps as candidates.
    - Inspect repository status, workspace structure, manifests, CI, tests, recent history, hotspots, TODOs, documentation, and non-code assets relevant to the chosen portfolio lens.
    - Preserve dirty worktrees. Run only safe, non-mutating diagnostics needed to substantiate a candidate.
@@ -37,15 +43,16 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
    - Return portfolio framing, ready-now tasks, safe execution waves, and a complete task packet only for work whose prerequisites are already satisfied.
    - List worthwhile but premature candidates separately with their unmet prerequisite and reevaluation trigger. Do not give them runnable prompts.
    - Cite concrete project evidence for every task.
-   - Recommend settings from the models, reasoning levels, modes, permissions, tools, and installed skills actually available in the current Codex environment.
+   - Recommend settings from the models, effort controls, modes, permissions, tools, and installed skills actually available in the target agent environment. Omit unsupported controls and mark unknown availability instead of inventing exact values.
    - Keep launch-time configuration outside the ready-to-paste prompt. Treat recommendations as advisory unless a setting is explicitly marked required for safety or correctness.
    - Make every prompt configuration-independent: it must remain coherent if the user chooses a different model, reasoning level, delegation mode, permission mode, project selector, or environment than recommended.
-   - Write a complete ready-to-paste `/goal` prompt for each ready-now task, including its workload and readiness boundaries. Replace every placeholder with project-specific content.
+   - Write a complete ready-to-paste prompt for each ready-now task using the target host's goal command and limits, including its workload and readiness boundaries. Replace every placeholder with project-specific content.
 
 4. Stop after presenting the portfolio.
    - Never create a goal, task, thread, worktree, branch, commit, or external record.
    - Never edit the inspected project while planning.
    - The user decides which proposals to run and when.
+   - To run an approved portfolio unattended, the user can invoke `long-horizon-orchestrator`, which launches, chains, merges and reports on the tasks.
 
 ## Portfolio Rules
 
@@ -59,9 +66,9 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
 - Report a wall-clock range, confidence level, calibration basis, and natural substantive workload for every ready-now proposal. Do not present unsupported hour estimates as fact.
 - Include required work items only when they are intrinsically necessary to the objective. Do not manufacture mandatory depth lanes to make a task appear long.
 - Exclude tasks that predictably require missing credentials, an unresolved product decision, destructive external action, or authorization outside the user's request.
-- Recommend Ultra only when independent subagent lanes materially improve the task. Do not use Ultra or higher reasoning effort to inflate duration; parallel execution can reduce wall-clock time.
+- Recommend delegation only when the target host supports it and independent subagent lanes materially improve the task. Do not use delegation or higher effort to inflate duration; parallel execution can reduce wall-clock time.
 - Put concurrent write-heavy tasks in separate Git worktrees and disclose shared lockfiles, root configuration, generated assets, external systems, and other likely collision surfaces.
 - Mention another skill only when it is installed and materially improves the task.
-- Full access removes local approval friction; it does not authorize deployment, publishing, deletion, messaging, purchases, or other externally consequential actions.
-- Never copy launch recommendations into the runnable prompt. Model names or slugs, reasoning levels, single-agent or Ultra choices, permission-mode labels, Goal-mode selection, and project or worktree selection belong only in the configuration section.
-- Express actual task authorization and safety boundaries behaviorally inside the prompt. For example, state which files may change and which external actions are forbidden; do not claim that the prompt grants Full access.
+- Broader permissions can reduce tool approval friction; they do not authorize deployment, publishing, deletion, messaging, purchases, or other externally consequential actions. A goal command does not change permissions.
+- Never copy launch recommendations into the runnable prompt. Model names or slugs, effort levels, delegation choices, permission-mode labels, and project or worktree selection belong only in the configuration section. The host's goal command is the only launch control included in the prompt.
+- Express actual task authorization and safety boundaries behaviorally inside the prompt. For example, state which files may change and which external actions are forbidden; do not claim that the prompt grants permissions.

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Long-Horizon Orchestrator"
+  short_description: "Run, chain and merge long agent tasks unattended"
+  default_prompt: "Use $long-horizon-orchestrator to run these tasks as separate agents, merge each into the current branch after review and checks, launch dependent tasks when ready, and give me a plain-language report at the end."
+
+policy:
+  allow_implicit_invocation: true

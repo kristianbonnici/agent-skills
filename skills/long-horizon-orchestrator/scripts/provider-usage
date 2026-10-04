@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Print the last observed subscription usage for Claude and Codex as JSON.
+
+Read-only. Values are the most recent ones each provider reported to local files,
+not a live query: a window whose reset time has passed is flagged as reset.
+Sources are internal formats of Claude Code, T3 Code and Codex; when one cannot
+be read, its provider is reported with an explanatory "error" instead of failing.
+
+Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+TAIL_BYTES = 4 * 1024 * 1024
+MAX_FILES = 40
+
+
+def iso(ts: float | None) -> str | None:
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds") if ts else None
+
+
+def tail_lines(path: Path) -> list[str]:
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(max(0, size - TAIL_BYTES))
+        return f.read().decode("utf-8", errors="replace").splitlines()
+
+
+def newest(paths) -> list[Path]:
+    files = [p for p in paths if p.is_file()]
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:MAX_FILES]
+
+
+def window(used_percent: float, resets_at: float | None, now: float) -> dict:
+    return {
+        "used_percent": round(used_percent, 1),
+        "resets_at": iso(resets_at),
+        "reset_since_observed": bool(resets_at and resets_at < now),
+    }
+
+
+def claude(now: float) -> dict:
+    out: dict = {"plan": None, "windows": {}, "observed_at": None, "source": None}
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()))
+    account_file = config_dir / ".claude.json"
+    try:
+        account = json.loads(account_file.read_text(encoding="utf-8")).get("oauthAccount") or {}
+        tier = account.get("organizationRateLimitTier") or account.get("userRateLimitTier")
+        kind = account.get("organizationType")
+        out["plan"] = " / ".join(x for x in (kind, tier) if x) or None
+    except (OSError, ValueError):
+        pass
+    logs = Path(os.environ.get("T3_USERDATA", Path.home() / ".t3" / "userdata")) / "logs" / "provider"
+    pattern = re.compile(r'"rate_limit_info":(\{.*?\}\}\})')
+    for path in newest(logs.glob("events.*.log*")):
+        for line in reversed(tail_lines(path)):
+            if '"type":"rate_limit_event"' not in line:
+                continue
+            match = pattern.search(line)
+            if not match:
+                continue
+            info = json.loads(match.group(1))
+            stamp = re.match(r"\[([^\]]+)\]", line)
+            observed = (
+                datetime.fromisoformat(stamp.group(1).replace("Z", "+00:00")).timestamp()
+                if stamp
+                else path.stat().st_mtime
+            )
+            for name, w in (info.get("unifiedWindows") or {}).items():
+                key = "weekly" if name == "seven_day" else name
+                out["windows"][key] = window(100 * float(w.get("utilization", 0)), w.get("resetsAt"), now)
+            out["status"] = info.get("status")
+            out["observed_at"] = iso(observed)
+            out["source"] = str(path)
+            return out
+    out["error"] = "no rate_limit_event found; Claude usage is only logged when Claude runs inside T3"
+    return out
+
+
+def codex_windows(primary: dict | None, secondary: dict | None, now: float, keys) -> dict:
+    windows = {}
+    for w in (primary, secondary):
+        if not w:
+            continue
+        minutes = w.get(keys[1])
+        name = {300: "five_hour", 10080: "weekly"}.get(minutes, f"window_{minutes}m")
+        windows[name] = window(float(w.get(keys[0], 0)), w.get("resets_at") or w.get("resetsAt"), now)
+    return windows
+
+
+def codex_from_t3(now: float) -> dict | None:
+    """Live `account/rateLimits/updated` notifications that T3 logs for Codex threads."""
+    logs = Path(os.environ.get("T3_USERDATA", Path.home() / ".t3" / "userdata")) / "logs" / "provider"
+    pattern = re.compile(r'"rateLimits":(\{.*?"planType":[^,}]*[^}]*\})')
+    for path in newest(logs.glob("events.*.log*")):
+        for line in reversed(tail_lines(path)):
+            if '"account/rateLimits/updated"' not in line:
+                continue
+            match = pattern.search(line)
+            if not match:
+                continue
+            try:
+                limits = json.loads(match.group(1))
+            except ValueError:
+                continue
+            stamp = re.match(r"\[([^\]]+)\]", line)
+            return {
+                "plan": limits.get("planType"),
+                "windows": codex_windows(
+                    limits.get("primary"), limits.get("secondary"), now, ("usedPercent", "windowDurationMins")
+                ),
+                "credits": limits.get("credits"),
+                "observed_at": stamp.group(1) if stamp else iso(path.stat().st_mtime),
+                "source": str(path),
+            }
+    return None
+
+
+def codex(now: float) -> dict:
+    out: dict = {"plan": None, "windows": {}, "observed_at": None, "source": None}
+    live = codex_from_t3(now)
+    sessions = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions"
+    for path in newest(sessions.rglob("rollout-*.jsonl")):
+        for line in reversed(tail_lines(path)):
+            if '"rate_limits"' not in line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            payload = record.get("payload") or record
+            limits = payload.get("rate_limits") or (payload.get("info") or {}).get("rate_limits")
+            if not limits:
+                continue
+            out["windows"] = codex_windows(
+                limits.get("primary"), limits.get("secondary"), now, ("used_percent", "window_minutes")
+            )
+            out["plan"] = limits.get("plan_type")
+            if limits.get("credits"):
+                out["credits"] = limits["credits"]
+            out["observed_at"] = record.get("timestamp") or iso(path.stat().st_mtime)
+            out["source"] = str(path)
+            break
+        if out["source"]:
+            break
+    if live and (not out["observed_at"] or stamp_seconds(live["observed_at"]) > stamp_seconds(out["observed_at"])):
+        return live
+    if not out["source"]:
+        out["error"] = "no rate limits found in Codex session files or T3 logs"
+    return out
+
+
+def stamp_seconds(value: str) -> float:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+
+
+def antigravity(now: float) -> dict:
+    return {
+        "plan": None,
+        "windows": {},
+        "error": (
+            "Antigravity does not record its quota locally; budget its hand-offs "
+            "(see references/routing.md) and stop using it for the window after a quota error"
+        ),
+    }
+
+
+def main() -> int:
+    now = datetime.now(timezone.utc).timestamp()
+    report = {"generated_at": iso(now), "providers": {}}
+    for name, reader in (("claude", claude), ("codex", codex), ("antigravity", antigravity)):
+        try:
+            report["providers"][name] = reader(now)
+        except Exception as exc:  # report, never crash the orchestrator
+            report["providers"][name] = {"error": f"{type(exc).__name__}: {exc}"}
+    json.dump(report, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

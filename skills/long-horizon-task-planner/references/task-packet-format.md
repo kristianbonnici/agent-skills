@@ -56,17 +56,17 @@ For each ready-now task, include the following sections.
 - **Risks and assumptions:** only material items
 - **Definition of done:** observable completion criteria for the natural objective
 
-### Recommended Codex configuration
+### Recommended agent configuration
 
-Provide launch-time metadata for the user to select before sending the prompt. These values are advisory unless safety or correctness makes one necessary; label any such value **Required** and explain why. Provide exact values for:
+Name the execution target, then provide launch-time metadata for the user to select before sending the prompt. These values are advisory unless safety or correctness makes one necessary; label any such value **Required** and explain why. Use exact values only when known and supported by that host; omit unsupported controls and label unknown availability. Include:
 
 - Project or working directory
 - Environment: current checkout, read-only, or new worktree
-- Model, using the full selectable label and slug when known (for example, GPT-5.6 Terra / `gpt-5.6-terra` rather than only "Terra")
-- Reasoning level
-- Intelligence/delegation mode: single agent, explicit subagents, or Ultra
-- Goal mode: yes
-- Permission mode
+- Model, using the selectable label and model ID or alias when known
+- Reasoning or effort level, if exposed
+- Execution/delegation choice using the host's supported terminology
+- Persistent execution: native `/goal` for Codex and Claude Code; verified equivalent or an explicit persistence limitation for another host
+- Permission or approval mode using the host's actual labels
 - Useful installed skills or tools
 - Parallel compatibility and likely merge-conflict surfaces
 
@@ -76,7 +76,17 @@ Keep this entire configuration outside the ready-to-paste prompt. The user may o
 
 ### Ready-to-paste prompt
 
-Write one self-contained prompt in a fenced text block. It must begin with a concrete `/goal` command and fully instantiate this contract:
+Write one self-contained prompt in a fenced text block. For Codex and Claude Code, begin with `/goal` and a measurable completion condition; use a verified equivalent or a plain task prompt for another host. Preserve the execution contract below while adapting its length and structure to the host.
+
+For Claude Code, the entire condition after `/goal` must be at most 4,000 characters, including subsequent lines. Use the compact form below instead of copying every heading from the expanded template. Include project-specific scope, readiness boundaries, required work, validation, authorization, stop conditions, and handoff evidence; keep detailed rationale and calibration in the surrounding task packet. If essential instructions cannot fit, provide a separate instruction prompt for the user to send first, followed by a short `/goal` condition that refers to that brief. Label the two messages and their order explicitly; do not write a planning file into the project.
+
+```text
+/goal <observable outcome> is complete, <specified checks> pass, and the handoff shows completion evidence; or a stated blocker is documented with evidence.
+
+Read <instruction and evidence paths>. Work only in <allowed scope> toward <one objective>. Preserve <readiness and decision boundaries> and unrelated changes. Complete <intrinsically required work>. Validate with <confirmed commands or artifact checks> and surface results in the conversation. Retry safe in-scope approaches when they fail. Stop if <specific missing prerequisite or decision blocker>; report the evidence and required next step. Do not <unauthorized external actions or protected changes>. The <range> workload estimate is not a timer; do not wait or add scope to fill it. Hand off <artifacts, required-work evidence, checks, unresolved decisions, and available runtime usage>.
+```
+
+For hosts that accept a longer goal directive, expand the same contract as needed:
 
 #### Launch-configuration boundary
 
@@ -86,9 +96,9 @@ Do not put any of the following inside the prompt:
 
 - Model labels, model slugs, or instructions to use a particular model
 - Reasoning-effort labels
-- Single-agent, explicit-subagent, intelligence, delegation, or Ultra-mode selections
-- Permission-mode names such as Full access
-- Goal-mode selection language; the opening `/goal` command is sufficient
+- Agent or delegation mode selections
+- Permission-mode names
+- Goal-mode selection language beyond the opening command
 - Instructions to select a project, create or select a worktree, or switch execution environments
 - A `Recommended configuration`, `Project and environment`, or equivalent launch-settings block
 
@@ -97,7 +107,7 @@ Refer to the current execution context neutrally, such as `the active task works
 Translate launch capabilities into task semantics. State the exact allowed and forbidden actions instead of asserting a permission mode. Describe the substantive work lanes without telling the agent whether to delegate them. A named installed skill may appear inside the prompt only when invoking that workflow is intrinsically required by the objective; do not repeat it as configuration metadata.
 
 ```text
-/goal Complete <specific objective> without stopping until <verifiable end state>.
+/goal Complete <specific objective> until <verifiable end state and handoff evidence>, or stop with evidence of <specific blocker>.
 
 Read first:
 - <project-specific instruction and evidence paths>
@@ -158,13 +168,13 @@ Final handoff:
 - Summarize changes and validation evidence.
 - Report completion evidence for every required work item.
 - Distinguish recommendations from accepted decisions and identify the owner of every unresolved choice.
-- Report elapsed time and token usage when Codex makes them available so future planning can be calibrated.
+- Report elapsed time and token usage when the agent host makes them available so future planning can be calibrated.
 - List remaining risks, assumptions, and follow-up work without performing that follow-up.
 ```
 
 Replace every angle-bracketed item with project-specific content. If the natural required work does not support the requested lower bound, reject the task instead of adding work. Include validation commands only after confirming they exist or deriving a safe equivalent from project configuration. A read-only task should request a durable report or other immediately usable artifact rather than code changes.
 
-Before presenting a task packet, compare the fenced prompt with its recommended configuration and remove all duplicated or assumed launch choices. In particular, check for model names or slugs, reasoning labels, mode names, permission labels, worktree-selection instructions, and configuration headings. Confirm that changing the external recommendation would not make any instruction in the prompt contradictory or misleading.
+Before presenting a task packet, compare the fenced prompt with its recommended configuration and remove all duplicated or assumed launch choices. In particular, check for model names or slugs, reasoning labels, mode names, permission labels, worktree-selection instructions, and configuration headings. Confirm that changing the external recommendation would not make any instruction in the prompt contradictory or misleading. For Claude Code, count the characters after `/goal` and confirm the condition fits its limit. Ensure the completion or blocker evidence will appear in the conversation for its evaluator.
 
 ## 4. Deferred Candidates
 

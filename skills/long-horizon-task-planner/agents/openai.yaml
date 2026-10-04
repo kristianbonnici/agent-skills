@@ -1,6 +1,6 @@
 interface:
   display_name: "Long-Horizon Task Planner"
-  short_description: "Plan autonomous project-specific Codex work"
+  short_description: "Plan autonomous project-specific agent work"
   default_prompt: "Use $long-horizon-task-planner to propose up to six ready-now overnight tasks aligned with this project's current critical path, returning fewer rather than premature work, without starting them."
 
 policy:
