@@ -5,6 +5,8 @@ factory	link	skills/product-design	~/.factory/skills/product-design
 antigravity	adapter	skills/product-design	~/.gemini/config/skills/product-design
 codex	link	skills/long-horizon-task-planner	~/.agents/skills/long-horizon-task-planner
 codex	link	skills/long-horizon-task-planner	~/.codex/skills/long-horizon-task-planner
+codex	link	skills/long-horizon-orchestrator	~/.agents/skills/long-horizon-orchestrator
+codex	link	skills/long-horizon-orchestrator	~/.codex/skills/long-horizon-orchestrator
 codex	link	skills/agent-ready-repo	~/.agents/skills/agent-ready-repo
 codex	link	skills/agent-ready-repo	~/.codex/skills/agent-ready-repo
 codex	link	skills/narrated-markdown-reader	~/.agents/skills/narrated-markdown-reader
@@ -13,3 +15,4 @@ codex	link	skills/remote-session-reporting	~/.agents/skills/remote-session-repor
 codex	link	skills/remote-session-reporting	~/.codex/skills/remote-session-reporting
 claude	link	skills/remote-session-reporting	~/.claude/skills/remote-session-reporting
 claude	link	skills/long-horizon-task-planner	~/.claude/skills/long-horizon-task-planner
+claude	link	skills/long-horizon-orchestrator	~/.claude/skills/long-horizon-orchestrator

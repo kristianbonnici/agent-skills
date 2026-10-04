@@ -1,6 +1,6 @@
 ---
 name: long-horizon-task-planner
-description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight agent tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks.
+description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight agent tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks; long-horizon-orchestrator does that.
 ---
 
 # Long-Horizon Task Planner
@@ -52,6 +52,7 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
    - Never create a goal, task, thread, worktree, branch, commit, or external record.
    - Never edit the inspected project while planning.
    - The user decides which proposals to run and when.
+   - To run an approved portfolio unattended, the user can invoke `long-horizon-orchestrator`, which launches, chains, merges and reports on the tasks.
 
 ## Portfolio Rules
 
