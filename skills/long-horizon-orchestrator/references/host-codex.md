@@ -42,7 +42,7 @@ spawn_agent({
 A Codex orchestrator should keep its own turn going instead of ending it and hoping to be woken:
 
 1. **Give yourself a goal.** After the user approves the contract, set a goal of your own:
-   `/goal Every task in the ledger at <path> is merged, ready, blocked, parked or failed, the ledger is up to date, and the final report has been written.`
+   `/goal Every task in the ledger at <path> is merged, ready, blocked, parked or failed, the ledger is up to date, and the final report has been posted in the chat.`
    If you can't run `/goal` yourself, put the exact line in the contract message for the user to send along with their approval.
 2. **Wait in a loop.** Call `wait_agent` on all running task IDs with the longest allowed timeout. Each return means at least one task reached a final status: handle it as described in "On every wake", launch anything it unblocked, then wait again on the remaining tasks.
 3. **On a timeout,** re-read the ledger and wait again. A timeout is not a failure.
@@ -53,7 +53,14 @@ Codex also delivers a final-status notification for completed agents. Verify on 
 
 `send_input` (or `followup_task`) continues a task with its context, for example "rebase onto `<integration branch>`, re-validate and retry the merge gate". Use `resume_agent` if you have already closed it.
 
+## When the usage window runs out
+
+You and every subagent share one Codex subscription. Policy: [routing.md](routing.md#3-when-a-window-runs-short-or-runs-out). Codex has no scheduler to wake you after a reset, so:
+- **Pause, don't move.** When the 5-hour window is nearly used up, record in the ledger which tasks are paused and when the window resets, and leave their worktrees as they are.
+- **Resume after the reset** with `send_input` (or `followup_task`) on each paused agent, so it keeps its context. If your own turn ended because of the limit, the run continues only when the session is resumed. Say this in the contract, with the likely reset time.
+
 ## Limits to state in the contract
 
 - **The session has to stay open.** Subagents live inside this Codex session, so it must stay running and the machine awake.
+- **No wake-up after a usage reset.** If the window runs out, the run pauses until the session is resumed.
 - **OpenAI models only.** Subagents run models available to Codex. For Claude, Antigravity or OpenCode tasks, prefer T3.

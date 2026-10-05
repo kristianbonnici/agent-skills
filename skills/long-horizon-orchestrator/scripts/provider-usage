@@ -1,25 +1,37 @@
 #!/usr/bin/env python3
-"""Print the last observed subscription usage for Claude and Codex as JSON.
+"""Print subscription usage and reset times for Claude and Codex as JSON.
 
-Read-only. Values are the most recent ones each provider reported to local files,
-not a live query: a window whose reset time has passed is flagged as reset.
-Sources are internal formats of Claude Code, T3 Code and Codex; when one cannot
-be read, its provider is reported with an explanatory "error" instead of failing.
+Read-only. By default each provider is asked directly, through its own CLI and
+sign-in, so the numbers include use from other devices and apps:
+  - Claude: `claude -p /usage`, a local command that makes no model call;
+  - Codex: the app server's `account/rateLimits/read` request.
+When a live query fails, or with --cached, the values come from the last ones
+each provider wrote to local files (T3 Code provider logs, Codex session files),
+and "live_error" says why. A window whose reset time has passed is flagged as
+reset. When nothing can be read, the provider gets an "error" instead of the
+script failing.
 
 Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
+import select
+import subprocess
 import sys
-from datetime import datetime, timezone
+import tempfile
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 TAIL_BYTES = 4 * 1024 * 1024
 MAX_FILES = 40
+LIVE_TIMEOUT = 45
 
 
 def iso(ts: float | None) -> str | None:
@@ -48,16 +60,7 @@ def window(used_percent: float, resets_at: float | None, now: float) -> dict:
 
 
 def claude(now: float) -> dict:
-    out: dict = {"plan": None, "windows": {}, "observed_at": None, "source": None}
-    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()))
-    account_file = config_dir / ".claude.json"
-    try:
-        account = json.loads(account_file.read_text(encoding="utf-8")).get("oauthAccount") or {}
-        tier = account.get("organizationRateLimitTier") or account.get("userRateLimitTier")
-        kind = account.get("organizationType")
-        out["plan"] = " / ".join(x for x in (kind, tier) if x) or None
-    except (OSError, ValueError):
-        pass
+    out: dict = {"plan": claude_plan(), "windows": {}, "observed_at": None, "source": None}
     logs = Path(os.environ.get("T3_USERDATA", Path.home() / ".t3" / "userdata")) / "logs" / "provider"
     pattern = re.compile(r'"rate_limit_info":(\{.*?\}\}\})')
     for path in newest(logs.glob("events.*.log*")):
@@ -81,9 +84,153 @@ def claude(now: float) -> dict:
             out["observed_at"] = iso(observed)
             out["source"] = str(path)
             return out
-    out["error"] = "no rate_limit_event found; Claude usage is only logged when Claude runs inside T3"
+    out["error"] = "no rate_limit_event found in T3 logs (logged only when Claude runs inside T3)"
     return out
 
+
+def claude_plan() -> str | None:
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()))
+    try:
+        account = json.loads((config_dir / ".claude.json").read_text(encoding="utf-8")).get("oauthAccount") or {}
+    except (OSError, ValueError):
+        return None
+    tier = account.get("organizationRateLimitTier") or account.get("userRateLimitTier")
+    kind = account.get("organizationType")
+    return " / ".join(x for x in (kind, tier) if x) or None
+
+
+USAGE_LINE = re.compile(
+    r"^Current (session|week)(?: \(([^)]*)\))?:\s*(\d+(?:\.\d+)?)% used(?:\s*·\s*resets (.+?))?\s*$"
+)
+RESET_TEXT = re.compile(
+    r"^(?:(?P<mon>[A-Za-z]{3})[a-z]* (?P<day>\d{1,2})(?:, (?P<year>\d{4}))? at )?"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)\s*(?:\((?P<tz>[^)]+)\))?$",
+    re.IGNORECASE,
+)
+MONTHS = {m: i for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
+
+
+def parse_reset(text: str, now: float) -> float | None:
+    """'Oct 6 at 1:49am (Europe/Helsinki)' or '3am (Europe/Helsinki)' -> epoch seconds."""
+    m = RESET_TEXT.match(text.strip())
+    if not m:
+        return None
+    try:
+        zone = ZoneInfo(m["tz"]) if m["tz"] else datetime.now().astimezone().tzinfo
+    except Exception:
+        zone = datetime.now().astimezone().tzinfo
+    hour = int(m["hour"]) % 12 + (12 if m["ampm"].lower() == "pm" else 0)
+    minute = int(m["minute"] or 0)
+    local_now = datetime.fromtimestamp(now, zone)
+    if m["mon"]:
+        month, day = MONTHS.get(m["mon"].lower()), int(m["day"])
+        if not month:
+            return None
+        years = [int(m["year"])] if m["year"] else [local_now.year, local_now.year + 1]
+        for year in years:
+            moment = datetime(year, month, day, hour, minute, tzinfo=zone)
+            if m["year"] or moment.timestamp() >= now - 86400:
+                return moment.timestamp()
+        return None
+    moment = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if moment.timestamp() < now - 60:
+        moment += timedelta(days=1)
+    return moment.timestamp()
+
+
+def claude_live(now: float) -> dict:
+    """Claude Code's /usage command, which reads the subscription's limits without a model call."""
+    proc = subprocess.run(
+        ["claude", "-p", "/usage", "--output-format", "json", "--no-session-persistence"],
+        cwd=tempfile.gettempdir(),
+        capture_output=True,
+        text=True,
+        timeout=LIVE_TIMEOUT,
+    )
+    try:
+        text = json.loads(proc.stdout).get("result") or ""
+    except ValueError:
+        text = proc.stdout
+    windows = {}
+    for line in text.splitlines():
+        m = USAGE_LINE.match(line.strip())
+        if not m:
+            continue
+        kind, scope, percent, reset = m.groups()
+        if kind == "session":
+            key = "five_hour"
+        elif not scope or scope.lower() == "all models":
+            key = "weekly"
+        else:
+            key = "weekly_" + re.sub(r"[^a-z0-9]+", "_", scope.lower()).strip("_")
+        windows[key] = window(float(percent), parse_reset(reset, now) if reset else None, now)
+    if "five_hour" not in windows and "weekly" not in windows:
+        detail = (text or proc.stderr).strip().splitlines()[:1]
+        raise RuntimeError("claude /usage printed no usage lines" + (f": {detail[0][:160]}" if detail else ""))
+    return {
+        "plan": claude_plan(),
+        "windows": windows,
+        "observed_at": iso(now),
+        "source": "live: claude -p /usage",
+    }
+
+
+def codex_live(now: float) -> dict:
+    """The Codex app server's account/rateLimits/read request, with Codex's own sign-in."""
+    proc = subprocess.Popen(
+        ["codex", "app-server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        cwd=tempfile.gettempdir(),
+    )
+    try:
+        for message in (
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"clientInfo": {"name": "provider-usage", "version": "1"}}},
+            {"jsonrpc": "2.0", "method": "initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": None},
+        ):
+            proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+        deadline = time.monotonic() + LIVE_TIMEOUT
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([proc.stdout], [], [], 1)
+            if not ready:
+                continue
+            line = proc.stdout.readline()
+            if not line:
+                break
+            try:
+                reply = json.loads(line)
+            except ValueError:
+                continue
+            if reply.get("id") != 2:
+                continue
+            if "error" in reply:
+                raise RuntimeError(f"account/rateLimits/read failed: {reply['error']}")
+            result = reply.get("result") or {}
+            limits = result.get("rateLimits") or {}
+            out = {
+                "plan": limits.get("planType"),
+                "windows": codex_windows(
+                    limits.get("primary"), limits.get("secondary"), now, ("usedPercent", "windowDurationMins")
+                ),
+                "observed_at": iso(now),
+                "source": "live: codex app-server account/rateLimits/read",
+            }
+            if limits.get("rateLimitReachedType"):
+                out["status"] = "rejected"
+            credits = (result.get("rateLimitResetCredits") or {}).get("credits") or []
+            available = sum(1 for c in credits if c.get("status") == "available")
+            if available:
+                out["reset_credits_available"] = available  # the user's to spend, never the orchestrator's
+            return out
+        raise RuntimeError("codex app-server gave no rate limits in time")
+    finally:
+        proc.kill()
+        proc.wait()
 
 def codex_windows(primary: dict | None, secondary: dict | None, now: float, keys) -> dict:
     windows = {}
@@ -173,10 +320,31 @@ def antigravity(now: float) -> dict:
     }
 
 
+def with_fallback(live, cached, use_live: bool):
+    def read(now: float) -> dict:
+        if not use_live:
+            return cached(now)
+        try:
+            return live(now)
+        except Exception as exc:  # fall back to the logs, never crash the orchestrator
+            out = cached(now)
+            out["live_error"] = f"{type(exc).__name__}: {exc}"
+            return out
+    return read
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--cached", action="store_true", help="skip the live queries and read local logs only")
+    args = parser.parse_args()
     now = datetime.now(timezone.utc).timestamp()
     report = {"generated_at": iso(now), "providers": {}}
-    for name, reader in (("claude", claude), ("codex", codex), ("antigravity", antigravity)):
+    readers = (
+        ("claude", with_fallback(claude_live, claude, not args.cached)),
+        ("codex", with_fallback(codex_live, codex, not args.cached)),
+        ("antigravity", antigravity),
+    )
+    for name, reader in readers:
         try:
             report["providers"][name] = reader(now)
         except Exception as exc:  # report, never crash the orchestrator

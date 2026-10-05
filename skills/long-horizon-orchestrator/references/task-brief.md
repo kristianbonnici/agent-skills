@@ -45,11 +45,14 @@ Constraints:
 - Install dependencies only from existing lockfiles; never change the lockfiles.
 - Use ports <ports> for anything that listens. Do not stop or reuse processes on <user and other tasks' ports>.
 - No pushing, publishing, deploying, or contacting outside services. <project-specific rules, such as live API calls or secrets>.
+- Do all the work on this thread. Hand a step to another provider only as "Help available" allows, never the rest of the task. If your usage limit runs out, simply stop: the orchestrator resumes you on this thread after the reset.
+- Keep files that must outlive the task (handoff, evidence logs) in <run directory>/<task ID>/, not in /tmp, which a restart clears.
 
 <Optional "Help available" section from routing.md, for example handing a computer-use step to Codex. Include it only when the orchestrator has checked that the other provider has room.>
 
 Validation (show the output in the conversation):
 - <exact commands>
+<If a check needs the real screen: "Real-screen checks: <list>. Before them, confirm the screen is unlocked (ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked prints <true/> when locked). If it is locked or the app's window can't be captured, don't retry. List each such check under 'Couldn't check' in the handoff, and continue to the merge gate on the other checks.">
 
 Finish and merge:
 1. Commit on <task branch> following the project's commit rules. Review the staged diff, stage explicit files, and never commit credentials, local traces or scratch output.
@@ -62,10 +65,11 @@ Finish and merge:
 
 Blocked. Stop without merging, report the evidence, then do the report-back:
 - <conditions that genuinely need the owner: missing prerequisite, a product decision, a confirmed defect you can't fix safely, checks that cannot pass, a dirty integration checkout>
+- <A real-screen check that couldn't run is not one of these, unless it is the task's main deliverable. It goes under "Couldn't check".>
 
 The <range> estimate is a sizing guess, not a timer. Don't wait, and don't add scope to fill it.
 
-Handoff: what changed; evidence for each required item; any steps handed to a helper (which harness, model and reasoning level, and for what); validation output; review findings; the commits merged (git log); untested platforms; recommendations kept separate from decisions; elapsed time and token usage if available.
+Handoff (in your final message, and saved as <run directory>/<task ID>/handoff.md): what changed; evidence for each required item; any steps handed to a helper (which harness, model and reasoning level, and for what); validation output; review findings; the commits merged (git log); "Couldn't check": checks that couldn't run and why, with what the owner should look at; untested platforms; recommendations kept separate from decisions; elapsed time and token usage if available.
 
 Report back (your very last action, whether you finished or are blocked):
 <host-specific report-back instruction from the host reference, with the orchestrator's ID filled in>
@@ -74,7 +78,7 @@ Report back (your very last action, whether you finished or are blocked):
 ## Goal template
 
 ```text
-/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown. <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message.
+/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown<, and any real-screen check that couldn't run is listed under "Couldn't check">. <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message.
 ```
 
 Name the report-back explicitly in the goal. Without that, the evaluator can mark the goal met before the task has told you anything, and you won't be woken.
@@ -87,19 +91,22 @@ Keep it short and machine-friendly. The facts you need sit on the first lines; a
 [long-horizon-orchestrator] run=<run ID> task=<task ID> status=<merged|ready|blocked|failed>
 branch=<task branch> head=<commit> integrated=<yes|no>
 agent=<harness/model/reasoning level that did the work> helpers=<harness/model/reasoning level × count for each hand-off, or none>
+unchecked=<checks that couldn't run, such as real-screen checks on a locked screen, or none>
 summary: <two to five plain sentences: what was built, what is left, and the decision needed if blocked>
 ```
 
-The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the diagram takes each agent's harness, model and reasoning level from the orchestrator's own launch record. Use `blocked` with "quota" in the summary when the task stopped because its provider ran out. The orchestrator then hands the task to another harness.
+The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the diagram takes each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
+
+A task whose usage limit runs out can't send a report at all. The orchestrator notices from the thread's state and resumes it after the reset.
 
 Use `ready` when the work is reviewed and validated on its branch but not merged: either the policy is "leave on branch" or the merge gate failed for a reason outside the task. Use `failed` for a crash or an environment problem, not for a decision.
 
 ## Continuation brief
 
-Use this when a task moves to another harness mid-way, for example because its provider ran out of quota. The successor works in the same worktree and branch, so it must build on the earlier work rather than start over.
+Use this when a new agent has to pick up a task in its existing worktree and branch: for example after its thread became unusable, or when the user approves moving it. A task paused by quota doesn't need one; it resumes on its own thread. The new agent must build on the earlier work rather than start over.
 
 ```text
-Continuation of <task ID>. The previous agent (<harness/model>) stopped at <time> because <reason, for example "its provider's usage limit was reached">. You continue in the same workspace and branch. Keep its work, including any uncommitted changes, unless it is clearly wrong.
+Continuation of <task ID>. The previous agent (<harness/model>) stopped at <time> because <reason, for example "its thread crashed and could not be resumed">. You continue in the same workspace and branch. Keep its work, including any uncommitted changes, unless it is clearly wrong.
 
 First: run git status, git diff and git log <integration branch>..HEAD to see what exists. The previous agent's last progress: <two to five sentences from its last messages>.
 
@@ -115,5 +122,6 @@ Its goal follows the goal template, with "(beginning "Continuation of <task ID>"
 - Every placeholder is filled in, and the brief makes sense to someone with no other context.
 - The ports and paths don't collide with the user's dev servers or with other running tasks.
 - The integration branch name, its checkout path and the task branch match the ledger.
+- The run directory path is filled in and exists, and no path in the brief points into `/tmp` for anything that must survive a restart.
 - The orchestrator ID in the report-back instruction is your own ID, copied exactly.
 - If a goal is used, its character count is under 4,000. Recount after every edit.

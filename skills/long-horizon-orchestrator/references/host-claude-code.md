@@ -29,6 +29,13 @@ Agent({
 - **Following up:** to continue a finished subagent with its context, for example "rebase and retry the merge gate", use `SendMessage` with its agent ID or name. A new `Agent` call starts from scratch.
 - **Backup check:** usually unnecessary, because completion notifications also fire when a subagent errors out. For extra safety on very long runs, a session-only `CronCreate` job (for example hourly at an odd minute) can re-read the ledger. It expires after 7 days. Delete it at the end.
 
+## When the usage window runs out
+
+You and every subagent share one Claude subscription, so its 5-hour window runs out for all of you at once. Policy: [routing.md](routing.md#3-when-a-window-runs-short-or-runs-out). Here:
+- **Before it runs out,** schedule a one-shot `CronCreate` (`recurring: false`) for a few minutes after the reset, pinned to that local date and time. Its prompt says to re-read the ledger and resume the paused tasks. Record its ID.
+- **Subagents stopped by the limit** report as finished with an error. Leave their worktrees as they are. After the reset, continue each one with `SendMessage`, so it keeps its context: "Your usage limit has reset. Continue the brief from where you stopped."
+- **Session-only.** Cron jobs live in this session. If the session closes, nothing resumes the run, so say so in the contract.
+
 ## Limits to state in the contract
 
 - **The session has to stay open.** Background subagents live inside this session. If the terminal closes or the machine sleeps, they stop, so tell the user to keep the session open and the machine awake.
@@ -41,4 +48,4 @@ If the user has opted into multi-agent workflows (for example by saying "ultraco
 
 ## At the end
 
-Send a `PushNotification` with one line saying the run is finished, if that tool is available. Then write the final report.
+Delete any cron jobs you created. Send a `PushNotification` with one line saying the run is finished, if that tool is available. Then post the final report as your final message.

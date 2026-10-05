@@ -17,6 +17,7 @@ jq -c '.providers[] | select(.providerInstanceId=="claudeAgent") | .models[] | {
 - **Providers:** use only those with no `constraints`.
 - **Model options:** reasoning is passed as an option, and its name differs by provider: Claude uses `{"id": "effort", "value": "high"}`, Codex uses `{"id": "reasoningEffort", "value": "high"}`. Always set it explicitly, following [routing.md](routing.md), and use only values the catalog lists.
 - **Record your `parentThreadId`** in the ledger. Every brief's report-back instruction needs it.
+- **Record your own settings.** `t3_thread_configuration` (no `threadId`) returns your provider, model and reasoning option. Copy them into the ledger for the report's diagram.
 
 ## Launch a task
 
@@ -34,6 +35,7 @@ t3_thread_launch({
 - **Select the workspace in this call.** Never ask a task to create its own worktree from the shell: T3's thread binding would not follow it.
 - **Retries.** `t3_thread_launch` has no retry key. Keep the returned `threadId`. After an error or a lost response, check `t3_thread_list` for the title before launching again.
 - **`runtimeMode`.** The task must run commands, commit and merge without approval prompts, so use `full-access` unless the contract says otherwise.
+- **Record what actually launched.** Call `t3_thread_configuration` with the task's `threadId`, and record the provider, model and reasoning option it returns. Take the launch time from the thread's `createdAt` in `t3_thread_list`, not from your own estimate.
 
 ## Queue the goal
 
@@ -78,15 +80,34 @@ schedule_task({
 
 - **Interval:** 20–45 minutes suits long tasks. Use the shorter end when only one or two tasks are running, because then few report-backs will wake you, and a dead task waits until the next tick. Shorter intervals mostly cost tokens.
 - **Record it:** keep the returned ID in the ledger, and delete the heartbeat with `delete_scheduled_task` when the run finishes.
+- **Model:** a scheduled run uses this thread's provider and model, which is one more reason never to switch your own model during a run.
 
 Every wake, not only a heartbeat, should check all running tasks. In testing, a crashed task was usually caught when another task's report woke the orchestrator.
 
-## When a task's run fails
+## Resume wake: after a usage window resets
 
-A crashed or provider-failed run leaves the thread with status `failed`. T3 then does not start the thread's queued messages, so a goal queued behind a failed first turn never runs, and the task sits silent.
+The scheduler has no one-off schedule, so use a fixed-time schedule for the reset day and delete it once it has fired:
 
-1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what failed, and ask it to continue the brief from the start of the thread.
-2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch`, using the same brief, a fresh branch name such as `<branch>-r2`, and a new goal. On the old thread:
+```text
+schedule_task({
+  title: "<run> resume after <provider> reset",
+  schedule: {type: "fixed_time", timeOfDay: "<local HH:MM, about 5 minutes after resets_at>", weekdays: [<that day, 0 = Sunday>]},
+  bindToCurrentThread: true,
+  clientRequestId: "<run>-resume-<n>",
+  prompt: "Resume wake for long-horizon-orchestrator run <run>: the <provider> 5-hour window has reset. Read the ledger at <path>. Continue every task marked paused on its own thread, check all other tasks as in the skill's 'On every wake' step, then delete this scheduled task."
+})
+```
+
+- **Check the time.** Convert `resets_at` (UTC) to local time, and confirm that the returned `nextRunAt` falls just after the reset.
+- **Record and remove it.** Keep its ID in the ledger, and delete it with `delete_scheduled_task` on the wake it causes, or at the finish.
+- **Keep the heartbeat.** A tick while the window is empty fails without harm, and the first tick after the reset is a backup for the resume wake.
+
+## When a task's run fails or is cancelled
+
+A crashed or provider-failed run leaves the thread with status `failed`. A restart of the computer or of the T3 server cancels every run in progress, which leaves `cancelled` or `interrupted`. In each case T3 does not start the thread's queued messages, so a goal queued behind the stopped turn never runs, and the task sits silent. Several tasks stopping at the same moment points to a restart: nudge each of them. A task that stopped because its usage window ran out is different; see "When a window runs out" below.
+
+1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what happened, and ask it to continue the brief from where it stopped.
+2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief, a fresh branch name such as `<branch>-r2`, and a new goal. On the old thread:
    - remove anything still queued with `t3_queue_cancel`;
    - remove its worktree and branch if they hold nothing;
    - settle it.
@@ -108,19 +129,16 @@ t3_thread_send({threadId, message, mode: "queue", clientRequestId: "<run>-<task>
 
 Use `queue` so the follow-up doesn't interrupt work in progress.
 
-## When a provider runs out of quota
+## When a window runs out
 
-For the policy, see [routing.md](routing.md#3-when-a-provider-runs-short-or-runs-out). The mechanics:
+For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-out): work pauses and resumes on the same subscription. The mechanics:
 
-- **A task's provider is exhausted:**
-  1. Run `t3_queue_cancel` on the old thread, so its queued goal can't start when the quota resets.
-  2. Launch the successor with `t3_thread_launch` on the new provider and model. Use `workspaceStrategy: {type: "existing_worktree", worktreePath: "<the task's worktree>", branch: "<the task's branch>"}` and a title like `"<task ID>: <title> (continued on <harness>)"`. Its message is the continuation brief.
-  3. Queue a goal if the new provider supports one.
-  4. Settle the old thread once the successor is running, and keep both thread IDs in the ledger.
-- **Your own provider is nearly exhausted:**
-  1. Call `t3_thread_configure` on your own thread (omit any `threadId`) with a model selection from a provider that has room. Task report-backs keep arriving, because the thread ID doesn't change.
-  2. Delete the heartbeat and schedule it again, so it runs on the new provider too.
-  3. Re-read the ledger first thing on the next wake. A different provider may not carry over the conversation, and the ledger has everything you need.
+- **A task stopped on quota:** leave its thread, queue and worktree alone. Schedule the resume wake. On the first wake after the reset, read the thread with `t3_thread_list`. If it isn't running again, send `t3_thread_send` in mode `"auto"`: "Your usage limit has reset. Continue the brief from where you stopped." The agent keeps its whole conversation, so it carries on where it was.
+- **Your own window is nearly used up:** schedule the resume wake, update the ledger, and end your turn.
+- **Never call `t3_thread_configure` on your own thread during a run.** In the first real run it went wrong in three ways:
+  - the call ended the calling turn on the spot, so nothing after it ran, and T3 recorded the turn as failed;
+  - the first switch didn't stick: the next heartbeat ran on the old model again;
+  - each call left a record that stayed "running" forever, so the thread showed "Waiting on N background tasks" with a Stop button that couldn't clear it, until the T3 server restarted.
 
 ## Keeping the thread list honest
 
@@ -131,6 +149,7 @@ The user's active thread list should show only what still needs them. Use `t3_th
   - Unpin it when the final report is written.
   - Never settle it. It holds the report, and the user settles it after reading.
 - **A merged task:** settle its thread once you have verified the merge and removed its worktree. Settle it yourself rather than letting the task do it, because only you know the merge checked out. Its workspace no longer exists, and the transcript stays available in the settled list.
+- **A task's helper threads:** reviewers, `delegate_task` children and other sub-agents get threads of their own. List them with `t3_thread_list({includeSubagents: true, limit: 100})` (paginate with `cursor`). Those with `relationshipToParent: "subagent"` and a `parentThreadId` that is a task's thread belong to that task. Settle the idle ones when you settle the task, and at the finish settle the idle helpers of unfinished tasks too. In the first real run, 27 helper threads were left for the end.
 - **A task that isn't finished** (blocked, failed, parked or ready-but-not-merged): leave its thread active and `mark_unread` it, so the user's active list matches the report's "Not finished" section.
 - **Throwaway probe threads you created, and superseded threads** (a failed attempt you relaunched): settle them.
 
@@ -142,7 +161,7 @@ Don't archive anything; settling is enough and easy to undo. A settled thread dr
 
 ## When the run finishes
 
-1. Delete the heartbeat.
-2. Confirm that every merged task's worktree is removed and its thread settled. Unfinished tasks keep their worktree and stay active and unread.
-3. Unpin your own thread, and leave it active with the final report.
+1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules.
+2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
+3. Post the final report as your last message in your own thread. Unpin the thread, and leave it active.
 4. If any pull requests were created, link them with `link_pull_request`.
