@@ -1,0 +1,273 @@
+/*
+ * Base stylesheet for the narrated Markdown reader.
+ * The reader's own <style> block builds on these variables and classes:
+ * --background, --foreground, --accent, --primary and --primary-foreground.
+ * Colors use light-dark(), so they follow the color-scheme of the element
+ * that uses them; the reader sets it from the Appearance control.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --background: light-dark(#ffffff, #1a1a1a);
+  --foreground: light-dark(#1c1d20, #f4f4f5);
+  --muted-foreground: light-dark(#6b6f76, #a1a1aa);
+  --surface: light-dark(#f2f2f3, #262626);
+  --control: light-dark(#ffffff, #333333);
+  --border: light-dark(rgb(0 0 0 / 0.1), rgb(255 255 255 / 0.12));
+  --track: light-dark(#d4d4d8, #52525b);
+  --link: light-dark(#1f6fc5, #7cb8f7);
+  --primary: light-dark(#2f8ff0, #7cb8f7);
+  --primary-foreground: light-dark(#ffffff, #0d1b2a);
+  --accent: light-dark(#e3f0fc, #10283f);
+
+  --radius: 0.5rem;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Text */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+}
+
+h3 {
+  font-size: 1.0625rem;
+}
+
+h4,
+h5,
+h6 {
+  font-size: 1rem;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+code:not(pre code) {
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  background: var(--surface);
+  border-radius: 0.3rem;
+}
+
+.text-small {
+  font-size: 0.75rem;
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tables */
+
+.table-responsive {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table :is(th, td) {
+  padding: 0.5rem 0.75rem 0.5rem 0;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.table th {
+  text-align: start;
+}
+
+.table thead th {
+  font-weight: 600;
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 0.35rem;
+}
+
+/* Toolbar */
+
+.card {
+  padding: 0.75rem;
+  background: var(--surface);
+  border-radius: calc(var(--radius) * 2);
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.viz-controls > .form-label {
+  flex: 1 1 14rem;
+}
+
+.form-label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.form-select {
+  width: 100%;
+  padding: 0.35rem 2rem 0.35rem 0.6rem;
+  font: inherit;
+  font-weight: 400;
+  color: var(--foreground);
+  background-color: var(--control);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 0.95rem) 50%,
+    calc(100% - 0.65rem) 50%;
+  background-size: 0.3rem 0.3rem;
+  background-repeat: no-repeat;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  appearance: none;
+  cursor: pointer;
+}
+
+.form-range {
+  width: 100%;
+  height: 1rem;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 0.25rem;
+  background: var(--track);
+  border-radius: 999px;
+}
+
+.form-range::-moz-range-track {
+  height: 0.25rem;
+  background: var(--track);
+  border-radius: 999px;
+}
+
+.form-range::-webkit-slider-thumb {
+  width: 1rem;
+  height: 1rem;
+  margin-top: -0.375rem;
+  background: var(--primary);
+  border: 0;
+  border-radius: 50%;
+  appearance: none;
+}
+
+.form-range::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  background: var(--primary);
+  border: 0;
+  border-radius: 50%;
+}
+
+.form-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.form-switch .form-check-input {
+  --knob: 0.5625rem;
+  flex: none;
+  width: 2rem;
+  height: 1.125rem;
+  margin: 0;
+  background: radial-gradient(circle at var(--knob) 50%, #ffffff 0.4rem, transparent 0.45rem), var(--track);
+  border-radius: 999px;
+  appearance: none;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.form-switch .form-check-input:checked {
+  --knob: calc(100% - 0.5625rem);
+  background: radial-gradient(circle at var(--knob) 50%, #ffffff 0.4rem, transparent 0.45rem), var(--primary);
+}
+
+:is(.form-select, .form-range, .form-check-input):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .form-switch .form-check-input {
+    transition: none;
+  }
+}
