@@ -76,11 +76,15 @@ fi
 
 if [ "$host" = all ] || [ "$host" = opencode ]; then
   if command -v opencode >/dev/null 2>&1; then
-    if opencode debug skill 2>/dev/null | grep -q 'product-design'; then
+    # OpenCode truncates stdout at 64 KiB when it writes to a pipe, so read
+    # its skill list from a file instead.
+    skill_list=$(mktemp "${TMPDIR:-/tmp}/doctor-opencode.XXXXXX")
+    if opencode debug skill >"$skill_list" 2>/dev/null && grep -q '"name": "product-design"' "$skill_list"; then
       pass "OpenCode discovers product-design"
     else
       fail "OpenCode does not discover product-design"
     fi
+    rm -f "$skill_list"
   else
     fail "OpenCode CLI missing"
   fi
