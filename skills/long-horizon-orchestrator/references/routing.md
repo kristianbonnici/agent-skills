@@ -23,13 +23,14 @@ Once the run has started, nothing changes subscription: not the tasks, and not y
 
 ## Reasoning level: err on the side of more
 
-An under-powered agent on important work costs more than an over-powered one: wrong turns, rework, review findings, and failures discovered in the morning. So bias every choice upward:
+An under-powered agent on important work costs more than an over-powered one: wrong turns, rework, review findings, and failures discovered in the morning. So never under-power a task. High is the default for real work, and you go above it only when you can name the benefit:
 
 | The work | Reasoning level |
 |---|---|
 | Very simple and fully specified (a mechanical edit, a rename, a lookup) | medium |
-| Any real task that is not trivially simple: the default | high or extra high |
-| Large or many-sided work that gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor) | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
+| Any real task that is not trivially simple: the default | high |
+| A task where you see a real benefit from extra thinking (for example subtle correctness or security logic, a bug with an unknown cause, a design choice with no precedent in the project). Name the benefit in the contract | extra high |
+| Sparingly: large or many-sided work that clearly gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor). Name the gain in the contract | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
 | An Antigravity helper step | high (see "Antigravity" below) |
 
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.

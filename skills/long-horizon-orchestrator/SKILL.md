@@ -30,7 +30,7 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 - **Home harness first.** Tasks run on the harness and model you are running on, unless a clear strength or the user says otherwise. Routing is settled in the contract.
 - **Real capacity.** Check usage with `scripts/provider-usage`, and judge it against plan size, never by raw percentage. 30% left of a Max 20x plan and of a Plus plan are very different amounts of work. Count other active runs that share the same subscriptions.
 - **Strengths are soft preferences.** Example: computer-use steps go to Codex when it has room. Prefer handing off just that step over moving the whole task.
-- **Reasoning errs upward.** Never use low. Use medium only for very simple steps, high or extra high for real tasks, and Ultracode (Claude Code) or Ultra (Codex) for work that gains from parallel sub-agents. The multi-agent modes use up a usage window much faster than a single agent. Always set the level explicitly; never inherit a default.
+- **Reasoning errs upward.** Never use low. Use medium only for very simple steps and high for real tasks. Use extra high only when you see a real benefit from the extra thinking, and name it in the contract. Use Ultracode (Claude Code) or Ultra (Codex) sparingly, only when the task clearly gains from parallel sub-agents, and name that gain in the contract. The multi-agent modes use up a usage window much faster than a single agent. Always set the level explicitly; never inherit a default.
 - **Antigravity is a sparing helper, never a task agent.** Its fast Gemini Flash models, always at high reasoning, may take a few simple, fully specified steps that can be checked, within a small per-window budget. Never give it complex work, and never orchestration.
 - **Quota pauses work; it never moves it.** You and every task stay on the subscription the contract assigned. When a 5-hour window runs out, the affected work pauses and resumes on the same thread after the reset, woken by a wake-up you schedule in advance. Never switch your own model, and never hand a task to another subscription, because of quota. A helper step that the brief allows is still fine.
 
@@ -50,7 +50,7 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 Put everything the user might want to decide into one message, so nothing needs asking later:
 
 - **Tasks:** one plain-language line each, with the waves and dependencies.
-- **Per task:** host or provider, model and effort, branch, and exclusive resources such as test ports. Give the reason for any task not on the home harness.
+- **Per task:** host or provider, model and effort, branch, and exclusive resources such as test ports. Give the reason for any task not on the home harness, and for any task above high.
 - **Usage:** each subscription's current usage in plain words, any other active run sharing them ([references/routing.md](references/routing.md#2-measure-capacity-as-plan-size-times-room-left) shows how to find them), and what the run is expected to consume. Say that work pauses when a 5-hour window runs out and resumes after its reset, at what time if that is likely.
 - **Integration branch:** the branch checked out where the run starts (`main`, `dev`, …).
   - Default policy: each task commits, gets an independent review, passes the full checks, and fast-forwards the integration branch itself. Nothing is pushed.
