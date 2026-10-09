@@ -76,7 +76,7 @@ Record each such decision for the final report.
 
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
 - Create the ledger and the run directory (see below), and record the contract in the ledger.
-- Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configuration`). The report's diagram needs it.
+- Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configuration`). The report's charts need it.
 - Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
   - Never use the user's own dev-server ports.
   - Never stop processes you didn't start.
@@ -136,7 +136,7 @@ When every task is done, blocked or parked:
 3. If the project has a quick main check, run it once on the integration branch.
 4. Remove throwaway threads or worktrees you made along the way.
 5. Take a final usage snapshot, and update the calibration in the owner's provider profile (see [references/routing.md](references/routing.md)).
-6. Write the final report from [references/final-report.md](references/final-report.md), with a Mermaid diagram of how the run actually went, and **post it in the chat as your final message**. This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. A copy saved next to the ledger is for the record; the user reads the chat.
+6. Write the final report from [references/final-report.md](references/final-report.md), with its two Mermaid charts of how the run actually went (a dependency graph and a timeline), and **post it in the chat as your final message**. This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. A copy saved next to the ledger is for the record; the user reads the chat.
 7. Set the ledger's status to `finished`.
 8. If the host has a push-notification tool, send one line saying the run is finished.
 
@@ -175,7 +175,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - launch and finish times taken from the host's timestamps, never estimated; merged commits; notes;
   - the harness, model and reasoning level of every agent that worked on it, including a relaunched attempt;
   - helper hand-offs (which harness, model and reasoning level, for what, how many times);
-  - events such as follow-ups, nudges, relaunches, rebases, and quota pauses with their resume times. The final report's run diagram is drawn from these.
+  - events such as follow-ups, nudges, relaunches, rebases, level changes, and quota pauses with when they began and when the tasks resumed. The final report's charts are drawn from these.
 - **Usage snapshots:** from `scripts/provider-usage`, taken at the start, before each wave, on wakes near a limit and at the finish. Note other active runs sharing the subscriptions, and the reason for any task routed away from the home harness.
 - **Decisions log:** what you decided on the user's behalf, and why.
 - **Open decisions:** what the user still needs to decide, with the task that raised each one.

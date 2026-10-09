@@ -95,7 +95,7 @@ unchecked=<checks that couldn't run, such as real-screen checks on a locked scre
 summary: <two to five plain sentences: what was built, what is left, and the decision needed if blocked>
 ```
 
-The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the diagram takes each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
+The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the report's charts take each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
 
 A task whose usage limit runs out can't send a report at all. The orchestrator notices from the thread's state and resumes it after the reset.
 

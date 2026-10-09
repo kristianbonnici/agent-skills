@@ -17,7 +17,7 @@ jq -c '.providers[] | select(.providerInstanceId=="claudeAgent") | .models[] | {
 - **Providers:** use only those with no `constraints`.
 - **Model options:** reasoning is passed as an option, and its name differs by provider: Claude uses `{"id": "effort", "value": "high"}`, Codex uses `{"id": "reasoningEffort", "value": "high"}`. Always set it explicitly, following [routing.md](routing.md), and use only values the catalog lists.
 - **Record your `parentThreadId`** in the ledger. Every brief's report-back instruction needs it.
-- **Record your own settings.** `t3_thread_configuration` (no `threadId`) returns your provider, model and reasoning option. Copy them into the ledger for the report's diagram.
+- **Record your own settings.** `t3_thread_configuration` (no `threadId`) returns your provider, model and reasoning option. Copy them into the ledger for the report's charts.
 
 ## Launch a task
 
@@ -163,5 +163,6 @@ Don't archive anything; settling is enough and easy to undo. A settled thread dr
 
 1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules.
 2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
-3. Post the final report as your last message in your own thread. Unpin the thread, and leave it active.
-4. If any pull requests were created, link them with `link_pull_request`.
+3. Gather the times for the report's timeline. For each task thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound.
+4. Post the final report as your last message in your own thread. Unpin the thread, and leave it active.
+5. If any pull requests were created, link them with `link_pull_request`.
