@@ -61,6 +61,6 @@ You and every subagent share one Codex subscription. Policy: [routing.md](routin
 
 ## Limits to state in the contract
 
-- **The session has to stay open.** Subagents live inside this Codex session, so it must stay running and the machine awake.
+- **The session has to stay open.** Subagents live inside this Codex session, so it must stay running. Keep the machine awake yourself ([machine.md](machine.md#4-keeping-the-computer-awake)).
 - **No wake-up after a usage reset.** If the window runs out, the run pauses until the session is resumed.
 - **OpenAI models only.** Subagents run models available to Codex. For Claude, Antigravity or OpenCode tasks, prefer T3.

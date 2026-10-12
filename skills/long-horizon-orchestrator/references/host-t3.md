@@ -129,6 +129,11 @@ t3_thread_send({threadId, message, mode: "queue", clientRequestId: "<run>-<task>
 
 Use `queue` so the follow-up doesn't interrupt work in progress.
 
+## Stopping a task
+
+- **A merged task that keeps working,** because its goal still asks for something (for example a check it listed as skipped): interrupt the turn with `t3_thread_interrupt`, then queue `/goal clear` with `t3_thread_send` in mode `queue`. Sent as a steer, `/goal clear` fails while a turn runs.
+- **A task the user stops:** cancel its queued messages (`t3_queue_list`, `t3_queue_cancel`), interrupt it, save its unfinished work as a patch ([integration.md](integration.md#a-task-the-user-stopped)), remove its worktree, and settle its thread.
+
 ## When a window runs out
 
 For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-out): work pauses and resumes on the same subscription. The mechanics:
@@ -144,6 +149,7 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 The user's active thread list should show only what still needs them. Use `t3_thread_organize`:
 
+- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Check each result: a call on another thread returns a `sequence`, while `settlesWhenTurnEnds: true` means it hit your own thread. Afterwards, `t3_thread_list({settled: false, includeSubagents: true})` should list only the threads you meant to keep.
 - **Your own thread:**
   - Pin it (omit `threadId`) when the first wave launches, so it's easy to find during the run.
   - Unpin it when the final report is written.
@@ -161,8 +167,8 @@ Don't archive anything; settling is enough and easy to undo. A settled thread dr
 
 ## When the run finishes
 
-1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules.
+1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules. Stop the keep-awake too.
 2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
-3. Gather the times for the report's timeline. For each task thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound.
+3. Gather the times for the report's timeline. For each task thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A helper agent can collect these for all the threads, which keeps the long results out of your context. Write them into the facts file, and `scripts/run-charts` draws both charts ([final-report.md](final-report.md#run-charts)).
 4. Post the final report as your last message in your own thread. Unpin the thread, and leave it active.
 5. If any pull requests were created, link them with `link_pull_request`.

@@ -1,0 +1,99 @@
+#!/bin/sh
+# Checks the long-horizon-orchestrator's helper scripts: lease and run-charts.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+scripts="$repo_root/skills/long-horizon-orchestrator/scripts"
+work=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-scripts-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+# lease: turns, a timed-out wait, release, run, and an unknown resource.
+run="$work/run"
+mkdir -p "$run/bin"
+cp "$scripts/lease" "$run/bin/lease"
+printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 15}, "gpu": {"slots": 2, "max_minutes": 30}}' > "$run/leases.json"
+lease="$run/bin/lease"
+
+"$lease" acquire screen --owner A >/dev/null
+status=0
+"$lease" acquire screen --owner B --wait-minutes 0.01 >/dev/null || status=$?
+test "$status" -eq 75
+"$lease" acquire screen --owner A >/dev/null            # the same owner renews
+"$lease" release screen --owner A >/dev/null
+"$lease" acquire screen --owner B --wait-minutes 0.01 >/dev/null
+"$lease" status | grep -q '"owner": "B"'
+"$lease" release screen --owner B >/dev/null
+
+"$lease" acquire gpu --owner A >/dev/null
+"$lease" acquire gpu --owner B >/dev/null                # two slots
+status=0
+"$lease" acquire gpu --owner C --all --wait-minutes 0.01 >/dev/null || status=$?
+test "$status" -eq 75
+"$lease" release gpu --owner A >/dev/null
+"$lease" release gpu --owner B >/dev/null
+"$lease" run gpu --owner C --all -- sh -c 'exit 3' >/dev/null || status=$?
+test "$status" -eq 3
+"$lease" acquire gpu --owner D --wait-minutes 0.01 >/dev/null   # run released it
+"$lease" release gpu --owner D >/dev/null
+
+status=0
+"$lease" acquire printer --owner A >/dev/null 2>&1 || status=$?
+test "$status" -eq 2
+
+# run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked
+# tasks shown dashed, no bar for a parked task.
+cat > "$work/facts.json" <<'EOF'
+{
+  "harness": "Claude Code (T3) · Opus 5.5",
+  "orchestrator": "Claude Code (T3) · Opus 5.5 (Extra High)",
+  "integration": {"branch": "main", "head": "abc1234"},
+  "pauses": [{"start": "04:17", "end": "05:55", "reason": "Claude limit"}],
+  "tasks": [
+    {"id": "A", "name": "Settings screen", "level": "high", "first_wave": true, "status": "merged",
+     "helpers": [{"label": "Codex · GPT-6.1 Sol (High)", "did": "screen check ×1"}],
+     "launched": "01:00", "ended": "01:35", "worked_minutes": 30},
+    {"id": "B1", "name": "Word counts", "level": "xhigh", "first_wave": true, "status": "replaced",
+     "note": "crashed twice", "launched": "01:00", "ended": "02:10", "worked_minutes": 62},
+    {"id": "B2", "name": "Word counts, second try", "level": "xhigh", "replaces": "B1", "status": "merged",
+     "launched": "02:15", "ended": "06:40", "worked_minutes": 50},
+    {"id": "C", "name": "Command line", "level": "high", "needs": ["A"], "status": "merged",
+     "launched": "01:36", "ended": "01:51", "worked_minutes": 14},
+    {"id": "D", "name": "Spell check", "level": "max", "first_wave": true, "status": "blocked",
+     "note": "blocked: needs API key", "launched": "01:00", "ended": "03:00", "worked_minutes": 65},
+    {"id": "E", "name": "Docs for D", "level": "high", "needs": ["D"], "status": "parked"},
+    {"id": "F", "name": "Export", "level": "high", "took_place_of": "A", "status": "stopped",
+     "launched": "01:36", "ended": "02:30", "worked_minutes": 41},
+    {"id": "QA", "name": "Integration QA", "level": "high", "qa": true, "status": "merged",
+     "launched": "06:45", "ended": "07:30", "worked_minutes": 44}
+  ]
+}
+EOF
+"$scripts/run-charts" "$work/facts.json" "$work/charts" >/dev/null
+graph="$work/charts/graph.mmd"
+timeline="$work/charts/timeline.mmd"
+
+python3 -I - "$graph" <<'EOF'
+import re, sys
+text = open(sys.argv[1]).read()
+edges = [l for l in text.splitlines() if re.match(r"\s+\S+ (-->|--->|==>|-\.->|-\.-|<==>) \S+$", l)]
+styled = []
+for line in re.findall(r"linkStyle ([\d,]+) ", text):
+    styled += [int(i) for i in line.split(",")]
+assert sorted(styled) == list(range(len(edges))), (len(edges), sorted(styled))
+assert "T_A ---> MAIN" in text and "T_B2 --> MAIN" in text and "T_C --> MAIN" in text
+for task in ("T_B1", "T_D", "T_E", "T_F", "T_QA"):
+    assert f"{task} --> MAIN" not in text and f"{task} ---> MAIN" not in text, task
+assert "MAIN <==> T_QA" in text and "T_A ==> T_C" in text and "T_A -.-> T_F" in text
+assert "T_B1 --> T_B2" in text and "class T_D blocked" in text and "class T_B1 replaced" in text
+assert ':::parked' in text.split("T_E[")[1].splitlines()[0] and ':::parked' in text.split("T_F[")[1].splitlines()[0]
+assert "violet above Extra High" in text and "main<br/>abc1234" in text
+EOF
+
+grep -q 'Paused 1h 38m :crit, p1, 04:17, 05:55' "$timeline"
+grep -q 'D · Spell check · Max · blocked · 2h 00m, worked 1h 05m :active, d, 01:00, 03:00' "$timeline"
+grep -q 'F · Export (took A.s place) · stopped, nothing merged' "$timeline"
+grep -q 'QA · Integration QA (after the others merged)' "$timeline"
+if grep -q 'Docs for D' "$timeline"; then exit 1; fi
+
+echo "orchestrator scripts: ok"

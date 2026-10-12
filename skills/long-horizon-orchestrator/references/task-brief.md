@@ -47,6 +47,9 @@ Constraints:
 - No pushing, publishing, deploying, or contacting outside services. <project-specific rules, such as live API calls or secrets>.
 - Do all the work on this thread. Hand a step to another provider only as "Help available" allows, never the rest of the task. If your usage limit runs out, simply stop: the orchestrator resumes you on this thread after the reset.
 - Keep files that must outlive the task (handoff, evidence logs) in <run directory>/<task ID>/, not in /tmp, which a restart clears.
+- Never run anything that asks for a password, Touch ID or keychain access: sudo, sfltool, DevToolsSecurity, tccutil, installers, creating keychain items<, project-specific ones>. Granted for this run: <permissions from the warm-up>. If a step needs more, skip it and list it under "Couldn't check". If a dialog asks for one of the granted permissions, Allow is fine; cancel any other, and mention it in the report-back.
+- <If the run has leases:> Shared resources: take <resource> with `<run directory>/bin/lease acquire <resource> --owner <task ID>` only while you use it, and release it right after (`release`, or `lease run <resource> --owner <task ID> -- <command>` for one command). Prefer checks that need no lease, such as rendering a view to an image. Once merged, don't wait for a lease.
+- The owner's things: <from the contract: their running app, its settings and data, services, ports>. Launch your own build by its path, with its own <settings, sockets, data folders>, and close only windows you opened. Keep large files (traces, recordings, downloads) in <run directory>/<task ID>/, delete what isn't evidence, and list downloads with sizes in the handoff.
 
 <Optional "Help available" section from routing.md, for example handing a computer-use step to Codex. Include it only when the orchestrator has checked that the other provider has room.>
 
@@ -78,10 +81,12 @@ Report back (your very last action, whether you finished or are blocked):
 ## Goal template
 
 ```text
-/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown<, and any real-screen check that couldn't run is listed under "Couldn't check">. <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message.
+/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown, and any check that couldn't run is listed under "Couldn't check" (that counts as done). <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. After the report-back, the work is over: start no new checks. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message.
 ```
 
 Name the report-back explicitly in the goal. Without that, the evaluator can mark the goal met before the task has told you anything, and you won't be woken.
+
+Say that a skipped check counts as done. Without that, a merged task can keep working for hours, retrying a check it already listed as skipped.
 
 ## Report-back message
 
@@ -92,10 +97,11 @@ Keep it short and machine-friendly. The facts you need sit on the first lines; a
 branch=<task branch> head=<commit> integrated=<yes|no>
 agent=<harness/model/reasoning level that did the work> helpers=<harness/model/reasoning level × count for each hand-off, or none>
 unchecked=<checks that couldn't run, such as real-screen checks on a locked screen, or none>
+prompts=<password, keychain or permission dialogs you saw and what you did, or none>
 summary: <two to five plain sentences: what was built, what is left, and the decision needed if blocked>
 ```
 
-The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the report's charts take each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
+The `prompts` line tells the orchestrator about dialogs on the user's screen. The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the report's charts take each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
 
 A task whose usage limit runs out can't send a report at all. The orchestrator notices from the thread's state and resumes it after the reset.
 
@@ -124,4 +130,5 @@ Its goal follows the goal template, with "(beginning "Continuation of <task ID>"
 - The integration branch name, its checkout path and the task branch match the ledger.
 - The run directory path is filled in and exists, and no path in the brief points into `/tmp` for anything that must survive a restart.
 - The orchestrator ID in the report-back instruction is your own ID, copied exactly.
+- The permissions, lease and owner's-things lines match the contract and what the warm-up granted.
 - If a goal is used, its character count is under 4,000. Recount after every edit.

@@ -38,7 +38,9 @@ Wait until the task has gone idle before cleaning up. A task may report back and
 - Launch the dependents as soon as the merge is verified; they don't need the old worktree.
 - Do the cleanup on a later wake if the task is still running. The heartbeat or its next report will bring you back.
 
-1. **Remove the worktree:** `git worktree remove <path>`, without `--force`. If git refuses because the worktree has changes, leave it and record why.
+Then confirm nothing still runs in the worktree: `lsof +D <worktree>` should list only the idle agent's own session. A thread can look finished while a background job it started still runs there. In the 2026-10-12 run, removing a worktree stopped a 24-minute measurement.
+
+1. **Remove the worktree:** `git worktree remove <path>`, without `--force`. If git refuses because the worktree has changes, leave it and record why. If the project builds desktop apps, first unregister the worktree's builds from the system, so links and app identifiers stop reaching them (on macOS, `lsregister -u <app path>`; [machine.md](machine.md#5-the-users-own-things) gives its full path).
 2. **Delete the branch:** `git branch -d <branch>` works when the branch tip is an ancestor of the integration branch.
 3. **If the branch was rebased:** after a rebase, the old branch ref (or the tip of a separate branch whose work was folded in) may not be an ancestor, and `-d` refuses.
    - Confirm the content is in the integration branch by comparing patches, not commit IDs: `git range-diff`, `git cherry -v <integration> <branch>`, or comparing the added and removed lines.
@@ -47,6 +49,13 @@ Wait until the task has gone idle before cleaning up. A task may report back and
 4. **Tidy the host's task list:** settle the task's T3 thread, or close the subagent in Codex. See the host reference.
 
 Cleanup is for merged work only. A blocked, failed, parked or ready-but-not-merged task keeps its worktree and branch, because they hold the unmerged work. Name them in the final report.
+
+## A task the user stopped
+
+Nothing of it merges. Keep its work in case the user wants it later:
+1. Save everything uncommitted as a patch: `git -C <worktree> add -A && git -C <worktree> diff --cached --binary > <run directory>/stopped/<branch>.patch`. If its branch has commits (`git log <integration branch>..<branch>`), save them as well with `git format-patch -o <run directory>/stopped/<branch>/ <integration branch>..<branch>`.
+2. Remove the worktree with `git worktree remove --force`, the one case for `--force` because the patch holds the work, and delete the branch with `git branch -D`.
+3. Record in the ledger and the report how to pick it up again: a new branch from the integration branch, then `git apply <patch>` (and `git am` for saved commits).
 
 ## What never happens
 

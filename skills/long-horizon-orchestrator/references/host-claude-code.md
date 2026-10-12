@@ -38,7 +38,7 @@ You and every subagent share one Claude subscription, so its 5-hour window runs 
 
 ## Limits to state in the contract
 
-- **The session has to stay open.** Background subagents live inside this session. If the terminal closes or the machine sleeps, they stop, so tell the user to keep the session open and the machine awake.
+- **The session has to stay open.** Background subagents live inside this session. If the terminal closes or the machine sleeps, they stop. Tell the user to keep the session open, and keep the machine awake yourself ([machine.md](machine.md#4-keeping-the-computer-awake)).
 - **No goal evaluator.** Subagents don't take `/goal`, so nothing makes them persist. For tasks expected to take many hours, recommend running them as T3 threads or separate top-level sessions instead.
 - **Claude models only.** `Agent` runs only Claude models. For other providers, prefer T3. As a fallback, a provider's CLI can run headless through `Bash` with `run_in_background` (for example `codex exec`), and its exit wakes you. Background commands time out after at most 2 hours, so this suits only shorter tasks.
 

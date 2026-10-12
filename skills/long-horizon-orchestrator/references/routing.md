@@ -167,18 +167,8 @@ Settings:
 
 Computer use works only while the Mac is awake and unlocked, and on windows the agent can capture. In the first overnight run, every real-screen check failed: the screen had locked itself, and Stage Manager, which can hide windows from Codex's screen capture, was on. So, whenever a task or helper step will operate the real screen:
 
-1. **Read the settings before the contract** (all read-only):
-
-   ```sh
-   sysadminctl -screenLock status 2>&1 | tail -1                # want "screenLock is off"
-   defaults read com.apple.WindowManager GloballyEnabled 2>&1   # Stage Manager: want 0 (or "does not exist")
-   pmset -g | grep -E '^ *(sleep|displaysleep) '                # system and display sleep, in minutes (0 = never)
-   ```
-
-2. **Remind the user in the contract**, saying what you found:
-   - keep the Mac awake and unlocked for the whole run: automatic screen lock off, no locking it by hand, and the display kept awake (for example with `caffeinate -d` running for the night);
-   - turn off Stage Manager for the run, because it hides windows from Codex's screen capture.
-3. **Check again before the step runs.** The screen is locked when this prints `<true/>`:
+1. **Settle it in the contract.** [machine.md](machine.md#2-build-the-permissions-list) reads the settings and lists what to change: automatic screen lock off, Stage Manager off, and the permissions computer use needs. You keep the display awake with `caffeinate -i -d` for the whole run ([machine.md](machine.md#4-keeping-the-computer-awake)).
+2. **Check again before the step runs.** The screen is locked when this prints `<true/>`:
 
    ```sh
    ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked
@@ -191,8 +181,10 @@ Computer use works only while the Mac is awake and unlocked, and on windows the 
 This needs T3, which can launch child tasks on other providers. In T3, when a task has a step suited to another provider and that provider has room, add a "Help available" section to the brief:
 
 ```text
-Help available: for <the step, for example "checking the settings screen in the running desktop app">, you may hand that step to Codex. Call delegate_task with target {providerInstanceId: "codex", model: "<model id>"}, mode "wait", and a self-contained description of the step, including what to report back. Use at most <n> such hand-offs. If the hand-off fails or Codex is unavailable, do the step yourself.
+Help available: for <the kind of step, for example "checking on the real screen how the app's windows look and behave">, you may hand that step to Codex. Call delegate_task with target {providerInstanceId: "codex", model: "<model id>", options: [<reasoning option>]}, mode "wait", and a self-contained description of the step, including what to report back. Use it as often as it genuinely helps, for steps where it does better than you, such as judging what is on the screen or clicking through a flow you can't script. Don't hand it work you can do as well yourself (a scripted check, a screenshot, code), and stop using it if Codex is short on room. If the hand-off fails or Codex is unavailable, do the step yourself.
 ```
+
+Codex hand-offs have no fixed count. Before each wave, check that Codex has room for the hand-offs you expect, and leave the section out if it doesn't.
 
 For an Antigravity step, the same pattern applies with its own budget and a check:
 
@@ -203,6 +195,10 @@ Help available: for simple, fully specified steps such as <example>, you may han
 Divide the run's Antigravity budget across the tasks that get this section, and record each task's share in the ledger.
 
 - **Codex computer use works under T3.** The owner confirmed this on 2026-10-04. It operates the real screen, so avoid it for steps that would disturb a user who is at the machine, unless the brief allows it. It needs the screen as described in section 4.
+- **What it did in the 2026-10-12 run:**
+  - Four hand-offs, all to click through and judge screens. Three passed. The fourth couldn't turn VoiceOver on (⌘F5), so leave VoiceOver checks to the task or the user.
+  - The tasks did most other screen checks themselves, through the accessibility API and screenshots.
+  - Tasks were allowed to hand any permission prompt to Codex, and none did: a task whose command waits on a dialog sees only a hang. Grant permissions in the warm-up instead ([machine.md](machine.md#3-the-warm-up)).
 - **A helper is for its step only.** A task must not hand the rest of its work to a helper, and neither a task nor a helper moves work to another subscription because the home window ran out (section 3).
 - **Plain Claude Code or Codex:** no cross-provider hand-off exists, so the step stays on the home harness.
 
@@ -215,6 +211,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/pro
 ```
 
 - **At the start:** read it if it exists. If it doesn't, create it from what `provider-usage` detects.
+- **After the warm-up:** update "Machine" with what was granted.
 - **At the finish:** update its calibration.
 
 The owner may edit it at any time, and their statements win over this reference. Keep it short:
@@ -234,12 +231,16 @@ The owner may edit it at any time, and their statements win over this reference.
 
 ## Machine
 - Automatic screen lock: <off/on> (owner, <date>); Stage Manager off for computer-use runs (owner, <date>)
+- Granted (warm-up, <date>): <harness app>: Accessibility, Screen Recording, Developer Tools, Automation of <apps>; Developer mode on; <toolchain license accepted>
+- Asks for a password, so never in a run: <commands found to prompt on this computer>
 
 ## Calibration (newest first)
 - codex/<plan> five_hour: ~<n>% per task-hour, <kind of task> (run <ledger name>)
 - claude/<plan> five_hour: ~<n>% per task-hour (run <ledger name>)
 - antigravity: <n> Flash hand-offs in one 5-hour window before a quota error (run <ledger name>)
 ```
+
+At the start of a run, read the "Granted" line under "Machine", so the contract asks only for what's new. Update it after the warm-up.
 
 ## 7. In the contract and the report
 

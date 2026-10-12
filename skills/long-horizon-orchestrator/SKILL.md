@@ -29,7 +29,7 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 
 - **Home harness first.** Tasks run on the harness and model you are running on, unless a clear strength or the user says otherwise. Routing is settled in the contract.
 - **Real capacity.** Check usage with `scripts/provider-usage`, and judge it against plan size, never by raw percentage. 30% left of a Max 20x plan and of a Plus plan are very different amounts of work. Count other active runs that share the same subscriptions.
-- **Strengths are soft preferences.** Example: computer-use steps go to Codex when it has room. Prefer handing off just that step over moving the whole task.
+- **Strengths are soft preferences.** Example: computer-use steps go to Codex when it has room. Prefer handing off just that step over moving the whole task. Hand off as often as it genuinely helps, with no fixed count, but only for work the helper is better at.
 - **Reasoning errs upward.** Never use low. Use medium only for very simple steps and high for real tasks. Use extra high only when you see a real benefit from the extra thinking, and name it in the contract. Use Ultracode (Claude Code) or Ultra (Codex) sparingly, only when the task clearly gains from parallel sub-agents, and name that gain in the contract. The multi-agent modes use up a usage window much faster than a single agent. Always set the level explicitly; never inherit a default.
 - **Antigravity is a sparing helper, never a task agent.** Its fast Gemini Flash models, always at high reasoning, may take a few simple, fully specified steps that can be checked, within a small per-window budget. Never give it complex work, and never orchestration.
 - **Quota pauses work; it never moves it.** You and every task stay on the subscription the contract assigned. When a 5-hour window runs out, the affected work pauses and resumes on the same thread after the reset, woken by a wake-up you schedule in advance. Never switch your own model, and never hand a task to another subscription, because of quota. A helper step that the brief allows is still fine.
@@ -43,6 +43,7 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
   - If `long-horizon-task-planner` is installed, run it to propose tasks.
   - If it isn't, apply its intent inline: tasks grounded in the current project, ready now, each one coherent objective with checks that prove completion.
 - Draw the dependency graph. A task that needs another task's code starts only after that predecessor is merged. Group tasks into waves.
+- If the user wants the run to use up an allowance ("most of this week's usage"), size the list for it now: add a ranked reserve of extra tasks to the contract. Launch reserve tasks while the run is going, as places free up, and never after the final report.
 - Give each task an ID (A, B, C…) and a branch name.
 
 ### 2. Present the run contract and get one approval
@@ -59,8 +60,14 @@ Put everything the user might want to decide into one message, so nothing needs 
 - **Pre-flight items:**
   - uncommitted work the tasks depend on (new worktrees contain only committed work);
   - an integration checkout that isn't clean;
-  - missing credentials or services;
-  - **computer use:** if any task or helper step operates the real screen, remind the user to keep the Mac awake and unlocked for the whole run (automatic screen lock off, and don't lock it by hand), and to turn off Stage Manager, which hides windows from Codex's screen capture. Read the current settings first and say what you found ([references/routing.md](references/routing.md#computer-use-needs-the-screen)).
+  - missing credentials or services.
+- **Permissions and the computer:** the user won't be there to type a password or click Allow, so the run gets everything it may need before they leave. Err on the side of more: an unused permission costs nothing, while a missing one stops a task or leaves a prompt on the screen. Read the current state, then list what's missing of these, from [references/machine.md](references/machine.md):
+  - admin commands for the user to paste into Terminal once (Developer mode, toolchain licenses, installs);
+  - privacy permissions for the harness app and for the app the tasks build or test (Accessibility, Screen Recording, Automation, …);
+  - settings for the run (screen lock and Stage Manager off when anything uses the real screen);
+  - the user's own things the run must leave as it found them, and the shared resources tasks take turns on (the screen, the GPU).
+
+  Say that you will keep the computer awake for the whole run (`caffeinate` on macOS), and that the warm-up needs the user at the computer for about five minutes right after they approve. Approving the contract approves all of it.
 - **Estimate:** a rough duration, labelled as an estimate. Agent runs often finish much faster than planned.
 - **Ledger:** where the ledger file will be.
 
@@ -80,6 +87,9 @@ Record each such decision for the final report.
 - Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
   - Never use the user's own dev-server ports.
   - Never stop processes you didn't start.
+- Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile.
+- Keep the computer awake until the finish ([references/machine.md](references/machine.md#4-keeping-the-computer-awake)), and record how.
+- Snapshot the user's own state into the run directory, and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
 
 ### 4. Launch the ready tasks
 
@@ -117,8 +127,9 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
      - otherwise, mark it failed and keep its worktree for the user.
 
      Record each nudge and relaunch in the ledger.
-4. **Check the home subscription's 5-hour window.** Take a usage snapshot and compare it with the last one. If the window is nearly used up, or will run out before the next heartbeat at its current pace, schedule the resume wake now, while you still can (see [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out)).
-5. **Update the ledger, then end the turn.** Write down every state change before ending, so the next wake starts from the truth.
+4. **Check the computer.** A password or keychain dialog on the screen (on macOS, `pgrep -x SecurityAgent` finds one) means a task ran something that asks for one. Nobody will answer it: find the command, stop it, and tell the task. Check free disk space and the keep-awake too ([references/machine.md](references/machine.md#7-during-the-run)).
+5. **Check the home subscription's 5-hour window.** Take a usage snapshot and compare it with the last one. If the window is nearly used up, or will run out before the next heartbeat at its current pace, schedule the resume wake now, while you still can (see [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out)).
+6. **Update the ledger, then end the turn.** Write down every state change before ending, so the next wake starts from the truth.
 
 Launching dependent tasks is your job, not the job of the task briefs. Keeping the chain in one place keeps the ledger accurate and lets you skip the dependents of a blocked task.
 
@@ -126,19 +137,21 @@ Launching dependent tasks is your job, not the job of the task briefs. Keeping t
 
 When every task is done, blocked or parked:
 
-1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat and any resume wake, and close or cancel any remaining agents.
+1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat, any resume wake and the keep-awake, and close or cancel any remaining agents.
 2. Verify the end state:
    - the integration branch log;
    - nothing was pushed;
    - the integration checkout is clean;
    - every merged task's worktree and branch is removed, and its entry and its helper threads tidied;
    - unfinished tasks keep theirs and stay visible.
-3. If the project has a quick main check, run it once on the integration branch.
-4. Remove throwaway threads or worktrees you made along the way.
-5. Take a final usage snapshot, and update the calibration in the owner's provider profile (see [references/routing.md](references/routing.md)).
-6. Write the final report from [references/final-report.md](references/final-report.md), with its two Mermaid charts of how the run actually went (a dependency graph and a timeline), and **post it in the chat as your final message**. This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. A copy saved next to the ledger is for the record; the user reads the chat.
-7. Set the ledger's status to `finished`.
-8. If the host has a push-notification tool, send one line saying the run is finished.
+3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)).
+4. If the project has a quick main check, run it once on the integration branch.
+5. Remove throwaway threads or worktrees you made along the way.
+6. Take a final usage snapshot, and update the calibration in the owner's provider profile (see [references/routing.md](references/routing.md)).
+7. Write the final report from [references/final-report.md](references/final-report.md), with its two Mermaid charts of how the run actually went (a dependency graph and a timeline), and **post it in the chat as your final message**. This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. A copy saved next to the ledger is for the record; the user reads the chat.
+8. Set the ledger's status to `finished`.
+9. If the host has a push-notification tool, send one line saying the run is finished.
+10. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user.
 
 ### 8. When the user comes back
 
@@ -177,6 +190,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - helper hand-offs (which harness, model and reasoning level, for what, how many times);
   - events such as follow-ups, nudges, relaunches, rebases, level changes, and quota pauses with when they began and when the tasks resumed. The final report's charts are drawn from these.
 - **Usage snapshots:** from `scripts/provider-usage`, taken at the start, before each wave, on wakes near a limit and at the finish. Note other active runs sharing the subscriptions, and the reason for any task routed away from the home harness.
+- **The computer:** what the warm-up granted and what is still missing; how the computer is kept awake (on macOS, the `caffeinate` process ID); where the start snapshot of the user's state is; and what was restored at the finish.
 - **Decisions log:** what you decided on the user's behalf, and why.
 - **Open decisions:** what the user still needs to decide, with the task that raised each one.
 
@@ -186,6 +200,8 @@ Update it on every state change. Mention its path in the contract message and in
 
 - **Verify, don't trust.** Check reports against git and thread state before acting on them or passing them on to the user.
 - **One approval, then no interruptions.** The user approved a contract, not a conversation. Questions that arise go into the final report, unless every remaining task is blocked on the same answer. In that case, finish early and report.
+- **Ask before the run, not during it.** Whatever needs the user (a password, a click on Allow, a decision) goes into the contract and the warm-up. A prompt that appears during the run is a defect to stop, not a question to wait on.
+- **The report ends the run.** A usage target is met by the plan and its reserve list, never by work added after the report.
 - **Isolation by default.** Use a separate worktree for each writing task, exclusive ports and directories, and fast-forward-only merges. A task whose fast-forward fails rebases, re-validates and tries again.
 - **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work.
 - **Never push, publish or force-update.** Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.

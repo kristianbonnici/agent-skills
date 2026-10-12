@@ -10,6 +10,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - Keep recommendations separate from decisions. Never present something a task chose on its own as settled.
 - Be honest about anything that didn't finish, was blocked or wasn't verified, such as untested operating systems or a skipped check. One line each is enough.
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
+- A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
 
 ## Template
 
@@ -39,6 +40,9 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Only if some checks couldn't run, from the tasks' "unchecked" lines, for example real-screen checks while the screen was locked.>
 - **<Where to look>:** what to try, and what it should do.
 
+## Side effects on your computer
+<Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed, services reinstalled, files left or removed, disk space used and freed, and anything the run couldn't restore.>
+
 ## Open decisions
 
 1. **<Short label>.** <One sentence of context.> <The question?>
@@ -64,6 +68,8 @@ The report has two Mermaid charts of the run as it actually happened, not as pla
 - **Worked time:** the sum of the task's turns, each from its start to its completion, from the host's per-turn records (in T3, see [host-t3.md](host-t3.md)). It counts only the task's own agent, not helpers it waited on. Cap it at the total when a task kept talking after its merge. If the host has no per-turn times, show only the total and say so once under the chart.
 - **Quota pauses:** from when the first task failed on the limit until you resumed the tasks, from the threads' failed and resumed turns, not from your forecast.
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events.
+
+Put these facts into a JSON file in the run directory, and let `scripts/run-charts <facts.json> <output folder>` write both charts in the style below. Its `--help` lists the fields. With `--render`, it also draws them on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the charts by hand: `linkStyle` indexes are easy to miscount.
 
 ### Shared style
 

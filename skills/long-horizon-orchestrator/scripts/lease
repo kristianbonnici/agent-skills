@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Take turns at shared resources (the real screen, the GPU, a device) during a run.
+
+Copy this script into <run directory>/bin/ and describe the resources in
+<run directory>/leases.json, for example:
+
+  {"screen": {"slots": 1, "max_minutes": 15}, "gpu": {"slots": 2, "max_minutes": 30}}
+
+Usage:
+  lease acquire <resource> --owner <task ID> [--all] [--minutes N] [--wait-minutes W]
+  lease release <resource> --owner <task ID>
+  lease run <resource> --owner <task ID> [--all] [--minutes N] [--wait-minutes W] -- <command...>
+  lease status
+
+  --all       take every slot of the resource (for example the whole GPU for a timing run)
+  --minutes   how long the lease lasts (default 20, at most the resource's max_minutes); acquiring
+              again with the same owner renews it, and a forgotten lease frees itself when it expires
+  --wait-minutes  how long to wait for a turn (default 120)
+  --run       the run directory (default: the folder above this script's folder, or $LEASE_RUN_DIR)
+
+Turns are first come, first served for each resource. A waiter that stops asking for a minute
+loses its place. "run" holds the lease only while the command runs, and stops the command when
+the lease runs out.
+
+Exit status: 0 done; 75 the wait timed out; 124 "run" stopped the command at the end of its
+lease; 2 usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+
+DEFAULT_MINUTES = 20.0
+FORGET_WAITER_SECONDS = 60
+
+
+def run_dir(arg: str | None) -> str:
+    if arg:
+        return arg
+    if os.environ.get("LEASE_RUN_DIR"):
+        return os.environ["LEASE_RUN_DIR"]
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class Leases:
+    def __init__(self, root: str):
+        self.root = root
+        self.locks = os.path.join(root, "locks")
+        self.state_path = os.path.join(self.locks, "state.json")
+        self.log_path = os.path.join(self.locks, "log.txt")
+        config_path = os.path.join(root, "leases.json")
+        try:
+            with open(config_path) as f:
+                self.config = json.load(f)
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"lease: can't read {config_path}: {error}")
+
+    def log(self, line: str) -> None:
+        with open(self.log_path, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+
+    def locked(self, change):
+        """Runs change(state, now) under an exclusive lock and saves the state."""
+        os.makedirs(self.locks, exist_ok=True)
+        with open(os.path.join(self.locks, ".lock"), "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                with open(self.state_path) as f:
+                    state = json.load(f)
+            except (OSError, ValueError):
+                state = {}
+            now = time.time()
+            leases = state.setdefault("leases", {})
+            for name in list(leases):
+                leases[name] = [l for l in leases[name] if l["expires"] > now]
+            waiting = state.setdefault("waiting", {})
+            for key in list(waiting):
+                if waiting[key]["seen"] < now - FORGET_WAITER_SECONDS:
+                    del waiting[key]
+            result = change(state, now)
+            with open(self.state_path + ".new", "w") as f:
+                json.dump(state, f, indent=1)
+            os.replace(self.state_path + ".new", self.state_path)
+            return result
+
+    def slots(self, resource: str) -> int:
+        return int(self.config[resource].get("slots", 1))
+
+    def max_minutes(self, resource: str) -> float:
+        return float(self.config[resource].get("max_minutes", 30))
+
+    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float) -> bool:
+        need = self.slots(resource) if take_all else 1
+
+        def attempt(state, now):
+            held = state["leases"].setdefault(resource, [])
+            expires = now + minutes * 60
+            for lease in held:
+                if lease["owner"] == owner:
+                    lease["expires"] = expires
+                    return True
+            me = f"{resource}:{owner}"
+            waiting = state["waiting"]
+            waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
+            queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
+            if queue[0][1] != me:
+                return False
+            if sum(l["slots"] for l in held) + need > self.slots(resource):
+                return False
+            held.append({"owner": owner, "slots": need, "expires": expires})
+            del waiting[me]
+            return True
+
+        return self.locked(attempt)
+
+    def acquire(self, resource: str, owner: str, take_all: bool, minutes: float, wait_minutes: float) -> bool:
+        deadline = time.time() + wait_minutes * 60
+        announced = False
+        while True:
+            if self.try_acquire(resource, owner, take_all, minutes):
+                self.log(f"acquire {resource} {owner} {minutes:g}m{' all' if take_all else ''}")
+                print(f"lease: {owner} holds {resource} for up to {minutes:g} min")
+                return True
+            now = time.time()
+            if now >= deadline:
+                self.locked(lambda state, _: state["waiting"].pop(f"{resource}:{owner}", None))
+                print(f"lease: gave up waiting for {resource} after {wait_minutes:g} min")
+                return False
+            if not announced:
+                print(f"lease: waiting for {resource} ...", flush=True)
+                announced = True
+            time.sleep(max(0.2, min(10.0, deadline - now)))
+
+    def release(self, resource: str, owner: str) -> int:
+        def drop(state, _):
+            held = state["leases"].get(resource, [])
+            kept = [l for l in held if l["owner"] != owner]
+            state["leases"][resource] = kept
+            return len(held) - len(kept)
+
+        released = self.locked(drop)
+        self.log(f"release {resource} {owner}")
+        return released
+
+    def status(self) -> dict:
+        def report(state, now):
+            return {
+                "leases": {
+                    name: [dict(l, minutes_left=round((l["expires"] - now) / 60, 1)) for l in held]
+                    for name, held in state["leases"].items()
+                    if held
+                },
+                "waiting": [k for _, k in sorted((w["since"], k) for k, w in state["waiting"].items())],
+            }
+
+        return self.locked(report)
+
+
+def main(argv: list[str]) -> int:
+    command_args: list[str] = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, command_args = argv[:i], argv[i + 1:]
+    parser = argparse.ArgumentParser(prog="lease", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("action", choices=["acquire", "release", "run", "status"])
+    parser.add_argument("resource", nargs="?")
+    parser.add_argument("--owner")
+    parser.add_argument("--all", action="store_true", dest="take_all")
+    parser.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
+    parser.add_argument("--wait-minutes", type=float, default=120.0)
+    parser.add_argument("--run")
+    args = parser.parse_args(argv)
+
+    leases = Leases(run_dir(args.run))
+    if args.action == "status":
+        print(json.dumps(leases.status(), indent=1))
+        return 0
+    if not args.resource or args.resource not in leases.config:
+        known = ", ".join(sorted(leases.config)) or "none"
+        print(f"lease: name a resource from leases.json ({known})", file=sys.stderr)
+        return 2
+    if not args.owner:
+        print("lease: --owner <task ID> is required", file=sys.stderr)
+        return 2
+    minutes = min(args.minutes, leases.max_minutes(args.resource))
+
+    if args.action == "release":
+        print(f"lease: released {leases.release(args.resource, args.owner)} lease(s)")
+        return 0
+    if args.action == "acquire":
+        return 0 if leases.acquire(args.resource, args.owner, args.take_all, minutes, args.wait_minutes) else 75
+    if not command_args:
+        print("lease: run needs -- <command>", file=sys.stderr)
+        return 2
+    if not leases.acquire(args.resource, args.owner, args.take_all, minutes, args.wait_minutes):
+        return 75
+    try:
+        process = subprocess.Popen(command_args)
+        try:
+            return process.wait(timeout=minutes * 60)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            print(f"lease: stopped the command at the end of its {minutes:g} min lease", file=sys.stderr)
+            return 124
+    finally:
+        leases.release(args.resource, args.owner)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
