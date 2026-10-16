@@ -36,18 +36,7 @@ t3_thread_launch({
 - **Retries.** `t3_thread_launch` has no retry key. Keep the returned `threadId`. After an error or a lost response, check `t3_thread_list` for the title before launching again.
 - **`runtimeMode`.** The task must run commands, commit and merge without approval prompts, so use `full-access` unless the contract says otherwise.
 - **Record what actually launched.** Call `t3_thread_configuration` with the task's `threadId`, and record the provider, model and reasoning option it returns. Take the launch time from the thread's `createdAt` in `t3_thread_list`, not from your own estimate.
-
-## Queue the goal
-
-This applies to Claude Code (`claudeAgent`) and Codex (`codex`) tasks:
-
-```text
-t3_thread_send({threadId: "<task thread>", message: "<the /goal text>", mode: "queue", clientRequestId: "<run>-<task>-goal-v1"})
-```
-
-- **Queue it, don't steer it.** Queueing makes the goal its own turn, after the brief's first turn.
-- **Confirm it took.** A short `t3_thread_read` later should show the goal was accepted ("Goal set: …"). If it was rejected for length, shorten it and send it again with a new `clientRequestId`.
-- **Other providers,** when the contract routes a task to one, get the brief alone. Their persistence comes from the brief's stop conditions. (Antigravity and OpenCode normally serve only as fast helpers, [routing.md](routing.md#fast-helpers-antigravity-and-opencode).)
+- **The brief is the only message.** Don't queue a `/goal` behind it, on any provider ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)). A Claude Code task that ends its turn while its builds or reviewers run is woken when they finish.
 
 ## Report-back: how you get woken
 
@@ -62,11 +51,11 @@ If the t3_thread_send tool is not available but the environment variable T3_ACP_
 ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" ${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call t3_thread_send '<the same arguments as JSON>'
 ```
 
-A queued message to your idle thread starts a new turn. That turn is the wake-up. If you are busy, the message waits behind your current turn. Put the report-back into the goal condition too, so the goal evaluator won't mark the task finished until it has been sent.
+A queued message to your idle thread starts a new turn. That turn is the wake-up. If you are busy, the message waits behind your current turn.
 
 ## Heartbeat: a backup for silent tasks
 
-A task can die without reporting: a provider crash, a hung command, or a lost goal. After launching the first wave, schedule a heartbeat that posts into your own thread:
+A task can die without reporting: a provider crash, a hung command, or a turn that ended before its work was done. After launching the first wave, schedule a heartbeat that posts into your own thread:
 
 ```text
 schedule_task({
@@ -104,10 +93,10 @@ schedule_task({
 
 ## When a task's run fails or is cancelled
 
-A crashed or provider-failed run leaves the thread with status `failed`. A restart of the computer or of the T3 server cancels every run in progress, which leaves `cancelled` or `interrupted`. In each case T3 does not start the thread's queued messages, so a goal queued behind the stopped turn never runs, and the task sits silent. Several tasks stopping at the same moment points to a restart: nudge each of them. A task that stopped because its usage window ran out is different; see "When a window runs out" below.
+A crashed or provider-failed run leaves the thread with status `failed`. A restart of the computer or of the T3 server cancels every run in progress, which leaves `cancelled` or `interrupted`. In each case T3 does not start the thread's queued messages, so a follow-up queued behind the stopped turn never runs, and the task sits silent. Several tasks stopping at the same moment points to a restart: nudge each of them. A task that stopped because its usage window ran out is different; see "When a window runs out" below.
 
 1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what happened, and ask it to continue the brief from where it stopped.
-2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief, a fresh branch name such as `<branch>-r2`, and a new goal. On the old thread:
+2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief and a fresh branch name such as `<branch>-r2`. On the old thread:
    - remove anything still queued with `t3_queue_cancel`;
    - remove its worktree and branch if they hold nothing;
    - settle it.
@@ -117,7 +106,7 @@ A crashed or provider-failed run leaves the thread with status `failed`. A resta
 
 - **`t3_thread_list`:** status of every thread.
 - **`t3_thread_read`:** `view: "messages"` and a small `limit` give the last messages. Long results may be saved to a file; read the last items with `jq '.items[-3:]'`, and page through long texts with `itemId` and `textOffset`.
-- **`t3_thread_wait`:** only for a short wait inside a turn, never as the main waiting mechanism. With a short `timeoutMs`, it is also the quickest way to see whether a task has gone idle before cleanup: an idle thread returns immediately. A report-back often arrives while the task's queued goal turn is still running.
+- **`t3_thread_wait`:** only for a short wait inside a turn, never as the main waiting mechanism. With a short `timeoutMs`, it is also the quickest way to see whether a task has gone idle before cleanup: an idle thread returns immediately. A report-back often arrives while the task's turn is still writing its final message.
 
 ## Following up with a task
 
@@ -131,7 +120,7 @@ Use `queue` so the follow-up doesn't interrupt work in progress.
 
 ## After a verified merge
 
-Expect the task's goal turn to outlive its report-back: on 2026-10-15, two merged tasks kept working after their reports. On the wake that verifies the merge:
+A task's turn usually ends with its final message, just after the report-back. It can go on when a background job it started finishes and wakes it, or when it decides on more checks. On the wake that verifies the merge:
 
 1. **See whether it still runs:** `t3_thread_wait` with a short `timeoutMs` returns at once for an idle thread.
 2. **If it runs, read its last messages.** Re-running checks, or retrying one it listed under "Couldn't check", is over: stop it now, as below, before any cleanup. Let a turn finish only when it does something still to come, such as a follow-up you sent; clean up on a later wake.
@@ -140,7 +129,7 @@ Expect the task's goal turn to outlive its report-back: on 2026-10-15, two merge
 
 ## Stopping a task
 
-- **A merged task that keeps working,** because its goal still asks for something (for example a check it listed as skipped): interrupt the turn with `t3_thread_interrupt`, then queue `/goal clear` with `t3_thread_send` in mode `queue`. Sent as a steer, `/goal clear` fails while a turn runs. Do both on the same wake.
+- **A merged task that keeps working** (re-running checks, or retrying one it listed under "Couldn't check"): interrupt the turn with `t3_thread_interrupt`, and cancel anything still queued for it (`t3_queue_list`, `t3_queue_cancel`). If the thread has a goal set some other way, also queue `/goal clear` with `t3_thread_send` in mode `queue`, on the same wake: sent as a steer, it fails while a turn runs.
 - **A task the user stops:** cancel its queued messages (`t3_queue_list`, `t3_queue_cancel`), interrupt it, save its unfinished work as a patch ([integration.md](integration.md#a-task-the-user-stopped)), remove its worktree, and settle its thread.
 
 ## When a window runs out
@@ -178,7 +167,7 @@ For research and collection, a fast helper suits ([routing.md](routing.md#fast-h
 
 ## Another orchestrator's thread
 
-When another run is active ([routing.md](routing.md#running-beside-another-orchestrator)), its ledger names its orchestrator thread. Write to it with `t3_thread_send` in mode `queue` and a `clientRequestId` such as `<run>-to-<other run>-<n>`. A queued message starts a turn there, so send only what the other run needs: the coordination note at the start, findings that affect it, and the word that you have finished. Never interrupt, configure, settle or send `/goal` to another run's threads.
+When another run is active ([routing.md](routing.md#running-beside-another-orchestrator)), its ledger names its orchestrator thread. Write to it with `t3_thread_send` in mode `queue` and a `clientRequestId` such as `<run>-to-<other run>-<n>`. A queued message starts a turn there, so send only what the other run needs: the coordination note at the start, findings that affect it, and the word that you have finished. Never interrupt, configure or settle another run's threads, or send commands to them.
 
 ## When the run finishes
 

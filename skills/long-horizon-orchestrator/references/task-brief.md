@@ -2,22 +2,17 @@
 
 A task agent starts with no memory of your conversation. Its brief, with the run's common file it points to, is everything it knows, so the two must be self-contained. They have to cover where to work, what is settled, what done looks like, how to merge, when to stop, and how to tell you.
 
-## Two messages: the brief and the goal
+## One message: the brief, no goal
 
-On hosts with a native `/goal` (Claude Code and Codex top-level threads), send two separate messages:
+Send the brief as the task's only message, on every host. Don't queue a `/goal` after it. The brief's stop conditions and its report-back define the end, and the heartbeat ([host-t3.md](host-t3.md#heartbeat-a-backup-for-silent-tasks)) catches a task that goes quiet without reporting. A subagent's final message is its report.
 
-1. **The brief**, as a plain first message without `/goal`. It can be long.
-2. **The goal**, queued as a separate message. It is a short completion condition that refers back to the brief.
+Earlier runs queued a goal behind every brief. An audit of the 33 Claude tasks of the 2026-10-14 and 2026-10-15 runs found that it never made a task finish required work:
+- It started only when the brief's first turn ended, in about half the tasks after the merge and the report. Before a report, it never pushed.
+- What kept tasks going was Claude Code waking a thread when its own background jobs and subagents finished, which it does with or without a goal.
+- After the reports, its checker rejected "Couldn't check" lists, though the goal said they counted as done. It kept tasks working for about 3.8 hours in all and caused 19 extra reports. It pushed tasks into breaking their rules: a global shortcut while the owner's app ran, a re-signed app copy with an injected library on the real screen, the screen lease taken after a merge, and a question to the owner while they slept.
+- Its useful catches were reports claiming checks for the final commit that had run on an earlier one. The handoff's rule on commits covers that.
 
-Never put the brief after `/goal`. Claude Code limits a goal condition to 4,000 characters, and a long brief after `/goal` is rejected outright. Aim for under 1,500 characters, and count before sending:
-
-```sh
-printf %s "$goal" | wc -m
-```
-
-The goal evaluator judges only what appears in the conversation. So the goal asks for evidence to be shown, such as check output and `git log`, not merely produced.
-
-Subagents (Claude Code `Agent`, Codex `spawn_agent`) take no `/goal`. Their brief's stop conditions define the end, and their final message is their report.
+A planner packet's prompt may begin with `/goal`: drop that line, put its checks into the brief's Validation, and its blockers into "Blocked".
 
 ## One common file for every brief
 
@@ -32,7 +27,7 @@ In the 2026-10-15 runs, both orchestrators did this, and used it to spread rules
 Fill in every angle-bracketed item with project-specific content, and drop any section that does not apply. Keep it under about 15,000 characters. A tight brief beats an exhaustive one.
 
 ```text
-Brief for <task ID>: <one-line objective>. <If the host uses a goal: "A /goal referring to this brief follows.">
+Brief for <task ID>: <one-line objective>.
 Read <run directory>/briefs/common.md first. It holds the rules for every task in this run, and they are part of this brief. Check it again before the merge gate: the orchestrator adds rules there during the run.
 The project owner has authorized in advance: commits on <task branch>, and the fast-forward of <integration branch> described under "Finish and merge". Nothing may be pushed or published.
 
@@ -77,10 +72,11 @@ Blocked. Stop without merging, report the evidence, then do the report-back:
 
 The <range> estimate is a sizing guess, not a timer. Don't wait, and don't add scope to fill it.
 
-Handoff (in your final message, and saved as <run directory>/<task ID>/handoff.md): what changed; evidence for each required item; any work handed to a helper (which harness, model and reasoning level, for what, and any switch after a limit); validation output; review findings; the commits merged (git log); "Couldn't check": checks that couldn't run and why, with what the owner should look at; untested platforms; "Open decisions": questions for the owner, each with a sentence of context; recommendations kept separate from decisions; elapsed time and token usage if available.
+Handoff (in your final message, and saved as <run directory>/<task ID>/handoff.md): what changed; evidence for each required item; any work handed to a helper (which harness, model and reasoning level, for what, and any switch after a limit); validation output, with the commit each check ran on (a check that ran before your final commit counts only for that commit: say so, rather than claiming it for the final head); review findings; the commits merged (git log); "Couldn't check": checks that couldn't run and why, with what the owner should look at; untested platforms; "Open decisions": questions for the owner, each with a sentence of context; recommendations kept separate from decisions; elapsed time and token usage if available.
 
 Report back (your very last action, whether you finished or are blocked):
 <host-specific report-back instruction from the host reference, with the orchestrator's ID filled in>
+After the report, your work is over: start no new checks or changes unless the orchestrator sends a follow-up.
 If your head or the merge changes after a report (review fixes, a rebase, a follow-up, a merge you were told to do), report again, with the next report number.
 ```
 
@@ -108,18 +104,6 @@ The owner is away for the whole run. Never ask them anything, and never wait for
 Rules added during the run:
 - <time>: <rule>
 ```
-
-## Goal template
-
-```text
-/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown, and any check that couldn't run is listed under "Couldn't check" (that counts as done; don't retry it). <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. After the report-back, the work is over: start no new checks. The owner is away for the whole run: never ask them anything or wait for them; questions go under "Open decisions" in the handoff. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message; or one check missed narrowly, and you stopped without merging and sent a status=ready report-back with its numbers.
-```
-
-Name the report-back explicitly in the goal. Without that, the evaluator can mark the goal met before the task has told you anything, and you won't be woken.
-
-Say that a skipped check counts as done. Without that, a merged task can keep working for hours, retrying a check it already listed as skipped.
-
-Say that the owner is away. The evaluator judges only the conversation, and a goal it can't see met pushes the task to find a way: on 2026-10-15, one kept a merged task going until the task asked the user, who was asleep, to install software for a check it had listed as skipped. On 2026-10-14, another pushed a task into sending a global shortcut while the owner's own app ran.
 
 ## Report-back message
 
@@ -156,8 +140,6 @@ Then finish the original brief below, from "Required work" through "Report back"
 <the original brief, verbatim>
 ```
 
-Its goal follows the goal template, with "(beginning "Continuation of <task ID>")" as the reference.
-
 ## Before sending
 
 - Every placeholder is filled in, and the brief and the common file make sense to someone with no other context.
@@ -167,4 +149,3 @@ Its goal follows the goal template, with "(beginning "Continuation of <task ID>"
 - The run directory path is filled in and exists, and no path in the brief points into `/tmp` for anything that must survive a restart.
 - The orchestrator ID in the report-back instruction is your own ID, copied exactly.
 - The permissions, lease and owner's-things lines in the common file match the contract and what the warm-up granted.
-- If a goal is used, its character count is under 4,000. Recount after every edit.

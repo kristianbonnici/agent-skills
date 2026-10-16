@@ -19,7 +19,7 @@ Agent({
 
 - **Start from the integration branch.** The worktree is created from your current HEAD, so make sure the integration checkout is on the integration branch and that anything the task needs is committed.
 - **Use the reported branch.** The subagent gets its own branch. Use the branch name it reports, and look up its path with `git worktree list`.
-- **No `/goal` for subagents.** The brief's stop conditions define the end, so state them sharply. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line." That final message comes back to you.
+- **The brief alone.** As on every host, a task gets no `/goal` ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)): the brief's stop conditions define the end, so state them sharply. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line." That final message comes back to you.
 - **Merging.** Under the merge policy, the subagent fast-forwards the integration checkout itself (`git -C <integration checkout> merge --ff-only <branch>`).
 - **Worktree cleanup.** Claude Code removes a subagent's worktree automatically only when it has no changes, and a task with commits always has some. So once you have verified a merge, remove the worktree and delete the branch yourself, as [integration.md](integration.md) describes.
 
@@ -39,7 +39,7 @@ You and every subagent share one Claude subscription, so its 5-hour window runs 
 ## Limits to state in the contract
 
 - **The session has to stay open.** Background subagents live inside this session. If the terminal closes or the machine sleeps, they stop. Tell the user to keep the session open, and keep the machine awake yourself ([machine.md](machine.md#4-keeping-the-computer-awake)).
-- **No goal evaluator.** Subagents don't take `/goal`, so nothing makes them persist. For tasks expected to take many hours, recommend running them as T3 threads or separate top-level sessions instead.
+- **Long tasks.** A subagent lives inside this session and ends with its final message. For tasks expected to take many hours, recommend running them as T3 threads or separate top-level sessions instead, which keep their own conversation and can be continued on their own.
 - **Claude models only.** `Agent` runs only Claude models. For other providers, prefer T3. As a fallback, a provider's CLI can run headless through `Bash` with `run_in_background` (for example `codex exec`), and its exit wakes you. Background commands time out after at most 2 hours, so this suits only shorter tasks.
 
 ## Workflows

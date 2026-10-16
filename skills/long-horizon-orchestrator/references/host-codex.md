@@ -34,7 +34,7 @@ spawn_agent({
 ```
 
 - **Fresh context.** Use `fork_context: false`, so the task starts from the brief alone and not from your conversation.
-- **No `/goal` for subagents.** Their brief's stop conditions define the end. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line."
+- **The brief alone.** As on every host, a task gets no `/goal` ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)): its brief's stop conditions define the end. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line."
 - **Concurrency.** Sessions have a limit on concurrent agents (`max_concurrent_threads_per_session`), so keep each wave within it. Finished agents count toward the limit until closed: call `close_agent` once you have handled a result.
 
 ## Staying in control

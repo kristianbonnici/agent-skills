@@ -48,7 +48,7 @@ Clean up only worktrees and branches this run created.
 
 Launch the dependents as soon as the merge is verified; they don't need the old worktree. Then clean up only once the task and everything it started have stopped. Check, in this order:
 
-1. **Its turn.** A task often reports back and keeps working, for example when its goal turn re-runs the checks or retries a check it listed under "Couldn't check". Once the merge is verified, that work is over: stop the turn on this same wake (in T3, interrupt it and clear its goal, [host-t3.md](host-t3.md#stopping-a-task)). A turn doing something the report-back mentioned as still to come, such as a follow-up you sent, finishes first.
+1. **Its turn.** A task can report back and keep working, for example when a background job it started wakes it, or when it re-runs the checks or retries one it listed under "Couldn't check". Once the merge is verified, that work is over: stop the turn on this same wake (in T3, interrupt it, [host-t3.md](host-t3.md#stopping-a-task)). A turn doing something the report-back mentioned as still to come, such as a follow-up you sent, finishes first.
 2. **Its background jobs.** Settling a thread or closing an agent does not stop the jobs it started. Read the task's last messages for anything it started in the background (a `lease run`, a server, a measurement), then look:
 
    ```sh
