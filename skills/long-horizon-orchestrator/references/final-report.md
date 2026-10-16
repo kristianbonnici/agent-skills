@@ -7,7 +7,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - Post the report in the chat as your final message, every time the run ends: all tasks merged, some blocked or parked, or stopped early. Post it again, whole and updated, when the outcome changes later, for example after the user's own check lets a blocked task merge. Save a copy in the run directory, but a saved file is not a report the user has received.
 - Use plain language. Describe each new thing by what the user can now do, and where to find it. Leave out file names, function names, test counts, commit IDs and review mechanics unless the user needs them to act.
 - Gather open decisions from every task's handoff and from your decisions log. Remove duplicates, and phrase each one as a question with one sentence of context.
-- Keep recommendations separate from decisions. Never present something a task chose on its own as settled.
+- Recommend an answer to each open decision, and to each next step where there is a real choice (whether to do it, when, or how). Base it on what the run learned, such as the tasks' findings, their recommendations and the checks, and give the reason in one sentence. When you have no good basis, say so and name what would settle it. Label it as a recommendation: the decision stays the user's, and nothing was built on it. Never present something a task chose on its own as settled.
 - Be honest about anything that didn't finish, was blocked or wasn't verified, such as untested operating systems or a skipped check. One line each is enough.
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
 - A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
@@ -49,10 +49,12 @@ The reader is returning after hours away, and probably after several tasks' wort
 ## Open decisions
 
 1. **<Short label>.** <One sentence of context.> <The question?>
+   **Recommended:** <the option you would pick>, because <one sentence, from what the run found>. <Or: "No recommendation: <what would settle it>.">
 2. ...
 
 ## Suggested next steps
-- <Follow-ups the tasks recommended, or that you noticed. One line each.>
+<Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
+- <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
 <One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; detailed technical notes available on request.>
 

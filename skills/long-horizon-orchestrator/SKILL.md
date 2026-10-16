@@ -202,7 +202,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
 - **Usage snapshots:** from `scripts/provider-usage`, taken at the start, before each wave, on wakes near a limit and at the finish. Note other active runs sharing the subscriptions, and the reason for any task routed away from the home harness.
 - **The computer:** what the warm-up granted and what is still missing; how the computer is kept awake (on macOS, the `caffeinate` process ID); where the start snapshot of the user's state is; and what was restored at the finish.
 - **Decisions log:** what you decided on the user's behalf, and why.
-- **Open decisions:** what the user still needs to decide, with the task that raised each one.
+- **Open decisions:** what the user still needs to decide, with the task that raised each one and the recommendations you and the task have for it.
 
 Update it on every state change. Mention its path in the contract message and in the final report.
 
