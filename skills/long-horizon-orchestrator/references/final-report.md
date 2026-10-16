@@ -26,6 +26,8 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 ## How it ran
 
+<The run-time line from `summary.txt` (see "Run charts" below), for example: "Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota. The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.">
+
 <The dependency graph; see "Run charts" below.>
 
 <The timeline; see "Run charts" below.>
@@ -67,10 +69,11 @@ The report has two Mermaid charts of the run as it actually happened, not as pla
 - **Launch time:** the host's creation time for the task's thread or agent. Convert UTC to the user's local time.
 - **Merge time:** the integration branch's reflog, which shows when each task's merge moved it (`git reflog show <branch> --date=format-local:'%H:%M:%S'`). A commit's own date is not its merge time: rebases rewrite it.
 - **Worked time:** the sum of the task's turns, each from its start to its completion, from the host's per-turn records (in T3, see [host-t3.md](host-t3.md)). It counts only the task's own agent, not helpers it waited on. Cap it at the total when a task kept talking after its merge. If the host has no per-turn times, show only the total and say so once under the chart.
+- **The whole run:** from the user's approval of the contract (its time is in the ledger) to the final report. Your own worked time is the sum of your turns in that span, from the host's per-turn records of your own thread, and the number of those turns is your wake count. If the host has no per-turn times, give the run's span only.
 - **Quota pauses:** from when the first task failed on the limit until you resumed the tasks, from the threads' failed and resumed turns, not from your forecast.
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events.
 
-Put these facts into a JSON file in the run directory, and let `scripts/run-charts <facts.json> <output folder>` write both charts in the style below. Its `--help` lists the fields. With `--render`, it also draws them on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the charts by hand: `linkStyle` indexes are easy to miscount.
+Put these facts into a JSON file in the run directory, and let `scripts/run-charts <facts.json> <output folder>` write both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws them on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the charts by hand: `linkStyle` indexes are easy to miscount.
 
 ### Shared style
 
@@ -95,7 +98,7 @@ Both charts must read well on a white and on a black background, because the use
 
 A top-down `flowchart TB`, built like this:
 
-- **Orchestrator:** one node at the top, with its harness, model and reasoning level. Add any pause as a line, such as `paused 04:17–05:55 · Claude limit`.
+- **Orchestrator:** one node at the top, with its harness, model and reasoning level, and the whole run's time (`whole run 6h 45m, worked 25m`). Add any pause as a line, such as `paused 04:17–05:55 · Claude limit`.
 - **Tasks:** one node per agent that worked on a task, labelled with the task ID and a plain name. Add a second line only for something the reader must notice, such as `blocked: needs API key`, `crashed twice` or `1 screen check left for you`.
 - **Harness and model:** if every task ran on the same harness and model, say it once at the start of the title (`All tasks: Claude Code · Opus 5.5`). Otherwise give each task node a line such as `Codex · GPT-6.1 Sol (High)`, because the same model at a different level is a different worker. The colour shows the level band either way.
 - **Launch arrows:** a thin arrow from the orchestrator to every task that started without waiting for another task, whenever it was launched. A task launched hours later because of a quota pause still gets one. Tasks that waited hang below what they waited for instead.
@@ -114,7 +117,7 @@ title: "All tasks: Claude Code · Opus 5.5 · grey dashed = waited for a free pl
 ---
 %%{init: {"theme": "base", "fontFamily": "Helvetica Neue, Helvetica, Arial, sans-serif", "themeVariables": {"titleColor": "#71717a", "textColor": "#71717a", "lineColor": "#8a8a93"}, "flowchart": {"curve": "basis", "nodeSpacing": 16, "rankSpacing": 46}}}%%
 flowchart TB
-  O(["Orchestrator<br/>Claude Code · Opus 5.5 (Extra High)<br/>paused 04:17–05:55 · Claude limit"]):::orch
+  O(["Orchestrator<br/>Claude Code · Opus 5.5 (Extra High)<br/>whole run 6h 45m, worked 25m<br/>paused 04:17–05:55 · Claude limit"]):::orch
   A["A · Settings screen<br/>1 screen check left for you"]:::high
   B1["B · Word counts<br/>crashed twice"]:::xhigh
   D["D · Spell check<br/>blocked: needs API key"]:::ultra
@@ -159,9 +162,10 @@ flowchart TB
 
 A Mermaid `gantt` chart, built like this:
 
-- **Sections:** `Quota pauses` first, then `First wave`, then `Launched later`. Section bands are drawn faintly, so tinted section colours separate them in both themes.
+- **Sections:** `Quota pauses` first, then `First wave`, then `Launched later`, and `Whole run` last. Section bands are drawn faintly, so tinted section colours separate them in both themes.
 - **Pauses:** one red bar per pause, labelled with its length (`Paused 1h 38m`). If only some tasks paused, say which in the label.
 - **Tasks:** one bar per agent that worked on a task, from its launch to its merge, or to when it stopped if it never merged. Tasks that never started get no bar.
+- **Whole run:** one last bar for the orchestrator, from the user's approval to the final report, with its total and worked time (`Orchestrator · 6h 45m, worked 25m`), coloured by your own reasoning level.
 - **Labels:** the task ID and plain name; why it started late, if it waited (`needed A`, `took A's place`); the outcome, if it didn't merge (`blocked`, `crashed twice`); the total time and the worked time (`4h 25m, worked 50m`).
 - **Reasoning level in the label:** name the level when the colour doesn't pin it down: when it changed during the run (`Ultracode → Extra High`), for any level above Extra High, and for any level below High.
 - **Colours come from tags,** because Gantt bars have only four styles: no tag is blue (Extra High), `active` is violet (above Extra High), `done` is teal (High or lower), and `crit` is red (pauses). Here the tags carry no other meaning.
@@ -178,7 +182,7 @@ A Mermaid `gantt` chart, built like this:
 }, "gantt": {"barHeight": 22, "barGap": 6, "topPadding": 56, "leftPadding": 120, "fontSize": 13, "sectionFontSize": 13, "numberSectionStyles": 3}}}%%
 gantt
   todayMarker off
-  title Bar = launch to merge or stop · violet above Extra High · blue Extra High · teal High or lower (effort at launch) · red = quota pause
+  title Bar = launch to merge or stop · last bar = whole run, approval to report · violet above Extra High · blue Extra High · teal High or lower (effort at launch) · red = quota pause
   dateFormat HH:mm
   axisFormat %H:%M
   section Quota pauses
@@ -192,6 +196,8 @@ gantt
     C · Command line (needed A) · 15m, worked 14m  :done, c, 01:36, 01:51
     F · Export (took A's place) · 54m, worked 41m  :done, f, 01:36, 02:30
     QA · Integration QA (after all merged) · 45m, worked 44m :done, qa, 06:45, 07:30
+  section Whole run
+    Orchestrator · 6h 45m, worked 25m              :whole_run, 00:50, 07:35
 ```
 
 Copy the init lines of both examples as they are, so the charts look alike from one run to the next. If the user's chat view doesn't render Mermaid, the blocks still read as lists of tasks, times and links, so include them either way.

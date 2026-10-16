@@ -88,6 +88,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
 - Create the ledger and the run directory (see below), and record the contract in the ledger.
 - Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configuration`). The report's charts need it.
+- If your thread's title doesn't say plainly which run this is, rename it so the user can tell runs apart (in T3, [references/host-t3.md](references/host-t3.md#name-your-own-thread)).
 - Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
   - Never use the user's own dev-server ports.
   - Never stop processes you didn't start.
@@ -185,7 +186,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
 - **Contract:**
   - the integration checkout path, branch and starting HEAD;
   - the merge policy;
-  - the user's approval, quoted, and every amendment they sent during the run, quoted with its time;
+  - the user's approval, quoted with its time, which starts the run's clock for the report, and every amendment they sent during the run, quoted with its time;
   - the port and resource allocation;
   - any other active run: its ledger, the notes you exchanged and what you agreed.
 - **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; and the IDs of the heartbeat and any resume wake.

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Write the final report's two Mermaid charts (graph.mmd, timeline.mmd) from a run's facts.
+"""Write the final report's two Mermaid charts (graph.mmd, timeline.mmd) from a run's facts,
+and its run-time line (summary.txt).
 
 The charts follow references/final-report.md ("Run charts"): a dependency graph and a
 timeline, coloured by each task's reasoning level at launch.
@@ -10,6 +11,11 @@ Facts file (JSON):
     "harness": "Claude Code (T3) · Opus 5.5",       # optional: say it once when every task used it
     "orchestrator": "Claude Code (T3) · Opus 5.5 (Extra High)",
     "integration": {"branch": "main", "head": "4e1c2a7"},
+    "run": {                                         # optional: the whole run, from the user's approval
+      "start": "00:50", "end": "07:35",              # to the final report
+      "level": "xhigh",                              # the orchestrator's reasoning level
+      "worked_minutes": 25, "wakes": 18              # the orchestrator's own turns in that time
+    },
     "pauses": [{"start": "04:17", "end": "05:55", "reason": "Claude limit", "which": "all tasks"}],
     "tasks": [
       {
@@ -34,6 +40,9 @@ Facts file (JSON):
 
 Usage:
   run-charts <facts.json> <output folder> [--render] [--puppeteer-config <file>]
+
+summary.txt gets the report's run-time line: how long the run took, how much of it was paused,
+how long the orchestrator and the tasks worked, and how many tasks ran at once at most.
 
 --render also draws each chart on a white and on a black background with the Mermaid command
 line (mmdc), when it is installed, so you can look at them before posting.
@@ -159,6 +168,12 @@ def graph(facts: dict) -> str:
 
     orchestrator = facts.get("orchestrator", "Orchestrator")
     lines_o = ["Orchestrator", orchestrator]
+    run = facts.get("run")
+    if run and run.get("start") and run.get("end"):
+        clock = Clock(times_of(facts))
+        total = clock.minutes(run["start"], run["end"])
+        worked = run.get("worked_minutes")
+        lines_o.append(f"whole run {span(total)}" + (f", worked {span(min(int(worked), total))}" if worked is not None else ""))
     for pause in facts.get("pauses", []):
         lines_o.append(f"paused {pause['start']}–{pause['end']}" + (f" · {pause['reason']}" if pause.get("reason") else ""))
 
@@ -214,15 +229,29 @@ def graph(facts: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def times_of(facts: dict) -> list[str]:
+    times = [p[k] for p in facts.get("pauses", []) for k in ("start", "end")]
+    times += [t[k] for t in facts["tasks"] if t.get("launched") and t.get("ended") for k in ("launched", "ended")]
+    run = facts.get("run") or {}
+    times += [run[k] for k in ("start", "end") if run.get(k)]
+    return times
+
+
+def timed(tasks: list[dict]) -> list[dict]:
+    return [t for t in tasks if t.get("launched") and t.get("ended") and t.get("status") != "parked"]
+
+
 def timeline(facts: dict) -> str:
     tasks = facts["tasks"]
     pauses = facts.get("pauses", [])
-    times = [p[k] for p in pauses for k in ("start", "end")]
-    times += [t[k] for t in tasks if t.get("launched") and t.get("ended") for k in ("launched", "ended")]
-    clock = Clock(times)
+    clock = Clock(times_of(facts))
+    run = facts.get("run") or {}
     bands = {level(t) for t in tasks}
     names = [("above", "violet above Extra High"), ("xhigh", "blue Extra High"), ("high", "teal High or lower")]
-    title = ("Bar = launch to merge or stop · " + " · ".join(text for key, text in names if key in bands)
+    if run.get("start") and run.get("end"):
+        bands.add(level({"id": "orchestrator", "level": run.get("level", "high")}))
+    title = ("Bar = launch to merge or stop" + (" · last bar = whole run, approval to report" if run.get("start") else "")
+             + " · " + " · ".join(text for key, text in names if key in bands)
              + " (effort at launch)" + (" · red = quota pause" if pauses else ""))
     lines = [TIMELINE_INIT, "gantt", "  todayMarker off", f"  title {title}",
              f"  dateFormat {clock.mermaid}", "  axisFormat %H:%M"]
@@ -233,8 +262,7 @@ def timeline(facts: dict) -> str:
             lines.append(f"    {text.replace(':', '')} :crit, p{n}, {p['start']}, {p['end']}")
     used: set[str] = set()
     for title_, first in (("First wave", True), ("Launched later", False)):
-        rows = [t for t in tasks if bool(t.get("first_wave")) == first and t.get("launched") and t.get("ended")
-                and t.get("status") != "parked"]
+        rows = [t for t in timed(tasks) if bool(t.get("first_wave")) == first]
         if not rows:
             continue
         lines.append(f"  section {title_}")
@@ -264,7 +292,54 @@ def timeline(facts: dict) -> str:
             used.add(gid)
             text = " · ".join(parts).replace(":", "").replace("#", "")
             lines.append(f"    {text} :{tag}{gid}, {t['launched']}, {t['ended']}")
+    if run.get("start") and run.get("end"):
+        total = clock.minutes(run["start"], run["end"])
+        text = f"Orchestrator · {span(total)}"
+        if run.get("worked_minutes") is not None:
+            text += f", worked {span(min(int(run['worked_minutes']), total))}"
+        tag = {"above": "active, ", "xhigh": "", "high": "done, "}[level({"id": "orchestrator", "level": run.get("level", "high")})]
+        gid = "whole_run"
+        while gid in used:
+            gid += "_"
+        lines += ["  section Whole run", f"    {text.replace(':', '')} :{tag}{gid}, {run['start']}, {run['end']}"]
     return "\n".join(lines) + "\n"
+
+
+def summary(facts: dict) -> str:
+    """The report's run-time line, so nobody adds up durations by hand."""
+    tasks = timed(facts["tasks"])
+    clock = Clock(times_of(facts))
+    run = facts.get("run") or {}
+    if run.get("start") and run.get("end"):
+        start, end = run["start"], run["end"]
+    elif tasks:
+        start, end = min(t["launched"] for t in tasks), max(t["ended"] for t in tasks)
+    else:
+        return ""
+    short = (lambda v: v.split(" ")[1]) if clock.dated else (lambda v: v)
+    paused = sum(clock.minutes(p["start"], p["end"]) for p in facts.get("pauses", []))
+    text = f"Run time: {span(clock.minutes(start, end))} ({short(start)}–{short(end)})"
+    text += f", including {span(paused)} paused for quota." if paused else "."
+    worked = sum(min(int(t.get("worked_minutes", clock.minutes(t["launched"], t["ended"]))),
+                     clock.minutes(t["launched"], t["ended"])) for t in tasks)
+    events = sorted([(clock.minutes(start, t["launched"]), 1) for t in tasks]
+                    + [(clock.minutes(start, t["ended"]), -1) for t in tasks])
+    running = most = 0
+    for _, step in events:  # an end at the same minute as a launch counts first
+        running += step
+        most = max(most, running)
+    parts = []
+    if run.get("worked_minutes") is not None:
+        wakes = f" over {run['wakes']} wakes" if run.get("wakes") else ""
+        parts.append(f"the orchestrator worked {span(int(run['worked_minutes']))}{wakes}")
+    if tasks:
+        parts.append(f"the tasks worked {span(worked)} together, with at most {most} running at once")
+    if parts:
+        joined = "; ".join(parts)
+        text += " " + joined[0].upper() + joined[1:] + "."
+    if not (run.get("start") and run.get("end")):
+        text += " (From the first launch to the last finish; the run's own start and end weren't given.)"
+    return text
 
 
 def render(folder: Path, puppeteer_config: str | None) -> None:
@@ -303,7 +378,11 @@ def main(argv: list[str]) -> int:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "graph.mmd").write_text(graph(facts))
     (folder / "timeline.mmd").write_text(timeline(facts))
-    print(f"run-charts: wrote {folder / 'graph.mmd'} and {folder / 'timeline.mmd'}")
+    line = summary(facts)
+    (folder / "summary.txt").write_text(line + "\n")
+    print(f"run-charts: wrote {folder / 'graph.mmd'}, {folder / 'timeline.mmd'} and {folder / 'summary.txt'}")
+    if line:
+        print(line)
     if args.render:
         render(folder, args.puppeteer_config)
     return 0

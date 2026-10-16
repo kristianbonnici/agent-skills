@@ -115,6 +115,7 @@ cat > "$work/facts.json" <<'EOF'
   "harness": "Claude Code (T3) · Opus 5.5",
   "orchestrator": "Claude Code (T3) · Opus 5.5 (Extra High)",
   "integration": {"branch": "main", "head": "abc1234"},
+  "run": {"start": "00:50", "end": "07:35", "level": "xhigh", "worked_minutes": 25, "wakes": 18},
   "pauses": [{"start": "04:17", "end": "05:55", "reason": "Claude limit"}],
   "tasks": [
     {"id": "A", "name": "Settings screen", "level": "high", "first_wave": true, "status": "merged",
@@ -162,5 +163,9 @@ grep -q 'D · Spell check · Max · blocked · 2h 00m, worked 1h 05m :active, d,
 grep -q 'F · Export (took A.s place) · stopped, nothing merged' "$timeline"
 grep -q 'QA · Integration QA (after the others merged)' "$timeline"
 if grep -q 'Docs for D' "$timeline"; then exit 1; fi
+grep -q 'Orchestrator · 6h 45m, worked 25m :whole_run, 00:50, 07:35' "$timeline"
+grep -q 'whole run 6h 45m, worked 25m' "$graph"
+# A: 30, B1: 62, B2: 50, C: 14, D: 65, F: 41, QA: 44 = 306 minutes; A, B1, D, then C and F at 01:36.
+grep -qx 'Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota. The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.' "$work/charts/summary.txt"
 
 echo "orchestrator scripts: ok"

@@ -19,6 +19,16 @@ jq -c '.providers[] | select(.providerInstanceId=="claudeAgent") | .models[] | {
 - **Record your `parentThreadId`** in the ledger. Every brief's report-back instruction needs it.
 - **Record your own settings.** `t3_thread_configuration` (no `threadId`) returns your provider, model and reasoning option. Copy them into the ledger for the report's charts.
 
+## Name your own thread
+
+The user may have several orchestrators in the thread list, and a thread's title is usually its first message, cut short. Once the contract is approved, read your title: `t3_thread_read` on your `parentThreadId`, with `limit: 1`, returns it as `thread.title`. If it doesn't say plainly which run this is, for example it is generic, a fragment of the request, or about something else, rename it:
+
+```text
+t3_thread_update({action: "rename", title: "Orchestrator: <project> · <what the run does>", clientRequestId: "<run>-rename"})
+```
+
+Omit `threadId`, so it renames your own thread. Keep the title short, such as `Orchestrator: lector · voice agent and settings`, and record it in the ledger. Leave a title that already says this alone. Rename only your own thread, never the user's other threads or another run's.
+
 ## Launch a task
 
 ```text
@@ -150,7 +160,7 @@ The user's active thread list should show only what still needs them. Use `t3_th
 - **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Check each result: a call on another thread returns a `sequence`, while `settlesWhenTurnEnds: true` means it hit your own thread. Afterwards, `t3_thread_list({settled: false, includeSubagents: true})` should list only the threads you meant to keep.
 - **Your own thread:**
   - Pin it (omit `threadId`) when the first wave launches, so it's easy to find during the run.
-  - Unpin it when the final report is written.
+  - Keep it pinned after the final report. The user unpins it after reading.
   - Never settle it. It holds the report, and the user settles it after reading.
 - **A merged task:** settle its thread once you have verified the merge and removed its worktree. Settle it yourself rather than letting the task do it, because only you know the merge checked out. Its workspace no longer exists, and the transcript stays available in the settled list.
 - **A task's helper threads:** reviewers, `delegate_task` children and other sub-agents get threads of their own. List them with `t3_thread_list({includeSubagents: true, limit: 100})` (paginate with `cursor`). Those with `relationshipToParent: "subagent"` and a `parentThreadId` that is a task's thread belong to that task. Settle the idle ones when you settle the task, and at the finish settle the idle helpers of unfinished tasks too. In the first real run, 27 helper threads were left for the end.
@@ -173,6 +183,6 @@ When another run is active ([routing.md](routing.md#running-beside-another-orche
 
 1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules. Stop the keep-awake too.
 2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
-3. Gather the times for the report's timeline. For each task thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A fast helper ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)) can collect these for all the threads, which keeps the long results out of your context; check a few of its times against the ledger. Write them into the facts file, and `scripts/run-charts` draws both charts ([final-report.md](final-report.md#run-charts)).
-4. Post the final report as your last message in your own thread. Unpin the thread, and leave it active.
+3. Gather the times for the report's timeline. For each task thread, and for your own thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A fast helper ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)) can collect these for all the threads, which keeps the long results out of your context; check a few of its times against the ledger. Your own turns from the approval on give your worked time and wake count, for the facts file's `run`; the approval's time is in the ledger, and the run ends with the report. Write them into the facts file, and `scripts/run-charts` draws both charts ([final-report.md](final-report.md#run-charts)).
+4. Post the final report as your last message in your own thread. Leave the thread pinned and active.
 5. If any pull requests were created, link them with `link_pull_request`.
