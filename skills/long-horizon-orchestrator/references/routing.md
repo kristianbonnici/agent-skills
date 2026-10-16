@@ -11,7 +11,7 @@ The home harness is the harness and model the orchestrator itself runs on:
 
 Route every task there by default. The user chose this harness for the run, its tools and installed skills are known to work, and it is usually the subscription the user sized for this kind of work.
 
-The one exception: if you yourself run on Antigravity, don't treat it as the home harness for complex tasks. Route those to Claude Code or Codex (see "Antigravity" below).
+The one exception: if you yourself run on Antigravity or on one of OpenCode's free models, don't treat it as the home harness for complex tasks. Route those to Claude Code or Codex (see "Fast helpers" below).
 
 Route a task elsewhere only when one of these applies, and only in the contract the user approves:
 1. **Strength:** another provider clearly does a particular piece of work better and has room for it (section 4).
@@ -19,7 +19,7 @@ Route a task elsewhere only when one of these applies, and only in the contract 
 
 Running short of capacity is not a reason to route elsewhere. The home subscription is the one the user started the run on and sized for it; the others are usually smaller and kept for the work they were given. If the home harness can't fit the whole run, say so in the contract and plan for pauses (section 3).
 
-Once the run has started, nothing changes subscription: not the tasks, and not you.
+Once the run has started, nothing changes subscription: not the tasks, and not you. Only a fast helper's work may switch between helpers (section 4).
 
 ## Reasoning level: err on the side of more
 
@@ -31,7 +31,7 @@ An under-powered agent on important work costs more than an over-powered one: wr
 | Any real task that is not trivially simple: the default | high |
 | A task where you see a real benefit from extra thinking (for example subtle correctness or security logic, a bug with an unknown cause, a design choice with no precedent in the project). Name the benefit in the contract | extra high |
 | Sparingly: large or many-sided work that clearly gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor). Name the gain in the contract | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
-| An Antigravity helper step | high (see "Antigravity" below) |
+| A fast helper's step or research lane, on Antigravity or OpenCode | high (see "Fast helpers" below) |
 
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
 - **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` defaults to low.
@@ -66,28 +66,43 @@ Percentages from different plans are not comparable. 30% left of Claude Max 20x 
 tasks that fit ≈ (100 − used_percent) / percent one task uses on that plan
 ```
 
-- **Where "percent one task uses" comes from:** the calibration in the user's profile (section 6). With no calibration yet, be conservative on small plans. On a Plus-sized plan, assume one multi-hour implementation task can take most of a 5-hour window. On a Max-sized plan, assume a small share.
+- **Where "percent one task uses" comes from:** the calibration in the user's profile (section 6). With no calibration yet, be conservative on small plans. On a Plus-sized plan, assume one heavy implementation task takes about a whole 5-hour window per hour of work: on 2026-10-15, three Codex tasks at high drained a fresh ChatGPT Plus window in about 20 minutes, twice (about 90% of a window per task-hour). On a Max-sized plan, assume a small share.
 - **Learning it:** after each task, update the calibration from the snapshots taken before and after. If several tasks shared the provider, split the change between them by duration. Calibrate only from real runs, with tasks of about 20 minutes or longer. Short tasks and test runs give wildly misleading per-hour rates: a 3-minute task that moves a window by 3 points is not "60% per hour". When a run is too short to calibrate from, say so in the ledger and leave the profile unchanged.
 - **The 5-hour window limits a wave; the weekly window limits the whole run.** The weekly window also covers the user's next days, so don't plan to use more than about 80% of a weekly window without saying so in the contract.
 - **Staleness:** treat `observed_at` as the age of the number. A window with `reset_since_observed: true` has reset since it was read, so it is near zero again.
-- **Missing data:** if a provider's usage can't be read, say so and route by plan size alone. Antigravity's is never readable, so it runs on a hand-off budget instead.
+- **Missing data:** if a provider's usage can't be read, say so and route by plan size alone. Antigravity's and OpenCode's are never readable, so their helpers are watched for errors and slowdowns instead (section 4).
 - **Other runs share the windows.** Another orchestrator run on the same machine draws on the same subscriptions. Before the contract and before each wave, look for other ledgers next to yours:
 
   ```sh
   grep -l -E '^Status: (running|paused)' "${XDG_STATE_HOME:-$HOME/.local/state}"/agent-skills/long-horizon-orchestrator/*.md
   ```
 
-  A ledger without a `Status:` line that was changed in the last day may also be active. For each active run, count its running tasks on each provider and leave room for them. Name them in the contract, and in the report's usage line, because they make the usage numbers a shared total.
+  A ledger without a `Status:` line that was changed in the last day may also be active. For each active run, count its running tasks on each provider and leave room for them. Name them in the contract, and in the report's usage line, because they make the usage numbers a shared total. Then coordinate with it, as below.
+
+### Running beside another orchestrator
+
+The owner sometimes runs two orchestrators at once on one computer, often on the same repository. On 2026-10-15, two runs shared one checkout, one Claude plan and the screen for about four hours without trouble, because they agreed how. When another run is active:
+
+1. **Write to it before your contract.** Its ledger names its thread (in T3, send to that thread with `t3_thread_send` in mode `queue`). Say which run you are, where your ledger is, which code areas and shared resources your tasks will use, your ports and folders, and when you expect to finish. Wait a few minutes for its answer (in T3, `t3_thread_wait` on its thread, then read its last message). Keep the note and its answer in your ledger, and ask it to keep them in its own. If no answer comes (the run is paused, or doesn't know this protocol), go on with safe defaults: stay out of the code areas its ledger names, use its lease folder if it has one (otherwise make one and tell it), keep clear of its ports and folders, and leave the shared finish to whichever run turns out to be last.
+2. **Split the code areas.** Say in your contract which parts of the code your tasks stay out of because the other run works there, and ask it to do the same for yours. Overlap only where both runs agree.
+3. **Share one lease folder.** Both runs take turns at the screen and the GPU through the same leases: a folder of its own next to the ledgers (for example `<repo>-<computer>-leases/`, with `bin/lease` and `leases.json`, [machine.md](machine.md#6-shared-resources-and-disk)), with owners named after their run (`app-B`, `ask-F`). If the other run already set one up, use it.
+4. **Keep ports and folders apart,** and name the other run's in your briefs as not yours to stop or reuse.
+5. **Its merges are normal movement of the integration branch.** Your tasks rebase onto them as onto any other merge. Never revert or rework the other run's merged work; tell it what you found instead.
+6. **The user's settings are shared.** Both runs' test builds may write the same settings of the user's app. When your wake's settings check ([machine.md](machine.md#7-during-the-run)) shows a change, find whose build made it, restore it, and tell that run, so it steers its task.
+7. **Agree on the shared finish.** Steps that touch what both runs share (relaunching the user's app, the final comparison of their settings) are done once, by whichever run finishes last. Each run still runs the quick main check for its own report: the first to finish in a detached worktree, the last in the checkout (SKILL.md, "Finish"). The first to finish tells the other, and the last names both runs in its report.
+8. **Forward findings.** Anything one run learns that affects the other (a flaky check, a new rule for the briefs, a shared file that broke) goes to the other run's thread at once.
 
 ## 3. When a window runs short or runs out
 
-When a usage window runs out, the work that depends on it pauses. Nothing moves to another subscription: not a task, and not you. Waiting beats a hand-off in two ways:
+When a usage window runs out, the work that depends on it pauses. Nothing moves to another subscription: not a task, and not you. (A fast helper that hits its own limit is different: its work switches to another helper, section 4.) Waiting beats a hand-off in two ways:
 - the subscriptions stay used the way the user sized them;
 - an agent that resumes on its own thread keeps everything it knew, which a successor would have to rebuild from notes.
 
 ### Before launching
 
 If a wave won't fit in the home harness's 5-hour window, launch what fits and hold the rest until the reset, with a resume wake scheduled for just after it (below). Tasks that the contract routed to another provider follow that provider's windows in the same way.
+
+On a small plan such as ChatGPT Plus, each hour of a heavy task takes about a whole window (section 2). Launch such tasks one at a time, or together only when the contract accepts a near-certain pause, and schedule the resume wake as soon as they start.
 
 ### Watch the pace, not just the level
 
@@ -143,25 +158,55 @@ Never work around a limit silently. The report says which tasks paused, for how 
 | Work | Prefer | Applies when | Basis |
 |---|---|---|---|
 | Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex | Codex has room for that piece | Owner's assessment, 2026-10: Codex's computer use is stronger |
-| A small, fully specified step a fast model can do (see "Antigravity" below) | Antigravity, Gemini Flash | the step is simple, the hand-off budget isn't spent, and the result can be checked | Owner, 2026-10: a fast, less capable helper, to be used sparingly |
+| Research and retrieval: web and documentation research, searching a codebase, logs or many files, surveying how others solve a problem, collecting facts and evidence | A fast helper (see "Fast helpers" below), as a sub-task or a research subagent inside the task | the result can be checked against its sources | Owner, 2026-10-16: use them freely for research and retrieval |
+| A simple, fully specified step: a mechanical edit from an exact rule, renames, boilerplate from a template, extracting facts from named files | A fast helper | the result is cheap to check | Owner, 2026-10 |
 | Everything else | Home harness | always | section 1 |
-
-### Antigravity: a fast helper for simple steps
-
-Antigravity is never a task agent for complex work. Don't give it a whole task, a design or debugging problem, a review, or a merge gate, and don't use it to save capacity on work that needs judgment. It never orchestrates either, not even as a stand-in while the home window resets (section 3). Its role is the occasional simple step inside a task run by a stronger agent. Such a step:
-
-- **Has a fully specified input and output:** a mechanical edit across many files from an exact rule, renames, reformatting, boilerplate from a given template, extracting facts from named files, or a quick lookup.
-- **Is cheap to check:** the delegating agent reviews the result, for example with a diff, a test or a quick read, before relying on it.
-
-Settings:
-
-- **Model:** a Gemini Flash model at high reasoning, for example `gemini-3.8-flash-high`, even for quick steps. Flash stays fast at high reasoning, and since it is a less capable model to begin with, the extra reasoning is what makes its results dependable. Don't use Antigravity's larger models (Gemini Pro, or the Claude and GPT models it also offers) to do bigger work through the back door. That work belongs to the home harness.
-- **Budget:** treat Antigravity's plan as small, with its own limits (the owner's plan is in the profile), and Antigravity doesn't record its quota locally, so `provider-usage` can't show it. Limit the number of hand-offs instead. The default is at most 5 small steps per 5-hour window for the whole run, unless the profile's calibration says otherwise. Count them in the ledger.
-- **Quota errors:** after a quota or rate-limit error, stop using Antigravity until its window resets, and note the error in the profile. The point at which errors start is the calibration.
 
 - **A preference, not a rule.** Claude agents can do computer use too. When Codex is short on room, unavailable, or the computer-use part is trivial, keep the work on the home harness.
 - **Apply it to the smallest sensible piece.** If only one step of a task needs computer use, keep the task on the home harness and hand that one step to Codex (section 5). Move the whole task only when most of it is computer use.
 - **The user can override this.** The owner's profile (section 6) wins over this table.
+
+### Fast helpers: Antigravity and OpenCode
+
+Two providers offer fast models that cost the run little. Handing them research and simple steps saves the task agent's context and its subscription for the work that needs judgment:
+
+- **Antigravity:** `gemini-3.8-flash-high`, Gemini Flash at high reasoning.
+- **OpenCode:** only its two free models that are good enough (owner, 2026-10-16): `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free`, each with `{"id": "variant", "value": "high"}`. Its other free models aren't good enough, and its paid models bill the owner per request: use neither.
+
+Flash models stay fast at high reasoning, and since they are less capable to begin with, the extra reasoning is what makes their results dependable. Don't use these providers' larger models (Gemini Pro, the Claude and GPT models Antigravity also offers, OpenCode's paid models) to do bigger work through the back door. That work belongs to the home harness.
+
+**What they take,** as often as it genuinely helps, with no fixed count:
+- **Research and retrieval:** web and documentation research, searching a codebase, logs or many files, surveying how other projects solve a problem, collecting facts, API details or evidence, comparing options against named criteria, condensing long material.
+- **Simple, fully specified steps:** a mechanical edit across many files from an exact rule, renames, reformatting, boilerplate from a given template, extracting facts from named files, a quick lookup.
+
+**How a task uses them,** in T3 through `delegate_task` (section 5):
+- **as a sub-task** (`mode: "wait"`), for a question or a step the task needs before it goes on;
+- **as a research subagent** (`mode: "async"`, `role: "research"`), for a longer lane that runs while the task's agent does other work, such as surveying prior art while it reads the code. Its completion wakes the agent. A task may run several lanes at once when their questions are independent.
+
+You may use them too, for the run's own chores: collecting thread times for the report's charts, condensing handoffs, research while planning. On 2026-10-15, one of each did such a read-only collection job correctly.
+
+**What they never take:** a whole task, a design decision, a bug with an unknown cause, code changes that need judgment, a review, the merge gate, or the orchestration, not even as a stand-in while the home window resets (section 3). They are never task agents.
+
+**Every result is checked** by the agent that asked, before it relies on it. For research, the helper gives a source for each claim (a link, or a file and line), and the agent checks the claims it builds on. For a step, a diff, a test or a quick read.
+
+**They run with the owner's own setup.** A helper loads the owner's configuration for its harness, including their MCP servers: on 2026-10-15, an OpenCode helper connected to the owner's running app through it. So every helper's prompt says: stay read-only, apart from the files a step names; never commit, merge, or touch the integration checkout; don't use tools that reach the owner's apps or services (speaking, messaging, their app's own tools); never ask the user anything.
+
+**Limits: switch, don't wait.** Neither provider's usage can be read locally, so watch the helpers themselves.
+- **OpenCode's free models are rate-limited, model by model.** Under load, most requests come back `429` and OpenCode quietly retries them, so a helper slows down rather than fails. On 2026-10-16, about 12 of 15 requests to GLM-5.3 Flash between 17:59 and 18:02 failed with `429`. The signs:
+  - a step takes several times longer than the same kind of step did earlier;
+  - `task_status` stays `working` while its child thread shows nothing new for several minutes;
+  - it ends with a rate-limit (`429`) or "Upstream request failed" error.
+
+  OpenCode's log (`~/.local/share/opencode/log/opencode.log`) records only that last error, not the retries before it. The owner's OpenCode console lists every request.
+- **Antigravity has a small plan with its own limits** (the owner's plan is in the profile), and says so with a quota or rate-limit error.
+- **When a helper is limited,** cancel it (`task_cancel`) and switch. A task calling a helper in `wait` mode sees nothing while it waits, so it passes a `timeoutMs` of a few minutes; `waitTimedOut` is its sign to look at `task_status`. Then:
+  1. **Model:** on OpenCode, delegate the same prompt again to its other good free model.
+  2. **Provider:** if that one is limited too, or the helper was on Antigravity, delegate it to the other provider.
+  3. **Yourself:** when every helper is limited, do the work yourself.
+
+  Try a limited OpenCode model again only on a later step, and drop it for the rest of the task if it is still slow. After an Antigravity quota error, leave Antigravity alone until its window resets.
+- **Switching moves helper work only.** Helpers are free or small, not the subscriptions the user sized for the run, so their work may move between them. The task itself, and you, never move (section 3).
+- **Record it.** The ledger gets each task's helper use (provider, model and level, and for what, with counts) and every limit and switch. Where the limits began goes into the profile's calibration.
 
 ### Computer use needs the screen
 
@@ -176,9 +221,9 @@ Computer use works only while the Mac is awake and unlocked, and on windows the 
 
    If it is locked, or the app's window can't be captured, don't retry. The task lists the check under "Couldn't check" in its handoff, merges on its other checks (unless that check is its main deliverable), and the report asks the user to look.
 
-## 5. Handing one step to another provider
+## 5. Handing work to another provider
 
-This needs T3, which can launch child tasks on other providers. In T3, when a task has a step suited to another provider and that provider has room, add a "Help available" section to the brief:
+This needs T3, which can launch child tasks on other providers. In T3, when a task has work suited to another provider and that provider has room, add a "Help available" section to the brief. For Codex:
 
 ```text
 Help available: for <the kind of step, for example "checking on the real screen how the app's windows look and behave">, you may hand that step to Codex. Call delegate_task with target {providerInstanceId: "codex", model: "<model id>", options: [<reasoning option>]}, mode "wait", and a self-contained description of the step, including what to report back. Use it as often as it genuinely helps, for steps where it does better than you, such as judging what is on the screen or clicking through a flow you can't script. Don't hand it work you can do as well yourself (a scripted check, a screenshot, code), and stop using it if Codex is short on room. If the hand-off fails or Codex is unavailable, do the step yourself.
@@ -186,20 +231,29 @@ Help available: for <the kind of step, for example "checking on the real screen 
 
 Codex hand-offs have no fixed count. Before each wave, check that Codex has room for the hand-offs you expect, and leave the section out if it doesn't.
 
-For an Antigravity step, the same pattern applies with its own budget and a check:
-
-```text
-Help available: for simple, fully specified steps such as <example>, you may hand the step to a fast helper. Call delegate_task with target {providerInstanceId: "antigravity", model: "gemini-3.8-flash-high"}, mode "wait", and exact inputs, rules and the expected output. Use at most <n> such hand-offs. Check every result before using it. If it is wrong, or the helper reports a quota error, do the step yourself and don't use the helper again in this task.
-```
-
-Divide the run's Antigravity budget across the tasks that get this section, and record each task's share in the ledger.
-
 - **Codex computer use works under T3.** The owner confirmed this on 2026-10-04. It operates the real screen, so avoid it for steps that would disturb a user who is at the machine, unless the brief allows it. It needs the screen as described in section 4.
 - **What it did in the 2026-10-12 run:**
   - Four hand-offs, all to click through and judge screens. Three passed. The fourth couldn't turn VoiceOver on (⌘F5), so leave VoiceOver checks to the task or the user.
   - The tasks did most other screen checks themselves, through the accessibility API and screenshots.
   - Tasks were allowed to hand any permission prompt to Codex, and none did: a task whose command waits on a dialog sees only a hang. Grant permissions in the warm-up instead ([machine.md](machine.md#3-the-warm-up)).
-- **A helper is for its step only.** A task must not hand the rest of its work to a helper, and neither a task nor a helper moves work to another subscription because the home window ran out (section 3).
+
+For the fast helpers, add this section, with examples from the task:
+
+```text
+Help available (fast helpers): you may hand two kinds of work to a fast helper model, as often as it genuinely helps:
+- research and retrieval, such as <examples: how other projects solve X, what the docs of Y say about Z, where this codebase does W>. Ask a self-contained question: what to find, where to look, and the answer's format, with a source (a link, or a file and line) for each claim;
+- simple, fully specified steps, such as <example>. Give the exact inputs, rules and expected output.
+Call delegate_task with role "research" (or "general" for a step) and either mode "wait" with timeoutMs <n minutes, in milliseconds> for a quick one, or mode "async" for a longer research lane while you keep working; its completion wakes you. Targets, in this order:
+1. {providerInstanceId: "<first helper>", model: "<model>"<, options>}
+2. {providerInstanceId: "<second>", model: "<model>"<, options>}
+3. {providerInstanceId: "<third>", model: "<model>"<, options>}
+Use no other model of these providers. Tell the helper to stay read-only (apart from the files a step names), never to commit or merge, not to use tools that reach the owner's apps or services, and never to ask the user anything. Check every result before you rely on it: check the claims you build on against their sources, and diff or test a step. Never hand a helper a decision, code that needs judgment, a review or the merge gate.
+A helper is limited when it reports a quota or rate-limit (429) error or "Upstream request failed", or when it is far slower than the same kind of work was earlier. A wait that returns waitTimedOut, or an async lane with nothing new in its child thread for <n> minutes, is the sign: look at task_status, and if it is still working without progress, it is limited. Then cancel it with task_cancel and give the same prompt to the next target; when all are limited, do the work yourself. Note each switch, and which helpers you used for what, in your handoff.
+```
+
+Fill in the targets from section 4: Antigravity (`antigravity`, `gemini-3.8-flash-high`, no options) and OpenCode's `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free` (`opencode`, options `[{id: "variant", value: "high"}]`), the two OpenCode models next to each other, so a limited one switches model first. Spread the load across the two providers: give about half the tasks Antigravity first, and the others OpenCode first. Leave out a helper that is limited now, and put one that was limited earlier last. Five minutes without anything new suits a quick step (timeoutMs 300000); allow a research lane longer.
+
+- **A helper is for its step or lane only.** A task must not hand the rest of its work to a helper. When the home window runs out, the task pauses (section 3); it doesn't keep going by handing its work to helpers.
 - **Plain Claude Code or Codex:** no cross-provider hand-off exists, so the step stays on the home harness.
 
 ## 6. The owner's profile
@@ -223,10 +277,11 @@ The owner may edit it at any time, and their statements win over this reference.
 - Claude: <plan, e.g. Max 20x> (detected <date>)
 - Codex: <plan, e.g. ChatGPT Plus> (detected <date>)
 - Antigravity: <plan> with its own limits (owner, <date>; usage not readable locally)
+- OpenCode: free models only (owner, <date>); rate-limited model by model, usage not readable locally
 
 ## Preferences
 - Prefer Codex for computer use when it has room (owner, <date>)
-- Antigravity only for simple, checkable steps, sparingly (owner, <date>)
+- Fast helpers inside tasks, for research, retrieval and simple steps: Antigravity's Gemini Flash at high; OpenCode's <models good enough> at high; never task agents (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)
 
 ## Machine
@@ -238,6 +293,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - codex/<plan> five_hour: ~<n>% per task-hour, <kind of task> (run <ledger name>)
 - claude/<plan> five_hour: ~<n>% per task-hour (run <ledger name>)
 - antigravity: <n> Flash hand-offs in one 5-hour window before a quota error (run <ledger name>)
+- opencode/<model>: rate-limited after <n> requests in <m> minutes; switched to <model or provider> (run <ledger name>)
 ```
 
 At the start of a run, read the "Granted" line under "Machine", so the contract asks only for what's new. Update it after the warm-up.
@@ -249,7 +305,9 @@ At the start of a run, read the "Granted" line under "Machine", so the contract 
   - Give the expected consumption of the run, and whether it is likely to pause for a reset (and until when).
   - Name any other active run that shares the subscriptions.
   - Give the reason for each task routed away from the home harness.
+  - Say which tasks may use the fast helpers, and for what.
 - **In the report:**
   - Add one line on usage, before and after.
   - Name any task that paused for a reset, and for how long.
   - Name other runs that used the same subscriptions meanwhile, because their use is in the numbers.
+  - Mention a helper that was rate-limited or ran out, and what the work switched to.

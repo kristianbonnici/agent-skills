@@ -4,7 +4,7 @@
 Copy this script into <run directory>/bin/ and describe the resources in
 <run directory>/leases.json, for example:
 
-  {"screen": {"slots": 1, "max_minutes": 15}, "gpu": {"slots": 2, "max_minutes": 30}}
+  {"screen": {"slots": 1, "max_minutes": 15, "wait_minutes": 45}, "gpu": {"slots": 2, "max_minutes": 30}}
 
 Usage:
   lease acquire <resource> --owner <task ID> [--all] [--minutes N] [--wait-minutes W]
@@ -15,15 +15,23 @@ Usage:
   --all       take every slot of the resource (for example the whole GPU for a timing run)
   --minutes   how long the lease lasts (default 20, at most the resource's max_minutes); acquiring
               again with the same owner renews it, and a forgotten lease frees itself when it expires
-  --wait-minutes  how long to wait for a turn (default 120)
+  --wait-minutes  how long to wait for a turn (default: the resource's wait_minutes, else 30)
   --run       the run directory (default: the folder above this script's folder, or $LEASE_RUN_DIR)
 
-Turns are first come, first served for each resource. A waiter that stops asking for a minute
-loses its place. "run" holds the lease only while the command runs, and stops the command when
-the lease runs out.
+Turns are first come, first served for each resource. A waiter that stops asking for 15 seconds
+loses its place. "run" holds the lease only while the command runs, stops the command when the
+lease runs out, and releases the lease if it is stopped itself.
 
-Exit status: 0 done; 75 the wait timed out; 124 "run" stopped the command at the end of its
-lease; 2 usage error.
+While others wait, a holder's turn lasts at most the resource's turn_minutes (default: its
+max_minutes), counted from when the first of them began waiting, or from the holder's first
+acquire if that is later. Renewing never stretches a turn: a renewal after it, or one that would
+leave less than a minute, releases the lease and exits 76; stop using the resource, and acquire
+again to queue behind the others. With nobody waiting, renewing goes on extending the lease. A
+holder that doesn't renew keeps its lease until it expires, at most max_minutes after its last
+acquire.
+
+Exit status: 0 done; 75 the wait timed out; 76 the turn is over and others wait (the lease is
+released); 124 "run" stopped the command at the end of its lease; 2 usage error.
 """
 
 from __future__ import annotations
@@ -32,12 +40,18 @@ import argparse
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
 
 DEFAULT_MINUTES = 20.0
-FORGET_WAITER_SECONDS = 60
+DEFAULT_WAIT_MINUTES = 30.0
+FORGET_WAITER_SECONDS = 15
+POLL_SECONDS = 2.0
+TURN_GRACE_SECONDS = 60
+TIMED_OUT = 75
+TURN_OVER = 76
 
 
 def run_dir(arg: str | None) -> str:
@@ -95,47 +109,71 @@ class Leases:
     def max_minutes(self, resource: str) -> float:
         return float(self.config[resource].get("max_minutes", 30))
 
-    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float) -> bool:
+    def turn_minutes(self, resource: str) -> float:
+        return float(self.config[resource].get("turn_minutes", self.max_minutes(resource)))
+
+    def wait_minutes(self, resource: str) -> float:
+        return float(self.config[resource].get("wait_minutes", DEFAULT_WAIT_MINUTES))
+
+    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float):
+        """Returns ("held", minutes left), ("waiting", None) or ("turn over", None)."""
         need = self.slots(resource) if take_all else 1
+        turn = self.turn_minutes(resource)
 
         def attempt(state, now):
             held = state["leases"].setdefault(resource, [])
             expires = now + minutes * 60
-            for lease in held:
-                if lease["owner"] == owner:
-                    lease["expires"] = expires
-                    return True
             me = f"{resource}:{owner}"
             waiting = state["waiting"]
+            for lease in held:
+                if lease["owner"] == owner:
+                    since = lease.setdefault("since", now)
+                    others = [w["since"] for k, w in waiting.items() if w["resource"] == resource and k != me]
+                    if others:
+                        end = max(since, min(others)) + turn * 60
+                        if end - now < TURN_GRACE_SECONDS:
+                            held.remove(lease)
+                            return "turn over", None
+                        expires = min(expires, end)
+                    lease["expires"] = expires
+                    return "held", (expires - now) / 60
             waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
             queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
             if queue[0][1] != me:
-                return False
+                return "waiting", None
             if sum(l["slots"] for l in held) + need > self.slots(resource):
-                return False
-            held.append({"owner": owner, "slots": need, "expires": expires})
+                return "waiting", None
+            held.append({"owner": owner, "slots": need, "expires": expires, "since": now})
             del waiting[me]
-            return True
+            return "held", minutes
 
         return self.locked(attempt)
 
-    def acquire(self, resource: str, owner: str, take_all: bool, minutes: float, wait_minutes: float) -> bool:
+    def acquire(self, resource: str, owner: str, take_all: bool, minutes: float, wait_minutes: float):
+        """Returns (exit status, minutes the lease lasts or None)."""
         deadline = time.time() + wait_minutes * 60
         announced = False
         while True:
-            if self.try_acquire(resource, owner, take_all, minutes):
-                self.log(f"acquire {resource} {owner} {minutes:g}m{' all' if take_all else ''}")
-                print(f"lease: {owner} holds {resource} for up to {minutes:g} min")
-                return True
+            result, left = self.try_acquire(resource, owner, take_all, minutes)
+            if result == "held":
+                self.log(f"acquire {resource} {owner} {left:.1f}m{' all' if take_all else ''}")
+                print(f"lease: {owner} holds {resource} for up to {round(left, 1):g} min")
+                return 0, left
+            if result == "turn over":
+                self.log(f"turn over {resource} {owner}")
+                print(f"lease: {owner}'s turn at {resource} is over and others are waiting, so the lease "
+                      f"is released. Stop using {resource}; acquire again to queue behind them.",
+                      file=sys.stderr)
+                return TURN_OVER, None
             now = time.time()
             if now >= deadline:
                 self.locked(lambda state, _: state["waiting"].pop(f"{resource}:{owner}", None))
                 print(f"lease: gave up waiting for {resource} after {wait_minutes:g} min")
-                return False
+                return TIMED_OUT, None
             if not announced:
                 print(f"lease: waiting for {resource} ...", flush=True)
                 announced = True
-            time.sleep(max(0.2, min(10.0, deadline - now)))
+            time.sleep(max(0.2, min(POLL_SECONDS, deadline - now)))
 
     def release(self, resource: str, owner: str) -> int:
         def drop(state, _):
@@ -152,7 +190,8 @@ class Leases:
         def report(state, now):
             return {
                 "leases": {
-                    name: [dict(l, minutes_left=round((l["expires"] - now) / 60, 1)) for l in held]
+                    name: [dict(l, minutes_left=round((l["expires"] - now) / 60, 1),
+                                held_minutes=round((now - l.get("since", now)) / 60, 1)) for l in held]
                     for name, held in state["leases"].items()
                     if held
                 },
@@ -174,7 +213,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--owner")
     parser.add_argument("--all", action="store_true", dest="take_all")
     parser.add_argument("--minutes", type=float, default=DEFAULT_MINUTES)
-    parser.add_argument("--wait-minutes", type=float, default=120.0)
+    parser.add_argument("--wait-minutes", type=float)
     parser.add_argument("--run")
     args = parser.parse_args(argv)
 
@@ -190,25 +229,45 @@ def main(argv: list[str]) -> int:
         print("lease: --owner <task ID> is required", file=sys.stderr)
         return 2
     minutes = min(args.minutes, leases.max_minutes(args.resource))
+    wait_minutes = args.wait_minutes if args.wait_minutes is not None else leases.wait_minutes(args.resource)
 
     if args.action == "release":
         print(f"lease: released {leases.release(args.resource, args.owner)} lease(s)")
         return 0
     if args.action == "acquire":
-        return 0 if leases.acquire(args.resource, args.owner, args.take_all, minutes, args.wait_minutes) else 75
+        return leases.acquire(args.resource, args.owner, args.take_all, minutes, wait_minutes)[0]
     if not command_args:
         print("lease: run needs -- <command>", file=sys.stderr)
         return 2
-    if not leases.acquire(args.resource, args.owner, args.take_all, minutes, args.wait_minutes):
-        return 75
+    code, left = leases.acquire(args.resource, args.owner, args.take_all, minutes, wait_minutes)
+    if code:
+        return code
+
+    class Stopped(Exception):
+        pass
+
+    def stop(signum, _frame):
+        raise Stopped(signum)
+
+    for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(signum, stop)
+    process = None
     try:
         process = subprocess.Popen(command_args)
         try:
-            return process.wait(timeout=minutes * 60)
+            return process.wait(timeout=left * 60)
         except subprocess.TimeoutExpired:
             process.terminate()
-            print(f"lease: stopped the command at the end of its {minutes:g} min lease", file=sys.stderr)
+            print(f"lease: stopped the command at the end of its {round(left, 1):g} min lease", file=sys.stderr)
             return 124
+    except Stopped as stopped:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        return 128 + stopped.args[0]
     finally:
         leases.release(args.resource, args.owner)
 

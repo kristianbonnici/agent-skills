@@ -5,6 +5,16 @@
 - **Merge (default):** each task fast-forwards the integration branch itself once the review and full checks pass. Tasks that finish around the same time race safely: fast-forward-only either succeeds or fails cleanly, and a task that loses rebases, re-validates and tries again.
 - **Leave on branch:** each task stops with a reviewed, validated, rebased branch and reports `ready`. Nothing touches the integration branch. A dependent task is based on its predecessor's branch, forming a stack. Say so in the contract and the report, because the user then has to merge in order.
 
+### A narrow, measured miss
+
+Work merges only when every check passes. There is one exception, and you decide it, never the task: a task that meets its main goal with a broad, measured improvement, but misses one named check narrowly, for a reason it understands. The task reports `ready` with the numbers, and you may let it merge when all of these hold:
+- the miss is small and measured: the check's threshold, the result before the change and after it;
+- nothing else fails, and the main deliverable isn't the check that missed;
+- a follow-up task is launched for the miss, within the contract (from the reserve, or as a new task with the same scope);
+- the report names the miss and its follow-up.
+
+Then tell the task to merge (it reports again once merged), or do the gate yourself. If any condition fails, the task stays `ready` and the report lists it under "Not finished". Never loosen, skip or re-baseline the check to make it pass. In the 2026-10-15 run, two tasks merged this way, each with a follow-up, and both checks were later made to pass as they stood.
+
 ## Verifying a "merged" report
 
 ```sh
@@ -14,9 +24,11 @@ git merge-base --is-ancestor <task head> <integration branch> && echo merged
 
 Record the merged commits in the ledger. If the report says `merged` but git disagrees, treat the task as `ready` and handle it as described below.
 
+A task may report more than once: after review fixes, a rebase or a follow-up. Act on its latest report, verify that report's head, and record the commits it merged.
+
 ## A task that is ready but not merged
 
-The integration branch may have moved, or the checkout may have been dirty at the gate. Either way:
+The integration branch may have moved, or the checkout may have been dirty at the gate. (A task that stopped because one check missed narrowly is a different case: see "A narrow, measured miss" above.) Either way:
 
 1. Check the integration checkout. If it has tracked modifications the run didn't make, the user is probably working there. Don't touch it. Keep the task `ready` and list it in the final report.
 2. Otherwise, send the task a follow-up asking it to rebase, re-validate and retry the merge gate.
@@ -34,11 +46,21 @@ A dependent task launches only when every prerequisite is `merged` (or `ready`, 
 
 Clean up only worktrees and branches this run created.
 
-Wait until the task has gone idle before cleaning up. A task may report back and then keep working, for example when its queued goal turn re-runs the checks in the same worktree. Removing the worktree under it breaks that turn.
-- Launch the dependents as soon as the merge is verified; they don't need the old worktree.
-- Do the cleanup on a later wake if the task is still running. The heartbeat or its next report will bring you back.
+Launch the dependents as soon as the merge is verified; they don't need the old worktree. Then clean up only once the task and everything it started have stopped. Check, in this order:
 
-Then confirm nothing still runs in the worktree: `lsof +D <worktree>` should list only the idle agent's own session. A thread can look finished while a background job it started still runs there. In the 2026-10-12 run, removing a worktree stopped a 24-minute measurement.
+1. **Its turn.** A task often reports back and keeps working, for example when its goal turn re-runs the checks or retries a check it listed under "Couldn't check". Once the merge is verified, that work is over: stop the turn on this same wake (in T3, interrupt it and clear its goal, [host-t3.md](host-t3.md#stopping-a-task)). A turn doing something the report-back mentioned as still to come, such as a follow-up you sent, finishes first.
+2. **Its background jobs.** Settling a thread or closing an agent does not stop the jobs it started. Read the task's last messages for anything it started in the background (a `lease run`, a server, a measurement), then look:
+
+   ```sh
+   pgrep -fl '<worktree path>'            # processes whose command line names the worktree
+   lsof +D '<worktree path>'              # processes with files or their working folder there: only the idle agent's own session
+   pgrep -fl '<run directory>/<task ID>'  # jobs whose command line names the task's folder in the run directory
+   ```
+3. **Its leases.** `lease status` (in the run's lease folder, normally the run directory) should show none held by the task. Release a merged task's lease only after its processes are gone; releasing it earlier hands the resource to another task while the old job still uses it.
+
+If anything still runs, leave the cleanup for a later wake; the heartbeat or the task's next report will bring you back. A job that would never end on its own (a server, a watcher) after the task's turn has stopped: ask the task to stop it, or stop it yourself by its process ID, once `ps -p <pid> -o command=` shows it is the task's. In the 2026-10-12 run, removing a worktree stopped a 24-minute measurement. On 2026-10-15, a thread showed completed while its background screen check still ran; its worktree was removed and its lease released, and another task's screen check overlapped it for two minutes and had to be redone.
+
+Then clean up:
 
 1. **Remove the worktree:** `git worktree remove <path>`, without `--force`. If git refuses because the worktree has changes, leave it and record why. If the project builds desktop apps, first unregister the worktree's builds from the system, so links and app identifiers stop reaching them (on macOS, `lsregister -u <app path>`; [machine.md](machine.md#5-the-users-own-things) gives its full path).
 2. **Delete the branch:** `git branch -d <branch>` works when the branch tip is an ancestor of the integration branch.
@@ -54,7 +76,7 @@ Cleanup is for merged work only. A blocked, failed, parked or ready-but-not-merg
 
 Nothing of it merges. Keep its work in case the user wants it later:
 1. Save everything uncommitted as a patch: `git -C <worktree> add -A && git -C <worktree> diff --cached --binary > <run directory>/stopped/<branch>.patch`. If its branch has commits (`git log <integration branch>..<branch>`), save them as well with `git format-patch -o <run directory>/stopped/<branch>/ <integration branch>..<branch>`.
-2. Remove the worktree with `git worktree remove --force`, the one case for `--force` because the patch holds the work, and delete the branch with `git branch -D`.
+2. Remove the worktree with `git worktree remove --force`, one of the two cases for `--force`, because the patch holds the work (the other is the finish's throwaway check worktree), and delete the branch with `git branch -D`.
 3. Record in the ledger and the report how to pick it up again: a new branch from the integration branch, then `git apply <patch>` (and `git am` for saved commits).
 
 ## What never happens

@@ -314,8 +314,8 @@ def antigravity(now: float) -> dict:
         "plan": None,
         "windows": {},
         "error": (
-            "Antigravity does not record its quota locally; budget its hand-offs "
-            "(see references/routing.md) and stop using it for the window after a quota error"
+            "Antigravity does not record its quota locally; watch its hand-offs for quota errors "
+            "(see references/routing.md, Fast helpers) and stop using it for the window after one"
         ),
     }
 

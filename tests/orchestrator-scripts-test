@@ -6,9 +6,20 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 scripts="$repo_root/skills/long-horizon-orchestrator/scripts"
 work=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-scripts-test.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+background=""
+trap 'for pid in $background; do kill "$pid" 2>/dev/null || true; done; rm -rf "$work"' EXIT HUP INT TERM
 
-# lease: turns, a timed-out wait, release, run, and an unknown resource.
+# Waits until "lease status" in the run folder $1 shows the text $2.
+wait_for_status() {
+  tries=0
+  until "$1/bin/lease" status | grep -q "$2"; do
+    tries=$((tries + 1))
+    test "$tries" -lt 50
+    sleep 0.1
+  done
+}
+
+# lease: turns, a timed-out wait, release, run, an unknown resource, and a turn's end.
 run="$work/run"
 mkdir -p "$run/bin"
 cp "$scripts/lease" "$run/bin/lease"
@@ -40,6 +51,62 @@ test "$status" -eq 3
 status=0
 "$lease" acquire printer --owner A >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
+
+# lease: with nobody waiting a renewal goes on; once someone waits, a renewal past the turn
+# releases the lease (76) and the waiter gets it.
+run2="$work/run2"
+mkdir -p "$run2/bin"
+cp "$scripts/lease" "$run2/bin/lease"
+printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 15, "turn_minutes": 0.001}}' > "$run2/leases.json"
+lease2="$run2/bin/lease"
+"$lease2" acquire screen --owner A >/dev/null
+sleep 0.2
+"$lease2" acquire screen --owner A >/dev/null            # past its turn, but nobody waits
+"$lease2" acquire screen --owner B --wait-minutes 1 >/dev/null &
+waiter=$!
+background="$background $waiter"
+wait_for_status "$run2" '"screen:B"'
+status=0
+"$lease2" acquire screen --owner A >/dev/null 2>&1 || status=$?
+test "$status" -eq 76
+wait "$waiter"                                           # B got the screen
+"$lease2" status | grep -q '"owner": "B"'
+"$lease2" status | grep -q '"held_minutes"'
+
+# lease: a renewal while someone waits lasts only to the end of the turn; a resource's own
+# wait_minutes is the default wait; a stopped "run" stops its command and releases the lease.
+run3="$work/run3"
+mkdir -p "$run3/bin"
+cp "$scripts/lease" "$run3/bin/lease"
+printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 15, "turn_minutes": 2}, "printer": {"slots": 1, "max_minutes": 5, "wait_minutes": 0.01}}' > "$run3/leases.json"
+lease3="$run3/bin/lease"
+"$lease3" acquire screen --owner A --minutes 15 >/dev/null
+"$lease3" acquire screen --owner B --wait-minutes 1 >/dev/null &
+waiter=$!
+background="$background $waiter"
+wait_for_status "$run3" '"screen:B"'
+"$lease3" acquire screen --owner A --minutes 15 | grep -q -E 'for up to (1\.9|2) min'
+kill "$waiter"
+"$lease3" release screen --owner A >/dev/null
+
+"$lease3" acquire printer --owner A >/dev/null
+status=0
+"$lease3" acquire printer --owner B >/dev/null || status=$?
+test "$status" -eq 75
+"$lease3" release printer --owner A >/dev/null
+
+"$lease3" run printer --owner C -- sh -c 'echo $$ > "$1"; exec sleep 30' sh "$run3/child.pid" >/dev/null &
+runner=$!
+background="$background $runner"
+wait_for_status "$run3" '"owner": "C"'
+tries=0
+until test -s "$run3/child.pid"; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
+kill -TERM "$runner"
+status=0
+wait "$runner" || status=$?
+test "$status" -eq 143
+if kill -0 "$(cat "$run3/child.pid")" 2>/dev/null; then exit 1; fi
+if "$lease3" status | grep -q '"owner": "C"'; then exit 1; fi
 
 # run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked
 # tasks shown dashed, no bar for a parked task.

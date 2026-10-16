@@ -29,10 +29,10 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 
 - **Home harness first.** Tasks run on the harness and model you are running on, unless a clear strength or the user says otherwise. Routing is settled in the contract.
 - **Real capacity.** Check usage with `scripts/provider-usage`, and judge it against plan size, never by raw percentage. 30% left of a Max 20x plan and of a Plus plan are very different amounts of work. Count other active runs that share the same subscriptions.
-- **Strengths are soft preferences.** Example: computer-use steps go to Codex when it has room. Prefer handing off just that step over moving the whole task. Hand off as often as it genuinely helps, with no fixed count, but only for work the helper is better at.
+- **Strengths are soft preferences.** Example: computer-use steps go to Codex when it has room. Prefer handing off just that step over moving the whole task. Hand off as often as it genuinely helps, with no fixed count, but only for work the helper is better at, or, for the fast helpers below, research and simple steps that save the task agent's context.
 - **Reasoning errs upward.** Never use low. Use medium only for very simple steps and high for real tasks. Use extra high only when you see a real benefit from the extra thinking, and name it in the contract. Use Ultracode (Claude Code) or Ultra (Codex) sparingly, only when the task clearly gains from parallel sub-agents, and name that gain in the contract. The multi-agent modes use up a usage window much faster than a single agent. Always set the level explicitly; never inherit a default.
-- **Antigravity is a sparing helper, never a task agent.** Its fast Gemini Flash models, always at high reasoning, may take a few simple, fully specified steps that can be checked, within a small per-window budget. Never give it complex work, and never orchestration.
-- **Quota pauses work; it never moves it.** You and every task stay on the subscription the contract assigned. When a 5-hour window runs out, the affected work pauses and resumes on the same thread after the reset, woken by a wake-up you schedule in advance. Never switch your own model, and never hand a task to another subscription, because of quota. A helper step that the brief allows is still fine.
+- **Fast helpers take research and simple steps inside tasks.** Antigravity's Gemini Flash and OpenCode's two good free models (DeepSeek V4.1 Flash, GLM-5.3 Flash), all at high reasoning, take research and retrieval (web and documentation research, searching code and logs, collecting facts) and simple, fully specified steps, as a sub-task or as a research subagent running beside the task's agent. That agent checks what they return. They are never task agents, reviewers, merge gates or orchestrators.
+- **Quota pauses work; it never moves it.** You and every task stay on the subscription the contract assigned. When a 5-hour window runs out, the affected work pauses and resumes on the same thread after the reset, woken by a wake-up you schedule in advance. Never switch your own model, and never hand a task to another subscription, because of quota. Fast helpers are the exception, because the run isn't sized on them: a helper that hits a rate limit or slows down hands its work to the next helper (on OpenCode, its other free model first, then the other provider), and when all are limited, back to the agent that asked.
 
 ## Workflow
 
@@ -51,8 +51,9 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 Put everything the user might want to decide into one message, so nothing needs asking later:
 
 - **Tasks:** one plain-language line each, with the waves and dependencies.
-- **Per task:** host or provider, model and effort, branch, and exclusive resources such as test ports. Give the reason for any task not on the home harness, and for any task above high.
+- **Per task:** host or provider, model and effort, branch, exclusive resources such as test ports, and the helpers it may use. Give the reason for any task not on the home harness, and for any task above high.
 - **Usage:** each subscription's current usage in plain words, any other active run sharing them ([references/routing.md](references/routing.md#2-measure-capacity-as-plan-size-times-room-left) shows how to find them), and what the run is expected to consume. Say that work pauses when a 5-hour window runs out and resumes after its reset, at what time if that is likely.
+- **Another run:** if another orchestrator is active on this computer, what you agreed with it before the contract: the code areas each run stays out of, the shared lease folder, ports and folders, and who does the shared finish steps ([references/routing.md](references/routing.md#running-beside-another-orchestrator)).
 - **Integration branch:** the branch checked out where the run starts (`main`, `dev`, …).
   - Default policy: each task commits, gets an independent review, passes the full checks, and fast-forwards the integration branch itself. Nothing is pushed.
   - Alternative the user may choose: leave each task on its reviewed branch for the user to merge.
@@ -79,6 +80,8 @@ After approval, do not ask the user anything. When a new decision comes up:
 
 Record each such decision for the final report.
 
+A message from the user during the run amends the contract. Quote it in the ledger with its time, and act on it: it may widen the scope, move a task to another provider, or override a default of this skill. Don't ask them to confirm what they already said, and don't take it as an opening for other questions; the rest of the contract stands. Name each amendment in the report.
+
 ### 3. Prepare
 
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
@@ -90,6 +93,7 @@ Record each such decision for the final report.
 - Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile.
 - Keep the computer awake until the finish ([references/machine.md](references/machine.md#4-keeping-the-computer-awake)), and record how.
 - Snapshot the user's own state into the run directory, and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
+- Write the common file that every brief points to, with the rules all tasks share ([references/task-brief.md](references/task-brief.md#one-common-file-for-every-brief)).
 
 ### 4. Launch the ready tasks
 
@@ -118,8 +122,8 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
    - Check the task's thread or agent status and read its last message.
    - A report says what the task believes; git says what happened.
 3. **Act.** Follow [references/integration.md](references/integration.md):
-   - **Merged:** mark it done and launch any task this unblocked. Once the task has gone idle, remove its worktree and branch and tidy its entry in the host's task list (in T3, settle its thread).
-   - **Ready but not merged** (the integration branch moved, the checkout is dirty, or the policy is to leave it on its branch): follow the integration reference.
+   - **Merged:** verify the head of its latest report, mark it done and launch any task this unblocked. Then clean up, only once the task and everything it started have stopped, in the order [references/integration.md](references/integration.md#cleanup-after-a-merge) gives: stop a goal turn that outlived the report, check for background jobs, then for leases it holds, then remove its worktree and branch and tidy its entry in the host's task list (in T3, settle its thread). Settling a thread or closing an agent doesn't stop the jobs it started, so if anything still runs, clean up on a later wake.
+   - **Ready but not merged** (the integration branch moved, the checkout is dirty, the policy is to leave it on its branch, or one check missed narrowly): follow the integration reference.
    - **Blocked:** if the cause is mechanical and within the contract, such as a rebase conflict, a port clash or a flaky check, send the task a follow-up. Otherwise mark it blocked, park its dependents, and record the decision it needs.
    - **Paused by quota** (its provider's window ran out, so it stopped without reporting): leave it as it is, on its thread and worktree. Make sure a resume wake is scheduled, and after the reset continue it on the same thread, as [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out) describes. This is not a failure, and the nudge that resumes it doesn't count as its one nudge.
    - **Silent** (idle, failed, cancelled or interrupted, with no report and no quota cause): read its last messages and act on them. Several tasks stopping at the same moment means the computer or the host restarted. Nudge each of them, and check that the run directory survived. If a task simply stopped, for example after a crash or a provider error, nudge it once. If the nudge fails as well:
@@ -127,8 +131,11 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
      - otherwise, mark it failed and keep its worktree for the user.
 
      Record each nudge and relaunch in the ledger.
-4. **Check the computer.** A password or keychain dialog on the screen (on macOS, `pgrep -x SecurityAgent` finds one) means a task ran something that asks for one. Nobody will answer it: find the command, stop it, and tell the task. Check free disk space and the keep-awake too ([references/machine.md](references/machine.md#7-during-the-run)).
-5. **Check the home subscription's 5-hour window.** Take a usage snapshot and compare it with the last one. If the window is nearly used up, or will run out before the next heartbeat at its current pace, schedule the resume wake now, while you still can (see [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out)).
+4. **Check the computer** ([references/machine.md](references/machine.md#7-during-the-run)):
+   - Compare the user's settings with the start snapshot. Restore at once, key by key, what a test build changed, and tell the task that did it.
+   - A password or keychain dialog on the screen (on macOS, `pgrep -x SecurityAgent` finds one) means a task ran something that asks for one. Nobody will answer it: find the command, stop it by its process ID, and tell the task.
+   - Check free disk space and the keep-awake too.
+5. **Check the home subscription's 5-hour window.** Take a usage snapshot and compare it with the last one. If the window is nearly used up, or will run out before the next heartbeat at its current pace, schedule the resume wake now, while you still can (see [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out)). Note any fast helper the tasks found limited, and leave it out of new briefs until it recovers.
 6. **Update the ledger, then end the turn.** Write down every state change before ending, so the next wake starts from the truth.
 
 Launching dependent tasks is your job, not the job of the task briefs. Keeping the chain in one place keeps the ledger accurate and lets you skip the dependents of a blocked task.
@@ -144,8 +151,8 @@ When every task is done, blocked or parked:
    - the integration checkout is clean;
    - every merged task's worktree and branch is removed, and its entry and its helper threads tidied;
    - unfinished tasks keep theirs and stay visible.
-3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)).
-4. If the project has a quick main check, run it once on the integration branch.
+3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)). If another run is still active, leave the steps you share with it to whichever finishes last, as agreed, and tell it you have finished.
+4. If the project has a quick main check, run it once on the integration branch. Run it in a detached worktree (`git worktree add --detach <run directory>/final-check <integration branch>`, then `git worktree remove --force` it, since it holds no work) when another run still works in the checkout, or when the check writes files the user's own copy uses, such as the app they have running.
 5. Remove throwaway threads or worktrees you made along the way.
 6. Take a final usage snapshot, and update the calibration in the owner's provider profile (see [references/routing.md](references/routing.md)).
 7. Write the final report from [references/final-report.md](references/final-report.md), with its two Mermaid charts of how the run actually went (a dependency graph and a timeline), and **post it in the chat as your final message**. This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. A copy saved next to the ledger is for the record; the user reads the chat.
@@ -177,8 +184,9 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
 - **Contract:**
   - the integration checkout path, branch and starting HEAD;
   - the merge policy;
-  - the user's approval, quoted;
-  - the port and resource allocation.
+  - the user's approval, quoted, and every amendment they sent during the run, quoted with its time;
+  - the port and resource allocation;
+  - any other active run: its ledger, the notes you exchanged and what you agreed.
 - **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; and the IDs of the heartbeat and any resume wake.
 - **One row per task:**
   - ID, title, dependencies;
@@ -187,7 +195,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - status (`pending`, `running`, `paused`, `merged`, `ready`, `blocked`, `failed`, `parked`);
   - launch and finish times taken from the host's timestamps, never estimated; merged commits; notes;
   - the harness, model and reasoning level of every agent that worked on it, including a relaunched attempt;
-  - helper hand-offs (which harness, model and reasoning level, for what, how many times);
+  - helper hand-offs (which harness, model and reasoning level, for what, how many times), and any limit a helper hit and what its work switched to;
   - events such as follow-ups, nudges, relaunches, rebases, level changes, and quota pauses with when they began and when the tasks resumed. The final report's charts are drawn from these.
 - **Usage snapshots:** from `scripts/provider-usage`, taken at the start, before each wave, on wakes near a limit and at the finish. Note other active runs sharing the subscriptions, and the reason for any task routed away from the home harness.
 - **The computer:** what the warm-up granted and what is still missing; how the computer is kept awake (on macOS, the `caffeinate` process ID); where the start snapshot of the user's state is; and what was restored at the finish.
@@ -203,6 +211,7 @@ Update it on every state change. Mention its path in the contract message and in
 - **Ask before the run, not during it.** Whatever needs the user (a password, a click on Allow, a decision) goes into the contract and the warm-up. A prompt that appears during the run is a defect to stop, not a question to wait on.
 - **The report ends the run.** A usage target is met by the plan and its reserve list, never by work added after the report.
 - **Isolation by default.** Use a separate worktree for each writing task, exclusive ports and directories, and fast-forward-only merges. A task whose fast-forward fails rebases, re-validates and tries again.
-- **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work.
+- **Stop only what you started,** by its recorded process ID, never by a name or pattern. A pattern matches other tasks' builds and the user's own apps.
+- **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work. Only a fast helper's work switches, between helpers, when one is limited.
 - **Never push, publish or force-update.** Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
 - **Calibrate.** Record actual task durations in the ledger and report them, so future estimates improve.

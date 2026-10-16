@@ -47,7 +47,7 @@ t3_thread_send({threadId: "<task thread>", message: "<the /goal text>", mode: "q
 
 - **Queue it, don't steer it.** Queueing makes the goal its own turn, after the brief's first turn.
 - **Confirm it took.** A short `t3_thread_read` later should show the goal was accepted ("Goal set: …"). If it was rejected for length, shorten it and send it again with a new `clientRequestId`.
-- **Other providers** (OpenCode, Antigravity, …) get the brief alone. Their persistence comes from the brief's stop conditions.
+- **Other providers,** when the contract routes a task to one, get the brief alone. Their persistence comes from the brief's stop conditions. (Antigravity and OpenCode normally serve only as fast helpers, [routing.md](routing.md#fast-helpers-antigravity-and-opencode).)
 
 ## Report-back: how you get woken
 
@@ -129,9 +129,18 @@ t3_thread_send({threadId, message, mode: "queue", clientRequestId: "<run>-<task>
 
 Use `queue` so the follow-up doesn't interrupt work in progress.
 
+## After a verified merge
+
+Expect the task's goal turn to outlive its report-back: on 2026-10-15, two merged tasks kept working after their reports. On the wake that verifies the merge:
+
+1. **See whether it still runs:** `t3_thread_wait` with a short `timeoutMs` returns at once for an idle thread.
+2. **If it runs, read its last messages.** Re-running checks, or retrying one it listed under "Couldn't check", is over: stop it now, as below, before any cleanup. Let a turn finish only when it does something still to come, such as a follow-up you sent; clean up on a later wake.
+3. **Then the cleanup gate** in [integration.md](integration.md#cleanup-after-a-merge): its background jobs and its leases, then the worktree and the branch.
+4. **Settle the thread and its helper threads** (below), including any fast-helper children it delegated.
+
 ## Stopping a task
 
-- **A merged task that keeps working,** because its goal still asks for something (for example a check it listed as skipped): interrupt the turn with `t3_thread_interrupt`, then queue `/goal clear` with `t3_thread_send` in mode `queue`. Sent as a steer, `/goal clear` fails while a turn runs.
+- **A merged task that keeps working,** because its goal still asks for something (for example a check it listed as skipped): interrupt the turn with `t3_thread_interrupt`, then queue `/goal clear` with `t3_thread_send` in mode `queue`. Sent as a steer, `/goal clear` fails while a turn runs. Do both on the same wake.
 - **A task the user stops:** cancel its queued messages (`t3_queue_list`, `t3_queue_cancel`), interrupt it, save its unfinished work as a patch ([integration.md](integration.md#a-task-the-user-stopped)), remove its worktree, and settle its thread.
 
 ## When a window runs out
@@ -165,10 +174,16 @@ Don't archive anything; settling is enough and easy to undo. A settled thread dr
 
 `delegate_task` children notify you automatically on completion. Use them for short, read-mostly work you need to finish this step, such as an extra review or a research question. They aren't bound to their own worktree, so don't use them for parallel writing tasks in one repository.
 
+For research and collection, a fast helper suits ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)): give it `role: "research"`, the target and options from routing.md, and a prompt that says it is read-only. If it is limited (an error, or far slower than expected), `task_cancel` it and delegate the same prompt to the next helper. Settle its child thread once you've used its result.
+
+## Another orchestrator's thread
+
+When another run is active ([routing.md](routing.md#running-beside-another-orchestrator)), its ledger names its orchestrator thread. Write to it with `t3_thread_send` in mode `queue` and a `clientRequestId` such as `<run>-to-<other run>-<n>`. A queued message starts a turn there, so send only what the other run needs: the coordination note at the start, findings that affect it, and the word that you have finished. Never interrupt, configure, settle or send `/goal` to another run's threads.
+
 ## When the run finishes
 
 1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules. Stop the keep-awake too.
 2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
-3. Gather the times for the report's timeline. For each task thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A helper agent can collect these for all the threads, which keeps the long results out of your context. Write them into the facts file, and `scripts/run-charts` draws both charts ([final-report.md](final-report.md#run-charts)).
+3. Gather the times for the report's timeline. For each task thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A fast helper ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)) can collect these for all the threads, which keeps the long results out of your context; check a few of its times against the ledger. Write them into the facts file, and `scripts/run-charts` draws both charts ([final-report.md](final-report.md#run-charts)).
 4. Post the final report as your last message in your own thread. Unpin the thread, and leave it active.
 5. If any pull requests were created, link them with `link_pull_request`.

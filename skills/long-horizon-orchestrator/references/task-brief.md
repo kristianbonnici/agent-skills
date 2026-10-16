@@ -1,6 +1,6 @@
 # Task brief
 
-A task agent starts with no memory of your conversation. Its brief is everything it knows, so it must be self-contained. It has to cover where to work, what is settled, what done looks like, how to merge, when to stop, and how to tell you.
+A task agent starts with no memory of your conversation. Its brief, with the run's common file it points to, is everything it knows, so the two must be self-contained. They have to cover where to work, what is settled, what done looks like, how to merge, when to stop, and how to tell you.
 
 ## Two messages: the brief and the goal
 
@@ -19,12 +19,21 @@ The goal evaluator judges only what appears in the conversation. So the goal ask
 
 Subagents (Claude Code `Agent`, Codex `spawn_agent`) take no `/goal`. Their brief's stop conditions define the end, and their final message is their report.
 
+## One common file for every brief
+
+Much of a brief is the same for every task: the rules about the owner's things, the permissions the warm-up granted, the leases, the ports already taken, the help sections, and the rules the run learns as it goes. Put all of that into one file, `<run directory>/briefs/common.md` (template below), and keep in each brief only what is the task's own. Each brief tells its agent to read the common file first. Save the briefs next to it, as `<run directory>/briefs/<task ID>.md`.
+
+When a rule changes during the run, add it to the common file with the time, so that tasks launched later get it. A running task read the file at its start: send it the new rule too. A queued follow-up reaches it only when its current turn ends, so send a rule that matters now, such as a safety rule, as a steer (in T3, `t3_thread_send` in mode `steer`), which reaches the running turn.
+
+In the 2026-10-15 runs, both orchestrators did this, and used it to spread rules learned along the way, such as "renewing a lease doesn't extend your turn".
+
 ## Brief template
 
 Fill in every angle-bracketed item with project-specific content, and drop any section that does not apply. Keep it under about 15,000 characters. A tight brief beats an exhaustive one.
 
 ```text
 Brief for <task ID>: <one-line objective>. <If the host uses a goal: "A /goal referring to this brief follows.">
+Read <run directory>/briefs/common.md first. It holds the rules for every task in this run, and they are part of this brief. Check it again before the merge gate: the orchestrator adds rules there during the run.
 The project owner has authorized in advance: commits on <task branch>, and the fast-forward of <integration branch> described under "Finish and merge". Nothing may be pushed or published.
 
 Read first: <instruction files such as AGENTS.md and CLAUDE.md, plus the docs and source paths that matter, each with a few words on why>.
@@ -40,18 +49,13 @@ Required work:
 1. <intrinsically necessary item with an observable result>
 2. ...
 
-Constraints:
+Constraints, besides those in the common file:
 - Work only in this task's workspace: <worktree path, or "the active task workspace">. Do not edit other checkouts.
-- Install dependencies only from existing lockfiles; never change the lockfiles.
-- Use ports <ports> for anything that listens. Do not stop or reuse processes on <user and other tasks' ports>.
-- No pushing, publishing, deploying, or contacting outside services. <project-specific rules, such as live API calls or secrets>.
-- Do all the work on this thread. Hand a step to another provider only as "Help available" allows, never the rest of the task. If your usage limit runs out, simply stop: the orchestrator resumes you on this thread after the reset.
-- Keep files that must outlive the task (handoff, evidence logs) in <run directory>/<task ID>/, not in /tmp, which a restart clears.
-- Never run anything that asks for a password, Touch ID or keychain access: sudo, sfltool, DevToolsSecurity, tccutil, installers, creating keychain items<, project-specific ones>. Granted for this run: <permissions from the warm-up>. If a step needs more, skip it and list it under "Couldn't check". If a dialog asks for one of the granted permissions, Allow is fine; cancel any other, and mention it in the report-back.
-- <If the run has leases:> Shared resources: take <resource> with `<run directory>/bin/lease acquire <resource> --owner <task ID>` only while you use it, and release it right after (`release`, or `lease run <resource> --owner <task ID> -- <command>` for one command). Prefer checks that need no lease, such as rendering a view to an image. Once merged, don't wait for a lease.
-- The owner's things: <from the contract: their running app, its settings and data, services, ports>. Launch your own build by its path, with its own <settings, sockets, data folders>, and close only windows you opened. Keep large files (traces, recordings, downloads) in <run directory>/<task ID>/, delete what isn't evidence, and list downloads with sizes in the handoff.
+- Use ports <ports> for anything that listens.
+- Keep this task's files that must outlive it (handoff, evidence logs) in <run directory>/<task ID>/.
+- <Rules for this task only, such as a resource it alone may use.>
 
-<Optional "Help available" section from routing.md, for example handing a computer-use step to Codex. Include it only when the orchestrator has checked that the other provider has room.>
+<Optional "Help available" sections from routing.md that only this task gets. Include one only when the orchestrator has checked that the provider has room.>
 
 Validation (show the output in the conversation):
 - <exact commands>
@@ -64,6 +68,7 @@ Finish and merge:
 4. Merge gate: only if every check passes and no confirmed defect remains, confirm that <integration checkout path> is on <integration branch> with no tracked modifications, then run:
    git -C <integration checkout path> merge --ff-only <task branch>
    If the fast-forward fails because the branch moved, go back to step 3. Never force-update, never push.
+   If one check misses narrowly while the main goal is met, don't merge, and don't loosen, skip or re-baseline the check: report status=ready with "narrow miss", the check's threshold and its results before and after your change, then stop. The orchestrator decides, and may tell you to merge.
 <For the "leave on branch" policy, replace steps 3–4 with: "Rebase onto <integration branch>, re-run validation, and stop. Do not merge.">
 
 Blocked. Stop without merging, report the evidence, then do the report-back:
@@ -72,21 +77,49 @@ Blocked. Stop without merging, report the evidence, then do the report-back:
 
 The <range> estimate is a sizing guess, not a timer. Don't wait, and don't add scope to fill it.
 
-Handoff (in your final message, and saved as <run directory>/<task ID>/handoff.md): what changed; evidence for each required item; any steps handed to a helper (which harness, model and reasoning level, and for what); validation output; review findings; the commits merged (git log); "Couldn't check": checks that couldn't run and why, with what the owner should look at; untested platforms; recommendations kept separate from decisions; elapsed time and token usage if available.
+Handoff (in your final message, and saved as <run directory>/<task ID>/handoff.md): what changed; evidence for each required item; any work handed to a helper (which harness, model and reasoning level, for what, and any switch after a limit); validation output; review findings; the commits merged (git log); "Couldn't check": checks that couldn't run and why, with what the owner should look at; untested platforms; "Open decisions": questions for the owner, each with a sentence of context; recommendations kept separate from decisions; elapsed time and token usage if available.
 
 Report back (your very last action, whether you finished or are blocked):
 <host-specific report-back instruction from the host reference, with the orchestrator's ID filled in>
+If your head or the merge changes after a report (review fixes, a rebase, a follow-up, a merge you were told to do), report again, with the next report number.
+```
+
+## Common file template
+
+```text
+Rules for every task in run <run ID>. Your brief points here, and these rules are part of it. The orchestrator adds rules at the end during the run, each with its time.
+
+The owner is away for the whole run. Never ask them anything, and never wait for them: no question tools (AskUserQuestion, request_user_input, an "ask" tool), no approval prompts. Decide yourself what is reversible and within your brief; put every other question under "Open decisions" in your handoff.
+
+- Install dependencies only from existing lockfiles; never change the lockfiles.
+- No pushing, publishing, deploying, or contacting outside services. <project-specific rules, such as live API calls or secrets>.
+- Do all the work on your own thread. Hand work to another provider only as a "Help available" section allows, never the rest of the task. If your usage limit runs out, simply stop: the orchestrator resumes you on your thread after the reset.
+- Keep files that must outlive your task in <run directory>/<your task ID>/, not in /tmp, which a restart clears. Keep large files (traces, recordings, downloads) there too, delete what isn't evidence, and list downloads with sizes in the handoff.
+- Never run anything that asks for a password, Touch ID or keychain access: sudo, sfltool, DevToolsSecurity, tccutil, installers, creating keychain items<, project-specific ones>. Granted for this run: <permissions from the warm-up>. If a step needs more, skip it and list it under "Couldn't check". If a dialog asks for one of the granted permissions, Allow is fine; cancel any other, and mention it in the report-back.
+- Stop only processes you started, by the process ID you recorded. Never use pkill, killall, or a process name or pattern: one can match another task's build or the owner's own app. Close the windows and app copies you opened by their window or process ID.
+- Never press global keyboard shortcuts, and never operate the owner's own running app or their windows. Use only the builds and windows you launched.
+- The owner's things: <from the contract: their running app, its settings and data, services, their ports>. Launch your own build by its path, with its own <settings, sockets, data folders>. Prefer launch arguments to writing the owner's settings; if a step writes one anyway, read it first and put it back right after. <Don't delete test builds' sandbox containers: macOS asks for a password.>
+- Ports and folders of other tasks<, and of the other run>: <list>. Don't stop or reuse them.
+- <If the run has leases:> Shared resources: take <resource> with `<lease folder>/bin/lease acquire <resource> --owner <owner prefix><your task ID>` only while you use it, and release it right after (`release`, or `lease run <resource> --owner ... -- <command>` for one command). Renewing is only for finishing the same check: once your turn is over and others wait, a renewal releases the lease (exit 76), so stop using the resource and queue again. If no turn comes within the wait (exit 75), list the check under "Couldn't check" and go on. Prefer checks that need no lease, such as rendering a view to an image. Once merged, don't wait for a lease.
+- <If another orchestrator runs:> Another run works on <its code areas>. Don't edit them; its merges into <integration branch> are normal, so rebase onto them as onto any other.
+
+<"Help available" sections from routing.md that every task gets.>
+
+Rules added during the run:
+- <time>: <rule>
 ```
 
 ## Goal template
 
 ```text
-/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown, and any check that couldn't run is listed under "Couldn't check" (that counts as done). <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. After the report-back, the work is over: start no new checks. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message.
+/goal The brief earlier in this thread (beginning "Brief for <task ID>") is complete. Every item under its "Required work" is done, <the two or three most important outcomes, named concretely>. The validation commands pass on the final branch, with output shown, and any check that couldn't run is listed under "Couldn't check" (that counts as done; don't retry it). <Integration branch> has been fast-forwarded to <task branch> with nothing pushed (git log shown). The handoff is written, and the report-back message has been sent to the orchestrator. After the report-back, the work is over: start no new checks. The owner is away for the whole run: never ask them anything or wait for them; questions go under "Open decisions" in the handoff. Alternatively: you stopped on one of the brief's "Blocked" conditions without merging, reported the evidence, and sent the report-back message; or one check missed narrowly, and you stopped without merging and sent a status=ready report-back with its numbers.
 ```
 
 Name the report-back explicitly in the goal. Without that, the evaluator can mark the goal met before the task has told you anything, and you won't be woken.
 
 Say that a skipped check counts as done. Without that, a merged task can keep working for hours, retrying a check it already listed as skipped.
+
+Say that the owner is away. The evaluator judges only the conversation, and a goal it can't see met pushes the task to find a way: on 2026-10-15, one kept a merged task going until the task asked the user, who was asleep, to install software for a check it had listed as skipped. On 2026-10-14, another pushed a task into sending a global shortcut while the owner's own app ran.
 
 ## Report-back message
 
@@ -105,7 +138,9 @@ The `prompts` line tells the orchestrator about dialogs on the user's screen. Th
 
 A task whose usage limit runs out can't send a report at all. The orchestrator notices from the thread's state and resumes it after the reset.
 
-Use `ready` when the work is reviewed and validated on its branch but not merged: either the policy is "leave on branch" or the merge gate failed for a reason outside the task. Use `failed` for a crash or an environment problem, not for a decision.
+A task reports again whenever its head or its merge changes after a report: review fixes, a rebase, a follow-up, a merge it was told to do. Each report carries the next number in its request ID (`report-2`, …), and the orchestrator acts on the latest.
+
+Use `ready` when the work is reviewed and validated on its branch but not merged: the policy is "leave on branch", the merge gate failed for a reason outside the task, or one check missed narrowly and the orchestrator decides ([integration.md](integration.md#a-narrow-measured-miss)). Use `failed` for a crash or an environment problem, not for a decision.
 
 ## Continuation brief
 
@@ -125,10 +160,11 @@ Its goal follows the goal template, with "(beginning "Continuation of <task ID>"
 
 ## Before sending
 
-- Every placeholder is filled in, and the brief makes sense to someone with no other context.
+- Every placeholder is filled in, and the brief and the common file make sense to someone with no other context.
+- The brief points to the common file, and the common file holds every rule added so far.
 - The ports and paths don't collide with the user's dev servers or with other running tasks.
 - The integration branch name, its checkout path and the task branch match the ledger.
 - The run directory path is filled in and exists, and no path in the brief points into `/tmp` for anything that must survive a restart.
 - The orchestrator ID in the report-back instruction is your own ID, copied exactly.
-- The permissions, lease and owner's-things lines match the contract and what the warm-up granted.
+- The permissions, lease and owner's-things lines in the common file match the contract and what the warm-up granted.
 - If a goal is used, its character count is under 4,000. Recount after every edit.

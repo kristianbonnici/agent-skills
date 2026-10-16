@@ -30,18 +30,19 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 <The timeline; see "Run charts" below.>
 
-<One or two lines the charts can't say on their own, such as why the pauses happened or why effort levels changed.>
+<One or two lines the charts can't say on their own, such as why the pauses happened, why effort levels changed, a helper that hit a rate limit and what its work switched to, or what you changed because the user asked during the run.>
 
 ## Not finished
-<Only if some tasks are blocked, parked or failed.>
+<Only if some tasks are blocked, parked or failed, or merged with a narrow miss.>
 - **<Task>:** what's missing, why, and what it needs from you.
+- **<Task> merged one check short:** <the check, its result against its threshold>; <the follow-up task> carries it<, and how that ended>.
 
 ## Worth checking yourself
 <Only if some checks couldn't run, from the tasks' "unchecked" lines, for example real-screen checks while the screen was locked.>
 - **<Where to look>:** what to try, and what it should do.
 
 ## Side effects on your computer
-<Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed, services reinstalled, files left or removed, disk space used and freed, and anything the run couldn't restore.>
+<Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed and restored, services reinstalled, files left or removed (test builds' sandbox containers, which need your password to delete, are safe to remove), disk space used and freed, and anything the run couldn't restore.>
 
 ## Open decisions
 

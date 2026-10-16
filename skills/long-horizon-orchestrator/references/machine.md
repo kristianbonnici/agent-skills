@@ -85,7 +85,7 @@ caffeinate -i -d -t <seconds> &   # -i: no idle sleep; -d: keep the display on (
 In the contract, list what belongs to the user and must be left as found: their running copy of the app, its settings and data, services it depends on, its link scheme and app identity, their other apps' windows, and their dev-server ports.
 
 - **Snapshot at the start**, into the run directory. Adapt it to the project, for example:
-  - the app's settings (`defaults export <domain> <file>` on macOS);
+  - the app's settings (on macOS, `defaults export <domain> <file>` for restoring with `defaults import`, and `defaults export <domain> - > <file>.xml` for comparing: a file export is binary);
   - the list of files in `~/Library/Preferences`;
   - background services (`launchctl list`);
   - app copies registered with the system (on macOS, `"$LSREGISTER" -dump | grep '^path:'`, with `LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister`, which isn't on the PATH);
@@ -93,30 +93,41 @@ In the contract, list what belongs to the user and must be left as found: their 
 - **Rules for the briefs:**
   - launch your own build by its path (on macOS, `open -a <path>`), because a link or app identifier can open another copy;
   - give your build its own settings, sockets and data folders;
+  - prefer launch arguments to writing the user's settings; when a step writes one anyway (a settings window that remembers its last page, a first-run window), read the value first and put it back right after;
   - close only windows you opened;
+  - stop only processes you started, by the process ID you recorded, never with `pkill`, `killall` or a name or pattern, which can match another task's build or the user's own app;
+  - never press global keyboard shortcuts, and never operate the user's own running copy of the app: use only builds and windows you launched;
   - never send work to the user's live services.
+- **System registries** (on macOS, LaunchServices, login items, launchd): when unregistering builds or removing entries, match exact paths or bundle identifiers, never a substring, and look at every match before changing anything. If a wrong entry was changed, restore it at once (`"$LSREGISTER" -f <app>` re-registers an app) and note it for the report.
+- **Sandbox containers** (`~/Library/Containers/<test build's identifier>`): don't delete them during the run. macOS asks for the user's password before removing an app's container, and nobody is there to answer. Leave them, and list them under "Side effects" as safe to delete.
 - **At the finish, compare with the snapshot:**
   - restore changed settings;
   - delete leftover test files;
   - unregister builds whose worktrees were removed (on macOS, `"$LSREGISTER" -u <app>`);
   - list anything you couldn't restore under "Side effects" in the report.
 
-In the 2026-10-12 run, a test build opened by a bare link spoke through the user's live speech service and wrote into their app's history. Tests also left about 5,700 settings files, and the user's sound volume set to zero.
+In the 2026-10-12 run, a test build opened by a bare link spoke through the user's live speech service and wrote into their app's history. Tests also left about 5,700 settings files, and the user's sound volume set to zero. In the 2026-10-14 run:
+- one task's `pkill -f` stopped two other tasks' builds, and a `pkill -x` quit one of the user's own apps;
+- a cleanup's `grep -i atest` over the registered apps also matched another app's `UpdATESTaging` folder and unregistered it;
+- deleting test containers in Finder put password dialogs on the screen.
 
 ## 6. Shared resources and disk
 
-- **Leases.** Some resources only one or two tasks can use at a time: the real screen, the GPU, a hardware device, a single test account. Declare them in the contract, and let tasks take turns with `scripts/lease`. Copy it into `<run directory>/bin/` at the start and write `<run directory>/leases.json`, for example:
+- **Leases.** Some resources only one or two tasks can use at a time: the real screen, the GPU, a hardware device, a single test account. Declare them in the contract, and let tasks take turns with `scripts/lease`. Copy it into `<run directory>/bin/` at the start and write `<run directory>/leases.json` (when another run shares the computer, use one lease folder for both instead, below), for example:
 
   ```json
-  {"screen": {"slots": 1, "max_minutes": 15}, "gpu": {"slots": 2, "max_minutes": 30}}
+  {"screen": {"slots": 1, "max_minutes": 15, "wait_minutes": 45}, "gpu": {"slots": 2, "max_minutes": 30, "wait_minutes": 60}}
   ```
 
   Briefs give tasks the command (`<run directory>/bin/lease acquire screen --owner <task ID>`). Turns are first come, first served, and a lease expires after its limit.
   - Tasks hold a lease only while using it.
+  - **A turn is bounded.** Renewing (acquiring again with the same owner) is only for finishing the same check. While others wait, a holder's turn lasts at most `turn_minutes` (by default the resource's `max_minutes`), counted from when the first of them began waiting. A renewal after that, or one that would leave less than a minute, releases the lease and exits 76, and the task queues again behind the others. A holder that doesn't renew keeps its lease until it expires, at most `max_minutes` after its last acquire, so a waiter waits at most about `turn_minutes` plus `max_minutes` for each holder ahead of it. Set `turn_minutes` above the longest single check.
+  - **A wait is bounded too.** A task waits at most `wait_minutes` for a turn (exit 75), then lists the check under "Couldn't check" and goes on. Size it for the queue you expect: about the number of tasks that may wait at once times `turn_minutes`. Too short, and everyone behind the first waiter skips their check.
   - Tasks prefer checks that need no lease; rendering a view to an image needs none.
-  - A merged task never waits for the screen.
+  - A merged task never waits for a lease. Its own leases are released only once its processes have stopped ([integration.md](integration.md#cleanup-after-a-merge)).
+  - When another orchestrator runs on the same computer, both use one lease folder ([routing.md](routing.md#running-beside-another-orchestrator)).
 
-  In the 2026-10-12 run, tasks waited up to 69 minutes for the screen until leases were capped at 15 minutes.
+  In the 2026-10-12 run, tasks waited up to 69 minutes for the screen until leases were capped at 15 minutes. On 2026-10-15, one task kept renewing the screen for over an hour while seven waited, so most of their screen checks were skipped; the turn limit is there to stop that.
 - **Disk.** Check free space on every wake.
   - Tasks keep large files (profiler traces, recordings, downloads) in the run directory, delete what isn't evidence, and list downloads with sizes in the handoff.
   - In the 2026-10-12 run, 61 GB of profiler traces in the temporary folder took free space from 123 GB to 23 GB.
@@ -124,6 +135,10 @@ In the 2026-10-12 run, a test build opened by a bare link spoke through the user
 
 ## 7. During the run
 
+On every wake:
+
+- **The user's settings:** compare them with the start snapshot, which takes a second (on macOS, `defaults export <domain> - | diff <snapshot>.xml -`). Restore what a test build changed at once, key by key (`defaults write` or `defaults delete` of that key; importing the whole snapshot would also undo what the user's own copy wrote since), note it, and tell the task that did it, so it changes how it runs the step. Keys the user's own running copy writes in normal use are its own state: note them, and leave them. In four runs between 2026-10-13 and 2026-10-15, test builds sharing the user's settings cleared a chosen model, and wrote first-run state and a window's last page.
+- **Processes:** stop a stray process only by its process ID, after checking with `ps -p <pid> -o command=` that it is the run's.
 - **A password dialog on the screen** means a task ran something that asks for one, and nobody will answer it. On macOS, `pgrep -x SecurityAgent` finds it. Find the command and stop it, tell the task, and note it for the report.
 - **A permission dialog for something approved** may be answered Allow, by the task or a helper. Any other dialog is cancelled, and the task mentions it in its report-back.
 - **Don't plan on a helper answering prompts mid-run.** The task usually doesn't know a dialog is there. The warm-up is the way to grant permissions.
