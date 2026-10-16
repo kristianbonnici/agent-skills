@@ -297,8 +297,16 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/pro
 ```
 
 - **At the start:** read it if it exists. If it doesn't, create it from what `provider-usage` detects.
-- **After the warm-up:** update "Machine" with what was granted.
+- **After the warm-up:** update this computer's "Machine" section with what was granted.
 - **At the finish:** update its calibration.
+
+**It may live in the owner's private repository.** `scripts/bootstrap` links the file into a private git repository of the owner's state, so it follows them between computers. When it is a link:
+- **Edit the file it points to** (`realpath` of the path above), never the link. Some editing tools write a new file and rename it over the old one, which would replace the link with a local copy.
+- **At the start,** bring it up to date before reading it: `git -C <its repository> pull --ff-only`.
+- **At the finish,** after the last update, commit only this file and push it: `git -C <its repository> commit -m "<run>: provider profile" -- <file>`, then `git -C <its repository> push`. If the push is rejected because another computer pushed first, pull with `--rebase` and push again.
+- **Never force-push, and never commit anything else** in that repository. If the pull or push fails (no network, a conflict), go on with the local file and say so in the report.
+
+**Several computers share it.** Plans, preferences and calibration hold for every computer, because they share the subscriptions. Each computer has its own section, `## Machine: <computer>`, named by `scutil --get LocalHostName` on macOS (`hostname -s` elsewhere). Read and update only your own computer's section, and add it if it is missing.
 
 The owner may edit it at any time, and their statements win over this reference. Keep it short:
 
@@ -317,7 +325,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - Advanced helper inside tasks, for bounded harder sub-tasks: Gemini 4 Argon at high, within a weekly budget per run (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)
 
-## Machine
+## Machine: <computer>
 - Automatic screen lock: <off/on> (owner, <date>); Stage Manager off for computer-use runs (owner, <date>)
 - Granted (warm-up, <date>): <harness app>: Accessibility, Screen Recording, Developer Tools, Automation of <apps>; Developer mode on; <toolchain license accepted>
 - Asks for a password, so never in a run: <commands found to prompt on this computer>
@@ -330,7 +338,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - opencode/<model>: rate-limited after <n> requests in <m> minutes; switched to <model or provider> (run <ledger name>)
 ```
 
-At the start of a run, read the "Granted" line under "Machine", so the contract asks only for what's new. Update it after the warm-up.
+At the start of a run, read the "Granted" line in this computer's "Machine" section, so the contract asks only for what's new. Update it after the warm-up.
 
 ## 7. In the contract and the report
 

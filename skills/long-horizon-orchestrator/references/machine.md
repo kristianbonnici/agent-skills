@@ -61,7 +61,7 @@ Right after approval, while the user is still at the computer (about five minute
    ```
 
    Some permissions can't be added from a prompt: Developer Tools, a permission that needs the app restarted, or one denied before (Automation then fails with error -1743). For those, the user switches it on in System Settings → Privacy & Security.
-3. Run each check again and show the result, for example "7 of 7 granted". Record it in the ledger, and in the owner's profile under "Machine" with the date.
+3. Run each check again and show the result, for example "7 of 7 granted". Record it in the ledger, and in the owner's profile under this computer's "Machine" section with the date.
 4. Start keeping the computer awake (section 4).
 
 If the user doesn't wait for the warm-up, launch anyway. Tasks then skip what isn't granted and list it under "Couldn't check".

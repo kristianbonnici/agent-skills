@@ -30,6 +30,16 @@ Preview changes without writing:
 
 Bootstrap is idempotent. It repairs managed symlinks but refuses to overwrite real files or directories it does not own.
 
+### Private state
+
+Skills keep per-owner facts, such as the orchestrator's provider profile, in
+`${XDG_STATE_HOME:-~/.local/state}/agent-skills/<skill>/`, outside this public
+repository. To carry them between computers, keep them in a private git
+repository cloned next to this one as `agent-skills-state` (or set
+`AGENT_SKILLS_STATE` to its path). Bootstrap links each `<skill>/<file>` in it
+into the state folder, and doctor checks the links. Without that repository,
+the files simply stay local.
+
 ## Repository layout
 
 ```text

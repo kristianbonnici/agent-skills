@@ -4,6 +4,10 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 manifest="$repo_root/install/links.tsv"
+# The owner's private state repository: each <skill>/<file> in it is linked into
+# the skills' state folder, so per-owner facts follow the owner between computers.
+state_repo=${AGENT_SKILLS_STATE:-$(dirname -- "$repo_root")/agent-skills-state}
+state_home=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills
 
 host=all
 dry_run=0
@@ -16,6 +20,9 @@ Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies]
        bootstrap --dependencies [--dry-run]
 
 Hosts: opencode, factory, codex, claude, antigravity, antigravity-ide, antigravity-cli
+
+Also links the files of a private state repository (AGENT_SKILLS_STATE, by default
+agent-skills-state next to this repository) into ${XDG_STATE_HOME:-~/.local/state}/agent-skills.
 EOF
 }
 
@@ -104,6 +111,15 @@ if [ "$install_links" -eq 1 ]; then
     esac
     case "$source" in skills/product-design*) selected_product_design=1 ;; esac
   done < "$manifest"
+
+  if [ -d "$state_repo/.git" ]; then
+    for state_file in "$state_repo"/*/*; do
+      [ -f "$state_file" ] || continue
+      link_one "$state_file" "$state_home/${state_file#"$state_repo"/}"
+    done
+  else
+    echo "No private state repository at $state_repo; skills keep their state locally."
+  fi
 fi
 
 if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_product_design" -eq 1 ] || [ "$host" = all ]; }; then

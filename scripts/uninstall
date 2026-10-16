@@ -4,6 +4,8 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 manifest="$repo_root/install/links.tsv"
+state_repo=${AGENT_SKILLS_STATE:-$(dirname -- "$repo_root")/agent-skills-state}
+state_home=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills
 host=all
 dry_run=0
 
@@ -64,3 +66,10 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
       ;;
   esac
 done < "$manifest"
+
+if [ -d "$state_repo/.git" ]; then
+  for state_file in "$state_repo"/*/*; do
+    [ -f "$state_file" ] || continue
+    remove_link "$state_file" "$state_home/${state_file#"$state_repo"/}"
+  done
+fi

@@ -6,6 +6,14 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 test_home=$(mktemp -d "${TMPDIR:-/tmp}/agent-skills-test.XXXXXX")
 trap 'rm -rf "$test_home"' EXIT HUP INT TERM
 
+# A stand-in for the owner's private state repository.
+state_repo="$test_home/agent-skills-state"
+mkdir -p "$state_repo/.git" "$state_repo/long-horizon-orchestrator"
+printf '# Providers\n' > "$state_repo/long-horizon-orchestrator/providers.md"
+printf '# State\n' > "$state_repo/README.md"
+export AGENT_SKILLS_STATE="$state_repo"
+export XDG_STATE_HOME="$test_home/.local/state"
+
 HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
 HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
 
@@ -29,6 +37,9 @@ test -L "$test_home/.codex/skills/remote-session-reporting"
 test -L "$test_home/.agents/skills/remote-session-reporting"
 test "$(readlink "$test_home/.claude/skills/remote-session-reporting")" = "$repo_root/skills/remote-session-reporting"
 test -f "$test_home/.claude/skills/remote-session-reporting/SKILL.md"
+state_link="$test_home/.local/state/agent-skills/long-horizon-orchestrator/providers.md"
+test "$(readlink "$state_link")" = "$state_repo/long-horizon-orchestrator/providers.md"
+test ! -e "$test_home/.local/state/agent-skills/README.md"
 
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
 test ! -e "$test_home/.config/opencode/skills/product-design"
@@ -42,5 +53,7 @@ test ! -L "$test_home/.codex/skills/agent-ready-repo"
 test ! -e "$test_home/.codex/skills/agent-ready-repo"
 test ! -e "$test_home/.claude/skills/remote-session-reporting"
 test ! -e "$test_home/.codex/skills/remote-session-reporting"
+test ! -L "$state_link"
+test -f "$state_repo/long-horizon-orchestrator/providers.md"
 
 echo "bootstrap-test: passed"
