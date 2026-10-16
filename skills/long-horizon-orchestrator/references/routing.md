@@ -32,6 +32,7 @@ An under-powered agent on important work costs more than an over-powered one: wr
 | A task where you see a real benefit from extra thinking (for example subtle correctness or security logic, a bug with an unknown cause, a design choice with no precedent in the project). Name the benefit in the contract | extra high |
 | Sparingly: large or many-sided work that clearly gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor). Name the gain in the contract | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
 | A fast helper's step or research lane, on Antigravity or OpenCode | high (see "Fast helpers" below) |
+| An advanced helper step on Gemini 4 Argon | high: `gemini-4-argon-high` (see "Advanced helper" below) |
 
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
 - **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` defaults to low.
@@ -55,8 +56,14 @@ It prints each provider's plan and the usage and reset time of its 5-hour and we
 The script asks each provider directly, so the numbers include use from other devices and apps (claude.ai, ChatGPT, Codex elsewhere):
 - **Claude:** Claude Code's own `/usage` command, run without a model call (`claude -p /usage`). It uses no quota and works even when the window is used up.
 - **Codex:** Codex's app server (`account/rateLimits/read`), with Codex's own sign-in.
+- **Antigravity:** the Antigravity CLI's own `/usage` command (`agy -p /usage`), which starts no agent turn and uses no quota. Antigravity splits its models into groups, and each group has its own windows:
+  - `gemini_models_five_hour` and `gemini_models_weekly`: Gemini Flash and Pro, so the Flash helper;
+  - `gemini_4_argon_weekly`: Gemini 4 Argon. On the Pro plan, Argon has its own weekly window and no 5-hour one;
+  - `claude_and_gpt_models_*`: the Claude and GPT models Antigravity also offers, which the run doesn't use.
 
-When a live query fails, for example with no network, the script falls back to the last values the providers wrote to local logs and says so in `source`. Those are only as fresh as the last request made on this machine. `--cached` skips the live queries.
+  Quota is used in proportion to the cost of the tokens, so a call's size matters more than how many calls there are. If `ai_credits_remaining` appears, the owner has paid credits that Antigravity can spend once a window is used up. Never let a run spend them: an Antigravity helper that reports a quota error stops there, even if credits would let it go on.
+
+When a live query fails, for example with no network, the script falls back to the last values Claude and Codex wrote to local logs and says so in `source`. Antigravity has no such logs, so it gets an `error` instead. Those are only as fresh as the last request made on this machine. `--cached` skips the live queries.
 
 Codex may list free rate-limit resets (`reset_credits_available`). Never use one: spending them is the user's decision.
 
@@ -70,7 +77,7 @@ tasks that fit ≈ (100 − used_percent) / percent one task uses on that plan
 - **Learning it:** after each task, update the calibration from the snapshots taken before and after. If several tasks shared the provider, split the change between them by duration. Calibrate only from real runs, with tasks of about 20 minutes or longer. Short tasks and test runs give wildly misleading per-hour rates: a 3-minute task that moves a window by 3 points is not "60% per hour". When a run is too short to calibrate from, say so in the ledger and leave the profile unchanged.
 - **The 5-hour window limits a wave; the weekly window limits the whole run.** The weekly window also covers the user's next days, so don't plan to use more than about 80% of a weekly window without saying so in the contract.
 - **Staleness:** treat `observed_at` as the age of the number. A window with `reset_since_observed: true` has reset since it was read, so it is near zero again.
-- **Missing data:** if a provider's usage can't be read, say so and route by plan size alone. Antigravity's and OpenCode's are never readable, so their helpers are watched for errors and slowdowns instead (section 4).
+- **Missing data:** if a provider's usage can't be read, say so and route by plan size alone. OpenCode's is never readable, so its helpers are watched for errors and slowdowns instead (section 4). Watch Antigravity's helpers that way too whenever its usage can't be read.
 - **Other runs share the windows.** Another orchestrator run on the same machine draws on the same subscriptions. Before the contract and before each wave, look for other ledgers next to yours:
 
   ```sh
@@ -160,6 +167,7 @@ Never work around a limit silently. The report says which tasks paused, for how 
 | Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex | Codex has room for that piece | Owner's assessment, 2026-10: Codex's computer use is stronger |
 | Research and retrieval: web and documentation research, searching a codebase, logs or many files, surveying how others solve a problem, collecting facts and evidence | A fast helper (see "Fast helpers" below), as a sub-task or a research subagent inside the task | the result can be checked against its sources | Owner, 2026-10-16: use them freely for research and retrieval |
 | A simple, fully specified step: a mechanical edit from an exact rule, renames, boilerplate from a template, extracting facts from named files | A fast helper | the result is cheap to check | Owner, 2026-10 |
+| A bounded sub-task too hard for Flash: deep research and synthesis, a scoped investigation, an advisory second review, a well-specified piece of code | Gemini 4 Argon (see "Advanced helper" below) | the run's Argon budget has room, and the agent that asked can check the result | Owner, 2026-10-17 |
 | Everything else | Home harness | always | section 1 |
 
 - **A preference, not a rule.** Claude agents can do computer use too. When Codex is short on room, unavailable, or the computer-use part is trivial, keep the work on the home harness.
@@ -173,7 +181,7 @@ Two providers offer fast models that cost the run little. Handing them research 
 - **Antigravity:** `gemini-3.8-flash-high`, Gemini Flash at high reasoning.
 - **OpenCode:** only its two free models that are good enough (owner, 2026-10-16): `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free`, each with `{"id": "variant", "value": "high"}`. Its other free models aren't good enough, and its paid models bill the owner per request: use neither.
 
-Flash models stay fast at high reasoning, and since they are less capable to begin with, the extra reasoning is what makes their results dependable. Don't use these providers' larger models (Gemini Pro, the Claude and GPT models Antigravity also offers, OpenCode's paid models) to do bigger work through the back door. That work belongs to the home harness.
+Flash models stay fast at high reasoning, and since they are less capable to begin with, the extra reasoning is what makes their results dependable. Don't use these providers' other larger models (Gemini Pro, the Claude and GPT models Antigravity also offers, OpenCode's paid models) to do bigger work through the back door. That work belongs to the home harness. The one exception is Gemini 4 Argon, for the advanced steps below.
 
 **What they take,** as often as it genuinely helps, with no fixed count:
 - **Research and retrieval:** web and documentation research, searching a codebase, logs or many files, surveying how other projects solve a problem, collecting facts, API details or evidence, comparing options against named criteria, condensing long material.
@@ -191,22 +199,40 @@ You may use them too, for the run's own chores: collecting thread times for the 
 
 **They run with the owner's own setup.** A helper loads the owner's configuration for its harness, including their MCP servers: on 2026-10-15, an OpenCode helper connected to the owner's running app through it. So every helper's prompt says: stay read-only, apart from the files a step names; never commit, merge, or touch the integration checkout; don't use tools that reach the owner's apps or services (speaking, messaging, their app's own tools); never ask the user anything.
 
-**Limits: switch, don't wait.** Neither provider's usage can be read locally, so watch the helpers themselves.
+**Limits: switch, don't wait.** OpenCode's usage can't be read, so watch its helpers themselves. Antigravity's can, so check it as well as watching its helpers.
 - **OpenCode's free models are rate-limited, model by model.** Under load, most requests come back `429` and OpenCode quietly retries them, so a helper slows down rather than fails. On 2026-10-16, about 12 of 15 requests to GLM-5.3 Flash between 17:59 and 18:02 failed with `429`. The signs:
   - a step takes several times longer than the same kind of step did earlier;
   - `task_status` stays `working` while its child thread shows nothing new for several minutes;
   - it ends with a rate-limit (`429`) or "Upstream request failed" error.
 
   OpenCode's log (`~/.local/share/opencode/log/opencode.log`) records only that last error, not the retries before it. The owner's OpenCode console lists every request.
-- **Antigravity has a small plan with its own limits** (the owner's plan is in the profile), and says so with a quota or rate-limit error.
+- **Antigravity has a small plan with its own limits** (the owner's plan is in the profile). Flash draws on the Gemini group's 5-hour and weekly windows. Before each wave, read them in the usage snapshot: while `gemini_models_five_hour` is past about 85%, put OpenCode first in new briefs and leave Antigravity out until the reset. A helper that hits the limit anyway says so with a quota or rate-limit error.
 - **When a helper is limited,** cancel it (`task_cancel`) and switch. A task calling a helper in `wait` mode sees nothing while it waits, so it passes a `timeoutMs` of a few minutes; `waitTimedOut` is its sign to look at `task_status`. Then:
   1. **Model:** on OpenCode, delegate the same prompt again to its other good free model.
   2. **Provider:** if that one is limited too, or the helper was on Antigravity, delegate it to the other provider.
   3. **Yourself:** when every helper is limited, do the work yourself.
 
-  Try a limited OpenCode model again only on a later step, and drop it for the rest of the task if it is still slow. After an Antigravity quota error, leave Antigravity alone until its window resets.
+  Try a limited OpenCode model again only on a later step, and drop it for the rest of the task if it is still slow. After an Antigravity quota error, leave that model group alone until its window resets (`resets_at` in the snapshot). Argon and Flash have separate windows, so one running out doesn't stop the other.
 - **Switching moves helper work only.** Helpers are free or small, not the subscriptions the user sized for the run, so their work may move between them. The task itself, and you, never move (section 3).
 - **Record it.** The ledger gets each task's helper use (provider, model and level, and for what, with counts) and every limit and switch. Where the limits began goes into the profile's calibration.
+
+### Advanced helper: Gemini 4 Argon
+
+Antigravity's `gemini-4-argon-high` is clearly stronger than Flash and much cheaper for the run than another home-harness agent. It takes sub-tasks that need more judgment than Flash can give, but are still bounded and checkable:
+- **Deep research and synthesis:** comparing designs or libraries against the task's criteria, explaining how an unfamiliar part of the code works, condensing a long specification into the decisions it forces.
+- **A scoped investigation:** tracing where a failure could come from within named files or logs, and ranking the likely causes with evidence. The task's agent decides what the cause is and how to fix it.
+- **An advisory second review** of a diff or a plan, beside the task's own reviewers. It adds findings; it never replaces a reviewer and is never the merge gate.
+- **A well-specified piece of code:** a self-contained function, module or test suite against a given interface, which the task's agent reads, tests and owns.
+
+What it never takes is the same as for the fast helpers: a whole task (unless the user routes one there in the contract), a design decision, the merge gate, or the orchestration.
+
+**Its quota is small, so give it a budget.** On the Pro plan, Argon has a weekly window of its own (`gemini_4_argon_weekly`) and no 5-hour one, and quota is used by token cost. On 2026-10-17, a one-word reply with a 22,000-token prompt used about 0.9% of the week, so a research lane that reads many files can take a large share. So:
+- **In the contract,** give the run an Argon budget in points of its weekly window. The default is at most half of what is left, so the owner keeps the rest of the week. Name the tasks that may use it.
+- **Use it where Flash isn't enough.** Give Argon the files, paths and question up front, so it doesn't spend its quota searching; send plain lookups to Flash or OpenCode.
+- **Before each wave,** check `gemini_4_argon_weekly` against the budget, and leave Argon out of new briefs once the budget is used.
+- **When Argon is limited** (a quota error, or the budget is used), its work goes back to the agent that asked. Don't hand it to Flash or OpenCode, which can't do it well.
+
+Calls, targets and checks work as for the fast helpers (section 5), with `{providerInstanceId: "antigravity", model: "gemini-4-argon-high"}`.
 
 ### Computer use needs the screen
 
@@ -253,6 +279,12 @@ A helper is limited when it reports a quota or rate-limit (429) error or "Upstre
 
 Fill in the targets from section 4: Antigravity (`antigravity`, `gemini-3.8-flash-high`, no options) and OpenCode's `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free` (`opencode`, options `[{id: "variant", value: "high"}]`), the two OpenCode models next to each other, so a limited one switches model first. Spread the load across the two providers: give about half the tasks Antigravity first, and the others OpenCode first. Leave out a helper that is limited now, and put one that was limited earlier last. Five minutes without anything new suits a quick step (timeoutMs 300000); allow a research lane longer.
 
+When a task may use Argon, add this section too:
+
+```text
+Help available (advanced helper): for <the kind of sub-task, for example "comparing the two sync designs against the brief's criteria" or "a second review of your diff before you hand off">, you may hand a bounded sub-task to Gemini 4 Argon: call delegate_task with target {providerInstanceId: "antigravity", model: "gemini-4-argon-high"}, role "research" (or "general" for code), and mode "wait" with timeoutMs <n> or mode "async". It has a small weekly quota: use it about <n> times in this task at most, only where a fast helper wouldn't do, and give it the files, paths and question up front so it doesn't spend its quota searching. The same rules as for the fast helpers apply: read-only apart from named files, no commits or merges, no tools that reach the owner's apps or services, never ask the user. Check what it returns: you decide, and you own any code it writes. If it reports a quota or rate-limit error, do that work yourself; don't hand it to a fast helper.
+```
+
 - **A helper is for its step or lane only.** A task must not hand the rest of its work to a helper. When the home window runs out, the task pauses (section 3); it doesn't keep going by handing its work to helpers.
 - **Plain Claude Code or Codex:** no cross-provider hand-off exists, so the step stays on the home harness.
 
@@ -276,12 +308,13 @@ The owner may edit it at any time, and their statements win over this reference.
 ## Plans
 - Claude: <plan, e.g. Max 20x> (detected <date>)
 - Codex: <plan, e.g. ChatGPT Plus> (detected <date>)
-- Antigravity: <plan> with its own limits (owner, <date>; usage not readable locally)
+- Antigravity: <plan> with its own limits (owner, <date>); usage read by `agy -p /usage`, with Gemini 5-hour and weekly windows and a separate Argon weekly window
 - OpenCode: free models only (owner, <date>); rate-limited model by model, usage not readable locally
 
 ## Preferences
 - Prefer Codex for computer use when it has room (owner, <date>)
 - Fast helpers inside tasks, for research, retrieval and simple steps: Antigravity's Gemini Flash at high; OpenCode's <models good enough> at high; never task agents (owner, <date>)
+- Advanced helper inside tasks, for bounded harder sub-tasks: Gemini 4 Argon at high, within a weekly budget per run (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)
 
 ## Machine
@@ -292,7 +325,8 @@ The owner may edit it at any time, and their statements win over this reference.
 ## Calibration (newest first)
 - codex/<plan> five_hour: ~<n>% per task-hour, <kind of task> (run <ledger name>)
 - claude/<plan> five_hour: ~<n>% per task-hour (run <ledger name>)
-- antigravity: <n> Flash hand-offs in one 5-hour window before a quota error (run <ledger name>)
+- antigravity/gemini_models: <n> Flash hand-offs took the 5-hour window from <a>% to <b>% (run <ledger name>)
+- antigravity/gemini_4_argon: <n> Argon hand-offs of <kind> took the week from <a>% to <b>% (run <ledger name>)
 - opencode/<model>: rate-limited after <n> requests in <m> minutes; switched to <model or provider> (run <ledger name>)
 ```
 
@@ -301,11 +335,12 @@ At the start of a run, read the "Granted" line under "Machine", so the contract 
 ## 7. In the contract and the report
 
 - **In the contract:**
-  - Show the usage snapshot in plain words, for example "Claude Max 20x: 9% of the 5-hour window and 23% of the week used. Codex Plus: 23% and 16%."
+  - Show the usage snapshot in plain words, for example "Claude Max 20x: 9% of the 5-hour window and 23% of the week used. Codex Plus: 23% and 16%. Antigravity Pro: Gemini 2% and 1%; Argon 1% of its week."
   - Give the expected consumption of the run, and whether it is likely to pause for a reset (and until when).
   - Name any other active run that shares the subscriptions.
   - Give the reason for each task routed away from the home harness.
   - Say which tasks may use the fast helpers, and for what.
+  - Give the run's Argon budget, in points of its weekly window, and which tasks may use it.
 - **In the report:**
   - Add one line on usage, before and after.
   - Name any task that paused for a reset, and for how long.

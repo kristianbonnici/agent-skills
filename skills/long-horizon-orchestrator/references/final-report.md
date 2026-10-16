@@ -54,7 +54,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 <One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; detailed technical notes available on request.>
 
-<One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
+<One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%; Antigravity Argon from 1% to 9% of its week." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
 ```
 
 ## Run charts

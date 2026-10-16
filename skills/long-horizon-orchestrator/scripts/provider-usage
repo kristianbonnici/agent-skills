@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""Print subscription usage and reset times for Claude and Codex as JSON.
+"""Print subscription usage and reset times for Claude, Codex and Antigravity as JSON.
 
 Read-only. By default each provider is asked directly, through its own CLI and
 sign-in, so the numbers include use from other devices and apps:
   - Claude: `claude -p /usage`, a local command that makes no model call;
-  - Codex: the app server's `account/rateLimits/read` request.
-When a live query fails, or with --cached, the values come from the last ones
-each provider wrote to local files (T3 Code provider logs, Codex session files),
-and "live_error" says why. A window whose reset time has passed is flagged as
+  - Codex: the app server's `account/rateLimits/read` request;
+  - Antigravity: `agy -p /usage` and `agy -p /credits`, which answer without an
+    agent turn. Each model group gets its own windows, named
+    `<group>_five_hour` and `<group>_weekly` (for example `gemini_models_five_hour`,
+    `gemini_4_argon_weekly`).
+When a live query fails, or with --cached, Claude and Codex values come from the
+last ones each provider wrote to local files (T3 Code provider logs, Codex session
+files), and "live_error" says why. Antigravity keeps no such files, so it is read
+live only. A window whose reset time has passed is flagged as
 reset. When nothing can be read, the provider gets an "error" instead of the
 script failing.
 
@@ -21,6 +26,7 @@ import json
 import os
 import re
 import select
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -309,13 +315,70 @@ def stamp_seconds(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
+def agy_command(command: str) -> dict:
+    """A read-only slash command of the Antigravity CLI; it starts no agent turn and spends no quota."""
+    agy = shutil.which("agy") or str(Path.home() / ".local" / "bin" / "agy")
+    proc = subprocess.run(
+        [agy, "-p", command, "--output-format", "json"],
+        cwd=tempfile.gettempdir(),
+        capture_output=True,
+        text=True,
+        timeout=LIVE_TIMEOUT,
+    )
+    try:
+        reply = json.loads(proc.stdout)
+    except ValueError:
+        detail = (proc.stdout or proc.stderr).strip().splitlines()[:1]
+        raise RuntimeError(f"agy {command} printed no JSON" + (f": {detail[0][:160]}" if detail else ""))
+    if reply.get("status") != "SUCCESS":
+        raise RuntimeError(f"agy {command} failed: {str(reply.get('response') or reply)[:160]}")
+    return (reply.get("command") or {}).get("data") or {}
+
+
+def antigravity_live(now: float) -> dict:
+    """Antigravity's quota: each model group has its own 5-hour and weekly windows, or a weekly one only."""
+    windows, groups = {}, {}
+    for group in agy_command("/usage").get("groups") or []:
+        slug = re.sub(r"[^a-z0-9]+", "_", (group.get("name") or "").lower()).strip("_")
+        if not slug:
+            continue
+        groups[slug] = group.get("description")  # which models share the group's windows
+        for bucket in group.get("buckets") or []:
+            if bucket.get("remaining_fraction") is None:
+                continue  # a bucket the plan has disabled
+            span = {"5h": "five_hour", "weekly": "weekly"}.get(bucket.get("window"), bucket.get("window"))
+            reset = bucket.get("reset_time")
+            windows[f"{slug}_{span}"] = window(
+                100 * (1 - float(bucket["remaining_fraction"])),
+                stamp_seconds(reset) if reset else None,
+                now,
+            )
+    if not windows:
+        raise RuntimeError("agy /usage listed no quota buckets")
+    out = {
+        "plan": None,  # agy doesn't name the plan; the owner's profile does
+        "windows": windows,
+        "groups": groups,
+        "observed_at": iso(now),
+        "source": "live: agy -p /usage",
+    }
+    try:
+        credits = agy_command("/credits").get("remaining_credits")
+    except Exception:
+        credits = None
+    if credits:
+        out["ai_credits_remaining"] = credits  # paid by the owner; the run never spends them
+    return out
+
+
 def antigravity(now: float) -> dict:
     return {
         "plan": None,
         "windows": {},
         "error": (
-            "Antigravity does not record its quota locally; watch its hand-offs for quota errors "
-            "(see references/routing.md, Fast helpers) and stop using it for the window after one"
+            "Antigravity's usage is read live only (agy -p /usage); watch its hand-offs for quota "
+            "errors (see references/routing.md, Fast helpers) and stop using a model group for "
+            "its window after one"
         ),
     }
 
@@ -342,7 +405,7 @@ def main() -> int:
     readers = (
         ("claude", with_fallback(claude_live, claude, not args.cached)),
         ("codex", with_fallback(codex_live, codex, not args.cached)),
-        ("antigravity", antigravity),
+        ("antigravity", with_fallback(antigravity_live, antigravity, not args.cached)),
     )
     for name, reader in readers:
         try:
