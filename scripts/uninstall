@@ -42,8 +42,8 @@ remove_link() {
     echo "DRY RUN: rm $remove_target"
   else
     rm "$remove_target"
+    echo "REMOVED $remove_target"
   fi
-  echo "REMOVED $remove_target"
 }
 
 while IFS=$(printf '\t') read -r row_host mode source target; do

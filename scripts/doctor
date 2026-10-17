@@ -87,10 +87,21 @@ fi
 
 if [ "$host" = all ] || [ "$host" = opencode ]; then
   if command -v opencode >/dev/null 2>&1; then
-    # OpenCode truncates stdout at 64 KiB when it writes to a pipe, so read
-    # its skill list from a file instead.
+    # OpenCode 2 lists skills through its background service (`opencode api
+    # skill.list`); the list can come back empty while the service still loads
+    # them, so ask a few times. It truncates stdout at 64 KiB when it writes to
+    # a pipe, so read the list from a file instead.
     skill_list=$(mktemp "${TMPDIR:-/tmp}/doctor-opencode.XXXXXX")
-    if opencode debug skill >"$skill_list" 2>/dev/null && grep -q '"name": "product-design"' "$skill_list"; then
+    found=0
+    for attempt in 1 2 3 4 5; do
+      if opencode api skill.list >"$skill_list" 2>/dev/null &&
+        python3 -c 'import json, sys; sys.exit(not any(s.get("id") == "product-design" for s in json.load(open(sys.argv[1])).get("data", [])))' "$skill_list" 2>/dev/null; then
+        found=1
+        break
+      fi
+      sleep 2
+    done
+    if [ "$found" -eq 1 ]; then
       pass "OpenCode discovers product-design"
     else
       fail "OpenCode does not discover product-design"
