@@ -62,6 +62,7 @@ The script asks each provider directly, so the numbers include use from other de
   - `claude_and_gpt_models_*`: the Claude and GPT models Antigravity also offers, which the run doesn't use.
 
   Quota is used in proportion to the cost of the tokens, so a call's size matters more than how many calls there are. If `ai_credits_remaining` appears, the owner has paid credits that Antigravity can spend once a window is used up. Never let a run spend them: an Antigravity helper that reports a quota error stops there, even if credits would let it go on.
+- **Copilot:** GitHub's own quota endpoint (`gh api /copilot_internal/user`, the one its editors use), which spends nothing. Copilot has one window, `monthly`, with `units_entitled` and `units_remaining`; it resets on the first of the month. It is billed by token cost in fractional units, not per request. If the live read fails, `local_units_used_this_month` gives what this machine's Copilot sessions spent (from `~/.copilot/session-state`), but not what is left. If `overage_permitted` appears, GitHub would bill the owner past the budget: never let a run go past it.
 
 When a live query fails, for example with no network, the script falls back to the last values Claude and Codex wrote to local logs and says so in `source`. Antigravity has no such logs, so it gets an `error` instead. Those are only as fresh as the last request made on this machine. `--cached` skips the live queries.
 
@@ -210,11 +211,21 @@ You may use them too, for the run's own chores: collecting thread times for the 
 - **When a helper is limited,** cancel it (`task_cancel`) and switch. A task calling a helper in `wait` mode sees nothing while it waits, so it passes a `timeoutMs` of a few minutes; `waitTimedOut` is its sign to look at `task_status`. Then:
   1. **Model:** on OpenCode, delegate the same prompt again to its other good free model.
   2. **Provider:** if that one is limited too, or the helper was on Antigravity, delegate it to the other provider.
-  3. **Yourself:** when every helper is limited, do the work yourself.
+  3. **Backup:** when both are limited, delegate it to Copilot (see "Backup helper" below), if its budget has room.
+  4. **Yourself:** when every helper is limited, do the work yourself.
 
   Try a limited OpenCode model again only on a later step, and drop it for the rest of the task if it is still slow. After an Antigravity quota error, leave that model group alone until its window resets (`resets_at` in the snapshot). Argon and Flash have separate windows, so one running out doesn't stop the other.
 - **Switching moves helper work only.** Helpers are free or small, not the subscriptions the user sized for the run, so their work may move between them. The task itself, and you, never move (section 3).
 - **Record it.** The ledger gets each task's helper use (provider, model and level, and for what, with counts) and every limit and switch. Where the limits began goes into the profile's calibration.
+
+### Backup helper: GitHub Copilot
+
+Copilot (`acpRegistry_copilot`, model `default`, no options) is a third fast helper, used only when Antigravity's Flash and both OpenCode models are limited, or to spread a heavy helper load. On the owner's student plan, Auto routing is the only choice and it picks GPT-5.6 Luna every time (`availableModels` held only that model on 2026-10-17); no reasoning level can be set. It takes the same work as the other fast helpers and nothing more, with the same rules and checks.
+
+- **It is fast and cheap per call, but the budget is monthly.** On 2026-10-17, a lookup in one file (3 model calls, 68,000 input tokens) took 0.7 of the month's 200 units, and a research lane that read three long files (6 calls, 241,000 input tokens, 77% cached) took 1.8 units in 30 seconds. So budget about 0.75 units per 100,000 input tokens. Both answers were right; one line number was 3 lines off, so check citations as for any helper.
+- **Give it a budget in the contract,** in units of the monthly window: by default at most a third of what is left, since the window also covers the rest of the owner's month. Before each wave, check `units_remaining` in the snapshot, and leave Copilot out of new briefs once the budget is used.
+- **When it is limited** (a quota error, or the budget is used), it drops out of the order like any other helper. Its quota resets only at `resets_at`, so don't try it again this run.
+- **Its usage is recorded locally too.** Each Copilot session writes `~/.copilot/session-state/<id>/events.jsonl`: `session.auto_mode_resolved` names the model Auto chose, and the last `session.usage_checkpoint` holds `totalNanoAiu` (units × 10⁹). Use them to attribute the run's Copilot use per helper.
 
 ### Advanced helper: Gemini 4 Argon
 
@@ -273,11 +284,12 @@ Call delegate_task with role "research" (or "general" for a step) and either mod
 1. {providerInstanceId: "<first helper>", model: "<model>"<, options>}
 2. {providerInstanceId: "<second>", model: "<model>"<, options>}
 3. {providerInstanceId: "<third>", model: "<model>"<, options>}
+4. {providerInstanceId: "<backup>", model: "default"} (the backup: only when the targets above are limited)
 Use no other model of these providers. Tell the helper to stay read-only (apart from the files a step names), never to commit or merge, not to use tools that reach the owner's apps or services, and never to ask the user anything. Check every result before you rely on it: check the claims you build on against their sources, and diff or test a step. Never hand a helper a decision, code that needs judgment, a review or the merge gate.
 A helper is limited when it reports a quota or rate-limit (429) error or "Upstream request failed", or when it is far slower than the same kind of work was earlier. A wait that returns waitTimedOut, or an async lane with nothing new in its child thread for <n> minutes, is the sign: look at task_status, and if it is still working without progress, it is limited. Then cancel it with task_cancel and give the same prompt to the next target; when all are limited, do the work yourself. Note each switch, and which helpers you used for what, in your handoff.
 ```
 
-Fill in the targets from section 4: Antigravity (`antigravity`, `gemini-3.8-flash-high`, no options) and OpenCode's `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free` (`opencode`, options `[{id: "variant", value: "high"}]`), the two OpenCode models next to each other, so a limited one switches model first. Spread the load across the two providers: give about half the tasks Antigravity first, and the others OpenCode first. Leave out a helper that is limited now, and put one that was limited earlier last. Five minutes without anything new suits a quick step (timeoutMs 300000); allow a research lane longer.
+Fill in the targets from section 4: Antigravity (`antigravity`, `gemini-3.8-flash-high`, no options) and OpenCode's `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free` (`opencode`, options `[{id: "variant", value: "high"}]`), the two OpenCode models next to each other, so a limited one switches model first. Put Copilot (`acpRegistry_copilot`, model `default`, no options) fourth when its budget has room, and leave it out otherwise. Spread the load across the two providers: give about half the tasks Antigravity first, and the others OpenCode first. Leave out a helper that is limited now, and put one that was limited earlier last. Five minutes without anything new suits a quick step (timeoutMs 300000); allow a research lane longer.
 
 When a task may use Argon, add this section too:
 
@@ -318,6 +330,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - Codex: <plan, e.g. ChatGPT Plus> (detected <date>)
 - Antigravity: <plan> with its own limits (owner, <date>); usage read by `agy -p /usage`, with Gemini 5-hour and weekly windows and a separate Argon weekly window
 - OpenCode: free models only (owner, <date>); rate-limited model by model, usage not readable locally
+- Copilot: <plan, e.g. student (free_educational_quota)>, Auto routing only (<model it routes to>), <n> units a month (detected <date>); usage read by `gh api /copilot_internal/user`
 
 ## Preferences
 - Prefer Codex for computer use when it has room (owner, <date>)
@@ -335,6 +348,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - claude/<plan> five_hour: ~<n>% per task-hour (run <ledger name>)
 - antigravity/gemini_models: <n> Flash hand-offs took the 5-hour window from <a>% to <b>% (run <ledger name>)
 - antigravity/gemini_4_argon: <n> Argon hand-offs of <kind> took the week from <a>% to <b>% (run <ledger name>)
+- copilot/<plan> monthly: <n> hand-offs of <kind>, <tokens> input tokens, took <a> units (run <ledger name>)
 - opencode/<model>: rate-limited after <n> requests in <m> minutes; switched to <model or provider> (run <ledger name>)
 ```
 

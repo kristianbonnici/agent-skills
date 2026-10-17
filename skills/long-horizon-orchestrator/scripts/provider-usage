@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print subscription usage and reset times for Claude, Codex and Antigravity as JSON.
+"""Print subscription usage and reset times for Claude, Codex, Antigravity and Copilot as JSON.
 
 Read-only. By default each provider is asked directly, through its own CLI and
 sign-in, so the numbers include use from other devices and apps:
@@ -9,14 +9,18 @@ sign-in, so the numbers include use from other devices and apps:
     agent turn. Each model group gets its own windows, named
     `<group>_five_hour` and `<group>_weekly` (for example `gemini_models_five_hour`,
     `gemini_4_argon_weekly`).
+  - Copilot: GitHub's `copilot_internal/user` endpoint through `gh api`, which
+    spends no quota. Its premium budget is a monthly window (`monthly`), billed
+    by token cost in fractional units.
 When a live query fails, or with --cached, Claude and Codex values come from the
 last ones each provider wrote to local files (T3 Code provider logs, Codex session
-files), and "live_error" says why. Antigravity keeps no such files, so it is read
-live only. A window whose reset time has passed is flagged as
+files), and "live_error" says why. Copilot's local session files give only what
+this machine used this month, not what is left. Antigravity keeps no such files,
+so it is read live only. A window whose reset time has passed is flagged as
 reset. When nothing can be read, the provider gets an "error" instead of the
 script failing.
 
-Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA.
+Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME.
 """
 
 from __future__ import annotations
@@ -383,6 +387,63 @@ def antigravity(now: float) -> dict:
     }
 
 
+def copilot_live(now: float) -> dict:
+    """Copilot's monthly premium budget, as GitHub reports it to its own clients."""
+    gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
+    proc = subprocess.run(
+        [gh, "api", "/copilot_internal/user"], capture_output=True, text=True, timeout=LIVE_TIMEOUT
+    )
+    if proc.returncode:
+        raise RuntimeError(f"gh api /copilot_internal/user failed: {(proc.stderr or proc.stdout).strip()[:160]}")
+    info = json.loads(proc.stdout)
+    premium = (info.get("quota_snapshots") or {}).get("premium_interactions")
+    if not premium:
+        raise RuntimeError("GitHub reported no premium quota for this account")
+    reset = info.get("quota_reset_date_utc")
+    out = {
+        "plan": info.get("access_type_sku") or info.get("copilot_plan"),
+        "windows": {},
+        "observed_at": premium.get("timestamp_utc") or iso(now),
+        "source": "live: gh api /copilot_internal/user",
+    }
+    if premium.get("unlimited"):
+        out["unlimited"] = True
+        return out
+    out["windows"]["monthly"] = window(
+        100 - float(premium.get("percent_remaining", 0)), stamp_seconds(reset) if reset else None, now
+    )
+    out["units_entitled"] = premium.get("entitlement")
+    out["units_remaining"] = premium.get("quota_remaining")
+    if premium.get("overage_permitted"):
+        out["overage_permitted"] = True  # billed to the owner past the budget; the run never relies on it
+    return out
+
+
+def copilot(now: float) -> dict:
+    """What this machine's Copilot sessions spent this month; the budget left needs the live read."""
+    home = Path(os.environ.get("COPILOT_HOME", Path.home() / ".copilot")) / "session-state"
+    month = datetime.fromtimestamp(now, timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    used, sessions = 0.0, 0
+    for path in home.glob("*/events.jsonl"):
+        if path.stat().st_mtime < month.timestamp():
+            continue
+        last = None
+        for line in tail_lines(path):
+            if '"session.usage_checkpoint"' in line:
+                last = line
+        if last:
+            used += json.loads(last).get("data", {}).get("totalNanoAiu", 0) / 1e9
+            sessions += 1
+    return {
+        "plan": None,
+        "windows": {},
+        "local_units_used_this_month": round(used, 2),
+        "local_sessions_this_month": sessions,
+        "source": str(home),
+        "error": "Copilot's remaining budget is read live only (gh api /copilot_internal/user)",
+    }
+
+
 def with_fallback(live, cached, use_live: bool):
     def read(now: float) -> dict:
         if not use_live:
@@ -406,6 +467,7 @@ def main() -> int:
         ("claude", with_fallback(claude_live, claude, not args.cached)),
         ("codex", with_fallback(codex_live, codex, not args.cached)),
         ("antigravity", with_fallback(antigravity_live, antigravity, not args.cached)),
+        ("copilot", with_fallback(copilot_live, copilot, not args.cached)),
     )
     for name, reader in readers:
         try:
