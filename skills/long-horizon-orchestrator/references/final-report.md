@@ -11,6 +11,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - Be honest about anything that didn't finish, was blocked or wasn't verified, such as untested operating systems or a skipped check. One line each is enough.
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
 - A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
+- Show what changed: the tasks' pictures under their items ("Pictures" below), and in T3 the run map right above the report ("Run map").
 
 ## Template
 
@@ -21,18 +22,17 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 **1. <Plain name> (Task A)**
 <Two or three sentences in everyday language: what you can now do, and where to find it.>
+<If it changed something you can see: its pictures, each on its own line. In T3, `![<caption>](<absolute path>)`; elsewhere, `<caption>: <absolute path>`.>
 
 **2. ...**
 
 ## How it ran
 
-<The run-time line from `summary.txt` (see "Run charts" below), for example: "Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota. The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.">
+<The run-time line from `summary.txt` (see "The run's facts" below), for example: "Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota. The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.">
 
-<The dependency graph; see "Run charts" below.>
+<Outside T3 only: the dependency graph and the timeline; see "Run charts" below. In T3 the run map above the report shows both.>
 
-<The timeline; see "Run charts" below.>
-
-<One or two lines the charts can't say on their own, such as why the pauses happened, why effort levels changed, a helper that hit a rate limit and what its work switched to, or what you changed because the user asked during the run.>
+<One or two lines the map or charts can't say on their own, such as why the pauses happened, why effort levels changed, a helper that hit a rate limit and what its work switched to, or what you changed because the user asked during the run.>
 
 ## Not finished
 <Only if some tasks are blocked, parked or failed, or merged with a narrow miss.>
@@ -56,26 +56,51 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
 - <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
-<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; detailed technical notes available on request.>
+<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request.>
 
 <One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%; Antigravity Argon from 1% to 9% of its week." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
 ```
 
-## Run charts
+## Pictures
 
-The report has two Mermaid charts of the run as it actually happened, not as planned. The **dependency graph** shows who launched what, what waited for what, and how the work reached the integration branch. The **timeline** shows when each task ran, for how long, and how much of that time it was working. Draw both for every run, in this order.
+A task that changes something you can see leaves one to three pictures of it with captions, listed under "Pictures" in its handoff ([task-brief.md](task-brief.md)).
+
+- Show them under the task's item in "What was built", and list them in the task's `pictures` in the facts file, so the run map shows them on its card too.
+- Use them as they are. Don't open them to check them: each task took them from its own build with sample content, and looking costs your context. Open one only when its caption is missing or unclear.
+- They stay in the run directory. Never copy them into a repository, and never link to `/tmp`.
+- A task with nothing visible to show leaves none.
+
+## The run's facts
+
+The run map, the charts and the run-time line are all drawn from one facts file of the run as it actually happened, not as planned.
 
 ### Where the facts come from
 
 - **Harness, model and reasoning level:** the host's record you saved at launch, never an agent's description of itself. Note every level change you made during the run.
 - **Launch time:** the host's creation time for the task's thread or agent. Convert UTC to the user's local time.
 - **Merge time:** the integration branch's reflog, which shows when each task's merge moved it (`git reflog show <branch> --date=format-local:'%H:%M:%S'`). A commit's own date is not its merge time: rebases rewrite it.
-- **Worked time:** the sum of the task's turns, each from its start to its completion, from the host's per-turn records (in T3, see [host-t3.md](host-t3.md)). It counts only the task's own agent, not helpers it waited on. Cap it at the total when a task kept talking after its merge. If the host has no per-turn times, show only the total and say so once under the chart.
+- **Worked time:** the sum of the task's turns, each from its start to its completion, from the host's per-turn records (in T3, see [host-t3.md](host-t3.md)). It counts only the task's own agent, not helpers it waited on. Cap it at the total when a task kept talking after its merge. Keep the turns themselves too (a task's `turns`, and the run's for your own): the map's timeline draws them. If the host has no per-turn times, show only the total and say so once under the chart.
 - **The whole run:** from the user's approval of the contract (its time is in the ledger) to the final report. Your own worked time is the sum of your turns in that span, from the host's per-turn records of your own thread, and the number of those turns is your wake count. If the host has no per-turn times, give the run's span only.
 - **Quota pauses:** from when the first task failed on the limit until you resumed the tasks, from the threads' failed and resumed turns, not from your forecast.
-- **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events.
+- **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events. For the map, add each helper's outcome (`status`) and whether it reviewed or researched (`role`).
+- **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff.
 
-Put these facts into a JSON file in the run directory, and let `scripts/run-charts <facts.json> <output folder>` write both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws them on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the charts by hand: `linkStyle` indexes are easy to miscount.
+Put these facts into a JSON file in the run directory, and run `scripts/run-charts <facts.json> <run directory>/report`. It writes the run map, both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws the charts on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the map or the charts by hand: the map is tens of thousands of characters, and `linkStyle` indexes are easy to miscount.
+
+## Run map
+
+In T3, the report's picture of the run is the run map, drawn with `html_render` right above the report. It replaces the two Mermaid charts there. The orchestrator and its tasks are a tree of cards on a canvas the user can pan, zoom and rearrange. Each card shows the model's maker, the model and its level, the status, the one-line summary and the times. Each task's sub-agents fold out under it, lines show what launched and what waited for what, and a timeline sits under the canvas.
+
+1. `run-charts` writes three files beside the charts: `run-map.html` (the map on its own, for a browser), `run-map.svg` (the same page, carried as an image) and `run-map-t3.html`, a short page of a few thousand characters that loads the other two, the marks and the pictures by path. It prints the height to give `html_render`.
+2. Read `run-map-t3.html` and pass it unchanged to `html_preview` once. Its console should say `run map ready` and nothing should have failed.
+3. Pass the same page to `html_render`, titled `Run map · <run name>`, with that height, and then post the report. Don't describe the map in the report: it sits right above it. In the saved copy of the report, put `Run map: <path>/run-map.html` where the map was shown.
+4. Never paste `run-map.html` or `run-map.svg` into a tool, and never write the map's HTML yourself: either costs tens of thousands of tokens and invites typos. If the short page fails to draw, post the Mermaid charts instead and say so in one line.
+
+Outside T3, or on a host that can't show HTML, use the Mermaid charts below.
+
+## Run charts
+
+Outside T3, the report has two Mermaid charts instead of the map. The **dependency graph** shows who launched what, what waited for what, and how the work reached the integration branch. The **timeline** shows when each task ran, for how long, and how much of that time it was working. Draw both, in this order.
 
 ### Shared style
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Write the final report's two Mermaid charts (graph.mmd, timeline.mmd) from a run's facts,
-and its run-time line (summary.txt).
+"""Write the final report's run map (run-map.html, run-map.svg, run-map-t3.html), its two Mermaid
+charts (graph.mmd, timeline.mmd) and its run-time line (summary.txt) from a run's facts.
 
-The charts follow references/final-report.md ("Run charts"): a dependency graph and a
-timeline, coloured by each task's reasoning level at launch.
+The run map is the report's picture of the run in T3, where html_render shows it: the
+orchestrator and its tasks as a tree of cards you can pan, zoom and rearrange, with each task's
+sub-agents, what it waited for, its pictures, and a timeline. The Mermaid charts are the same
+picture for hosts that can't show HTML. Both follow references/final-report.md ("Run map",
+"Run charts"), coloured by each task's reasoning level at launch.
 
 Facts file (JSON):
 
@@ -38,8 +41,30 @@ Facts file (JSON):
     ]
   }
 
+Only for the run map, all optional:
+
+  "title": "OrbOS · night run", "date": "Sun 18 Oct",
+  "integration": {..., "ci": "passed"},             # or "failed"
+  "run": {..., "summary": "<the run's goal in one line>",
+          "turns": [["00:50", "01:02"], ...],      # the orchestrator's own turns
+          "helpers": [...]},                       # as a task's
+  a task's "summary": "<what it did or what you can now do, in one line>",
+           "turns": [["01:00", "01:20"], ...],     # its own turns, from the host's per-turn records
+           "pictures": [{"src": "A/pictures/settings.png", "caption": "The new settings screen"}],
+                                                   # relative to the facts file, or absolute
+  a helper's "status": "done" (or failed, cancelled), "role": "review" or "research",
+             "count": 2                            # when "did" doesn't end with ×2
+
+A pause's "which" names the tasks it stopped ("F only", "A, C"); without task IDs it covers every
+task running then. The maker's mark on each card comes from the model's name (assets/marks).
+
 Usage:
   run-charts <facts.json> <output folder> [--render] [--puppeteer-config <file>]
+
+run-map-t3.html is the page to paste into html_render in T3: a few thousand characters, because
+it only loads run-map.svg (the whole map, carried as an image that html_render inlines) and the
+marks and pictures, all by absolute path. Keep the output folder where it is until the report has
+been rendered. run-map.html is the same map on its own, to open in a browser.
 
 summary.txt gets the report's run-time line: how long the run took, how much of it was paused,
 how long the orchestrator and the tasks worked, and how many tasks ran at once at most.
@@ -51,6 +76,7 @@ line (mmdc), when it is installed, so you can look at them before posting.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
 import shutil
@@ -58,6 +84,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 FONT = "Helvetica Neue, Helvetica, Arial, sans-serif"
 GRAPH_INIT = (
@@ -358,6 +385,163 @@ def render(folder: Path, puppeteer_config: str | None) -> None:
                                                               f"failed: {result.stderr.strip()[:300]}"))
 
 
+ASSETS = Path(__file__).resolve().parent.parent / "assets"
+MAKERS = [  # the model's name, the maker's mark, its colour in the map (None: the text colour)
+    (r"claude|opus|sonnet|haiku|fable", "claude.svg", "#D97757"),
+    (r"\bgpt|codex|openai|\bo[1-9]\b", "openai.svg", None),
+    (r"gemini", "gemini.svg", "linear-gradient(135deg, #9168C0, #5684D1 55%, #1BA1E3)"),
+    (r"deepseek", "deepseek.svg", "#5786FE"),
+]
+EFFORTS = {"above": "Above Extra High", "max": "Max", "ultra": "Ultra", "ultracode": "Ultracode",
+           "ultrathink": "Ultrathink", "xhigh": "Extra High", "extra high": "Extra High", "high": "High",
+           "medium": "Medium", "low": "Low"}
+AGENT = re.compile(r"^(?:(?P<harness>.+?) · )?(?P<model>.+?)(?: \((?P<effort>[^()]+)\))?$")
+STUB = """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Run map</title></head>
+<body>
+<div class="rm" id="rm"><p style="color:#71717a;font:13px -apple-system,sans-serif">Loading the run map…</p></div>
+<script>
+// html_render inlines these absolute paths: the map's marks and pictures, and the map itself.
+window.RUN_MAP_FILES = %(files)s;
+fetch(%(page)s).then(r => r.text()).then(svg => {
+  const text = new DOMParser().parseFromString(svg, "image/svg+xml").querySelector("desc").textContent;
+  const page = new DOMParser().parseFromString(text, "text/html");
+  page.querySelectorAll("style").forEach(s => document.head.append(s));
+  document.getElementById("rm").replaceChildren();
+  const run = document.createElement("script");
+  run.textContent = page.querySelector("script").textContent;
+  document.body.append(run);
+}).catch(e => { document.getElementById("rm").textContent = "The run map didn't load: " + e; console.error("run map failed: " + e); });
+</script>
+</body>
+</html>
+"""
+
+
+def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
+    """The run map's data, with every time in minutes from the start of the run's first day, and
+    the files it draws (marks, pictures) by index: once as the standalone page loads them, once as
+    absolute paths for html_render."""
+    run = facts.get("run") or {}
+    turn_times = [v for item in [run, *facts["tasks"]] for turn in item.get("turns") or [] for v in turn]
+    values = times_of(facts) + turn_times
+    clock = Clock(values)
+    first = min((datetime.strptime(v, clock.format) for v in values), default=None) if clock.dated else None
+
+    def minute(value):
+        if not value:
+            return None
+        if clock.dated:
+            return int((datetime.strptime(value, clock.format) - first.replace(hour=0, minute=0)).total_seconds() // 60)
+        hours, minutes = value.split(":")
+        return int(hours) * 60 + int(minutes)
+
+    inline: list[str] = []
+    paths: list[str] = []
+    marks: dict[str, int] = {}
+
+    def add(path: Path, data: str) -> int:
+        inline.append(data)
+        paths.append(str(path))
+        return len(paths) - 1
+
+    def who(agent: str | None, level_value=None, level_label=None) -> dict:
+        found = AGENT.match(agent.strip()) if agent else None
+        harness, model, effort = (found.group("harness"), found.group("model"), found.group("effort")) if found else (None, None, None)
+        raw = str(level_value or "").strip().lower()
+        effort = effort or level_label or EFFORTS.get(raw)
+        band = LEVELS.get(raw) or LEVELS.get(str(effort or "").strip().lower()) or "high"
+        entry = {"harness": harness, "model": model, "effort": effort, "band": band,
+                 "mark": None, "ink": None, "letter": (model or harness or "?").strip()[:1].upper()}
+        for pattern, name, ink in MAKERS:
+            if re.search(pattern, model or harness or "", re.I):
+                path = ASSETS / "marks" / name
+                if path.exists():
+                    if name not in marks:
+                        marks[name] = add(path, "data:image/svg+xml;base64," + base64.b64encode(path.read_bytes()).decode())
+                    entry.update(mark=marks[name], ink=ink)
+                break
+        return entry
+
+    def helpers(items) -> list[dict]:
+        out = []
+        for h in items or []:
+            entry = who(h.get("label"))
+            did = h.get("did", "")
+            role = str(h.get("role", "")).strip().lower()
+            title = {"review": "Reviewer", "reviewer": "Reviewer", "research": "Researcher", "researcher": "Researcher"}.get(
+                role, role.capitalize() if role else ("Reviewer" if re.search(r"review", did, re.I) else "Helper"))
+            times = re.search(r"×\s*(\d+)\s*$", did)
+            count = int(h.get("count") or (times.group(1) if times else 1))
+            if count > 1 and not times:
+                title += f" ×{count}"
+            entry.update(title=title, did=did, count=count, status=h.get("status", "done"))
+            out.append(entry)
+        return out
+
+    def turns(item) -> list[list[int]]:
+        return [[minute(a), minute(b)] for a, b in item.get("turns") or []]
+
+    ids = [t["id"] for t in facts["tasks"]]
+    pauses = []
+    for p in facts.get("pauses", []):
+        start, end = minute(p["start"]), minute(p["end"])
+        named = [i for i in re.findall(r"[A-Za-z0-9_-]+", p.get("which", "")) if i in ids]
+        if not named:  # every task running then
+            named = [t["id"] for t in timed(facts["tasks"]) if minute(t["launched"]) < end and minute(t["ended"]) > start]
+        pauses.append({"start": start, "end": end, "reason": p.get("reason", ""), "which": p.get("which", ""), "tasks": named})
+
+    tasks = []
+    for t in facts["tasks"]:
+        launched, ended = minute(t.get("launched")), minute(t.get("ended"))
+        worked = t.get("worked_minutes")
+        if worked is not None and launched is not None and ended is not None:
+            worked = min(int(worked), ended - launched)
+        pictures = []
+        for picture in t.get("pictures") or []:
+            path = Path(picture["src"]).expanduser()
+            path = (path if path.is_absolute() else base / path).resolve()
+            if not path.exists():
+                print(f"run-charts: task {t['id']}'s picture {path} doesn't exist; left out of the map", file=sys.stderr)
+                continue
+            pictures.append({"file": add(path, str(path)), "caption": picture.get("caption", "")})
+        paused = [p for p in pauses if t["id"] in p["tasks"] and "pause" not in t.get("note", "").lower()]
+        tasks.append({
+            "id": t["id"], "name": t["name"], "summary": t.get("summary", ""), "status": t.get("status", "merged"),
+            "note": t.get("note", ""), "qa": bool(t.get("qa")), "needs": t.get("needs") or [],
+            "place": t.get("took_place_of") or None, "replaces": t.get("replaces") or None,
+            "launched": launched, "ended": ended, "worked": worked, "turns": turns(t), "pictures": pictures,
+            "paused": " · ".join(f"{span(p['end'] - p['start'])}" + (f" · {p['reason']}" if p["reason"] else "") for p in paused),
+            "helpers": helpers(t.get("helpers")),
+            **who(t.get("agent") or facts.get("harness"), t.get("level"), t.get("level_label")),
+        })
+    orch = {"name": "Orchestrator", "summary": run.get("summary", ""), "status": "done",
+            "start": minute(run.get("start")), "end": minute(run.get("end")), "worked": run.get("worked_minutes"),
+            "wakes": run.get("wakes"), "turns": turns(run), "helpers": helpers(run.get("helpers")),
+            **who(facts.get("orchestrator"), run.get("level"))}
+    data = {"title": facts.get("title", ""), "date": facts.get("date", ""), "integration": facts.get("integration", {}),
+            "orch": orch, "pauses": pauses, "tasks": tasks, "files": inline,
+            "turns_missing": any(not t.get("turns") for t in timed(facts["tasks"]))}
+    return data, inline, paths
+
+
+def run_map(facts: dict, base: Path, folder: Path) -> tuple[int, int]:
+    """Writes run-map.html, run-map.svg and run-map-t3.html; returns the T3 page's length and the
+    height to give html_render."""
+    data, _, paths = map_data(facts, base)
+    template = (ASSETS / "run-map.html").read_text()
+    page = template.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
+    (folder / "run-map.html").write_text(page)
+    carried = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", page)
+    (folder / "run-map.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><desc>'
+                                        + escape(carried) + "</desc></svg>\n")
+    stub = STUB % {"files": json.dumps(paths, ensure_ascii=False), "page": json.dumps(str((folder / "run-map.svg").resolve()))}
+    (folder / "run-map-t3.html").write_text(stub)
+    rows = len(timed(facts["tasks"])) + (1 if (facts.get("run") or {}).get("start") else 0)
+    return len(stub), 860 + 24 * rows  # generous: html_render shrinks the frame to the page, and narrow screens wrap more
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="run-charts", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -381,6 +565,9 @@ def main(argv: list[str]) -> int:
     line = summary(facts)
     (folder / "summary.txt").write_text(line + "\n")
     print(f"run-charts: wrote {folder / 'graph.mmd'}, {folder / 'timeline.mmd'} and {folder / 'summary.txt'}")
+    length, height = run_map(facts, Path(args.facts).resolve().parent, folder.resolve())
+    print(f"run-charts: wrote {folder / 'run-map.html'}, {folder / 'run-map.svg'} and {folder / 'run-map-t3.html'}"
+          f" ({length:,} characters; html_render height {height})")
     if line:
         print(line)
     if args.render:

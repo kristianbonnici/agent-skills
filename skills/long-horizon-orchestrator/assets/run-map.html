@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run map</title>
+<!-- The run map's page. scripts/run-charts fills in the data (the line "const DATA = ...") and writes
+     run-map.html, run-map.svg (this page, carried for T3) and run-map-t3.html (the short page to
+     paste into html_render). See references/final-report.md, "Run map". -->
+<style>
+:root {
+  --rm-card: var(--card, #ffffff); --rm-fg: var(--foreground, #18181b); --rm-muted: var(--muted-foreground, #71717a);
+  --rm-border: var(--border, #e4e4e7); --rm-soft: var(--secondary, #f4f4f5);
+  --rm-line: color-mix(in srgb, var(--info, #3b82f6) 62%, transparent);
+  --rm-ok: var(--success, #16a34a); --rm-warn: var(--warning, #d97706); --rm-bad: var(--destructive, #dc2626); --rm-info: var(--info, #2563eb);
+  --rm-above: #7c3aed; --rm-xhigh: #2563eb; --rm-high: #0d9488;
+  --rm-radius: 12px; --cv-h: 620px;
+}
+:root[data-theme="dark"] { --rm-card: var(--card, #1f1f23); --rm-fg: var(--foreground, #fafafa); --rm-muted: var(--muted-foreground, #a1a1aa); --rm-border: var(--border, #2e2e33); --rm-soft: var(--secondary, #27272a); }
+:root[data-theme="dark"] body { background: var(--background, #18181b); }
+@media (prefers-color-scheme: dark) { :root { --rm-card: var(--card, #1f1f23); --rm-fg: var(--foreground, #fafafa); --rm-muted: var(--muted-foreground, #a1a1aa); --rm-border: var(--border, #2e2e33); --rm-soft: var(--secondary, #27272a); } }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif); color: var(--rm-fg); }
+.rm { width: 100%; font-size: 14px; line-height: 1.35; padding: 4px 0 8px; }
+.rm-error { color: var(--rm-bad); font-size: 13px; }
+.rm-head { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; margin: 0 0 10px; }
+.rm-title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 600; }
+.rm-title .spark { color: var(--rm-info); font-size: 18px; }
+.rm-title .sub { font-weight: 400; color: var(--rm-muted); font-size: 14px; }
+.rm-stats { color: var(--rm-muted); font-size: 13px; display: flex; gap: 4px 12px; flex-wrap: wrap; }
+.rm-stats b { color: var(--rm-fg); font-weight: 600; } .rm-stats .ok { color: var(--rm-ok); } .rm-stats .bad { color: var(--rm-bad); }
+.rm-controls { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; align-items: center; }
+.rm-toggle { font: inherit; font-size: 12.5px; border: 1px solid var(--rm-border); background: var(--rm-card); color: var(--rm-muted); border-radius: 999px; padding: 4px 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.rm-toggle[aria-pressed="true"] { color: var(--rm-fg); border-color: color-mix(in srgb, var(--rm-info) 45%, var(--rm-border)); background: color-mix(in srgb, var(--rm-info) 9%, var(--rm-card)); }
+.rm-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .55; }
+.rm-toggle[aria-pressed="true"] .dot { background: var(--rm-info); opacity: 1; }
+.rm-legend { margin-left: auto; padding-right: 4px; display: flex; gap: 12px; font-size: 12px; color: var(--rm-muted); flex-wrap: wrap; }
+.rm-legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+
+/* the canvas */
+.cv { position: relative; height: var(--cv-h); border: 1px solid var(--rm-border); border-radius: var(--radius, 14px); overflow: hidden; cursor: grab; touch-action: none;
+  user-select: none; -webkit-user-select: none;
+  background-color: color-mix(in srgb, var(--rm-soft) 45%, transparent);
+  background-image: radial-gradient(color-mix(in srgb, var(--rm-muted) 30%, transparent) 1px, transparent 1.2px); background-size: 22px 22px; }
+.cv.dragging, .cv.dragging .card { cursor: grabbing; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.world.anim { transition: transform .32s cubic-bezier(.2,.7,.2,1); }
+.edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.edge { fill: none; stroke-width: 2; stroke-linecap: round; transition: opacity .15s; }
+.edge.spawn, .edge.sub { stroke: var(--rm-line); }
+.edge.need { stroke: var(--rm-warn); opacity: .85; }
+.edge.place { stroke: var(--rm-muted); stroke-dasharray: 1 5; opacity: .9; }
+.edge.relaunch { stroke: var(--rm-muted); stroke-dasharray: 4 4; opacity: .8; }
+.rm.no-deps .edge.need, .rm.no-deps .edge.place, .rm.no-deps .dotn.need { display: none; }
+.dotn { fill: var(--rm-card); stroke: var(--rm-line); stroke-width: 2; } .dotn.need { stroke: var(--rm-warn); }
+.cv-tools { position: absolute; right: 12px; top: 12px; display: flex; gap: 4px; z-index: 8; }
+.cv-tools button { font: inherit; font-size: 13px; min-width: 30px; height: 30px; padding: 0 9px; border-radius: 8px; border: 1px solid var(--rm-border); background: var(--rm-card); color: var(--rm-fg); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.cv-tools button:hover { background: var(--rm-soft); }
+.cv-tools .zoomv { min-width: 46px; color: var(--rm-muted); font-variant-numeric: tabular-nums; }
+.cv-hint { position: absolute; left: 12px; bottom: 10px; font-size: 11.5px; color: var(--rm-muted); background: color-mix(in srgb, var(--rm-card) 85%, transparent); padding: 3px 8px; border-radius: 6px; pointer-events: none; z-index: 8; }
+
+/* cards */
+.card { position: absolute; left: 0; top: 0; background: var(--rm-card); border: 1px solid var(--rm-border); border-radius: var(--rm-radius); cursor: grab;
+  padding: 12px 14px 11px; box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.05); transition: opacity .15s, box-shadow .15s, border-color .15s; }
+.card.hidden { display: none; }
+.card.appear { animation: rm-appear .28s ease-out backwards; }
+@keyframes rm-appear { from { opacity: 0; } }
+.card.moving { box-shadow: 0 2px 4px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.16); }
+.card.is-replaced { opacity: .6; } .card.is-replaced .c-name { text-decoration: line-through; text-decoration-color: var(--rm-muted); }
+.card.is-parked { border-style: dashed; opacity: .75; box-shadow: none; }
+.card.is-blocked { border-color: color-mix(in srgb, var(--rm-bad) 75%, var(--rm-border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--rm-bad) 75%, transparent); }
+.card.is-failed { border-color: color-mix(in srgb, var(--rm-warn) 75%, var(--rm-border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--rm-warn) 75%, transparent); }
+.card.helper { padding: 10px 12px 10px; }
+.c-top { display: flex; gap: 10px; align-items: flex-start; }
+.c-icon { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--rm-border); display: grid; place-items: center; background: var(--rm-card); }
+.c-icon.letter { font-size: 15px; font-weight: 650; color: var(--rm-muted); }
+.helper .c-icon { width: 32px; height: 32px; border-radius: 9px; }
+.mk { display: block; width: 18px; height: 18px; background: currentColor; -webkit-mask: var(--mk) center / contain no-repeat; mask: var(--mk) center / contain no-repeat; }
+.helper .mk { width: 16px; height: 16px; }
+.c-names { flex: 1 1 auto; min-width: 0; }
+.c-row1 { display: flex; gap: 8px; align-items: flex-start; }
+.c-name { flex: 1 1 auto; min-width: 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.helper .c-name { font-size: 15px; }
+.c-id { color: var(--rm-muted); font-weight: 600; margin-right: 5px; font-size: 14px; }
+.c-model { color: var(--rm-muted); font-size: 13px; display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
+.effort { display: inline-flex; align-items: center; gap: 4px; } .effort i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.pill { flex: 0 0 auto; font-size: 12.5px; font-weight: 500; border-radius: 7px; padding: 2px 8px; display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
+.pill.ok { color: var(--rm-ok); background: color-mix(in srgb, var(--rm-ok) 13%, transparent); }
+.pill.grey { color: var(--rm-muted); background: var(--rm-soft); }
+.pill.bad { color: var(--rm-bad); background: color-mix(in srgb, var(--rm-bad) 12%, transparent); }
+.pill.warn { color: var(--rm-warn); background: color-mix(in srgb, var(--rm-warn) 12%, transparent); }
+.pill.info { color: var(--rm-info); background: color-mix(in srgb, var(--rm-info) 12%, transparent); }
+.c-summary { margin: 8px 0 0; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.c-summary:empty { display: none; }
+.helper .c-summary { margin-top: 7px; font-size: 13.5px; }
+.rm.brief .card:not(.helper):not(.orch) .c-summary { display: none; }
+.c-foot { margin-top: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--rm-muted); font-variant-numeric: tabular-nums; }
+.c-foot .strong { color: var(--rm-fg); font-weight: 500; }
+.chip { border-radius: 6px; padding: 1px 6px; font-size: 12px; border: 0; font-family: inherit; }
+.chip.pause { color: var(--rm-bad); background: color-mix(in srgb, var(--rm-bad) 10%, transparent); }
+.chip.note { color: var(--rm-info); background: color-mix(in srgb, var(--rm-info) 10%, transparent); }
+.chip.need { color: var(--rm-warn); background: color-mix(in srgb, var(--rm-warn) 12%, transparent); }
+.chip.place { color: var(--rm-muted); background: var(--rm-soft); }
+.chip.pics { color: var(--rm-fg); background: var(--rm-soft); cursor: pointer; }
+.chip.pics:hover { background: color-mix(in srgb, var(--rm-info) 14%, var(--rm-soft)); }
+.kid-toggle { margin-left: auto; font: inherit; font-size: 13px; color: var(--rm-muted); background: transparent; border: 0; border-radius: 7px; padding: 2px 4px 2px 7px; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.kid-toggle:hover { background: var(--rm-soft); color: var(--rm-fg); }
+.c-foot .toggles { margin-left: auto; display: inline-flex; gap: 2px; } .toggles .kid-toggle { margin-left: 0; }
+.kid-toggle svg { width: 12px; height: 12px; transition: transform .15s; } .kid-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.kid-toggle.side svg { transform: rotate(-90deg); } .kid-toggle.side[aria-expanded="true"] svg { transform: rotate(90deg); }
+.rm.focus .card { opacity: .35; }
+.rm.focus .card.hl, .rm.focus .card.hl-kid { opacity: 1; }
+.rm.focus .card.hl { border-color: color-mix(in srgb, var(--rm-warn) 60%, var(--rm-border)); }
+.rm.focus .card.hl-self { opacity: 1; border-color: color-mix(in srgb, var(--rm-info) 65%, var(--rm-border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rm-info) 15%, transparent); }
+.rm.focus .edge { opacity: .12; } .rm.focus .edge.hl { opacity: 1; stroke-width: 2.5; }
+
+/* the full text of a card, on hover */
+.peek { position: absolute; z-index: 7; pointer-events: none; background: var(--rm-card); border: 1px solid var(--rm-border); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.18); padding: 11px 13px 10px; font-size: 13.5px; opacity: 0; transform: translateY(3px); transition: opacity .12s, transform .12s; }
+.peek.on { opacity: 1; transform: none; }
+.peek .p-name { font-weight: 600; font-size: 14.5px; }
+.peek .p-model { color: var(--rm-muted); font-size: 12.5px; margin-top: 2px; }
+.peek .p-sum { margin-top: 7px; }
+.peek .p-foot { margin-top: 7px; color: var(--rm-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* pictures */
+.gal { position: absolute; left: 12px; right: 12px; bottom: 12px; max-height: calc(100% - 64px); background: var(--rm-card); border: 1px solid var(--rm-border); border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.18); padding: 12px; z-index: 9; display: flex; flex-direction: column; gap: 8px; cursor: default; }
+.gal-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.gal-head .x { margin-left: auto; font: inherit; border: 0; background: var(--rm-soft); color: var(--rm-fg); border-radius: 7px; width: 28px; height: 28px; cursor: pointer; }
+.gal-big { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; overflow: hidden; }
+.gal-big img { max-width: 100%; max-height: 100%; border-radius: 8px; border: 1px solid var(--rm-border); object-fit: contain; }
+.gal-cap { font-size: 12.5px; color: var(--rm-muted); text-align: center; }
+.gal-thumbs { display: flex; gap: 8px; justify-content: center; }
+.gal-thumbs button { padding: 0; border: 2px solid transparent; border-radius: 8px; overflow: hidden; cursor: pointer; background: none; }
+.gal-thumbs button[aria-current="true"] { border-color: var(--rm-info); }
+.gal-thumbs img { display: block; height: 46px; width: auto; }
+
+/* the timeline */
+.rm-time { margin-top: 18px; }
+.t-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.t-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.t-legend { display: flex; gap: 12px; font-size: 12px; color: var(--rm-muted); flex-wrap: wrap; }
+.t-legend i { display: inline-block; width: 14px; height: 8px; border-radius: 3px; margin-right: 5px; }
+.t-grid { position: relative; }
+.t-row { display: grid; grid-template-columns: var(--t-label, 150px) 1fr; align-items: center; height: 24px; border-radius: 6px; cursor: pointer; }
+.t-row:hover, .t-row.hl { background: var(--rm-soft); }
+.t-label { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px 0 4px; }
+.t-label b { color: var(--rm-muted); font-weight: 600; margin-right: 4px; }
+.t-track { position: relative; height: 100%; }
+.t-span { position: absolute; top: 9px; height: 6px; border-radius: 3px; opacity: .22; }
+.t-turn { position: absolute; top: 7px; height: 10px; border-radius: 3px; min-width: 2px; }
+.t-end { position: absolute; top: 7px; width: 10px; height: 10px; border-radius: 50%; margin-left: -5px; background: var(--rm-ok); border: 2px solid var(--rm-card); }
+.t-end.grey { background: var(--rm-muted); } .t-end.bad { background: var(--rm-bad); }
+.t-pause { position: absolute; top: 4px; bottom: 4px; border-radius: 3px; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-bad) 40%, transparent) 0 3px, transparent 3px 7px); }
+.t-axis { position: relative; height: 18px; margin-left: var(--t-label, 150px); }
+.t-axis span { position: absolute; top: 2px; font-size: 11px; color: var(--rm-muted); transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.t-lines { position: absolute; top: 0; bottom: 18px; left: var(--t-label, 150px); right: 0; pointer-events: none; }
+.t-lines i { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--rm-border); }
+.t-band { position: absolute; top: 0; bottom: 18px; pointer-events: none; background: color-mix(in srgb, var(--rm-bad) 5%, transparent); }
+.t-note { font-size: 12px; color: var(--rm-muted); margin-top: 6px; }
+@media (max-width: 560px) { :root { --cv-h: 520px; } .t-grid, .t-axis { --t-label: 86px; } .rm-legend { margin-left: 0; } }
+</style>
+</head>
+<body>
+<div class="rm" id="rm"></div>
+<script>
+(() => {
+const DATA = /*DATA*/null;
+const root = document.getElementById("rm");
+try {
+const F = DATA, FILES = window.RUN_MAP_FILES || F.files || [];
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const clock = m => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(Math.round(m) % 60).padStart(2, "0")}`;
+const dur = m => { m = Math.round(m); const h = Math.floor(m / 60), r = m % 60; return h ? (r ? `${h}h ${String(r).padStart(2, "0")}m` : `${h}h`) : `${r}m`; };
+const timed = n => n.launched != null && n.ended != null;
+const worked = n => n.worked != null ? n.worked : (n.turns || []).reduce((s, [a, b]) => s + Math.max(0, b - a), 0);
+const bandColour = b => `var(--rm-${b || "high"})`;
+const CHEVRON = '<svg viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const PILLS = { merged: ["ok", "✓", "Merged"], done: ["ok", "✓", "Done"], replaced: ["grey", "■", "Replaced"], cancelled: ["grey", "■", "Cancelled"],
+  stopped: ["grey", "■", "Stopped"], failed: ["warn", "✕", "Failed"], blocked: ["bad", "!", "Blocked"], parked: ["grey", "‖", "Parked"],
+  ready: ["info", "●", "Ready"], running: ["info", "◌", "Running"], paused: ["info", "‖", "Paused"] };
+const pill = st => { const [c, g, t] = PILLS[st] || ["grey", "•", st]; const p = el("span", "pill " + c); p.append(el("span", null, g), el("span", null, t)); return p; };
+function icon(n) {
+  const box = el("div", "c-icon");
+  if (n.mark != null && FILES[n.mark]) { const i = el("i", "mk"); i.style.setProperty("--mk", `url("${FILES[n.mark]}")`); i.style.background = n.ink || "var(--rm-fg)"; box.append(i); }
+  else { box.classList.add("letter"); box.textContent = n.letter || "•"; }
+  return box;
+}
+if (/dark/.test(location.hash)) document.documentElement.dataset.theme = "dark";
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// the tree: the orchestrator, its tasks in rows by what they waited for, everyone's sub-agents
+const tasks = F.tasks || [], byId = {};
+tasks.forEach(t => { byId[t.id] = t; t.kind = "task"; });
+tasks.forEach(t => {
+  t.need = (t.needs || []).filter(id => byId[id]);
+  t.pre = [...t.need, ...(t.place && byId[t.place] ? [t.place] : [])];
+  if (t.replaces && !byId[t.replaces]) t.replaces = null;
+});
+const W = { orch: 340, task: 300, helper: 244 };
+const IND = 28, SPINE = 14, PORT = 284, HGAP = 26, VGAP = 78, SGAP = 12, SIDE = 44, ANCHOR = 26;
+const ORCH = Object.assign({ name: "Orchestrator", status: "done" }, F.orch || {}, { id: "ORCH", kind: "orch", collapsed: false });
+const nodes = [ORCH, ...tasks];
+const deps = {}; tasks.forEach(t => t.pre.forEach(p => (deps[p] = deps[p] || []).push(t.id)));
+const level = {};
+const lv = (t, seen = new Set()) => {
+  if (level[t.id] != null) return level[t.id];
+  if (seen.has(t.id)) return 1;
+  seen.add(t.id);
+  return level[t.id] = t.replaces ? lv(byId[t.replaces], seen) : t.pre.length ? 1 + Math.max(...t.pre.map(id => lv(byId[id], seen))) : 1;
+};
+tasks.forEach(t => lv(t));
+let rows = [[], []];
+tasks.forEach(t => { if (!t.replaces) (rows[level[t.id]] = rows[level[t.id]] || []).push(t); });
+for (let k = 1; k < rows.length; k++) rows[k] = rows[k] || [];
+const relaunches = {}; tasks.forEach(t => { if (t.replaces) (relaunches[t.replaces] = relaunches[t.replaces] || []).push(t); });
+const withRelaunches = row => row.flatMap(function chain(t) { return [t, ...(relaunches[t.id] || []).flatMap(chain)]; });
+const rootOf = t => { let r = t, k = 0; while (r.replaces) { r = byId[r.replaces]; k++; } return [r, k]; };
+const group = {}; const find = id => group[id] === id ? id : (group[id] = find(group[id]));
+tasks.forEach(t => group[t.id] = t.id);
+tasks.forEach(t => t.pre.forEach(p => group[find(p)] = find(t.id)));
+const size = {}; tasks.forEach(t => size[find(t.id)] = (size[find(t.id)] || 0) + 1);
+const firstIndex = id => tasks.findIndex(t => find(t.id) === find(id));
+rows[1].sort((a, b) => { const ga = size[find(a.id)] > 1 ? 0 : 1, gb = size[find(b.id)] > 1 ? 0 : 1;
+  return ga - gb || firstIndex(a.id) - firstIndex(b.id) || tasks.indexOf(a) - tasks.indexOf(b); });
+nodes.forEach(n => { n.helpers = (n.helpers || []).map(h => Object.assign(h, { kind: "helper", parentNode: n })); n.open = false; });
+const cards = nodes.flatMap(n => [n, ...n.helpers]);
+
+// header and switches
+const head = el("div", "rm-head"), title = el("div", "rm-title");
+title.append(el("span", "spark", "✦"), el("span", null, F.title || "Run map"), el("span", "sub", F.date || ""));
+const count = st => tasks.filter(t => t.status === st).length;
+const subs = nodes.reduce((s, n) => s + n.helpers.reduce((a, h) => a + (h.count || 1), 0), 0);
+const allTimes = [ORCH.start, ORCH.end, ...tasks.flatMap(t => [t.launched, t.ended])].filter(v => v != null);
+const span0 = ORCH.start != null ? ORCH.start : Math.min(...allTimes), span1 = ORCH.end != null ? ORCH.end : Math.max(...allTimes);
+const stats = el("div", "rm-stats"); const stat = h => { const s = el("span"); s.innerHTML = h; stats.append(s); };
+stat(`<b>${tasks.length}</b> task agent${tasks.length === 1 ? "" : "s"}`);
+if (subs) stat(`<b>${subs}</b> sub-agent${subs === 1 ? "" : "s"}`);
+stat(`<b class="ok">${count("merged")}</b> merged`);
+["blocked", "failed", "parked"].forEach(st => { if (count(st)) stat(`<b class="bad">${count(st)}</b> ${st}`); });
+if (allTimes.length) stat(`<b>${dur(span1 - span0)}</b>`);
+const I = F.integration || {};
+if (I.branch) stat(`${I.branch}${I.head ? ` <b>${I.head}</b>` : ""}${I.ci === "passed" ? ' · CI <b class="ok">✓</b>' : I.ci === "failed" ? ' · CI <b class="bad">✕</b>' : ""}`);
+head.append(title, stats); root.append(head);
+const controls = el("div", "rm-controls"); root.append(controls);
+function control(label, on, fn) { const b = el("button", "rm-toggle"); b.type = "button"; b.innerHTML = `<span class="dot"></span>${label}`; b.setAttribute("aria-pressed", String(on));
+  b.onclick = () => { const v = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", String(v)); fn(v); }; controls.append(b); return b; }
+const cv = el("div", "cv"), world = el("div", "world"); cv.append(world); root.append(cv);
+const svgNS = "http://www.w3.org/2000/svg";
+const P = (tag, attrs) => { const e = document.createElementNS(svgNS, tag); Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v)); return e; };
+const edges = P("svg", { class: "edges" }), gPaths = P("g"), gDots = P("g");
+const defs = P("defs"); defs.innerHTML = `<marker id="ahg" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" fill="var(--rm-muted)"/></marker>`;
+edges.append(defs, gPaths, gDots); world.append(edges);
+const tools = el("div", "cv-tools"); cv.append(tools);
+cv.append(el("div", "cv-hint", "Drag to pan · drag a card to move it · ⌘-scroll or pinch to zoom"));
+const peekBox = el("div", "peek"); peekBox.hidden = true; cv.append(peekBox);
+
+function toggleKids(n, open) { n.open = open; if (n.toggle) n.toggle.setAttribute("aria-expanded", String(open)); }
+function card(n) {
+  const kind = n.kind, c = el("div", `card ${kind}` + (["replaced", "parked", "blocked", "failed"].includes(n.status) ? ` is-${n.status}` : ""));
+  c.style.width = W[kind] + "px"; c._node = n;
+  const top = el("div", "c-top"), names = el("div", "c-names"), row1 = el("div", "c-row1"), name = el("div", "c-name");
+  if (kind === "task") name.append(el("span", "c-id", n.id));
+  n.label = kind === "helper" ? n.title || "Helper" : n.name;
+  name.append(el("span", null, n.label)); row1.append(name, pill(n.status || "done"));
+  const model = el("div", "c-model"); model.append(el("span", null, n.model || n.harness || ""));
+  if (n.effort) { const eff = el("span", "effort"), d = el("i"); d.style.background = bandColour(n.band); eff.append(d, el("span", null, n.effort)); model.append(el("span", null, "·"), eff); }
+  names.append(row1, model); top.append(icon(n), names); c.append(top);
+  const sum = el("p", "c-summary", (kind === "helper" ? n.did : n.summary) || ""); c.append(sum);
+  n.parts = { name, model, sum };
+  if (kind !== "helper") {
+    const foot = el("div", "c-foot"), toggles = el("span", "toggles");
+    if (kind === "orch") {
+      if (n.start != null && n.end != null) foot.append(el("span", "strong", dur(n.end - n.start)));
+      const bits = [n.worked != null ? `worked ${dur(n.worked)}` : "", n.wakes ? `${n.wakes} wakes` : ""].filter(Boolean);
+      if (bits.length) foot.append(el("span", null, "· " + bits.join(" · ")));
+    } else if (!timed(n)) foot.append(el("span", null, n.status === "parked" ? "never started" : "not timed"));
+    else if (worked(n) < 1) foot.append(el("span", null, `${clock(n.launched)} · stopped at once`));
+    else foot.append(el("span", "strong", dur(worked(n))), el("span", null, `· ${clock(n.launched)}–${clock(n.ended)}`));
+    if (n.need && n.need.length) foot.append(el("span", "chip need", "needs " + n.need.join(" · ")));
+    if (n.place) foot.append(el("span", "chip place", `took ${n.place}'s place`));
+    if (n.qa) foot.append(el("span", "chip note", `tested ${I.branch || "the branch"}`));
+    if (n.paused) foot.append(el("span", "chip pause", "‖ " + n.paused));
+    if (n.note) foot.append(el("span", "chip note", n.note));
+    if ((n.pictures || []).length) { const b = el("button", "chip pics", `▣ ${n.pictures.length}`); b.type = "button"; b.title = "Pictures"; b.onclick = () => openGallery(n, 0); foot.append(b); }
+    if (n.helpers.length) {
+      const t = el("button", "kid-toggle" + (kind === "orch" ? " side" : "")); t.type = "button"; t.title = `${n.helpers.length} sub-agent${n.helpers.length > 1 ? "s" : ""}`;
+      t.innerHTML = `<span>${kind === "orch" ? "+" : ""}${n.helpers.length}</span>${CHEVRON}`; t.setAttribute("aria-expanded", "false");
+      t.onclick = () => { hidePeek(); toggleKids(n, !n.open); layout(); };
+      n.toggle = t; (kind === "orch" ? toggles : foot).append(t);
+    }
+    if (kind === "orch" && tasks.length) {
+      const t = el("button", "kid-toggle"); t.type = "button"; t.title = "Tasks";
+      t.innerHTML = `<span>${tasks.length}</span>${CHEVRON}`; t.setAttribute("aria-expanded", "true");
+      t.onclick = () => { hidePeek(); n.collapsed = !n.collapsed; t.setAttribute("aria-expanded", String(!n.collapsed)); layout(); fit(true); };
+      toggles.append(t);
+    }
+    if (toggles.childElementCount) foot.append(toggles);
+    if (foot.childElementCount) c.append(foot);
+  }
+  c.addEventListener("dblclick", e => { if (e.target.closest("button")) return; zoomTo(n, 1); });
+  c.addEventListener("mouseenter", () => { if (kind === "task") focusOn(n.id); schedulePeek(n); });
+  c.addEventListener("mouseleave", () => { if (kind === "task") focusOn(null); hidePeek(); });
+  n.card = c; world.append(c);
+}
+cards.forEach(card);
+
+// placing the cards: a base layout, plus whatever the reader dragged each card by
+const visible = n => n.kind === "orch" || (n.kind === "task" ? !ORCH.collapsed : n.parentNode.open && visible(n.parentNode));
+let bounds = { x0: 0, y0: 0, x1: 1, y1: 1 };
+function stackUnder(t) {
+  let bottom = t.by + t.h;
+  if (t.open) { let y = bottom + SGAP; t.helpers.forEach(h => { h.by = y; y += h.h + SGAP; }); bottom = y - SGAP; }
+  return bottom;
+}
+function placeRow(row, y) {
+  // each card under the ports of what it waited for; a relaunch just right of the attempt it replaced
+  const c = {};
+  row.forEach(t => { if (!t.replaces) c[t.id] = t.pre.length ? t.pre.reduce((s, id) => s + byId[id].bx + PORT, 0) / t.pre.length : 0; });
+  row.forEach(t => { if (t.replaces) { const [r, k] = rootOf(t); c[t.id] = (c[r.id] || 0) + k * 0.001; } });
+  const want = row.map(t => ({ t, c: c[t.id] })).sort((a, b) => a.c - b.c);
+  let right = -Infinity;
+  want.forEach(w => { const x = Math.max(w.c - W.task / 2, right + HGAP); w.t.bx = x; right = x + W.task; });
+  const shift = want.reduce((s, w) => s + (w.c - (w.t.bx + W.task / 2)), 0) / Math.max(1, want.length);
+  want.forEach(w => { w.t.bx += shift; w.t.by = y; });
+}
+function chooseOrder() {
+  // the order of the first row whose waiting lines are shortest and pass behind no other card
+  const block = rows[1].filter(t => size[find(t.id)] > 1), rest = rows[1].filter(t => size[find(t.id)] <= 1);
+  if (block.length < 2) return;
+  const rowOf = {}; rows.forEach((r, k) => (r || []).forEach(t => rowOf[t.id] = k));
+  const cost = order => {
+    [...order, ...rest].forEach((t, i) => t.bx = i * (W.task + HGAP));
+    for (let k = 2; k < rows.length; k++) placeRow(rows[k], 0);
+    let c = 0;
+    tasks.forEach(t => { if (rowOf[t.id] == null) return; t.pre.forEach(id => { if (rowOf[id] == null) return;
+      const px = byId[id].bx + PORT; c += Math.abs(px - (t.bx + W.task / 2));
+      for (let k = rowOf[id] + 1; k < rowOf[t.id]; k++) rows[k].forEach(o => { if (o !== t && px > o.bx - 6 && px < o.bx + W.task + 6) c += 5000; }); }); });
+    return c;
+  };
+  let best = block, bestCost = Infinity, tried = 0;
+  const permute = (arr, l) => { if (tried > 50000) return; if (l === arr.length) { tried++; const c = cost(arr); if (c < bestCost) { bestCost = c; best = [...arr]; } return; }
+    for (let i = l; i < arr.length; i++) { [arr[l], arr[i]] = [arr[i], arr[l]]; permute(arr, l + 1); [arr[l], arr[i]] = [arr[i], arr[l]]; } };
+  if (block.length <= 8) permute([...block], 0);
+  rows[1] = [...best, ...rest];
+}
+function measure() {
+  // heights of the cards on show, measured once they're shown
+  cards.forEach(n => { if (n.shown) n.h = n.card.offsetHeight; });
+}
+function place() {
+  cards.forEach(n => { if (n.kind !== "helper") { n.x = n.bx + (n.ox || 0); n.y = n.by + (n.oy || 0); } });
+  cards.forEach(n => { if (n.kind === "helper" && n.shown) { const p = n.parentNode; n.x = p.x + n.bx - p.bx + (n.ox || 0); n.y = p.y + n.by - p.by + (n.oy || 0); } });
+  const shown = cards.filter(n => n.shown);
+  bounds = { x0: Math.min(...shown.map(n => n.x)), y0: Math.min(...shown.map(n => n.y)),
+    x1: Math.max(...shown.map(n => n.x + W[n.kind])), y1: Math.max(...shown.map(n => n.y + n.h)) };
+}
+function layout(instant) {
+  const before = new Set(cards.filter(n => n.shown));
+  cards.forEach(n => { n.shown = visible(n); n.card.classList.toggle("hidden", !n.shown); });
+  measure();
+  ORCH.by = 0;
+  let top = ORCH.h;
+  if (ORCH.open) { let y = 0; ORCH.helpers.forEach(h => { h.by = y; y += h.h + SGAP; }); top = Math.max(top, y - SGAP); }
+  if (!ORCH.collapsed && rows[1].length) {
+    rows[1].forEach((t, i) => { t.bx = i * (W.task + HGAP); t.by = top + VGAP; });
+    let bottom = Math.max(...rows[1].map(stackUnder));
+    for (let k = 2; k < rows.length; k++) { if (!rows[k].length) continue; placeRow(rows[k], bottom + VGAP); bottom = Math.max(...rows[k].map(stackUnder)); }
+    const x0 = Math.min(...tasks.map(t => t.bx));
+    tasks.forEach(t => { t.bx -= x0; t.helpers.forEach(h => h.bx = t.bx + IND); });
+    ORCH.bx = (rows[1][0].bx + rows[1][rows[1].length - 1].bx + W.task) / 2 - W.orch / 2;
+  } else ORCH.bx = 0;
+  ORCH.helpers.forEach(h => h.bx = ORCH.bx + W.orch + SIDE);
+  place();
+  edges.setAttribute("width", Math.max(1, bounds.x1)); edges.setAttribute("height", Math.max(1, bounds.y1));
+  cards.filter(n => n.shown).forEach(n => {
+    if (before.has(n) && n.ax != null) return;
+    const p = n.parentNode;  // a card coming into view starts where its parent is now, a little higher
+    if (p && p.ax != null && before.has(p)) { n.ax = p.ax + n.x - p.x; n.ay = p.ay + n.y - p.y - 14; } else { n.ax = n.x; n.ay = n.y - 14; }
+    if (!instant) { n.card.classList.remove("appear"); void n.card.offsetWidth; n.card.classList.add("appear"); }
+  });
+  animate(instant);
+}
+
+// moving the cards to where they go, and the lines with them
+let raf = 0;
+function settle() { cancelAnimationFrame(raf); cards.forEach(n => { if (n.shown) { n.ax = n.x; n.ay = n.y; } }); }
+function animate(instant) {
+  cancelAnimationFrame(raf);
+  if (instant || reduced) { settle(); render(); return; }
+  const from = cards.filter(n => n.shown).map(n => [n, n.ax, n.ay]), t0 = performance.now(), D = 300;
+  const step = now => {
+    const k = Math.min(1, (now - t0) / D), e = 1 - Math.pow(1 - k, 3);
+    from.forEach(([n, fx, fy]) => { n.ax = fx + (n.x - fx) * e; n.ay = fy + (n.y - fy) * e; });
+    render(); if (k < 1) raf = requestAnimationFrame(step);
+  };
+  render(); raf = requestAnimationFrame(step);
+}
+function render() {
+  cards.forEach(n => { if (n.shown) n.card.style.transform = `translate(${n.ax}px, ${n.ay}px)`; });
+  drawEdges();
+}
+function route(px, py, cx, cy, busY) {
+  // down from the parent, along a bus, down into the child; a curve if the child was dragged above it
+  if (cy - py >= 28) {
+    const bus = Math.min(Math.max(busY, py + 14), cy - 14), dx = cx - px;
+    if (Math.abs(dx) < 1) return `M${px} ${py} V${cy}`;
+    const s = Math.sign(dx), r = Math.min(12, Math.abs(dx) / 2, bus - py, cy - bus);
+    return `M${px} ${py} V${bus - r} Q${px} ${bus} ${px + s * r} ${bus} H${cx - s * r} Q${cx} ${bus} ${cx} ${bus + r} V${cy}`;
+  }
+  const k = Math.max(48, (py - cy) / 2 + 48);
+  return `M${px} ${py} C${px} ${py + k} ${cx} ${cy - k} ${cx} ${cy}`;
+}
+function spine(sx, sy, hx, hy) {
+  if (hy - sy >= 18 && hx - sx >= 9) { const r = Math.min(9, hx - sx, hy - sy); return `M${sx} ${sy} V${hy - r} Q${sx} ${hy} ${sx + r} ${hy} H${hx}`; }
+  return `M${sx} ${sy} C${sx} ${sy + 40} ${hx - 40} ${hy} ${hx} ${hy}`;
+}
+function sideways(ox, oy, hx, hy) {
+  const lx = ox + SIDE / 2;
+  if (hx - lx >= 8) {
+    if (Math.abs(hy - oy) < 1) return `M${ox} ${oy} H${hx}`;
+    const s = Math.sign(hy - oy), r = Math.min(9, Math.abs(hy - oy) / 2, hx - lx, lx - ox);
+    return `M${ox} ${oy} H${lx - r} Q${lx} ${oy} ${lx} ${oy + s * r} V${hy - s * r} Q${lx} ${hy} ${lx + r} ${hy} H${hx}`;
+  }
+  return `M${ox} ${oy} C${ox + 40} ${oy} ${hx - 40} ${hy} ${hx} ${hy}`;
+}
+const pool = new Map(); let used = new Set();
+function put(key, g, tag, attrs, init) {
+  let e = pool.get(key);
+  if (!e) { e = P(tag); if (init) init(e); g.append(e); pool.set(key, e); }
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); used.add(key); return e;
+}
+const cls = c => e => e.setAttribute("class", c);
+const link = (c, from, to) => e => { e.setAttribute("class", c); e.dataset.from = from; e.dataset.to = to; };
+function drawEdges() {
+  used = new Set();
+  if (!ORCH.collapsed && rows[1].length) {
+    const ox = ORCH.ax + W.orch / 2, oy = ORCH.ay + ORCH.h;
+    rows[1].forEach(t => { if (!t.replaces) put("spawn:" + t.id, gPaths, "path", { d: route(ox, oy, t.ax + W.task / 2, t.ay, t.ay - VGAP / 2) }, cls("edge spawn")); });
+    put("dot:orch", gDots, "circle", { cx: ox, cy: oy, r: 4.5 }, cls("dotn"));
+    for (let k = 2; k < rows.length; k++) {
+      const row = [...rows[k]].sort((a, b) => a.ax - b.ax);
+      row.forEach((t, j) => {
+        const busY = t.ay - VGAP / 2 + (j - (row.length - 1) / 2) * 9;
+        t.pre.forEach(id => { const p = byId[id], kind = t.need.includes(id) ? "need" : "place";
+          put(`${kind}:${id}>${t.id}`, gPaths, "path", { d: route(p.ax + PORT, p.ay + p.h, t.ax + W.task / 2, t.ay, busY) }, link("edge " + kind, id, t.id)); });
+      });
+    }
+    tasks.forEach(t => { if (deps[t.id]) put("dot:" + t.id, gDots, "circle", { cx: t.ax + PORT, cy: t.ay + t.h, r: 4.5 }, cls("dotn need")); });
+    tasks.filter(t => t.replaces).forEach(t => {
+      const a = byId[t.replaces], s = t.ax >= a.ax ? 1 : -1;
+      const x0 = s > 0 ? a.ax + W.task + 2 : a.ax - 2, x1 = s > 0 ? t.ax - 4 : t.ax + W.task + 4, y0 = a.ay + 30, y1 = t.ay + 30;
+      const d = Math.abs(y1 - y0) < 1 && (x1 - x0) * s > 0 ? `M${x0} ${y0} H${x1}` : `M${x0} ${y0} C${x0 + s * 40} ${y0} ${x1 - s * 40} ${y1} ${x1} ${y1}`;
+      put("relaunch:" + t.id, gPaths, "path", { d }, e => { link("edge relaunch", a.id, t.id)(e); e.setAttribute("marker-end", "url(#ahg)"); });
+    });
+  }
+  nodes.forEach(n => {
+    if (!n.shown || !n.open || !n.helpers.length) return;
+    if (n.kind === "orch") {
+      const ox = n.ax + W.orch, oy = n.ay + ANCHOR;
+      n.helpers.forEach((h, i) => put(`sub:${n.id}:${i}`, gPaths, "path", { d: sideways(ox, oy, h.ax, h.ay + ANCHOR) }, cls("edge sub")));
+      put("dot:sub:" + n.id, gDots, "circle", { cx: ox, cy: oy, r: 4.5 }, cls("dotn"));
+    } else {
+      const sx = n.ax + SPINE, sy = n.ay + n.h;
+      n.helpers.forEach((h, i) => put(`sub:${n.id}:${i}`, gPaths, "path", { d: spine(sx, sy, h.ax, h.ay + ANCHOR) }, cls("edge sub")));
+      put("dot:sub:" + n.id, gDots, "circle", { cx: sx, cy: sy, r: 4.5 }, cls("dotn"));
+    }
+  });
+  pool.forEach((e, k) => { if (!used.has(k)) { e.remove(); pool.delete(k); } });
+}
+
+// the view: pan, zoom, fit
+let view = { s: 1, tx: 0, ty: 0 };
+const zoomLabel = el("button", "zoomv"); zoomLabel.type = "button"; zoomLabel.title = "Actual size";
+function apply(anim) { world.classList.toggle("anim", !!anim); world.style.transform = `translate(${view.tx}px, ${view.ty}px) scale(${view.s})`; zoomLabel.textContent = Math.round(view.s * 100) + "%"; if (anim) setTimeout(() => world.classList.remove("anim"), 340); }
+const clampS = s => Math.min(1.6, Math.max(0.15, s));
+function zoomAt(px, py, s, anim) { s = clampS(s); view.tx = px - (px - view.tx) * s / view.s; view.ty = py - (py - view.ty) * s / view.s; view.s = s; apply(anim); }
+function fit(anim) {
+  const vw = cv.clientWidth, vh = cv.clientHeight, bw = bounds.x1 - bounds.x0, bh = bounds.y1 - bounds.y0;
+  const s = clampS(Math.min(1, (vw - 40) / bw, (vh - 70) / bh));
+  view = { s, tx: (vw - bw * s) / 2 - bounds.x0 * s, ty: 48 - bounds.y0 * s }; apply(anim);
+}
+function home(anim) {
+  const vw = cv.clientWidth, fitS = (vw - 40) / (bounds.x1 - bounds.x0);
+  const s = fitS >= 0.66 ? Math.min(1, fitS) : Math.min(0.9, Math.max(0.66, vw / 1000));
+  view = { s, tx: vw / 2 - (ORCH.x + W.orch / 2) * s, ty: 52 - ORCH.y * s }; apply(anim);
+}
+function zoomTo(n, s) { const vw = cv.clientWidth, vh = cv.clientHeight; view.s = clampS(s); view.tx = vw / 2 - (n.x + W[n.kind] / 2) * view.s; view.ty = vh / 2 - (n.y + n.h / 2) * view.s; apply(true); }
+const resetBtn = el("button", null, "Reset"); resetBtn.type = "button"; resetBtn.title = "Put the cards back"; resetBtn.hidden = true;
+resetBtn.onclick = () => { cards.forEach(n => { n.ox = 0; n.oy = 0; n.card.style.zIndex = ""; }); resetBtn.hidden = true; layout(); };
+[["−", "Zoom out", () => zoomAt(cv.clientWidth / 2, cv.clientHeight / 2, view.s / 1.25, true)], ["+", "Zoom in", () => zoomAt(cv.clientWidth / 2, cv.clientHeight / 2, view.s * 1.25, true)],
+ ["Fit", "Show the whole tree", () => fit(true)]].forEach(([t, ti, fn]) => { const b = el("button", null, t); b.type = "button"; b.title = ti; b.onclick = fn; tools.append(b); });
+zoomLabel.onclick = () => zoomAt(cv.clientWidth / 2, cv.clientHeight / 2, 1, true); tools.insertBefore(zoomLabel, tools.lastChild); tools.append(resetBtn);
+
+// dragging: the background pans, a card moves (with its sub-agents), two fingers zoom
+const pointers = new Map(); let pinch = null, drag = null, zTop = 1;
+function raise(n) { zTop++; n.card.style.zIndex = zTop; if (n.kind !== "helper") n.helpers.forEach(h => h.card.style.zIndex = zTop); }
+function endDrag() { if (drag && drag.node && drag.moved) { drag.node.card.classList.remove("moving"); resetBtn.hidden = false; } drag = null; }
+cv.addEventListener("pointerdown", e => {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  if (e.target.closest("button, .gal")) return;
+  hidePeek(); cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) {
+    const c = e.target.closest(".card"), n = c ? c._node : null;
+    drag = { node: n, x0: e.clientX, y0: e.clientY, moved: false, ox: n ? n.ox || 0 : 0, oy: n ? n.oy || 0 : 0, touch: e.pointerType !== "mouse" };
+    if (!n) cv.classList.add("dragging");
+  } else if (pointers.size === 2) {
+    endDrag(); const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: view.s };
+  }
+});
+cv.addEventListener("pointermove", e => {
+  if (!pointers.has(e.pointerId)) return;
+  const p = pointers.get(e.pointerId);
+  if (pointers.size === 1 && drag) {
+    if (drag.node) {
+      const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+      if (!drag.moved && Math.hypot(dx, dy) >= 4) { drag.moved = true; settle(); raise(drag.node); drag.node.card.classList.add("moving"); cv.classList.add("dragging"); focusOn(null); }
+      if (drag.moved) { drag.node.ox = drag.ox + dx / view.s; drag.node.oy = drag.oy + dy / view.s; place(); settle(); render(); }
+    } else { view.tx += e.clientX - p.x; view.ty += e.clientY - p.y; apply(); }
+  }
+  p.x = e.clientX; p.y = e.clientY;
+  if (pointers.size === 2 && pinch) { const [a, b] = [...pointers.values()], r = cv.getBoundingClientRect(); zoomAt((a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top, pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d); }
+});
+const up = e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId); if (pointers.size < 2) pinch = null;
+  if (!pointers.size) { if (drag && drag.node && !drag.moved && drag.touch) showPeek(drag.node, true); endDrag(); cv.classList.remove("dragging"); }
+};
+cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+cv.addEventListener("wheel", e => { const r = cv.getBoundingClientRect(); hidePeek();
+  if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(e.clientX - r.left, e.clientY - r.top, view.s * Math.exp(-e.deltaY * 0.01)); }
+  else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) { e.preventDefault(); view.tx -= e.deltaX; apply(); } }, { passive: false });
+
+// a card's whole text, when some of it doesn't fit or the card is small on screen
+const cut = e => e.offsetParent === null || e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1;
+let peekTimer = 0;
+function schedulePeek(n) { clearTimeout(peekTimer); if (pointers.size) return; peekTimer = setTimeout(() => showPeek(n), 320); }
+function hidePeek() { clearTimeout(peekTimer); peekBox.classList.remove("on"); peekBox.hidden = true; }
+function showPeek(n, always) {
+  const { name, model, sum } = n.parts;
+  if (!always && view.s >= 0.8 && !cut(name) && !cut(model) && (!sum.textContent || !cut(sum))) return;
+  peekBox.replaceChildren();
+  const nm = el("div", "p-name"); if (n.kind === "task") nm.append(el("span", "c-id", n.id)); nm.append(el("span", null, n.label)); peekBox.append(nm);
+  peekBox.append(el("div", "p-model", [n.model, n.effort, n.harness].filter(Boolean).join(" · ")));
+  const text = n.kind === "helper" ? n.did : n.summary; if (text) peekBox.append(el("div", "p-sum", text));
+  const bits = [];
+  if (n.kind === "helper") { const p = n.parentNode; bits.push(p.kind === "orch" ? "for the orchestrator" : `for ${p.id} · ${p.name}`); if (n.count > 1) bits.push(`${n.count} runs`); }
+  else if (n.kind === "orch") { if (n.start != null && n.end != null) bits.push(`${clock(n.start)}–${clock(n.end)}`); if (n.worked != null) bits.push(`worked ${dur(n.worked)}`); if (n.wakes) bits.push(`${n.wakes} wakes`); }
+  else {
+    if (timed(n)) bits.push(`${clock(n.launched)}–${clock(n.ended)}`, `worked ${dur(worked(n))}`);
+    if (n.need.length) bits.push("needs " + n.need.join(", "));
+    if (n.place) bits.push(`took ${n.place}'s place`);
+    if (n.paused) bits.push("paused " + n.paused);
+    if (n.note) bits.push(n.note);
+  }
+  if (bits.length) peekBox.append(el("div", "p-foot", bits.join(" · ")));
+  const r = n.card.getBoundingClientRect(), b = cv.getBoundingClientRect(), pw = Math.min(300, b.width - 24);
+  peekBox.style.width = pw + "px"; peekBox.hidden = false;
+  const ph = peekBox.offsetHeight;
+  let x = r.right - b.left + 10, y = r.top - b.top;
+  if (x + pw > b.width - 12) x = r.left - b.left - 10 - pw;
+  if (x < 12) { x = Math.min(Math.max(12, r.left - b.left), b.width - 12 - pw); y = r.bottom - b.top + 8; if (y + ph > b.height - 12) y = r.top - b.top - 8 - ph; }
+  y = Math.min(Math.max(12, y), b.height - 12 - ph);
+  peekBox.style.left = x + "px"; peekBox.style.top = y + "px";
+  requestAnimationFrame(() => peekBox.classList.add("on"));
+}
+
+// pictures
+const gal = el("div", "gal"); gal.hidden = true; cv.append(gal);
+function openGallery(n, i) {
+  hidePeek(); gal.replaceChildren(); gal.hidden = false;
+  const h = el("div", "gal-head"); h.append(el("span", null, `${n.id} · ${n.name}`));
+  const x = el("button", "x", "✕"); x.type = "button"; x.title = "Close"; x.onclick = () => gal.hidden = true; h.append(x);
+  const big = el("div", "gal-big"), img = el("img"), cap = el("div", "gal-cap"); big.append(img);
+  const th = el("div", "gal-thumbs");
+  const show = j => { img.src = FILES[n.pictures[j].file]; img.alt = n.pictures[j].caption || ""; cap.textContent = n.pictures[j].caption || ""; th.querySelectorAll("button").forEach((b, k) => b.setAttribute("aria-current", String(k === j))); };
+  n.pictures.forEach((p, j) => { const b = el("button"); b.type = "button"; b.title = p.caption || ""; const t = el("img"); t.src = FILES[p.file]; t.alt = ""; b.append(t); b.onclick = () => show(j); th.append(b); });
+  gal.append(h, big, cap); if (n.pictures.length > 1) gal.append(th); show(i);
+}
+
+// hovering a task lights up what it waited for and what waited for it
+function focusOn(id) {
+  root.classList.toggle("focus", !!id && !drag);
+  root.querySelectorAll(".hl,.hl-self,.hl-kid").forEach(e => e.classList.remove("hl", "hl-self", "hl-kid"));
+  if (!id || drag) return;
+  const rel = new Set([id]);
+  tasks.forEach(t => [...t.pre, ...(t.replaces ? [t.replaces] : [])].forEach(p => { if (p === id) rel.add(t.id); if (t.id === id) rel.add(p); }));
+  nodes.forEach(n => { n.card.classList.toggle("hl", rel.has(n.id) && n.id !== id); n.card.classList.toggle("hl-self", n.id === id);
+    n.helpers.forEach(h => h.card.classList.toggle("hl-kid", n.id === id)); });
+  gPaths.querySelectorAll("path[data-from]").forEach(p => p.classList.toggle("hl", p.dataset.from === id || p.dataset.to === id));
+  root.querySelectorAll(".t-row").forEach(r => r.classList.toggle("hl", rel.has(r.dataset.id)));
+}
+if (subs) control("Sub-agents", false, v => { nodes.forEach(n => { if (n.helpers.length) toggleKids(n, v); }); layout(); });
+control("Details", true, v => { root.classList.toggle("brief", !v); layout(); });
+if (tasks.some(t => t.pre.length)) control("Dependencies", true, v => root.classList.toggle("no-deps", !v));
+const legend = el("div", "rm-legend"), key = (colour, style, text) => `<span><i style="border-color:${colour};border-top-style:${style}"></i>${text}</span>`;
+legend.innerHTML = key("var(--rm-line)", "solid", "launched") + (tasks.some(t => t.need.length) ? key("var(--rm-warn)", "solid", "needed its code") : "")
+  + (tasks.some(t => t.place) ? key("var(--rm-muted)", "dotted", "took its place") : "") + (tasks.some(t => t.replaces) ? key("var(--rm-muted)", "dashed", "relaunched as") : "");
+controls.append(legend);
+
+// the timeline
+const shownRows = [...(ORCH.start != null && ORCH.end != null ? [ORCH] : []), ...tasks.filter(timed)];
+if (shownRows.length) {
+  const T = el("div", "rm-time"); root.append(T);
+  const th = el("div", "t-head"); th.append(el("h3", null, "Timeline"));
+  const bands = new Set(shownRows.filter(n => n.kind === "task").map(n => n.band || "high"));
+  const tl = el("div", "t-legend"); tl.innerHTML =
+    `<span><i style="background:var(--rm-high)"></i>working</span><span><i style="background:var(--rm-high);opacity:.25"></i>waiting</span>` +
+    ((F.pauses || []).length ? `<span><i style="background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--rm-bad) 45%,transparent) 0 3px,transparent 3px 6px)"></i>quota pause</span>` : "") +
+    `<span><i style="background:var(--rm-ok);width:9px;height:9px;border-radius:50%"></i>merged</span>` +
+    [["above", "above Extra High"], ["xhigh", "Extra High"], ["high", "High or lower"]].filter(([b]) => bands.has(b)).map(([b, t]) => `<span><i style="background:var(--rm-${b})"></i>${t}</span>`).join("");
+  th.append(tl); T.append(th);
+  const grid = el("div", "t-grid"); T.append(grid);
+  const times = shownRows.flatMap(n => n.kind === "orch" ? [n.start, n.end] : [n.launched, n.ended]);
+  const t0 = Math.floor(Math.min(...times) / 30) * 30, t1 = Math.max(t0 + 30, Math.ceil(Math.max(...times) / 30) * 30);
+  const pct = t => ((t - t0) / (t1 - t0) * 100) + "%", pctW = (a, b) => ((b - a) / (t1 - t0) * 100) + "%";
+  const lines = el("div", "t-lines"); grid.append(lines);
+  for (let m = t0; m <= t1; m += 30) { const i = el("i"); i.style.left = ((m - t0) / (t1 - t0) * 100) + "%"; lines.append(i); }
+  (F.pauses || []).forEach(p => { const b = el("div", "t-band"); b.style.left = `calc(var(--t-label, 150px) + (100% - var(--t-label, 150px)) * ${(p.start - t0) / (t1 - t0)})`;
+    b.style.width = `calc((100% - var(--t-label, 150px)) * ${(p.end - p.start) / (t1 - t0)})`; grid.append(b); });
+  const row = (n, label, colour) => {
+    const r = el("div", "t-row"); r.dataset.id = n.id;
+    const lab = el("div", "t-label"); if (n.kind !== "orch") lab.append(el("b", null, n.id)); lab.append(el("span", null, label)); lab.title = label;
+    const tr = el("div", "t-track"), a = n.kind === "orch" ? n.start : n.launched, b = n.kind === "orch" ? n.end : n.ended;
+    const span = el("div", "t-span"); span.style.left = pct(a); span.style.width = pctW(a, b); span.style.background = colour; tr.append(span);
+    const turns = (n.turns || []).length ? n.turns : [[a, b]];  // no per-turn times: the whole bar, fainter
+    turns.forEach(([s, e]) => { const t = el("div", "t-turn"); t.style.left = pct(s); t.style.width = pctW(s, e); t.style.background = colour; if (!(n.turns || []).length) t.style.opacity = ".55"; tr.append(t); });
+    (F.pauses || []).filter(p => (p.tasks || []).includes(n.id)).forEach(p => { const q = el("div", "t-pause"); q.style.left = pct(p.start); q.style.width = pctW(p.start, p.end); q.title = `paused · ${p.reason || ""}`; tr.append(q); });
+    const end = { merged: "", replaced: " grey", stopped: " grey", blocked: " bad", failed: " bad" }[n.status];
+    if (n.kind !== "orch" && end != null) { const d = el("div", "t-end" + end); d.style.left = pct(b); tr.append(d); }
+    r.title = `${n.kind === "orch" ? "Orchestrator" : n.id + " · " + label}: ${clock(a)}–${clock(b)}, worked ${dur(worked(n))}`;
+    r.append(lab, tr);
+    if (n.kind !== "orch") { r.addEventListener("mouseenter", () => focusOn(n.id)); r.addEventListener("mouseleave", () => focusOn(null)); }
+    r.addEventListener("click", () => { if (ORCH.collapsed && n.kind !== "orch") return; zoomTo(n, Math.max(view.s, 0.85)); });
+    grid.append(r);
+  };
+  shownRows.forEach(n => row(n, n.kind === "orch" ? "Orchestrator" : n.name, n.kind === "orch" ? "var(--rm-muted)" : n.status === "replaced" ? "var(--rm-muted)" : bandColour(n.band)));
+  const axis = el("div", "t-axis"); T.append(axis);
+  for (let m = t0; m <= t1; m += 60) { const s = el("span", null, clock(m)); s.style.left = ((m - t0) / (t1 - t0) * 100) + "%"; axis.append(s); }
+  const pauses = (F.pauses || []).map(p => `${p.which ? p.which + ": " : ""}paused ${clock(p.start)}–${clock(p.end)}${p.reason ? ` (${p.reason})` : ""}`).join("; ");
+  const note = (F.turns_missing ? "Bars run from launch to merge; solid parts are the agent's own turns where the host recorded them. " : "Bars run from launch to merge; solid parts are the agent's own turns. ")
+    + `Click a row to find its card.${pauses ? " " + pauses + "." : ""}`;
+  T.append(el("div", "t-note", note));
+}
+
+// start
+chooseOrder();
+rows = rows.map(r => withRelaunches(r || []));
+if (/open/.test(location.hash)) nodes.forEach(n => { if (n.helpers.length) toggleKids(n, true); });
+layout(true); /fit/.test(location.hash) ? fit() : home();
+const at = /at=([A-Za-z0-9_-]+)/.exec(location.hash); if (at && byId[at[1]]) zoomTo(byId[at[1]], 0.72);
+let lastW = cv.clientWidth;
+new ResizeObserver(() => { if (Math.abs(cv.clientWidth - lastW) > 2) { lastW = cv.clientWidth; layout(true); home(); } }).observe(cv);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => layout(true));
+window.runMap = { cards, layout, bounds: () => bounds, view: () => view };
+console.log(`run map ready: ${tasks.length} tasks, ${cards.length} cards`);
+} catch (e) {
+  root.replaceChildren(Object.assign(document.createElement("p"), { className: "rm-error", textContent: "The run map couldn't be drawn: " + e.message }));
+  console.error("run map failed: " + (e.stack || e));
+}
+})();
+</script>
+</body>
+</html>

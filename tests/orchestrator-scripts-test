@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease and run-charts.
+# Checks the long-horizon-orchestrator's helper scripts: lease, and run-charts with its run map.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -109,7 +109,9 @@ if kill -0 "$(cat "$run3/child.pid")" 2>/dev/null; then exit 1; fi
 if "$lease3" status | grep -q '"owner": "C"'; then exit 1; fi
 
 # run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked
-# tasks shown dashed, no bar for a parked task.
+# tasks shown dashed, no bar for a parked task; the run map from the same facts.
+mkdir -p "$work/pictures"
+python3 -I -c 'import base64, sys; open(sys.argv[1], "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="))' "$work/pictures/a.png"
 cat > "$work/facts.json" <<'EOF'
 {
   "harness": "Claude Code (T3) · Opus 5.5",
@@ -119,7 +121,11 @@ cat > "$work/facts.json" <<'EOF'
   "pauses": [{"start": "04:17", "end": "05:55", "reason": "Claude limit"}],
   "tasks": [
     {"id": "A", "name": "Settings screen", "level": "high", "first_wave": true, "status": "merged",
-     "helpers": [{"label": "Codex · GPT-6.1 Sol (High)", "did": "screen check ×1"}],
+     "helpers": [{"label": "Codex · GPT-6.1 Sol (High)", "did": "screen check ×1"},
+                 {"label": "Claude Code · Sonnet 5.5 (High)", "did": "Independent review: 2 fixes", "role": "review"}],
+     "summary": "A settings screen with the theme and the shortcut.",
+     "turns": [["01:00", "01:20"], ["01:25", "01:35"]],
+     "pictures": [{"src": "pictures/a.png", "caption": "The settings screen"}, {"src": "pictures/gone.png", "caption": "Gone"}],
      "launched": "01:00", "ended": "01:35", "worked_minutes": 30},
     {"id": "B1", "name": "Word counts", "level": "xhigh", "first_wave": true, "status": "replaced",
      "note": "crashed twice", "launched": "01:00", "ended": "02:10", "worked_minutes": 62},
@@ -137,7 +143,7 @@ cat > "$work/facts.json" <<'EOF'
   ]
 }
 EOF
-"$scripts/run-charts" "$work/facts.json" "$work/charts" >/dev/null
+"$scripts/run-charts" "$work/facts.json" "$work/charts" >"$work/charts.out" 2>"$work/charts.err"
 graph="$work/charts/graph.mmd"
 timeline="$work/charts/timeline.mmd"
 
@@ -167,5 +173,41 @@ grep -q 'Orchestrator · 6h 45m, worked 25m :whole_run, 00:50, 07:35' "$timeline
 grep -q 'whole run 6h 45m, worked 25m' "$graph"
 # A: 30, B1: 62, B2: 50, C: 14, D: 65, F: 41, QA: 44 = 306 minutes; A, B1, D, then C and F at 01:36.
 grep -qx 'Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota. The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.' "$work/charts/summary.txt"
+
+# run map: the page for html_render is short and names only files that exist; the SVG carries the
+# standalone page whole; the data has every time in minutes and every wait, relaunch and state.
+grep -q 'gone.png' "$work/charts.err"
+grep -q 'run-map-t3.html (.* characters; html_render height ' "$work/charts.out"
+python3 -I - "$work/charts" <<'EOF'
+import json, os, re, sys
+from xml.etree import ElementTree
+folder = sys.argv[1]
+stub = open(os.path.join(folder, "run-map-t3.html")).read()
+page = open(os.path.join(folder, "run-map.html")).read()
+assert len(stub) < 4000, len(stub)
+files = json.loads(re.search(r"window\.RUN_MAP_FILES = (\[.*?\]);", stub).group(1))
+carrier = json.loads(re.search(r"fetch\((\".*?\")\)", stub).group(1))
+assert all(os.path.isabs(f) and os.path.exists(f) for f in files + [carrier]), files
+assert ElementTree.parse(carrier).getroot().find("{http://www.w3.org/2000/svg}desc").text == page
+data = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))
+assert len(data["files"]) == len(files) and "/*DATA*/" not in page
+tasks = {t["id"]: t for t in data["tasks"]}
+assert tasks["A"]["launched"] == 60 and tasks["A"]["turns"] == [[60, 80], [85, 95]] and data["orch"]["start"] == 50
+assert [p["caption"] for p in tasks["A"]["pictures"]] == ["The settings screen"]
+assert files[tasks["A"]["pictures"][0]["file"]].endswith("pictures/a.png")
+assert [h["title"] for h in tasks["A"]["helpers"]] == ["Helper", "Reviewer"]
+assert tasks["A"]["helpers"][0]["model"] == "GPT-6.1 Sol" and files[tasks["A"]["helpers"][0]["mark"]].endswith("openai.svg")
+assert tasks["A"]["model"] == "Opus 5.5" and tasks["A"]["harness"] == "Claude Code (T3)" and tasks["A"]["effort"] == "High"
+assert tasks["D"]["effort"] == "Max" and tasks["D"]["band"] == "above" and tasks["D"]["status"] == "blocked"
+assert tasks["E"]["launched"] is None and tasks["E"]["status"] == "parked" and tasks["C"]["needs"] == ["A"]
+assert tasks["F"]["place"] == "A" and tasks["B2"]["replaces"] == "B1" and tasks["QA"]["qa"]
+assert data["pauses"][0]["tasks"] == ["B2"] and tasks["B2"]["paused"] == "1h 38m · Claude limit" and not tasks["D"]["paused"]
+assert data["integration"]["head"] == "abc1234" and data["turns_missing"]
+EOF
+if command -v node >/dev/null 2>&1; then
+  python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
+    "$work/charts/run-map.html" > "$work/run-map.js"
+  node --check "$work/run-map.js"
+fi
 
 echo "orchestrator scripts: ok"

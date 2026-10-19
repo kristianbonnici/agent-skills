@@ -44,7 +44,7 @@ Before saying a skill is installed, run:
 ```bash
 ./scripts/doctor --all
 ./tests/bootstrap-test
-./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's lease and run-charts scripts
+./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's lease and run-charts scripts, and the run map
 ```
 
 The doctor must confirm Product Design is absent from Codex discovery paths.
