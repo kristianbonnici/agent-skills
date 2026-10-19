@@ -55,8 +55,11 @@ Only for the run map, all optional:
   a helper's "status": "done" (or failed, cancelled), "role": "review" or "research",
              "count": 2                            # when "did" doesn't end with ×2
 
+  a task's, a helper's or the run's "maker": "moonshotai"  # when the model's name doesn't say it
+
 A pause's "which" names the tasks it stopped ("F only", "A, C"); without task IDs it covers every
-task running then. The maker's mark on each card comes from the model's name (assets/marks).
+task running then. Each card's mark is its model's maker, found from "maker" or the model's name,
+else, for a model named only "default" or "auto", its harness's, else a letter: assets/marks/marks.json.
 
 Usage:
   run-charts <facts.json> <output folder> [--render] [--puppeteer-config <file>]
@@ -386,12 +389,6 @@ def render(folder: Path, puppeteer_config: str | None) -> None:
 
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-MAKERS = [  # the model's name, the maker's mark, its colour in the map (None: the text colour)
-    (r"claude|opus|sonnet|haiku|fable", "claude.svg", "#D97757"),
-    (r"\bgpt|codex|openai|\bo[1-9]\b", "openai.svg", None),
-    (r"gemini", "gemini.svg", "linear-gradient(135deg, #9168C0, #5684D1 55%, #1BA1E3)"),
-    (r"deepseek", "deepseek.svg", "#5786FE"),
-]
 EFFORTS = {"above": "Above Extra High", "max": "Max", "ultra": "Ultra", "ultracode": "Ultracode",
            "ultrathink": "Ultrathink", "xhigh": "Extra High", "extra high": "Extra High", "high": "High",
            "medium": "Medium", "low": "Low"}
@@ -446,7 +443,9 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         paths.append(str(path))
         return len(paths) - 1
 
-    def who(agent: str | None, level_value=None, level_label=None) -> dict:
+    makers = json.loads((ASSETS / "marks" / "marks.json").read_text())
+
+    def who(agent: str | None, level_value=None, level_label=None, maker: str | None = None) -> dict:
         found = AGENT.match(agent.strip()) if agent else None
         harness, model, effort = (found.group("harness"), found.group("model"), found.group("effort")) if found else (None, None, None)
         raw = str(level_value or "").strip().lower()
@@ -454,20 +453,23 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         band = LEVELS.get(raw) or LEVELS.get(str(effort or "").strip().lower()) or "high"
         entry = {"harness": harness, "model": model, "effort": effort, "band": band,
                  "mark": None, "ink": None, "letter": (model or harness or "?").strip()[:1].upper()}
-        for pattern, name, ink in MAKERS:
-            if re.search(pattern, model or harness or "", re.I):
-                path = ASSETS / "marks" / name
-                if path.exists():
-                    if name not in marks:
-                        marks[name] = add(path, "data:image/svg+xml;base64," + base64.b64encode(path.read_bytes()).decode())
-                    entry.update(mark=marks[name], ink=ink)
-                break
+        # the model's maker (from "maker", or the model's name); for a model with no real name, the
+        # harness's own mark; else a letter, rather than a mark that would claim the wrong maker
+        named = f"{maker or ''} {model or ''}".strip()
+        chosen = next((m for m in makers if m.get("models") and named and re.search(m["models"], named, re.I)), None)
+        if not chosen and not maker and re.fullmatch(r"(default|auto)?", (model or "").strip(), re.I):
+            chosen = next((m for m in makers if m.get("harnesses") and harness and re.search(m["harnesses"], harness, re.I)), None)
+        if chosen and (ASSETS / "marks" / chosen["file"]).exists():
+            path = ASSETS / "marks" / chosen["file"]
+            if path.name not in marks:
+                marks[path.name] = add(path, "data:image/svg+xml;base64," + base64.b64encode(path.read_bytes()).decode())
+            entry.update(mark=marks[path.name], ink=chosen.get("ink"))
         return entry
 
     def helpers(items) -> list[dict]:
         out = []
         for h in items or []:
-            entry = who(h.get("label"))
+            entry = who(h.get("label"), maker=h.get("maker"))
             did = h.get("did", "")
             role = str(h.get("role", "")).strip().lower()
             title = {"review": "Reviewer", "reviewer": "Reviewer", "research": "Researcher", "researcher": "Researcher"}.get(
@@ -514,12 +516,12 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             "launched": launched, "ended": ended, "worked": worked, "turns": turns(t), "pictures": pictures,
             "paused": " · ".join(f"{span(p['end'] - p['start'])}" + (f" · {p['reason']}" if p["reason"] else "") for p in paused),
             "helpers": helpers(t.get("helpers")),
-            **who(t.get("agent") or facts.get("harness"), t.get("level"), t.get("level_label")),
+            **who(t.get("agent") or facts.get("harness"), t.get("level"), t.get("level_label"), t.get("maker")),
         })
     orch = {"name": "Orchestrator", "summary": run.get("summary", ""), "status": "done",
             "start": minute(run.get("start")), "end": minute(run.get("end")), "worked": run.get("worked_minutes"),
             "wakes": run.get("wakes"), "turns": turns(run), "helpers": helpers(run.get("helpers")),
-            **who(facts.get("orchestrator"), run.get("level"))}
+            **who(facts.get("orchestrator"), run.get("level"), maker=run.get("maker"))}
     data = {"title": facts.get("title", ""), "date": facts.get("date", ""), "integration": facts.get("integration", {}),
             "orch": orch, "pauses": pauses, "tasks": tasks, "files": inline,
             "turns_missing": any(not t.get("turns") for t in timed(facts["tasks"]))}

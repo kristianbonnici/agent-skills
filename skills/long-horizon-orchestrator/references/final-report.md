@@ -84,6 +84,7 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 - **Quota pauses:** from when the first task failed on the limit until you resumed the tasks, from the threads' failed and resumed turns, not from your forecast.
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events. For the map, add each helper's outcome (`status`) and whether it reviewed or researched (`role`).
 - **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff.
+- **Makers:** each card's mark comes from the model's name (`assets/marks/marks.json` knows about 40 makers and harnesses). When the name doesn't say who made the model, add the maker as the host's model ID names it (`"maker": "moonshotai"` for `openrouter/moonshotai/…`); a maker without a mark gets a letter.
 
 Put these facts into a JSON file in the run directory, and run `scripts/run-charts <facts.json> <run directory>/report`. It writes the run map, both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws the charts on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the map or the charts by hand: the map is tens of thousands of characters, and `linkStyle` indexes are easy to miscount.
 

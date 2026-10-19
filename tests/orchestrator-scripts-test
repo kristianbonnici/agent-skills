@@ -132,6 +132,10 @@ cat > "$work/facts.json" <<'EOF'
     {"id": "B2", "name": "Word counts, second try", "level": "xhigh", "replaces": "B1", "status": "merged",
      "launched": "02:15", "ended": "06:40", "worked_minutes": 50},
     {"id": "C", "name": "Command line", "level": "high", "needs": ["A"], "status": "merged",
+     "helpers": [{"label": "OpenCode · Kimi K3 (Max)", "did": "research ×1"},
+                 {"label": "Copilot · default (High)", "did": "review ×1"},
+                 {"label": "OpenCode · Big Pickle (High)", "did": "research ×1"},
+                 {"label": "OpenCode · House model (High)", "did": "research ×1", "maker": "z-ai"}],
      "launched": "01:36", "ended": "01:51", "worked_minutes": 14},
     {"id": "D", "name": "Spell check", "level": "max", "first_wave": true, "status": "blocked",
      "note": "blocked: needs API key", "launched": "01:00", "ended": "03:00", "worked_minutes": 65},
@@ -203,6 +207,29 @@ assert tasks["E"]["launched"] is None and tasks["E"]["status"] == "parked" and t
 assert tasks["F"]["place"] == "A" and tasks["B2"]["replaces"] == "B1" and tasks["QA"]["qa"]
 assert data["pauses"][0]["tasks"] == ["B2"] and tasks["B2"]["paused"] == "1h 38m · Claude limit" and not tasks["D"]["paused"]
 assert data["integration"]["head"] == "abc1234" and data["turns_missing"]
+marks = [files[h["mark"]].rsplit("/", 1)[-1] if h["mark"] is not None else h["letter"] for h in tasks["C"]["helpers"]]
+assert marks == ["kimi.svg", "githubcopilot.svg", "B", "zai.svg"], marks
+EOF
+# the makers' marks: every entry's file is there, clean (paths with one fill), and in the notice
+python3 -I - "$repo_root/skills/long-horizon-orchestrator/assets/marks" <<'EOF'
+import json, re, sys
+from pathlib import Path
+from xml.etree import ElementTree
+folder = Path(sys.argv[1])
+entries = json.loads((folder / "marks.json").read_text())
+notice = (folder / "NOTICE.md").read_text()
+assert len({e["id"] for e in entries}) == len(entries)
+for e in entries:
+    for key in ("models", "harnesses"):
+        if e.get(key):
+            re.compile(e[key])
+    root = ElementTree.parse(folder / e["file"]).getroot()
+    tags = {el.tag.split("}")[1] for el in root.iter()}
+    assert tags <= {"svg", "path"}, (e["file"], tags)
+    for el in root.iter():
+        assert set(el.attrib) <= {"viewBox", "fill", "fill-rule", "d"}, (e["file"], el.attrib.keys())
+    assert f"`{e['file']}`" in notice, e["file"]
+assert sorted(p.name for p in folder.glob("*.svg")) == sorted({e["file"] for e in entries})
 EOF
 if command -v node >/dev/null 2>&1; then
   python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
