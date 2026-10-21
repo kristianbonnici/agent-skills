@@ -4,9 +4,10 @@ charts (graph.mmd, timeline.mmd) and its run-time line (summary.txt) from a run'
 
 The run map is the report's picture of the run in T3, where html_render shows it: the
 orchestrator and its tasks as a tree of cards you can pan, zoom and rearrange, with each task's
-sub-agents, what it waited for, its pictures, and a timeline. The Mermaid charts are the same
-picture for hosts that can't show HTML. Both follow references/final-report.md ("Run map",
-"Run charts"), coloured by each task's reasoning level at launch.
+sub-agents, what it waited for, its pictures, and a timeline with a lane per agent.
+The Mermaid charts are the same picture for hosts that can't show HTML. Both follow
+references/final-report.md ("Run map", "Run charts"), coloured by each task's reasoning level at
+launch.
 
 Facts file (JSON):
 
@@ -540,8 +541,8 @@ def run_map(facts: dict, base: Path, folder: Path) -> tuple[int, int]:
                                         + escape(carried) + "</desc></svg>\n")
     stub = STUB % {"files": json.dumps(paths, ensure_ascii=False), "page": json.dumps(str((folder / "run-map.svg").resolve()))}
     (folder / "run-map-t3.html").write_text(stub)
-    rows = len(timed(facts["tasks"])) + (1 if (facts.get("run") or {}).get("start") else 0)
-    return len(stub), 860 + 24 * rows  # generous: html_render shrinks the frame to the page, and narrow screens wrap more
+    lanes = sum(1 for t in facts["tasks"] if not t.get("replaces")) + (1 if (facts.get("run") or {}).get("start") else 0)
+    return len(stub), 900 + 46 * lanes  # the canvas, then a lane per agent; generous: html_render shrinks the frame to the page
 
 
 def main(argv: list[str]) -> int:

@@ -137,30 +137,76 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .gal-thumbs button[aria-current="true"] { border-color: var(--rm-info); }
 .gal-thumbs img { display: block; height: 46px; width: auto; }
 
-/* the timeline */
-.rm-time { margin-top: 18px; }
-.t-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
-.t-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.t-legend { display: flex; gap: 12px; font-size: 12px; color: var(--rm-muted); flex-wrap: wrap; }
-.t-legend i { display: inline-block; width: 14px; height: 8px; border-radius: 3px; margin-right: 5px; }
-.t-grid { position: relative; }
-.t-row { display: grid; grid-template-columns: var(--t-label, 150px) 1fr; align-items: center; height: 24px; border-radius: 6px; cursor: pointer; }
-.t-row:hover, .t-row.hl { background: var(--rm-soft); }
-.t-label { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px 0 4px; }
-.t-label b { color: var(--rm-muted); font-weight: 600; margin-right: 4px; }
-.t-track { position: relative; height: 100%; }
-.t-span { position: absolute; top: 9px; height: 6px; border-radius: 3px; opacity: .22; }
-.t-turn { position: absolute; top: 7px; height: 10px; border-radius: 3px; min-width: 2px; }
-.t-end { position: absolute; top: 7px; width: 10px; height: 10px; border-radius: 50%; margin-left: -5px; background: var(--rm-ok); border: 2px solid var(--rm-card); }
-.t-end.grey { background: var(--rm-muted); } .t-end.bad { background: var(--rm-bad); }
-.t-pause { position: absolute; top: 4px; bottom: 4px; border-radius: 3px; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-bad) 40%, transparent) 0 3px, transparent 3px 7px); }
-.t-axis { position: relative; height: 18px; margin-left: var(--t-label, 150px); }
-.t-axis span { position: absolute; top: 2px; font-size: 11px; color: var(--rm-muted); transform: translateX(-50%); font-variant-numeric: tabular-nums; }
-.t-lines { position: absolute; top: 0; bottom: 18px; left: var(--t-label, 150px); right: 0; pointer-events: none; }
-.t-lines i { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--rm-border); }
-.t-band { position: absolute; top: 0; bottom: 18px; pointer-events: none; background: color-mix(in srgb, var(--rm-bad) 5%, transparent); }
-.t-note { font-size: 12px; color: var(--rm-muted); margin-top: 6px; }
-@media (max-width: 560px) { :root { --cv-h: 520px; } .t-grid, .t-axis { --t-label: 86px; } .rm-legend { margin-left: 0; } }
+/* the timeline: a lane per agent, its turns and the waits between them, the launches and
+   report-backs as lines from the orchestrator's lane */
+.tl { margin-top: 18px; position: relative; background: var(--rm-card); border: 1px solid var(--rm-border); border-radius: var(--radius, 14px); padding: 16px 18px 12px;
+  --tl-label: 198px; --tl-lane: 44px; --tl-orch: color-mix(in srgb, var(--rm-fg) 40%, var(--rm-card));
+  --tl-dim: 30%; font-variant-numeric: tabular-nums; }
+.tl-head { margin: 0 0 12px; }
+.tl-title { font-size: 15px; font-weight: 600; }
+.tl-stats { margin-top: 3px; display: flex; align-items: center; gap: 6px; color: var(--rm-muted); font-size: 13px; flex-wrap: wrap; min-height: 18px; }
+.tl-stats svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.tl-stats b { color: var(--rm-fg); font-weight: 600; }
+.tl-stats .sep { opacity: .6; }
+.tl-body { display: grid; grid-template-columns: var(--tl-label) minmax(0, 1fr); }
+.tl-labels { padding-bottom: 28px; min-width: 0; }
+.tl-lab { height: var(--tl-lane); display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 10px 0 2px; min-width: 0; cursor: pointer; border-radius: 8px; transition: opacity .15s; }
+.tl-name { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; min-width: 0; }
+.tl-name .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.tl-name .id { flex: 0 0 auto; color: var(--rm-muted); font-weight: 600; font-size: 12.5px; }
+.tl-name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-model { display: flex; align-items: center; gap: 5px; padding-left: 15px; color: var(--rm-muted); font-size: 12px; white-space: nowrap; overflow: hidden; min-width: 0; }
+.tl-model span { overflow: hidden; text-overflow: ellipsis; }
+.tl-model .mk { flex: 0 0 auto; width: 12px; height: 12px; }
+.tl-model .letter { flex: 0 0 auto; width: 12px; text-align: center; font-weight: 650; font-size: 10.5px; }
+.tl-lab.parked .tl-name, .tl-lab.parked .tl-model { opacity: .6; }
+.tl-plot { position: relative; min-width: 0; touch-action: pan-y; }
+.tl-svg { display: block; overflow: visible; }
+.tl-svg [data-tip] { cursor: default; }
+.tl-grid { stroke: var(--rm-border); stroke-width: 1; opacity: .7; }
+.tl-base { stroke: var(--rm-border); stroke-width: 1; }
+.tl-tick { fill: var(--rm-muted); font-size: 11px; text-anchor: middle; }
+.tl-work { fill: var(--c); }
+.tl-idle { fill: color-mix(in srgb, var(--c) var(--tl-dim), var(--rm-card)); }
+.tl-untimed { fill: var(--c); opacity: .55; }
+.tl-wait { fill: url(#rm-tl-hatch); stroke: color-mix(in srgb, var(--rm-muted) 35%, transparent); stroke-width: 1; }
+.tl-hatch-bg { fill: color-mix(in srgb, var(--rm-muted) 10%, var(--rm-card)); }
+.tl-hatch-ln { stroke: color-mix(in srgb, var(--rm-muted) 42%, transparent); stroke-width: 1.6; }
+.tl-bad-bg { fill: color-mix(in srgb, var(--rm-bad) 8%, transparent); }
+.tl-bad-ln { stroke: color-mix(in srgb, var(--rm-bad) 45%, transparent); stroke-width: 1.6; }
+.tl-failed { fill: color-mix(in srgb, var(--x, var(--rm-bad)) 16%, var(--rm-card)); stroke: color-mix(in srgb, var(--x, var(--rm-bad)) 75%, transparent); stroke-width: 1.2; }
+.tl-glyph { fill: none; stroke: var(--x, var(--rm-bad)); stroke-width: 1.4; stroke-linecap: round; }
+.tl-glyph.retry { stroke: var(--rm-card); stroke-width: 1.6; }
+.tl-badge { fill: var(--rm-card); stroke: var(--c); stroke-width: 1.4; }
+.tl-badge.stop { stroke: none; }
+.tl-glyph.retry.on-badge { stroke: var(--c); }
+.tl-ring { fill: var(--rm-card); stroke: var(--c); stroke-width: 2; }
+.tl-conn { fill: none; stroke: var(--c); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .9; transition: opacity .15s; }
+.tl-conn.dashed { stroke-dasharray: 3 3; }
+.tl-dot { fill: var(--c); stroke: var(--rm-card); stroke-width: 2; transition: opacity .15s; }
+.tl-pband { fill: color-mix(in srgb, var(--rm-bad) 6%, transparent); }
+.tl-plane { fill: url(#rm-tl-hatch-bad); }
+.tl-plabel { fill: var(--rm-bad); font-size: 11px; font-weight: 500; }
+.tl-parked { fill: var(--rm-muted); font-size: 11.5px; font-style: italic; }
+.tl-g { transition: opacity .15s; }
+.tl.focus .tl-g:not(.on), .tl.focus [data-lane]:not(.on), .tl.focus .tl-lab:not(.on) { opacity: .28; }
+.tl-foot { margin-top: 6px; display: flex; justify-content: flex-end; }
+.tl-legend { display: flex; align-items: center; justify-content: flex-end; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--rm-muted); }
+.tl-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tl-legend i { display: inline-block; width: 16px; height: 9px; border-radius: 3px; }
+.tl-legend svg { width: 14px; height: 14px; }
+.tl-note { margin-top: 6px; font-size: 12px; color: var(--rm-muted); }
+.tl-tip { position: absolute; z-index: 5; pointer-events: none; width: max-content; max-width: 280px; background: var(--rm-card); border: 1px solid var(--rm-border); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.2); padding: 10px 12px 9px; font-size: 13px; line-height: 1.38; opacity: 0; transform: translateY(3px); transition: opacity .12s, transform .12s; }
+.tl-tip.on { opacity: 1; transform: none; }
+.tl-tip .who { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; }
+.tl-tip .who .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex: 0 0 auto; }
+.tl-tip .m { margin: 1px 0 0 13px; color: var(--rm-muted); font-size: 12px; }
+.tl-tip .what { margin-top: 4px; }
+.tl-tip .meta { margin-top: 4px; color: var(--rm-muted); font-size: 12px; }
+@media (max-width: 560px) { .tl { --tl-label: 104px; --tl-lane: 40px; padding: 12px 12px 10px; } .tl-name { font-size: 12.5px; gap: 5px; } .tl-name .id { display: none; }
+  .tl-model { padding-left: 13px; font-size: 11px; } .tl-model .eff { display: none; } }
+@media (max-width: 560px) { :root { --cv-h: 520px; } .rm-legend { margin-left: 0; } }
 </style>
 </head>
 <body>
@@ -580,17 +626,19 @@ function openGallery(n, i) {
   gal.append(h, big, cap); if (n.pictures.length > 1) gal.append(th); show(i);
 }
 
-// hovering a task lights up what it waited for and what waited for it
+// hovering a task lights up what it waited for and what waited for it, in the tree and the timeline
+let timelineFocus = null;
 function focusOn(id) {
   root.classList.toggle("focus", !!id && !drag);
   root.querySelectorAll(".hl,.hl-self,.hl-kid").forEach(e => e.classList.remove("hl", "hl-self", "hl-kid"));
+  if (timelineFocus) timelineFocus(null);
   if (!id || drag) return;
   const rel = new Set([id]);
   tasks.forEach(t => [...t.pre, ...(t.replaces ? [t.replaces] : [])].forEach(p => { if (p === id) rel.add(t.id); if (t.id === id) rel.add(p); }));
   nodes.forEach(n => { n.card.classList.toggle("hl", rel.has(n.id) && n.id !== id); n.card.classList.toggle("hl-self", n.id === id);
     n.helpers.forEach(h => h.card.classList.toggle("hl-kid", n.id === id)); });
   gPaths.querySelectorAll("path[data-from]").forEach(p => p.classList.toggle("hl", p.dataset.from === id || p.dataset.to === id));
-  root.querySelectorAll(".t-row").forEach(r => r.classList.toggle("hl", rel.has(r.dataset.id)));
+  if (timelineFocus) timelineFocus(rel);
 }
 if (subs) control("Sub-agents", false, v => { nodes.forEach(n => { if (n.helpers.length) toggleKids(n, v); }); layout(); });
 control("Details", true, v => { root.classList.toggle("brief", !v); layout(); });
@@ -600,50 +648,238 @@ legend.innerHTML = key("var(--rm-line)", "solid", "launched") + (tasks.some(t =>
   + (tasks.some(t => t.place) ? key("var(--rm-muted)", "dotted", "took its place") : "") + (tasks.some(t => t.replaces) ? key("var(--rm-muted)", "dashed", "relaunched as") : "");
 controls.append(legend);
 
-// the timeline
-const shownRows = [...(ORCH.start != null && ORCH.end != null ? [ORCH] : []), ...tasks.filter(timed)];
-if (shownRows.length) {
-  const T = el("div", "rm-time"); root.append(T);
-  const th = el("div", "t-head"); th.append(el("h3", null, "Timeline"));
-  const bands = new Set(shownRows.filter(n => n.kind === "task").map(n => n.band || "high"));
-  const tl = el("div", "t-legend"); tl.innerHTML =
-    `<span><i style="background:var(--rm-high)"></i>working</span><span><i style="background:var(--rm-high);opacity:.25"></i>waiting</span>` +
-    ((F.pauses || []).length ? `<span><i style="background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--rm-bad) 45%,transparent) 0 3px,transparent 3px 6px)"></i>quota pause</span>` : "") +
-    `<span><i style="background:var(--rm-ok);width:9px;height:9px;border-radius:50%"></i>merged</span>` +
-    [["above", "above Extra High"], ["xhigh", "Extra High"], ["high", "High or lower"]].filter(([b]) => bands.has(b)).map(([b, t]) => `<span><i style="background:var(--rm-${b})"></i>${t}</span>`).join("");
-  th.append(tl); T.append(th);
-  const grid = el("div", "t-grid"); T.append(grid);
-  const times = shownRows.flatMap(n => n.kind === "orch" ? [n.start, n.end] : [n.launched, n.ended]);
-  const t0 = Math.floor(Math.min(...times) / 30) * 30, t1 = Math.max(t0 + 30, Math.ceil(Math.max(...times) / 30) * 30);
-  const pct = t => ((t - t0) / (t1 - t0) * 100) + "%", pctW = (a, b) => ((b - a) / (t1 - t0) * 100) + "%";
-  const lines = el("div", "t-lines"); grid.append(lines);
-  for (let m = t0; m <= t1; m += 30) { const i = el("i"); i.style.left = ((m - t0) / (t1 - t0) * 100) + "%"; lines.append(i); }
-  (F.pauses || []).forEach(p => { const b = el("div", "t-band"); b.style.left = `calc(var(--t-label, 150px) + (100% - var(--t-label, 150px)) * ${(p.start - t0) / (t1 - t0)})`;
-    b.style.width = `calc((100% - var(--t-label, 150px)) * ${(p.end - p.start) / (t1 - t0)})`; grid.append(b); });
-  const row = (n, label, colour) => {
-    const r = el("div", "t-row"); r.dataset.id = n.id;
-    const lab = el("div", "t-label"); if (n.kind !== "orch") lab.append(el("b", null, n.id)); lab.append(el("span", null, label)); lab.title = label;
-    const tr = el("div", "t-track"), a = n.kind === "orch" ? n.start : n.launched, b = n.kind === "orch" ? n.end : n.ended;
-    const span = el("div", "t-span"); span.style.left = pct(a); span.style.width = pctW(a, b); span.style.background = colour; tr.append(span);
-    const turns = (n.turns || []).length ? n.turns : [[a, b]];  // no per-turn times: the whole bar, fainter
-    turns.forEach(([s, e]) => { const t = el("div", "t-turn"); t.style.left = pct(s); t.style.width = pctW(s, e); t.style.background = colour; if (!(n.turns || []).length) t.style.opacity = ".55"; tr.append(t); });
-    (F.pauses || []).filter(p => (p.tasks || []).includes(n.id)).forEach(p => { const q = el("div", "t-pause"); q.style.left = pct(p.start); q.style.width = pctW(p.start, p.end); q.title = `paused · ${p.reason || ""}`; tr.append(q); });
-    const end = { merged: "", replaced: " grey", stopped: " grey", blocked: " bad", failed: " bad" }[n.status];
-    if (n.kind !== "orch" && end != null) { const d = el("div", "t-end" + end); d.style.left = pct(b); tr.append(d); }
-    r.title = `${n.kind === "orch" ? "Orchestrator" : n.id + " · " + label}: ${clock(a)}–${clock(b)}, worked ${dur(worked(n))}`;
-    r.append(lab, tr);
-    if (n.kind !== "orch") { r.addEventListener("mouseenter", () => focusOn(n.id)); r.addEventListener("mouseleave", () => focusOn(null)); }
-    r.addEventListener("click", () => { if (ORCH.collapsed && n.kind !== "orch") return; zoomTo(n, Math.max(view.s, 0.85)); });
-    grid.append(r);
+// the timeline: a lane per agent, its turns and the waits between them, the launches and
+// report-backs as lines from the orchestrator's lane
+(() => {
+  const orchTimed = ORCH.start != null && ORCH.end != null;
+  const COLOURS = ["#3b82f6", "#c026d3", "#e67700", "#10a37f", "#e0457b", "#0e9fb8", "#5f9e1f", "#8b5cf6"];
+  const chainOf = r => [r, ...(relaunches[r.id] || []).flatMap(function next(t) { return [t, ...(relaunches[t.id] || []).flatMap(next)]; })];
+  const first = c => Math.min(...c.filter(timed).map(t => t.launched), Infinity);
+  const lanes = tasks.filter(t => !t.replaces).map(r => chainOf(r))
+    .sort((a, b) => first(a) - first(b) || tasks.indexOf(a[0]) - tasks.indexOf(b[0]))
+    .map((chain, i) => ({ id: chain[0].id, ids: chain.map(t => t.id), node: chain[chain.length - 1], attempts: chain.filter(timed), colour: COLOURS[i % COLOURS.length] }));
+  if (orchTimed) lanes.unshift({ id: "ORCH", ids: ["ORCH"], node: ORCH, orch: true, attempts: [ORCH], colour: "var(--tl-orch)" });
+  if (!lanes.some(l => l.attempts.length && !l.orch)) return;
+  const span = n => n.kind === "orch" ? [n.start, n.end] : [n.launched, n.ended];
+  const times = lanes.flatMap(l => l.attempts.flatMap(span));
+  const t0 = orchTimed ? Math.min(ORCH.start, ...times) : Math.min(...times), t1 = Math.max(t0 + 1, ...times);
+  const timedTasks = tasks.filter(timed);
+  const work = timedTasks.reduce((s, t) => s + worked(t), 0);
+  const peak = Math.max(0, ...timedTasks.map(t => timedTasks.filter(o => o.launched <= t.launched && o.ended > t.launched).length));
+  const ICON = {
+    ok: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="none" stroke="var(--rm-ok)" stroke-width="1.5"/><path d="M5.2 8.2 7.1 10 10.8 6.2" fill="none" stroke="var(--rm-ok)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    warn: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="none" stroke="var(--rm-warn)" stroke-width="1.5"/><path d="M8 4.8v4M8 11.2v.1" stroke="var(--rm-warn)" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    hand: '<svg viewBox="0 0 16 16"><path d="M4 2.5v5.5a2.5 2.5 0 0 0 2.5 2.5H13M10.5 8l2.5 2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    x: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--rm-bad)" stroke-width="1.4"/><path d="M5.9 5.9l4.2 4.2M10.1 5.9l-4.2 4.2" stroke="var(--rm-bad)" stroke-width="1.4" stroke-linecap="round"/></svg>',
+    retry: '<svg viewBox="0 0 16 16"><path d="M12.6 8a4.6 4.6 0 1 1-1.4-3.3M11.4 2.4v2.6H8.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
-  shownRows.forEach(n => row(n, n.kind === "orch" ? "Orchestrator" : n.name, n.kind === "orch" ? "var(--rm-muted)" : n.status === "replaced" ? "var(--rm-muted)" : bandColour(n.band)));
-  const axis = el("div", "t-axis"); T.append(axis);
-  for (let m = t0; m <= t1; m += 60) { const s = el("span", null, clock(m)); s.style.left = ((m - t0) / (t1 - t0) * 100) + "%"; axis.append(s); }
-  const pauses = (F.pauses || []).map(p => `${p.which ? p.which + ": " : ""}paused ${clock(p.start)}–${clock(p.end)}${p.reason ? ` (${p.reason})` : ""}`).join("; ");
-  const note = (F.turns_missing ? "Bars run from launch to merge; solid parts are the agent's own turns where the host recorded them. " : "Bars run from launch to merge; solid parts are the agent's own turns. ")
-    + `Click a row to find its card.${pauses ? " " + pauses + "." : ""}`;
-  T.append(el("div", "t-note", note));
-}
+
+  // the frame: header, labels beside the plot, controls and legend
+  const T = el("section", "tl"); T.setAttribute("aria-label", "Timeline"); root.append(T);
+  const headEl = el("div", "tl-head"); headEl.append(el("div", "tl-title", "Timeline"));
+  const statsEl = el("div", "tl-stats"); statsEl.setAttribute("aria-live", "off"); headEl.append(statsEl); T.append(headEl);
+  const body = el("div", "tl-body"), labels = el("div", "tl-labels"), plot = el("div", "tl-plot"); body.append(labels, plot); T.append(body);
+  const svg = P("svg", { class: "tl-svg", role: "img" }); plot.append(svg);
+  svg.setAttribute("aria-label", `Timeline of the run, ${clock(t0)} to ${clock(t1)}: ` + lanes.filter(l => !l.orch).map(l => {
+    const a = l.attempts[0], z = l.attempts[l.attempts.length - 1];
+    return a ? `${l.node.id} ${l.node.name}, ${clock(a.launched)} to ${clock(z.ended)}, ${l.node.status}` : `${l.node.id} ${l.node.name}, ${l.node.status}`;
+  }).join("; "));
+  const tip = el("div", "tl-tip"); tip.hidden = true; T.append(tip);
+  const markOf = n => {
+    if (n.mark != null && FILES[n.mark]) { const i = el("i", "mk"); i.style.setProperty("--mk", `url("${FILES[n.mark]}")`); i.style.background = n.ink || "var(--rm-fg)"; return i; }
+    return el("span", "letter", n.letter || "•");
+  };
+  lanes.forEach(l => {
+    const n = l.node, lab = el("div", "tl-lab" + (l.attempts.length ? "" : " parked")); lab.dataset.id = l.id; lab.style.setProperty("--c", l.colour);
+    const nm = el("div", "tl-name"); nm.append(el("i", "dot"));
+    if (!l.orch) nm.append(el("span", "id", l.ids.join("→")));
+    nm.append(el("span", "nm", l.orch ? "Orchestrator" : n.name));
+    const md = el("div", "tl-model"); md.append(markOf(n), el("span", null, n.model || n.harness || ""));
+    if (n.effort) md.append(el("span", "eff", "· " + n.effort));
+    if (!l.attempts.length) md.append(el("span", null, "· " + n.status));
+    lab.append(nm, md); lab.title = (l.orch ? "Orchestrator" : `${n.id} · ${n.name}`) + (l.orch || ORCH.collapsed ? "" : " · click to find its card");
+    lab.addEventListener("mouseenter", () => l.orch ? timelineFocus(new Set(["ORCH"])) : focusOn(n.id));
+    lab.addEventListener("mouseleave", () => l.orch ? timelineFocus(null) : focusOn(null));
+    lab.addEventListener("click", () => { if (ORCH.collapsed && !l.orch) return; cv.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }); zoomTo(n, Math.max(view.s, 0.85)); });
+    l.lab = lab; labels.append(lab);
+  });
+  const foot = el("div", "tl-foot");
+  const legend = el("div", "tl-legend");
+  const sw = (bg, text) => `<span><i style="background:${bg}"></i>${text}</span>`;
+  const anyTask = n => tasks.some(t => timed(t) && n(t));
+  legend.innerHTML = sw("color-mix(in srgb, var(--rm-fg) 55%, var(--rm-card))", "Working")
+    + sw("color-mix(in srgb, var(--rm-fg) 16%, var(--rm-card))", "Between turns")
+    + (orchTimed ? sw("repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-muted) 50%, transparent) 0 1.5px, color-mix(in srgb, var(--rm-muted) 10%, var(--rm-card)) 1.5px 4px); outline: 1px solid color-mix(in srgb, var(--rm-muted) 35%, transparent); outline-offset: -1px", "Waiting on tasks") : "")
+    + (orchTimed ? `<span>${ICON.hand}Handoff</span>` : "")
+    + ((F.pauses || []).length ? sw("repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-bad) 45%, transparent) 0 1.5px, color-mix(in srgb, var(--rm-bad) 8%, transparent) 1.5px 4px)", "Paused") : "")
+    + (tasks.some(t => t.replaces) ? `<span style="color:var(--rm-muted)">${ICON.retry}Relaunched</span>` : "")
+    + (anyTask(t => ["blocked", "failed", "stopped", "replaced"].includes(t.status)) ? `<span>${ICON.x}Stopped</span>` : "");
+  foot.append(legend); T.append(foot);
+  if (F.turns_missing) T.append(el("div", "tl-note", "Some tasks have no per-turn times: their lanes run from launch to merge in one fainter bar."));
+
+  // drawing, at the plot's width
+  const BAR = 14, AX = 28, PADL = 14, PADR = 14, R = 6;
+  const ns = (tag, attrs, parent) => { const e = P(tag, attrs); if (parent) parent.append(e); return e; };
+  let X = t => 0, LH = 44, conns = [], tips = [];
+  const what = { work: "Working", idle: "Between turns", wait: "Waiting on tasks", untimed: "Launch to merge" };
+  function pieces(a, b, turns, gap) {
+    const xa = X(a), xb = Math.max(X(b), xa + 4);
+    if (!turns || !turns.length) return [{ kind: "untimed", x0: xa, x1: xb, a, b, n: 0, mins: b - a }];
+    const work = [];
+    turns.map(([s, e]) => [Math.max(a, s), Math.min(b, e)]).filter(([s, e]) => e >= s).sort((p, q) => p[0] - q[0]).forEach(([s, e]) => {
+      const x0 = X(s), x1 = Math.max(X(e), x0 + 3), last = work[work.length - 1];
+      if (last && x0 - last.x1 < 5) { last.x1 = Math.max(last.x1, x1); last.b = Math.max(last.b, e); last.n++; last.mins += e - s; }
+      else work.push({ kind: "work", x0, x1, a: s, b: e, n: 1, mins: e - s });
+    });
+    if (!work.length) return [{ kind: gap, x0: xa, x1: xb, a, b }];
+    const out = [];
+    if (work[0].x0 - xa < 5) { work[0].x0 = xa; work[0].a = a; } else out.push({ kind: gap, x0: xa, x1: work[0].x0, a, b: work[0].a });
+    work.forEach((p, i) => { out.push(p); const nx = work[i + 1]; if (nx) out.push({ kind: gap, x0: p.x1, x1: nx.x0, a: p.b, b: nx.a }); });
+    const lw = work[work.length - 1];
+    if (xb - lw.x1 < 5) { lw.x1 = Math.max(lw.x1, xb); lw.b = Math.max(lw.b, b); } else out.push({ kind: gap, x0: lw.x1, x1: xb, a: lw.b, b });
+    return out;
+  }
+  const addTip = (e, t) => { e.dataset.tip = tips.length; tips.push(t); return e; };
+  const ticksFor = w => { const per = (t1 - t0) / Math.max(1, w / 74); return [5, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1440].find(s => s >= per) || 1440; };
+  function cross(g, cx, cy, r) { ns("path", { class: "tl-glyph", d: `M${cx - r * .55} ${cy - r * .55}L${cx + r * .55} ${cy + r * .55}M${cx + r * .55} ${cy - r * .55}L${cx - r * .55} ${cy + r * .55}` }, g); }
+  function draw() {
+    const w = plot.clientWidth; if (w < 60) return;
+    LH = parseFloat(getComputedStyle(T).getPropertyValue("--tl-lane")) || 44;
+    const H = lanes.length * LH, base = H + 4;
+    X = t => PADL + (t - t0) / (t1 - t0) * (w - PADL - PADR);
+    svg.setAttribute("width", w); svg.setAttribute("height", H + AX); svg.setAttribute("viewBox", `0 0 ${w} ${H + AX}`);
+    svg.replaceChildren(); tips = []; conns = [];
+    const defs = ns("defs", {}, svg);
+    defs.innerHTML = `<pattern id="rm-tl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tl-hatch-bg" width="5" height="5"/><line class="tl-hatch-ln" x1="0" y1="0" x2="0" y2="5"/></pattern>`
+      + `<pattern id="rm-tl-hatch-bad" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tl-bad-bg" width="5" height="5"/><line class="tl-bad-ln" x1="0" y1="0" x2="0" y2="5"/></pattern>`;
+    // the clock: gridlines, the baseline and its times
+    const step = ticksFor(w - PADL - PADR), back = ns("g", {}, svg);
+    for (let m = Math.ceil(t0 / step) * step; m <= t1; m += step) {
+      const x = X(m); ns("line", { class: "tl-grid", x1: x, x2: x, y1: 0, y2: base }, back);
+      if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: base + 17 }, back).textContent = clock(m);
+    }
+    ns("line", { class: "tl-base", x1: PADL - 4, x2: w - PADR + 4, y1: base, y2: base }, back);
+    // quota pauses: a band across the plot, and hatching over the lanes they stopped
+    const gLanes = ns("g");
+    (F.pauses || []).forEach(p => {
+      const x0 = X(p.start), x1 = X(p.end);
+      addTip(ns("rect", { class: "tl-pband", x: x0, y: 0, width: Math.max(2, x1 - x0), height: H }, back), { title: "Quota pause", what: `Paused ${dur(p.end - p.start)}${p.reason ? " · " + p.reason : ""}`, meta: `${clock(p.start)}–${clock(p.end)}${p.which ? " · " + p.which : ""}` });
+      if (x1 - x0 > 70) ns("text", { class: "tl-plabel", x: x0 + 5, y: 11 }, back).textContent = `‖ paused ${dur(p.end - p.start)}`;
+    });
+    // the lanes
+    const gConn = ns("g"), gDots = ns("g");
+    const c0 = LH / 2, yb = c0 + BAR / 2;
+    lanes.forEach((l, li) => {
+      const cy = li * LH + LH / 2, g = ns("g", { class: "tl-g", "data-id": l.id }, gLanes); g.style.setProperty("--c", l.colour);
+      l.g = g; l.cy = cy; l.pieces = [];
+      if (!l.attempts.length) { ns("text", { class: "tl-parked", x: PADL + 2, y: cy + 4 }, g).textContent = l.node.status === "parked" ? "parked, never started" : "not timed"; return; }
+      l.attempts.forEach((t, k) => {
+        const [a, b] = span(t), ps = pieces(a, b, t.turns, l.orch ? "wait" : "idle"); l.pieces.push(ps);
+        const who = l.orch ? "Orchestrator" : `${t.id} · ${t.name}`;
+        ps.forEach((p, pi) => {
+          const x = p.x0 + 1, wd = Math.max(1.5, p.x1 - p.x0 - 2);
+          const lastBad = !l.orch && pi === ps.length - 1 && ["blocked", "failed", "stopped", "replaced"].includes(t.status);
+          const rect = ns("rect", { class: lastBad ? "tl-failed" : "tl-" + p.kind, x, y: cy - BAR / 2, width: wd, height: BAR, rx: Math.min(4, wd / 2) }, g);
+          if (lastBad && t.status !== "blocked") rect.style.setProperty("--x", t.status === "failed" ? "var(--rm-warn)" : "var(--rm-muted)");
+          const turnsText = p.kind === "work" && p.n > 1 ? ` · ${p.n} turns` : "";
+          const meta = `${clock(p.a)}–${clock(p.b)} · ${dur(p.b - p.a)}` + (p.kind === "work" && p.n > 1 ? ` · worked ${dur(p.mins)}` : "");
+          addTip(rect, { c: l.colour, who, model: [t.model, t.effort].filter(Boolean).join(" · "),
+            what: lastBad ? `${what[p.kind]}, then ${t.status}` + (t.note ? `: ${t.note}` : "") : l.orch && p.kind === "work" ? "Awake: checking, merging, launching" : p.kind === "idle" ? "Between turns: waiting on its builds, sub-agents or the screen" : what[p.kind] + turnsText,
+            meta, lane: l.orch ? null : t.id });
+          if (lastBad) {  // where it stopped: a cross in the last piece, or beside it when the piece is too small
+            const gx = wd >= 16 ? x + wd / 2 : x + wd + 8, eg = ns("g", { class: "tl-end" }, g);
+            if (t.status !== "blocked") eg.style.setProperty("--x", t.status === "failed" ? "var(--rm-warn)" : "var(--rm-muted)");
+            if (wd < 16) ns("circle", { class: "tl-badge stop", cx: gx, cy, r: 6.5 }, eg);
+            ns("circle", { class: "tl-glyph", cx: gx, cy, r: 4.6 }, eg); cross(eg, gx, cy, 4.6); }
+          if (k > 0 && pi === 0) {  // a relaunch: the retry mark where the new attempt began
+            if (wd >= 18) { ns("path", { class: "tl-glyph retry", d: `M${x + 13} ${cy}a4 4 0 1 1-1.2-2.9M${x + 12.2} ${cy - 5.2}v2.4h-2.4` }, g); }
+            else { ns("circle", { class: "tl-badge", cx: x - 7, cy, r: 6 }, g); ns("path", { class: "tl-glyph retry on-badge", d: `M${x - 3} ${cy}a4 4 0 1 1-1.2-2.9M${x - 3.8} ${cy - 5.2}v2.4h-2.4` }, g); }
+          }
+        });
+        if (t.status === "ready") { const eg = ns("g", { class: "tl-end" }, g); ns("circle", { class: "tl-ring", cx: ps[ps.length - 1].x1 + 6, cy, r: 4 }, eg); }
+        (F.pauses || []).filter(p => (p.tasks || []).includes(t.id)).forEach(p => {
+          const x0 = Math.max(X(p.start), ps[0].x0), x1 = Math.min(X(p.end), ps[ps.length - 1].x1);
+          if (x1 > x0) addTip(ns("rect", { class: "tl-plane", x: x0, y: cy - BAR / 2, width: x1 - x0, height: BAR, rx: 3 }, g), { c: "var(--rm-bad)", who, what: `Paused ${dur(p.end - p.start)}${p.reason ? " · " + p.reason : ""}`, meta: `${clock(p.start)}–${clock(p.end)}`, lane: t.id });
+        });
+        if (!l.orch && orchTimed) {
+          const sx = ps[0].x0 + 1, ex = ps[ps.length - 1].x1 - 1, model = [t.model, t.effort].filter(Boolean).join(" · ");
+          conns.push({ type: "launch", li, l, t, at: a, seg: sx, want: sx - R - 3,
+            tip: { c: l.colour, who, model, what: k > 0 ? `Relaunched at ${clock(a)}` : `Launched at ${clock(a)}` + (t.need && t.need.length ? `, once ${t.need.join(" and ")} had merged` : t.place ? `, in ${t.place}'s place` : ""), meta: t.summary || "", lane: t.id } });
+          if (["merged", "ready", "blocked"].includes(t.status)) conns.push({ type: "back", li, l, t, at: b, seg: ex, want: ex + R + 3, dashed: t.status !== "merged",
+            tip: { c: l.colour, who, model, what: t.status === "merged" ? `Reported back, merged into ${I.branch || "the branch"} at ${clock(b)}` : t.status === "ready" ? `Reported back ready at ${clock(b)}, not merged` : `Reported back blocked at ${clock(b)}`,
+              meta: `${clock(a)}–${clock(b)} · worked ${dur(worked(t))} of ${dur(b - a)}` + (t.helpers.length ? ` · ${t.helpers.reduce((s, h) => s + (h.count || 1), 0)} sub-agents` : ""), lane: t.id } });
+        }
+      });
+    });
+    // the handoffs: dots on the orchestrator's bar, lines down to each lane and back up; lines that
+    // would meet at one place are spread so they nest: lower lanes further out
+    const ox0 = lanes[0].orch && lanes[0].pieces[0] ? lanes[0].pieces[0][0].x0 + 3 : PADL, ox1 = w - PADR;
+    const spread = (list, dir) => {
+      list.sort((p, q) => p.want - q.want);
+      const groups = []; list.forEach(c => { const g = groups[groups.length - 1]; if (g && Math.abs(c.want - g[g.length - 1].want) < 7) g.push(c); else groups.push([c]); });
+      groups.forEach(g => {
+        g.sort((p, q) => p.li - q.li);
+        let edge = dir < 0 ? Math.min(...g.map(c => c.want)) : Math.max(...g.map(c => c.want)), gap = 5;
+        if (dir < 0) { edge = Math.max(edge, ox0 + (g.length - 1) * 2.5); gap = g.length > 1 ? Math.max(2.5, Math.min(5, (edge - ox0) / (g.length - 1))) : 5; }
+        else { edge = Math.min(edge, ox1 - (g.length - 1) * 2.5); gap = g.length > 1 ? Math.max(2.5, Math.min(5, (ox1 - edge) / (g.length - 1))) : 5; }
+        g.forEach((c, i) => { c.x = edge + dir * i * gap; c.r = g.length > 1 ? Math.min(4, Math.max(2.4, gap * .62)) : 4; });
+      });
+    };
+    spread(conns.filter(c => c.type === "launch"), -1); spread(conns.filter(c => c.type === "back"), 1);
+    conns.forEach(c => {
+      const yl = c.l.cy, r = Math.max(0, Math.min(R, Math.abs(c.seg - c.x), yl - yb - 2));
+      const d = c.type === "launch" ? `M${c.x} ${yb} V${yl - r} Q${c.x} ${yl} ${c.x + r} ${yl} H${c.seg}` : `M${c.seg} ${yl} H${c.x - r} Q${c.x} ${yl} ${c.x} ${yl - r} V${yb}`;
+      const p = ns("path", { class: "tl-conn" + (c.dashed ? " dashed" : ""), d }, gConn); p.style.setProperty("--c", c.l.colour); p.dataset.lane = c.l.id;
+      const dot = addTip(ns("circle", { class: "tl-dot", cx: c.x, cy: yb, r: c.r }, gDots), c.tip); dot.style.setProperty("--c", c.l.colour); dot.dataset.lane = c.l.id;
+    });
+    svg.append(gConn, gLanes, gDots);
+  }
+
+  // the outcome, the span and how much ran at once
+  function stats() {
+    const outcome = {}; lanes.forEach(l => { if (!l.orch) outcome[l.node.status] = (outcome[l.node.status] || 0) + 1; });
+    const bad = Object.keys(outcome).some(k => k !== "merged");
+    const bits = [Object.entries(outcome).sort((a, b) => (b[0] === "merged") - (a[0] === "merged") || b[1] - a[1]).map(([k, v]) => `<b>${v}</b> ${k}`).join(", "), `${clock(t0)}–${clock(t1)}`, `<b>${dur(t1 - t0)}</b>`];
+    if (work > 0) bits.push(`${dur(work)} of work` + (work / (t1 - t0) >= 1.05 ? `, <b>${(work / (t1 - t0)).toFixed(1)}×</b> faster than one at a time` : ""));
+    if (peak > 1) bits.push(`up to ${peak} at once`);
+    statsEl.innerHTML = (bad ? ICON.warn : ICON.ok) + bits.map(b => `<span>${b}</span>`).join('<span class="sep">·</span>');
+  }
+
+  svg.addEventListener("pointerdown", e => { const hit = e.target.closest("[data-tip]"); if (hit && e.pointerType !== "mouse") showTip(hit, e); });
+
+  // what each piece was, on hover; hovering a task's piece lights up its lane and its card
+  function showTip(target, e) {
+    const d = tips[+target.dataset.tip]; if (!d) return;
+    tip.replaceChildren();
+    if (d.who || d.title) { const who = el("div", "who"); if (d.c) { who.style.setProperty("--c", d.c); who.append(el("i", "dot")); } who.append(el("span", null, d.who || d.title)); tip.append(who); if (d.model) tip.append(el("div", "m", d.model)); }
+    if (d.what) tip.append(el("div", "what", d.what));
+    if (d.meta) tip.append(el("div", "meta", d.meta));
+    tip.hidden = false;
+    const r = target.getBoundingClientRect(), b = T.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+    const px = e && e.clientX != null ? e.clientX : r.left + r.width / 2;
+    let x = px - b.left - tw / 2, y = r.top - b.top - th - 10;
+    if (y < 6) y = r.bottom - b.top + 10;
+    x = Math.min(Math.max(8, x), b.width - tw - 8);
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+    requestAnimationFrame(() => tip.classList.add("on"));
+    if (d.lane) focusOn(d.lane);
+  }
+  function hideTip() { if (tip.hidden) return; tip.classList.remove("on"); tip.hidden = true; focusOn(null); }
+  svg.addEventListener("pointerover", e => { const t = e.target.closest("[data-tip]"); if (t && e.pointerType === "mouse") showTip(t, e); });
+  svg.addEventListener("pointerout", e => { const t = e.target.closest("[data-tip]"); if (t && !(e.relatedTarget && t.contains(e.relatedTarget))) hideTip(); });
+  svg.addEventListener("mousemove", e => { if (tip.hidden) return; const t = e.target.closest("[data-tip]"); if (!t) return;
+    const b = T.getBoundingClientRect(), tw = tip.offsetWidth; tip.style.left = Math.min(Math.max(8, e.clientX - b.left - tw / 2), b.width - tw - 8) + "px"; });
+
+  // hovering a task anywhere lights up its lane, and the lanes of what it waited for and what waited for it
+  timelineFocus = rel => {
+    T.classList.toggle("focus", !!rel);
+    lanes.forEach(l => { const on = !!rel && (l.orch || l.ids.some(id => rel.has(id)));
+      l.lab.classList.toggle("on", on); svg.querySelectorAll(`.tl-g[data-id="${l.id}"], [data-lane="${l.id}"]`).forEach(e => e.classList.toggle("on", on)); });
+  };
+  stats(); draw();
+  let lastW = plot.clientWidth;
+  new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } }).observe(plot);
+})();
 
 // start
 chooseOrder();
