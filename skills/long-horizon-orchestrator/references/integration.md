@@ -56,6 +56,7 @@ Launch the dependents as soon as the merge is verified; they don't need the old 
    lsof +D '<worktree path>'              # processes with files or their working folder there: only the idle agent's own session
    pgrep -fl '<run directory>/<task ID>'  # jobs whose command line names the task's folder in the run directory
    ```
+   Also the helpers it used that outlive it, such as a computer-use service or its `cua_node` processes, a browser or app of the kit's, a `tail -F`: stop them by process ID once no other running task uses them ([machine.md](machine.md#8-leftover-processes)).
 3. **Its leases.** `lease status` (in the run's lease folder, normally the run directory) should show none held by the task. Release a merged task's lease only after its processes are gone; releasing it earlier hands the resource to another task while the old job still uses it.
 
 If anything still runs, leave the cleanup for a later wake; the heartbeat or the task's next report will bring you back. A job that would never end on its own (a server, a watcher) after the task's turn has stopped: ask the task to stop it, or stop it yourself by its process ID, once `ps -p <pid> -o command=` shows it is the task's. In the 2026-10-12 run, removing a worktree stopped a 24-minute measurement. On 2026-10-15, a thread showed completed while its background screen check still ran; its worktree was removed and its lease released, and another task's screen check overlapped it for two minutes and had to be redone.

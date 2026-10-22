@@ -136,7 +136,7 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
 4. **Check the computer** ([references/machine.md](references/machine.md#7-during-the-run)):
    - Compare the user's settings with the start snapshot. Restore at once, key by key, what a test build changed, and tell the task that did it.
    - A password or keychain dialog on the screen (on macOS, `pgrep -x SecurityAgent` finds one) means a task ran something that asks for one. Nobody will answer it: find the command, stop it by its process ID, and tell the task.
-   - Check free disk space and the keep-awake too.
+   - Check free disk space and the keep-awake too, and look for leftover processes: a paused or merged task's test build, watcher or computer-use service still running ([references/machine.md](references/machine.md#8-leftover-processes)).
 5. **Check the home subscription's 5-hour window.** Take a usage snapshot and compare it with the last one. If the window is nearly used up, or will run out before the next heartbeat at its current pace, schedule the resume wake now, while you still can (see [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out)). Note any fast helper the tasks found limited, and leave it out of new briefs until it recovers. The snapshot also shows Antigravity's windows: leave Flash out of new briefs while the Gemini 5-hour window is past about 85%, and Argon once the run has used its budget.
 6. **Update the ledger, then end the turn.** Write down every state change before ending, so the next wake starts from the truth.
 
@@ -146,7 +146,7 @@ Launching dependent tasks is your job, not the job of the task briefs. Keeping t
 
 When every task is done, blocked or parked:
 
-1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat, any resume wake and the keep-awake, and close or cancel any remaining agents.
+1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat, any resume wake and the keep-awake, close or cancel any remaining agents, and stop the run's leftover processes: test builds, watchers, the kit's browsers, and computer-use services the run's steps started ([references/machine.md](references/machine.md#8-leftover-processes)).
 2. Verify the end state:
    - the integration branch log;
    - nothing was pushed;

@@ -74,7 +74,7 @@ A sleeping computer stops every task. So, from the warm-up to the finish, keep i
 caffeinate -i -d -t <seconds> &   # -i: no idle sleep; -d: keep the display on (needed when anything uses the screen)
 ```
 
-- Use `-i` alone when no task or helper uses the real screen.
+- Use `-i` alone when no task or helper uses the real screen, and switch to `-i -d` only while one does: a display kept awake keeps the window server drawing for nothing. On 2026-10-22, a `-d` kept all day while every task rested made the user's Mac run warm.
 - Set `-t` to the run's estimate plus a few hours, record the process ID in the ledger, and start a new one if the run outlasts it.
 - Stop it at the finish, or if the user stops the run.
 - It keeps the computer awake, but a screen lock the user set still locks it, which is why "automatic screen lock off" is in the permissions list.
@@ -142,3 +142,17 @@ On every wake:
 - **A password dialog on the screen** means a task ran something that asks for one, and nobody will answer it. On macOS, `pgrep -x SecurityAgent` finds it. Find the command and stop it, tell the task, and note it for the report.
 - **A permission dialog for something approved** may be answered Allow, by the task or a helper. Any other dialog is cancelled, and the task mentions it in its report-back.
 - **Don't plan on a helper answering prompts mid-run.** The task usually doesn't know a dialog is there. The warm-up is the way to grant permissions.
+
+## 8. Leftover processes
+
+Much of what tasks start outlives the task: computer-use services, test builds, the kit's browsers and app copies, log watchers, monitors. Each keeps using the processor, the screen or memory long after its work ended, and the user finds a warm, busy Mac. In the 2026-10-22 run:
+- Codex Computer Use's background service (`SkyComputerUseService`, started by the ChatGPT app for a computer-use step) used 17–26% CPU for two days, keeping a screen capture going, long after the run that needed it;
+- a task left `tail -F` on its log, and another a measurement monitor;
+- a task paused on its usage limit left its test build running with the reading orb's auto-click on, which would have read the user's own selections.
+
+So:
+- **At the start,** snapshot the processes into the run directory (`ps -axo pid,lstart,command > <run directory>/owner/processes.txt`), so leftovers can be told from the user's own.
+- **After each merge and on every wake,** look for processes started since the run began that belong to it: command lines naming the run directory or a task's worktree, test builds, the kit's browsers and apps, log watchers, and the computer-use helpers of the providers the run used (Codex: `~/.codex/computer-use/Codex Computer Use.app`'s `SkyComputerUseService` and the ChatGPT app's `cua_node` processes, whose working folder is a task's worktree). Stop each by its process ID once no running task uses it; a computer-use service starts again when the next step needs it. One already running before the run started is the user's: leave it, and name it in the report if it runs hot.
+- **A task that pauses** (a usage window, a long lease wait) quits its test builds and helpers first; stop a paused task's leftovers yourself, by process ID, when it didn't.
+- **At the finish,** compare with the start snapshot, stop every leftover of the run by process ID, and list in the report's "Side effects" what you stopped, and anything of the user's that used the processor heavily for hours, so they can decide.
+
