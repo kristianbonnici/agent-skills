@@ -74,7 +74,7 @@ A sleeping computer stops every task. So, from the warm-up to the finish, keep i
 caffeinate -i -d -t <seconds> &   # -i: no idle sleep; -d: keep the display on (needed when anything uses the screen)
 ```
 
-- Use `-i` alone when no task or helper uses the real screen, and switch to `-i -d` only while one does: a display kept awake keeps the window server drawing for nothing. On 2026-10-22, a `-d` kept all day while every task rested made the user's Mac run warm.
+- Use `-i -d` from the warm-up for as long as any task still to run may use the real screen, and `-i` alone once none will: a display kept awake while no screen work is left keeps the window server drawing for nothing (on 2026-10-22, a `-d` kept all day while every task rested made the user's Mac run warm). Never let the display sleep while screen work remains, and don't hand that to the tasks: when the display sleeps, macOS may lock the session even when the screen-lock setting reads off, and a task that wants the screen later finds it locked, with nobody to type the password. On 2026-10-23, a run started with `-i` alone, the display slept after 10 idle minutes (`pmset -g`: `displaysleep 10`), and the screen locked 10 minutes into the run although `sysadminctl -screenLock status` said off; the screen task found it locked and blocked.
 - Set `-t` to the run's estimate plus a few hours, record the process ID in the ledger, and start a new one if the run outlasts it.
 - Stop it at the finish, or if the user stops the run.
 - It keeps the computer awake, but a screen lock the user set still locks it, which is why "automatic screen lock off" is in the permissions list.
