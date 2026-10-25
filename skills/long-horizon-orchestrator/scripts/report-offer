@@ -571,7 +571,7 @@ def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
     built = task_lookup(facts, built_items(section(parts, "what was built")))
     decisions = listed(section(parts, "open decisions"))
     unfinished = listed(section(parts, "not finished"))
-    title = speakable(facts.get("title") or "the run")
+    title = speakable(facts.get("title") or "") or "the run"
 
     steps: list[dict] = []
     opening = " ".join(intro[:2]) or run_line(facts)
@@ -639,7 +639,8 @@ def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
             calls[-1].append(step)
         else:
             calls.append([step])
-    offer = {"action": "offer", "title": fit(f"Tour of the run: {title}", WALK["title"]), "mode": "guided",
+    # OrbOS heads the card "Walk me through:", so the title is what is walked through.
+    offer = {"action": "offer", "title": fit(title, WALK["title"]), "mode": "guided",
              "about": fit(safe(capitalized(f"{count(len(built), 'task')}, one card each: what it built"
                                + (" and its key change" if any(s["kind"] == "file" for s in steps) else "")
                                + ". Then what needs you.")), WALK["about"]),
