@@ -49,6 +49,10 @@ A Codex orchestrator should keep its own turn going instead of ending it and hop
 
 Codex also delivers a final-status notification for completed agents. Verify on first use whether that notification starts a new turn for an idle orchestrator. Until it is confirmed, rely on the `wait_agent` loop under your own goal.
 
+## At the end
+
+Post the final report as your final message. If OrbOS's server is registered for Codex (`read-aloud --mcp --harness codex`), it has the same `offer_reading` and `walkthrough` tools: offer the reading just before the report and give the tour last, only with the user at the computer ([final-report.md](final-report.md#offer-it-to-listen-to-and-as-a-tour)).
+
 ## Following up
 
 `send_input` (or `followup_task`) continues a task with its context, for example "rebase onto `<integration branch>`, re-validate and retry the merge gate". Use `resume_agent` if you have already closed it.
