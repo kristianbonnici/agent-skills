@@ -158,9 +158,14 @@ When every task is done, blocked or parked:
 5. Remove throwaway threads or worktrees you made along the way.
 6. Take a final usage snapshot, and update the calibration in the owner's provider profile. If the profile lives in the owner's private repository, commit and push it (see [references/routing.md](references/routing.md#6-the-owners-profile)).
 7. Write the final report from [references/final-report.md](references/final-report.md), with the tasks' pictures of what changed and a picture of how the run actually went: in T3 the run map, shown with `html_render` just before the report; elsewhere its two Mermaid charts (a dependency graph and a timeline). `scripts/run-charts` draws all of them from one facts file. **Post the report in the chat as your final message**. This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. A copy saved next to the ledger is for the record; the user reads the chat.
-8. Set the ledger's status to `finished`.
-9. If the host has a push-notification tool, send one line saying the run is finished.
-10. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user.
+8. If you have OrbOS's `offer_reading` or `walkthrough` tool, offer the report there too ([references/final-report.md](references/final-report.md#offer-it-to-listen-to-and-as-a-tour)). `scripts/report-offer` turns the facts file and the saved report into both tools' arguments.
+   - **The reading:** offer it just before you post the report. The call returns at once, and the card waits in the notch for 8 hours.
+   - **The tour:** offer it after the report, and only if the user is at the computer now. Otherwise the reading tells them to ask for it.
+
+   Neither may hold up the finish: the run ends with the report whatever the tools answer. Without the tools, skip this silently, and never speak aloud about either.
+9. Set the ledger's status to `finished`.
+10. If the host has a push-notification tool, send one line saying the run is finished.
+11. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user. A tour they ask for ("walk me through the run") isn't new work: give it from the same files.
 
 ### 8. When the user comes back
 
@@ -168,7 +173,8 @@ The user may answer open decisions, check something themselves, or ask for chang
 
 - **A check the user did counts.** If a task was blocked only on a check the user has now done, record their result and let the task finish its merge gate.
 - **Changes go to the task that owns the work.** For an unfinished task, send the request to its thread. For merged work, launch a small follow-up task. Make a change of a few lines yourself only if that is clearly simpler, and then run the full checks and the merge gate as a task would.
-- **Close the loop.** Update the ledger, clean up as in step 7, and post the report again: the whole report, updated, with one line at the top saying what changed since the last one.
+- **A tour when they ask.** "Walk me through the run" gets the tour from `tour.json` ([references/final-report.md](references/final-report.md#offer-it-to-listen-to-and-as-a-tour)). Run `scripts/report-offer` again first if the report changed.
+- **Close the loop.** Update the ledger, clean up as in step 7, and post the report again: the whole report, updated, with one line at the top saying what changed since the last one. Offer the new reading as in step 8, after withdrawing the old one if it still waits.
 
 ## Ledger
 

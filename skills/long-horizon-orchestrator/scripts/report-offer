@@ -1,0 +1,698 @@
+#!/usr/bin/env python3
+"""Turn a run's facts file and final report into what the orchestrator hands OrbOS at the finish:
+the report as a reading to listen to later (`offer_reading`) and as a tour (`walkthrough`). Both
+are JSON arguments for the tools, held to their limits, so the orchestrator passes them unchanged.
+
+references/final-report.md ("Offer it to listen to and as a tour") says when to use them.
+
+Usage:
+  report-offer <facts.json> <report.md> [--repo <integration checkout>] [--out <folder>]
+               [--no-files] [--ask-for-tour] [--words <n>]
+
+Writes into the output folder (the report's folder unless given):
+
+  reading.json   the offer_reading arguments: kind "report", a title, the text to read (plain
+                 speech, outcome first, then what was built and what needs the user, about two
+                 minutes, no code, paths or IDs) and the whole report as its original.
+  tour.json      {"offer": <the walkthrough offer, its first notes queued>,
+                  "calls": [<step calls, in order>], "end": <the end call>}
+                 An opening note, then per task a note (what it built, in two sentences) and,
+                 with --repo, a file step at its key change and a picture step for a picture its
+                 commits put in the repository; a closing note with the open decisions.
+
+The report is the one the skill's template describes ("## What was built" with "**1. Name
+(Task A)**" items, "## Open decisions" with numbered "**Label.**" items, and so on).
+
+Facts it reads, besides run-charts' (`run-charts --help`), all optional:
+  a task's "commits": ["dd8d3157", ...]   its merged commits; with --repo, the key change is the
+                                          largest added block of the file it changed most
+  a task's "key_change": {"path": "Sources/Retry.swift", "lines": [42, 58], "say": "..."}
+                                          the key change, chosen by the orchestrator; "say" is
+                                          the narration (what the change does, never the code)
+
+File and picture steps name paths relative to the repository, which must be the folder the
+orchestrator's harness runs in: OrbOS's MCP server reads them in its own workspace and nowhere
+else. Run pictures outside the repository aren't shown; the task's note says it left some.
+--no-files leaves out file and picture steps (a harness started elsewhere).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# The tools' limits (OrbOS: OfferReading.swift's OfferLimits, WalkthroughCall.swift's
+# WalkthroughLimits, docs/assistants.md). A field over its limit is refused, never cut, so every
+# text here is cut to fit before it is written.
+READING = {"title": 80, "text": 10_000, "original": 50_000, "source": 160}
+WALK = {"title": 80, "about": 300, "note": 200, "steps": 50, "queued": 20,
+        "step_title": 60, "caption": 140, "narration": 400}
+TOUR_LINES = 24              # lines marked in a file step (OrbOS takes up to 300)
+FILE_BYTES = 1_000_000       # a file step's file: at most 1 MB of UTF-8 text
+PICTURE_BYTES = 8_000_000    # a picture step's: a PNG or JPEG of at most 8 MB and 40 million pixels
+PICTURE_PIXELS = 40_000_000
+WORDS = 320                  # about two minutes: the offer card counts 160 words a minute
+
+# A file name that holds secrets by convention, which OrbOS's server refuses (docs/assistants.md,
+# "Tours of finished work"); left out here so a tour never trips a safety refusal.
+SECRET_FILES = re.compile(
+    r"(^|/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keychain-db|kdbx|tfstate)|id_(rsa|dsa|ecdsa|ed25519).*|\.netrc|\.npmrc|"
+    r"\.pypirc|\.htpasswd|\.dockercfg|credentials.*|secrets\..*|\.(zsh|bash)_history)$"
+    r"|(^|/)\.(git|ssh|aws|gnupg|docker|kube)/|(^|/)\.config/gh/", re.I)
+TEST_PATH = re.compile(r"(^|/)(tests?|spec|__tests__|Tests)(/|$)|(_test|\.test|\.spec|Tests?)\.\w+$")
+ASIDE_PATH = re.compile(r"(^|/)(experiments?|examples?|samples?|fixtures?|benchmarks?|demos?|spikes?)/", re.I)
+DOC_PATH = re.compile(r"\.(md|mdx|rst|txt|adoc)$", re.I)
+PICTURE_PATH = re.compile(r"\.(png|jpe?g)$", re.I)
+SKIP_PATH = re.compile(r"(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Package\.resolved|Cargo\.lock|"
+                       r"poetry\.lock|uv\.lock|go\.sum)$|\.(svg|gif|ico|pdf|zip|mp4|mov|lock)$", re.I)
+
+# Words that ask for a secret, as OrbOS's SecretRequest checks a walkthrough's words: a secret's
+# name and a word asking for it in one sentence makes OrbOS refuse the step (three refusals stop a
+# walkthrough). A sentence that would be refused is left out.
+SECRETS = [["password"], ["passcode"], ["passphrase"], ["pin", "code"], ["pin", "number"], ["otp"],
+           ["one-time", "code"], ["one", "time", "code"], ["one-time", "password"], ["verification", "code"],
+           ["authentication", "code"], ["2fa", "code"], ["login", "code"], ["sign-in", "code"],
+           ["recovery", "phrase"], ["recovery", "code"], ["recovery", "key"], ["seed", "phrase"], ["seed", "words"],
+           ["mnemonic", "phrase"], ["private", "key"], ["secret", "key"], ["api", "key"], ["access", "token"],
+           ["auth", "token"], ["bearer", "token"], ["card", "number"], ["credit", "card"], ["security", "code"],
+           ["cvv"], ["cvc"], ["social", "security", "number"]]
+ASKS = [["type"], ["types"], ["typing"], ["typed"], ["retype"], ["enter"], ["enters"], ["entering"], ["entered"],
+        ["re-enter"], ["paste"], ["pastes"], ["pasting"], ["give"], ["gives"], ["giving"], ["share"], ["shares"],
+        ["sharing"], ["provide"], ["provides"], ["providing"], ["fill", "in"], ["fills", "in"], ["filling", "in"],
+        ["fill", "out"], ["tell"], ["tells"], ["telling"], ["input"], ["submit"], ["send", "me"], ["send", "us"]]
+
+
+def has_phrase(words: list[str], phrases: list[list[str]], plurals: bool) -> bool:
+    for phrase in phrases:
+        for start in range(len(words) - len(phrase) + 1):
+            if all(words[start + i] == p or (plurals and i == len(phrase) - 1 and words[start + i] in (p + "s", p + "es"))
+                   for i, p in enumerate(phrase)):
+                return True
+    return False
+
+
+def asks_for_secret(sentence: str) -> bool:
+    words = [w.strip("-'’") for w in re.findall(r"[\w'’-]+", sentence)]
+    words = [w for w in words if w]
+    lower = [w.lower() for w in words]
+    secret = has_phrase(lower, SECRETS, True) or any(w in ("PIN", "PINs") for w in words)
+    return secret and has_phrase(lower, ASKS, False)
+
+
+# ---------------------------------------------------------------------------------------------
+# Speech: plain words, no code, paths or IDs
+
+HEX_ID = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+PATHLIKE = re.compile(r"(?<![\w/])(~|\.{0,2}/)?[\w.@-]+(/[\w.@-]+)+/?|\b[\w-]+\.(md|py|swift|ts|tsx|js|json|sh|"
+                      r"toml|yaml|yml|txt|html|css|plist|mmd|png|jpe?g|mp4|mov|log)\b")
+TASK_REF = re.compile(r"\s*\((?:[Tt]ask\s+)?[A-Z]{1,2}\d?(?:\s*(?:,|and)\s*[A-Z]{1,2}\d?)*\)|\s*\(\d+ above\)")
+
+
+GONE = "\x00"  # where code or an ID was left out, until the words around it are tidied
+
+
+def code_span(match: re.Match) -> str:
+    inner = match.group(1).strip()
+    if PATHLIKE.fullmatch(inner):
+        return "a note" if DOC_PATH.search(inner) else "a file"
+    if re.search(r"[(){}\[\]=<>;$\\]|::|->|--|\w\.\w", inner) or HEX_ID.fullmatch(inner):
+        return GONE
+    return inner.replace("_", " ")
+
+
+def speakable(text: str) -> str:
+    """Markdown as plain speech: no pictures, links, emphasis, code, paths, commit IDs or task IDs."""
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"<(https?://[^>]+)>|https?://\S+", "", text)
+    text = re.sub(r"`([^`]*)`", code_span, text)
+    text = re.sub(r"\*\*|__|(?<!\w)[*_](?=\S)|(?<=\S)[*_](?!\w)", "", text)
+    text = TASK_REF.sub("", text)
+    if TASK_IDS:
+        ids = "|".join(re.escape(i) for i in sorted(TASK_IDS, key=len, reverse=True))
+        text = re.sub(rf"\b(?:[Tt]ask\s+)?(?:{ids})['’]s\b", "another task's", text)
+        text = re.sub(rf"\b[Tt]ask\s+(?:{ids})\b", "a task", text)
+    text = HEX_ID.sub(GONE, text)
+    text = re.sub(rf"{GONE}(\s*(→|->|\.\.)\s*{GONE})+", GONE, text)
+    text = re.sub(rf"\s*\(\s*{GONE}\s*\)", "", text).replace(GONE, "")
+    text = PATHLIKE.sub(lambda m: "a note" if DOC_PATH.search(m.group(0)) else "a file", text)
+    text = re.sub(r"\s*(→|->)\s*", " to ", text)
+    text = re.sub(r"(\d)\s*[–-]\s*(\d)", r"\1 to \2", text)
+    text = re.sub(r"\s+[–—]\s+", ", ", text)
+    text = re.sub(r"~\s*(\d)", r"about \1", text)
+    text = re.sub(r"(\d)\s*×|×\s*(\d)", lambda m: (m.group(1) or "") + " times " + (m.group(2) or ""), text)
+    text = text.replace("&", "and").replace("…", "...")
+    text = re.sub(r"\(\s*[,;:]?\s*\)|\(\s*,\s*", lambda m: "" if m.group(0).endswith(")") else "(", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"([,;:])(?=[,.;:])", "", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return capitalized(text)
+
+
+def capitalized(text: str) -> str:
+    return re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), text)
+
+
+STARTERS = {"a", "an", "the", "there", "it", "its", "this", "these", "that", "those", "both", "each", "every", "all",
+            "you", "your", "one", "two", "three", "some", "most", "no", "now", "when", "with", "for", "in", "on"}
+# The run's task IDs, so "B's marks" is said as "another task's marks"; set from the facts.
+TASK_IDS: set[str] = set()
+
+
+def lowered(text: str) -> str:
+    """The first letter small, as after a colon, unless the first word is a name ("OrbOS", "I")."""
+    first = text.split(" ", 1)[0]
+    return text[0].lower() + text[1:] if first.lower() in STARTERS and first[:1].isupper() else text
+
+
+def sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"“(])", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def ended(text: str) -> str:
+    text = text.strip().rstrip(":;,")
+    return text if not text or text[-1] in ".!?" else text + "."
+
+
+def fit(text: str, limit: int) -> str:
+    """At most `limit` characters: whole sentences when they fit, else whole words and an ellipsis."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    kept = ""
+    for sentence in sentences(text):
+        if len(kept) + len(sentence) + (1 if kept else 0) > limit:
+            break
+        kept = f"{kept} {sentence}".strip()
+    if kept:
+        return kept
+    plain = re.sub(r"\s*\([^()]*\)", "", text)
+    if plain != text:
+        return fit(plain, limit)
+    cut = text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:—–- ")
+    return cut + "…"
+
+
+def safe(text: str) -> str:
+    """The sentences OrbOS would show: those that don't ask for a secret."""
+    return " ".join(s for s in sentences(text) if not asks_for_secret(s))
+
+
+def names(items: list[dict], limit: int) -> str:
+    """The items' labels for speech, the first `limit` of them, then how many more."""
+    said = [speakable(i["label"] or i["text"]).strip(" ,;:.") for i in items]
+    said = [n for n in said if n]
+    shown, rest = said[:limit], len(said) - min(len(said), limit)
+    return "; ".join(shown) + (f"; and {count(rest, 'more', 'more')}" if rest else "")
+
+
+def words(text: str) -> int:
+    return len(text.split())
+
+
+def duration(minutes: int) -> str:
+    hours, rest = divmod(max(0, minutes), 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours} hour" + ("s" if hours != 1 else ""))
+    if rest or not hours:
+        parts.append(f"{rest} minute" + ("s" if rest != 1 else ""))
+    return " and ".join(parts)
+
+
+NUMBERS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+
+
+def count(n: int, thing: str, plural: str | None = None) -> str:
+    name = thing if n == 1 else (plural or thing + "s")
+    return f"{NUMBERS[n] if n < len(NUMBERS) else n} {name}"
+
+
+# ---------------------------------------------------------------------------------------------
+# The report
+
+def report_sections(markdown: str) -> dict[str, str]:
+    found: dict[str, list[str]] = {"": []}
+    current = ""
+    for line in markdown.splitlines():
+        heading = re.match(r"^##\s+(.+?)\s*$", line)
+        if heading:
+            current = heading.group(1).strip().lower()
+            found.setdefault(current, [])
+        else:
+            found[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in found.items()}
+
+
+def section(parts: dict[str, str], *names: str) -> str:
+    for key, body in parts.items():
+        if any(key.startswith(n) for n in names):
+            return body
+    return ""
+
+
+def is_picture_line(line: str) -> bool:
+    return bool(re.match(r"^\s*!\[", line) or re.match(r"^\s*[^:]{1,120}:\s+/\S+\.(png|jpe?g)\s*$", line, re.I))
+
+
+def prose(lines: list[str]) -> str:
+    """A block's lines as sentences: bullets become sentences, pictures and sub-headings go."""
+    out = []
+    for line in lines:
+        line = line.strip()
+        if not line or is_picture_line(line) or re.fullmatch(r"\*\*[^*]+:\*\*", line):
+            continue
+        line = re.sub(r"^[-*]\s+|^\d+\.\s+", "", line)
+        line = re.sub(r"^\*\*([^*]+?)[:.]\*\*\s*", r"\1: ", line)
+        out.append(ended(line))
+    return " ".join(out)
+
+
+def built_items(body: str) -> list[dict]:
+    items: list[dict] = []
+    for line in body.splitlines():
+        head = re.match(r"^\*\*\s*\d+\.\s+(.+?)\s*\*\*\s*$", line.strip())
+        if head:
+            name = head.group(1)
+            ref = re.search(r"\((?:[Tt]ask\s+)?([A-Za-z]{1,2}\d?)\)\s*$", name)
+            items.append({"name": re.sub(r"\s*\([^)]*\)\s*$", "", name).strip(), "id": ref.group(1) if ref else None,
+                          "lines": []})
+        elif items:
+            items[-1]["lines"].append(line)
+    for item in items:
+        item["text"] = prose(item["lines"])
+    return items
+
+
+def listed(body: str) -> list[dict]:
+    """Numbered or bulleted items, each a bold label and its words; "Recommended:" kept apart."""
+    items: list[dict] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        start = re.match(r"^(?:\d+\.|[-*])\s+(?:\*\*(.+?)\*\*)?\s*(.*)$", stripped)
+        if start and not line.startswith((" ", "\t")):
+            label = (start.group(1) or "").strip().rstrip(".:")
+            items.append({"label": label, "text": start.group(2).strip(), "recommended": ""})
+        elif items and stripped:
+            rec = re.match(r"^\*\*Recommended:?\*\*:?\s*(.*)$", stripped)
+            if rec:
+                items[-1]["recommended"] = rec.group(1)
+            elif not re.fullmatch(r"\*\*[^*]+:\*\*", stripped):
+                items[-1]["text"] += " " + stripped
+    return items
+
+
+# ---------------------------------------------------------------------------------------------
+# The run's facts
+
+def clock(value: str) -> datetime | None:
+    for form in ("%Y-%m-%d %H:%M", "%H:%M"):
+        try:
+            return datetime.strptime(value, form)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def run_line(facts: dict) -> str:
+    tasks = [t for t in facts.get("tasks", []) if t.get("status") != "replaced"]
+    run = facts.get("run") or {}
+    start, end = clock(run.get("start", "")), clock(run.get("end", ""))
+    merged = sum(1 for t in tasks if t.get("status", "merged") == "merged")
+    others = {}
+    for t in tasks:
+        status = t.get("status", "merged")
+        if status != "merged":
+            others[status] = others.get(status, 0) + 1
+    def number(n: int) -> str:
+        return NUMBERS[n] if n < len(NUMBERS) else str(n)
+    outcome = (f"all {count(merged, 'task')} merged" if merged == len(tasks) and merged > 1
+               else f"{number(merged)} of the {count(len(tasks), 'task')} merged" if len(tasks) > 1
+               else ("the task merged" if merged else "the task didn't merge"))
+    if others:
+        outcome += ", " + ", ".join(f"{number(n)} {OUTCOME_WORDS.get(s, s)}" for s, n in sorted(others.items()))
+    if start and end and end >= start:
+        return ended(f"The run took {duration(int((end - start).total_seconds() // 60))}, and {outcome}")
+    return ended(capitalized(outcome))
+
+
+def task_lookup(facts: dict, items: list[dict]) -> list[dict]:
+    """Each report item with its task's facts, matched by the item's task ID, else its name, else order."""
+    tasks = [t for t in facts.get("tasks", []) if t.get("status") != "replaced"]
+    by_id = {str(t.get("id")): t for t in tasks}
+    by_name = {str(t.get("name", "")).lower(): t for t in tasks}
+    used: set[str] = set()
+    joined = []
+    for item in items:
+        task = by_id.get(item["id"] or "") or by_name.get(item["name"].lower())
+        if task is None:
+            task = next((t for t in tasks if str(t.get("id")) not in used), None)
+        if task is not None:
+            used.add(str(task.get("id")))
+        joined.append({"item": item, "task": task or {}})
+    for task in tasks:  # a task the report didn't list gets its own entry from the facts
+        if str(task.get("id")) not in used:
+            joined.append({"item": {"name": task.get("name", task.get("id", "")), "text": task.get("summary", ""), "id": task.get("id")},
+                           "task": task})
+    return joined
+
+
+# ---------------------------------------------------------------------------------------------
+# The reading
+
+def reading(facts: dict, markdown: str, budget: int = WORDS, ask_for_tour: bool = False) -> dict:
+    TASK_IDS.update(str(t.get("id")) for t in facts.get("tasks", []) if t.get("id"))
+    parts = report_sections(markdown)
+    intro = speakable(prose(parts.get("", "").splitlines()))
+    built = task_lookup(facts, built_items(section(parts, "what was built")))
+    unfinished = listed(section(parts, "not finished"))
+    checking = listed(section(parts, "worth checking"))
+    decisions = listed(section(parts, "open decisions"))
+
+    def item_sentences(entry: dict, n: int) -> str:
+        said = sentences(speakable(entry["item"].get("text", "")))[:n]
+        name = speakable(entry["item"]["name"])
+        status = entry["task"].get("status", "merged")
+        tail = "" if status in ("merged", "") else f" It is {OUTCOME_WORDS.get(status, status)}."
+        return ended(f"{name}: " + lowered(" ".join(said))) + tail if said else ended(name) + tail
+
+    def compose(intro_n: int, per_item: int, limit: int, with_checks: bool) -> str:
+        paragraphs = [" ".join(sentences(intro)[:intro_n]) or run_line(facts)]
+        if built:
+            paragraphs.append("What was built. " + " ".join(item_sentences(e, per_item) for e in built))
+        if intro_n and run_line(facts) not in paragraphs[0]:
+            paragraphs.append(run_line(facts))
+        if unfinished:
+            paragraphs.append("Not finished: " + ended(names(unfinished, limit)))
+        if decisions:
+            lead = capitalized(f"{count(len(decisions), 'open decision')} for you. ")
+            paragraphs.append(lead + ended(capitalized(names(decisions, limit))) +
+                              " The report recommends an answer to each.")
+        if checking and with_checks:
+            paragraphs.append("Worth checking yourself: " + ended(names(checking, limit)))
+        paragraphs.append("The whole report is in the chat, and it's under Full Text here."
+                          + (" For a tour of the run, card by card, ask me to walk you through the run." if ask_for_tour else ""))
+        return "\n\n".join(p for p in paragraphs if p)
+
+    text = ""
+    for intro_n, per_item, limit, with_checks in [(3, 2, 6, True), (2, 2, 5, True), (2, 1, 5, True), (2, 1, 4, False),
+                                                  (1, 1, 3, False), (1, 0, 3, False), (1, 0, 2, False)]:
+        text = compose(intro_n, per_item, limit, with_checks)
+        if words(text) <= budget:
+            break
+    title = facts.get("title") or "The run"
+    original = markdown.strip()
+    if len(original) > READING["original"]:
+        tail = "\n\n… The rest is in the chat."
+        original = original[: READING["original"] - len(tail)].rsplit("\n\n", 1)[0] + tail
+    return {"action": "offer", "kind": "report", "title": fit(f"Run report: {speakable(title)}", READING["title"]),
+            "text": fit(text, READING["text"]) if len(text) > READING["text"] else text,
+            "original": original, "source": "The run's final report, in this chat"}
+
+
+OUTCOME_WORDS = {"blocked": "blocked", "failed": "failed", "stopped": "stopped, with nothing merged",
+                 "ready": "ready but not merged", "parked": "parked, never started"}
+
+
+# ---------------------------------------------------------------------------------------------
+# The repository: a task's key change and its pictures
+
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    return done.stdout if done.returncode == 0 else ""
+
+
+def hunks(diff: str) -> list[tuple[int, int, int, int]]:
+    """A unified diff's hunks as (old start, old count, new start, new count)."""
+    out = []
+    for m in re.finditer(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", diff, re.M):
+        out.append((int(m.group(1)), int(m.group(2) or 1), int(m.group(3)), int(m.group(4) or 1)))
+    return out
+
+
+def moved(lines: tuple[int, int], later: list[tuple[int, int, int, int]]) -> tuple[int, int]:
+    """Lines of a file at the task's last commit, as they are after the later changes `later`."""
+    first, last = lines
+    shift_first = shift_last = 0
+    for old_start, old_count, new_start, new_count in later:
+        old_end = old_start + max(old_count, 1) - 1
+        delta = new_count - old_count
+        if old_end < first or (old_count == 0 and old_start < first):
+            shift_first += delta
+        if old_end < last or (old_count == 0 and old_start < last):
+            shift_last += delta
+    return max(1, first + shift_first), max(1, last + shift_last)
+
+
+def inside(repo: Path, path: str) -> Path | None:
+    if not path or path.startswith(("/", "~")) or ".." in Path(path).parts or SECRET_FILES.search(path):
+        return None
+    full = (repo / path).resolve()
+    try:
+        full.relative_to(repo.resolve())
+    except ValueError:
+        return None
+    return full if full.is_file() else None
+
+
+def text_file(full: Path) -> int | None:
+    """Its number of lines when it is UTF-8 text OrbOS shows, else None."""
+    if full.stat().st_size > FILE_BYTES:
+        return None
+    try:
+        return max(1, full.read_text(encoding="utf-8").count("\n") + (0 if full.read_bytes().endswith(b"\n") else 1))
+    except (UnicodeDecodeError, OSError):
+        return None
+
+
+def picture_size(full: Path) -> tuple[int, int] | None:
+    data = full.read_bytes()[:65536] if full.stat().st_size <= PICTURE_BYTES else b""
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data.startswith(b"\xff\xd8"):
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                return int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            i += 2 + int.from_bytes(data[i + 2:i + 4], "big")
+    return None
+
+
+def changes(repo: Path, task: dict) -> tuple[dict | None, str | None]:
+    """The task's key change (path and lines at HEAD) and a picture its commits put in the repository."""
+    commits = [c for c in task.get("commits") or [] if re.fullmatch(r"[0-9a-fA-F]{4,40}", str(c))]
+    given = task.get("key_change") or {}
+    key = None
+    if given.get("path") and inside(repo, given["path"]) and text_file(inside(repo, given["path"])):
+        total = text_file(inside(repo, given["path"]))
+        lines = given.get("lines")
+        if isinstance(lines, list) and len(lines) == 2 and all(isinstance(n, int) for n in lines) and 1 <= lines[0] <= lines[1]:
+            first, last = min(lines[0], total), min(lines[1], total, lines[0] + 299)
+            key = {"path": given["path"], "lines": [first, last], "say": given.get("say", "")}
+        else:
+            key = {"path": given["path"], "lines": None, "say": given.get("say", "")}
+    if not commits:
+        return key, None
+    resolved = [git(repo, "rev-parse", "--verify", "--quiet", c + "^{commit}").strip() for c in commits]
+    resolved = [c for c in resolved if c]
+    if not resolved:
+        return key, None
+    order = git(repo, "rev-list", "--topo-order", "--no-walk", *resolved).split()
+    newest, oldest = order[0], order[-1]
+    base = git(repo, "rev-parse", "--verify", "--quiet", oldest + "^").strip() or "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    added: dict[str, int] = {}
+    for line in git(repo, "diff", "--numstat", "--no-renames", base, newest).splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            added[parts[2]] = 0 if parts[0] == "-" else int(parts[0])
+    picture = next((p for p in sorted(added) if PICTURE_PATH.search(p) and inside(repo, p)
+                    and (size := picture_size(inside(repo, p))) and size[0] * size[1] <= PICTURE_PIXELS), None)
+    if key is None:
+        def rank(path: str) -> tuple[int, int]:
+            kind = 3 if TEST_PATH.search(path) else 2 if ASIDE_PATH.search(path) else 1 if DOC_PATH.search(path) else 0
+            return kind, -added[path]
+        candidates = sorted((p for p, n in added.items() if n > 0 and not SKIP_PATH.search(p) and not PICTURE_PATH.search(p)
+                             and inside(repo, p) and text_file(inside(repo, p))), key=rank)
+        for path in candidates:
+            blocks = [h for h in hunks(git(repo, "diff", "-U0", "--no-renames", base, newest, "--", path)) if h[3] > 0]
+            if not blocks:
+                continue
+            _, _, start, size = max(blocks, key=lambda h: h[3])
+            lines = (start, start + min(size, TOUR_LINES) - 1)
+            later = hunks(git(repo, "diff", "-U0", "--no-renames", newest, "HEAD", "--", path))
+            first, last = moved(lines, later)
+            total = text_file(inside(repo, path)) or last
+            first, last = min(first, total), min(max(last, first), total)
+            key = {"path": path, "lines": [first, last], "say": ""}
+            break
+    return key, picture
+
+
+# ---------------------------------------------------------------------------------------------
+# The tour
+
+def words_fit(text: str, limit: int, fallback: str) -> str:
+    return fit(safe(text), limit) or fit(fallback, limit)
+
+
+def labelled(name: str, what: str) -> str:
+    """A step's title: the task's name and what the step shows, or only what it shows when that's too long."""
+    title = f"{name}: {what}"
+    return title if len(title) <= WALK["step_title"] else capitalized(what)
+
+
+def note(title: str, caption: str, narration: str = "") -> dict:
+    step = {"kind": "note", "title": words_fit(title, WALK["step_title"], "A note"),
+            "caption": words_fit(caption, WALK["caption"], "More in the report.")}
+    if narration:
+        said = words_fit(narration, WALK["narration"], "")
+        if said and said != step["caption"]:
+            step["narration"] = said
+    return step
+
+
+def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
+    TASK_IDS.update(str(t.get("id")) for t in facts.get("tasks", []) if t.get("id"))
+    parts = report_sections(markdown)
+    intro = sentences(speakable(prose(parts.get("", "").splitlines())))
+    built = task_lookup(facts, built_items(section(parts, "what was built")))
+    decisions = listed(section(parts, "open decisions"))
+    unfinished = listed(section(parts, "not finished"))
+    title = speakable(facts.get("title") or "the run")
+
+    steps: list[dict] = []
+    opening = " ".join(intro[:2]) or run_line(facts)
+    steps.append(note("How the run went", intro[0] if intro else run_line(facts),
+                      f"{opening} I'll show each task in turn, then what needs you."))
+
+    per_task: list[list[dict]] = []
+    for entry in built:
+        item, task = entry["item"], entry["task"]
+        name = speakable(item["name"]) or speakable(str(task.get("name", ""))) or "A task"
+        said = sentences(speakable(item.get("text", ""))) or sentences(speakable(str(task.get("summary", ""))))
+        status = task.get("status", "merged")
+        state = "" if status in ("merged", "") else f"It is {OUTCOME_WORDS.get(status, status)}."
+        pictures = len(task.get("pictures") or [])
+        seen = f"It left {count(pictures, 'picture')}, under its item in the report." if pictures else ""
+        caption = " ".join(x for x in [said[0] if said else "", state] if x) or name
+        narration = " ".join(x for x in [" ".join(said[:2]), state, seen] if x)
+        group = [note(name, caption, narration)]
+        if repo is not None and task:
+            key, picture = changes(repo, task)
+            if key:
+                step = {"kind": "file", "title": labelled(name, "key change"),
+                        "path": key["path"]}
+                if key["lines"]:
+                    step["lines"] = key["lines"]
+                step["narration"] = words_fit(speakable(key["say"]) if key["say"] else
+                                              "The marked lines are where this task changed the most.",
+                                              WALK["narration"], "The marked lines are this task's key change.")
+                group.append(step)
+            if picture:
+                group.append({"kind": "picture", "title": labelled(name, "a picture"),
+                              "path": picture,
+                              "narration": "A picture this task added to the project."})
+        per_task.append(group)
+
+    closing = []
+    if unfinished:
+        closing.append("Not finished: " + names(unfinished, 3) + ".")
+    if decisions:
+        closing.append(capitalized(f"{count(len(decisions), 'open decision')} for you: ") + names(decisions, 4) + ".")
+    caption = (capitalized(f"{count(len(decisions), 'open decision')} for you, each with a recommended answer in the report.")
+               if decisions else "Nothing needs your decision.")
+    final = note("What needs you", caption, " ".join(closing) + " The report recommends an answer to each."
+                 if decisions else " ".join(closing) or caption)
+
+    # At most 50 steps: pictures go first, then file steps from the last task backwards, then tasks.
+    def total() -> int:
+        return 2 + sum(len(g) for g in per_task)
+    for kind in ("picture", "file"):
+        for group in reversed(per_task):
+            if total() <= WALK["steps"]:
+                break
+            group[:] = [s for s in group if s["kind"] != kind]
+    if total() > WALK["steps"]:
+        keep = WALK["steps"] - 3
+        rest = len(per_task) - keep
+        per_task = per_task[:keep] + [[note(f"{count(rest, 'more task')}", f"{count(rest, 'more task')} in the report.")]]
+    steps += [s for g in per_task for s in g] + [final]
+
+    # Calls: notes queue (up to 20 a call), file and picture steps go one to a call. The offer
+    # carries the notes before the first file step, so Start goes straight into them.
+    calls: list[list[dict]] = []
+    for step in steps:
+        if step["kind"] == "note" and calls and calls[-1][-1]["kind"] == "note" and len(calls[-1]) < WALK["queued"]:
+            calls[-1].append(step)
+        else:
+            calls.append([step])
+    offer = {"action": "offer", "title": fit(f"Tour of the run: {title}", WALK["title"]), "mode": "guided",
+             "about": fit(safe(capitalized(f"{count(len(built), 'task')}, one card each: what it built"
+                               + (" and its key change" if any(s["kind"] == "file" for s in steps) else "")
+                               + ". Then what needs you.")), WALK["about"]),
+             "estimated_steps": min(len(steps), WALK["steps"])}
+    if calls and all(s["kind"] == "note" for s in calls[0]):
+        offer["steps"] = calls.pop(0)
+    rest = [{"action": "step", "step": c[0]} if len(c) == 1 else {"action": "step", "steps": c} for c in calls]
+    end = {"action": "end", "note": fit("The whole report is in the chat.", WALK["note"])}
+    return {"offer": offer, "calls": rest, "end": end}
+
+
+# ---------------------------------------------------------------------------------------------
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="report-offer", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("facts")
+    parser.add_argument("report")
+    parser.add_argument("--repo", help="the integration checkout, which is the harness's working folder")
+    parser.add_argument("--out", help="the folder for reading.json and tour.json (the report's folder by default)")
+    parser.add_argument("--no-files", action="store_true", help="no file or picture steps")
+    parser.add_argument("--ask-for-tour", action="store_true",
+                        help="end the reading by saying how to ask for the tour (when you have the walkthrough tool)")
+    parser.add_argument("--words", type=int, default=WORDS, help=f"the reading's most words (default {WORDS}, about two minutes)")
+    args = parser.parse_args(argv)
+    facts = json.loads(Path(args.facts).read_text())
+    markdown = Path(args.report).read_text()
+    repo = None
+    if args.repo and not args.no_files:
+        repo = Path(args.repo).resolve()
+        if not git(repo, "rev-parse", "--git-dir"):
+            raise SystemExit(f"report-offer: {repo} isn't a git repository")
+    out = Path(args.out) if args.out else Path(args.report).resolve().parent
+    out.mkdir(parents=True, exist_ok=True)
+
+    offered = reading(facts, markdown, args.words, args.ask_for_tour)
+    walked = tour(facts, markdown, repo)
+    (out / "reading.json").write_text(json.dumps(offered, ensure_ascii=False, indent=2) + "\n")
+    (out / "tour.json").write_text(json.dumps(walked, ensure_ascii=False, indent=2) + "\n")
+
+    steps = (walked["offer"].get("steps") or []) + [s for c in walked["calls"] for s in ([c["step"]] if "step" in c else c["steps"])]
+    kinds = {k: sum(1 for s in steps if s["kind"] == k) for k in ("note", "file", "picture")}
+    n = words(offered["text"])
+    print(f"report-offer: wrote {out / 'reading.json'}: {n} words (about {max(1, round(n / 160))} min), "
+          f"{len(offered['text']):,} characters; original {len(offered['original']):,} characters")
+    print(f"report-offer: wrote {out / 'tour.json'}: {len(steps)} steps ({kinds['note']} notes, {kinds['file']} files, "
+          f"{kinds['picture']} pictures), {1 + len(walked['calls']) + 1} calls with the offer and the end")
+    for s in steps:
+        if s["kind"] != "note":
+            where = s["path"] + (f" lines {s['lines'][0]}–{s['lines'][1]}" if s.get("lines") else "")
+            print(f"  {s['kind']}: {where}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

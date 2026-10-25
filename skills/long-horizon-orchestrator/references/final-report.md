@@ -12,6 +12,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
 - A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
 - Show what changed: the tasks' pictures under their items ("Pictures" below), and in T3 the run map right above the report ("Run map").
+- With OrbOS's tools, offer the report to listen to, just before posting it, and as a tour after it when the user is at the computer ("Offer it to listen to and as a tour" below). Neither changes the report, and neither holds up the finish.
 
 ## Template
 
@@ -56,7 +57,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
 - <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
-<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request.>
+<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. With OrbOS's walkthrough tool, add: "Ask me to walk you through the run for a tour in the notch.">
 
 <One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%; Antigravity Argon from 1% to 9% of its week." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
 ```
@@ -84,6 +85,7 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 - **Quota pauses:** from when the first task failed on the limit until you resumed the tasks, from the threads' failed and resumed turns, not from your forecast.
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events. For the map, add each helper's outcome (`status`) and whether it reviewed or researched (`role`).
 - **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff.
+- **Commits:** a merged task's `commits` are the ones the ledger lists for it. With them, `scripts/report-offer` finds the task's key change for the tour. To choose it yourself, give the task a `key_change` instead ([below](#offer-it-to-listen-to-and-as-a-tour)).
 - **Makers:** each card's mark comes from the model's name (`assets/marks/marks.json` knows about 40 makers and harnesses). When the name doesn't say who made the model, add the maker as the host's model ID names it (`"maker": "moonshotai"` for `openrouter/moonshotai/…`); a maker without a mark gets a letter.
 
 Put these facts into a JSON file in the run directory, and run `scripts/run-charts <facts.json> <run directory>/report`. It writes the run map, both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws the charts on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the map or the charts by hand: the map is tens of thousands of characters, and `linkStyle` indexes are easy to miscount.
@@ -229,6 +231,54 @@ gantt
 ```
 
 Copy the init lines of both examples as they are, so the charts look alike from one run to the next. If the user's chat view doesn't render Mermaid, the blocks still read as lists of tasks, times and links, so include them either way.
+
+## Offer it to listen to and as a tour
+
+When the user has OrbOS, its MCP server (`read-aloud --mcp`) gives you `offer_reading` and `walkthrough`, perhaps with a prefix such as `mcp__read-aloud__`. With them, the report can wait in the notch to be heard later, and be walked through card by card. Without them, skip this section silently. Never `speak` about either: nobody asked to be woken.
+
+### Make the arguments
+
+1. Save the report as `<run directory>/report/final-report.md`, the copy the rules ask for.
+2. Run `scripts/report-offer <facts.json> <run directory>/report/final-report.md --repo <integration checkout> --ask-for-tour`.
+   - **`--ask-for-tour`** only when you have `walkthrough`. The reading then ends by saying how to ask for the tour.
+   - **`--repo`** adds the file and picture steps. OrbOS's server reads their paths relative to the folder your harness started it in, so use it only when that is the integration checkout. In T3 it is, because your thread runs at the project's root. Otherwise use `--no-files`.
+
+It writes `reading.json` and `tour.json` beside the report, and prints what they hold. Pass them to the tools unchanged: every field is already within the tools' limits, and words OrbOS would refuse, such as a sentence asking for a code, are left out.
+
+- **The reading** (kind `report`): the outcome first, then what was built, what isn't finished, the open decisions by name, and what to check. It is plain speech of about two minutes, with no code, paths or IDs. The whole report is its original, under **Full Text**.
+- **The tour:**
+  - an opening note;
+  - per task, a note of what it built, in two sentences;
+  - per task, its key change as a file step, and a picture its commits put in the repository;
+  - a closing note with the open decisions.
+
+  At most 50 steps, with the notes several to a call. The key change is the largest added block of the file the task changed most, found from its `commits`: source first, then docs, then examples and experiments, then tests. A task's `key_change` (`{"path": …, "lines": [first, last], "say": "<what the change does, never the code>"}`) overrides it.
+
+### Pictures in the tour
+
+OrbOS's server reads files only inside its workspace, so the tour shows only pictures in the repository, such as a guide's screenshots that a task updated. The tasks' own pictures stay in the run directory, and each task's note says how many it left under its item in the report. Never copy them into the repository to show them.
+
+### The reading: just before you post the report
+
+Call `offer_reading` with `reading.json`'s fields. It returns at once (`offered: r1`); keep the id in the ledger, so a re-posted report can withdraw it. The card waits in the notch until the user plays or dismisses it: 8 hours unless they chose otherwise, so a report that comes at night is still there in the morning. Offer it once. An error, such as a refusal or OrbOS not opening, goes into the ledger, and the finish goes on.
+
+### The tour: after the report, only with the user there
+
+A walkthrough's offer waits only as long as the user's question wait (3 minutes unless they chose otherwise), and a tour runs only while you make its calls. So:
+
+- **The user is at the computer** (input within the last 2 minutes; on macOS, `HIDIdleTime` from `ioreg -c IOHIDSystem`): after posting the report, give the tour as below. Then end the turn with one line, such as "The tour has ended." or "No tour for now: ask me to walk you through the run any time."
+- **Otherwise,** don't offer it. The reading and the report's closing line tell the user to ask for it ("walk me through the run"). When they do, give it from the same `tour.json`.
+
+To give it:
+
+1. Call `walkthrough` with `tour.json`'s `offer`. Its first notes are queued with it.
+2. Act on the first word of each answer:
+   - `started` or `next`: send the next of its `calls`, unchanged, and after the last one its `end`.
+   - `waiting` or `paused`: call `walkthrough` with `{"action": "wait"}`, and act on that answer.
+   - `back`: send the call before again.
+   - `refused` (an error): skip that call and go on with the next.
+   - `declined`, `expired`, `busy` or `stopped`: stop there, and don't offer it again unless the user asks. `busy` means another walkthrough is on the Mac.
+3. Say nothing in the chat while it runs: the card speaks each step.
 
 ## Example of the right level
 
