@@ -519,6 +519,8 @@ for folder in ("A/pictures", "B/pictures", "report"):
     os.makedirs(os.path.join(run_dir, folder))
 os.makedirs(repo)
 subprocess.run(["git", "-C", repo, "init", "-q"], check=True)
+with open(os.path.join(repo, "main.txt"), "w") as f:
+    f.write("one\ntwo\nthree\n")
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==")
 JPEG = b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x02\x00\x03\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xd9"
 def put(path, data):
@@ -535,6 +537,7 @@ def pictures(task, names):
     return [{"src": os.path.join(run_dir, task, "pictures", n), "caption": f"The {n} picture"} for n in names]
 facts = {"title": "Sample · pictures night", "run": {"start": "2026-10-24 01:00", "end": "2026-10-24 02:00"},
          "tasks": [{"id": "A", "name": "Cards", "status": "merged",
+                    "key_change": {"path": "main.txt", "lines": [1, 2], "say": "The cards' new look."},
                     "pictures": pictures("A", ["1-card.png", "2-menu.jpg", "notes.txt", ".env.png", "fake.png", "link.png"])
                                 + [{"src": os.path.join(work, "outside.png"), "caption": "Outside the run"}]},
                    {"id": "B", "name": "Menus", "status": "merged",     # relative to the facts file
@@ -587,7 +590,8 @@ for line in sys.stdin:
             text, error = ("refused: this OrbOS can't keep a tour with an offer (update it). Nothing was offered; "
                            "offer the reading without its tour."), True
         elif tour:
-            bad = [n for n, s in enumerate(tour) if s.get("path", "").endswith("B/pictures/1.png")]
+            refused = "main.txt" if mode == "keyrefuse" else "B/pictures/1.png"
+            bad = [n for n, s in enumerate(tour) if s.get("path", "") == refused]
             if bad:
                 text, error = f"refused: The tour's Step {bad[0] + 1}: That picture isn't there. Nothing was offered.", True
             else:
@@ -644,7 +648,13 @@ assert "It left seven pictures, under its item in the report." in next(s for s i
 
 # Without --pictures: no pictures folder for the command, and the run's pictures stay out.
 done, lines, offered, _ = offer("tour")
-assert done.returncode == 0 and lines[0]["argv"] == ["--harness", "claude-code", "--mcp"] and len(offered["steps"]) == 4, offered
+assert done.returncode == 0 and lines[0]["argv"] == ["--harness", "claude-code", "--mcp"] and len(offered["steps"]) == 5, offered
+
+# A key change the orchestrator chose, refused by OrbOS: left out for good, the tour offered without it.
+done, lines, offered, _ = offer("keyrefuse")
+calls = [m["params"]["arguments"] for m in lines[1:] if m.get("method") == "tools/call"]
+assert done.returncode == 0 and len(calls) == 2 and offered["tour"] == 4, offered
+assert "main.txt" in [s.get("path") for s in calls[0]["tour"]] and "main.txt" not in [s.get("path") for s in calls[1]["tour"]]
 
 # An OrbOS that can't keep a tour: the reading alone, which says how to ask for the tour.
 done, lines, offered, _ = offer("notours", "--pictures", run_dir, "--harness", "codex")
@@ -669,6 +679,7 @@ assert done.returncode == 3 and "isn't here" in done.stdout and os.path.exists(o
 # A server that hangs after the call went out: the offer may have arrived (exit 4), so not again.
 done, lines, offered, took = offer("hang", "--timeout", "3")
 assert done.returncode == 4 and offered["uncertain"] and "in time" in offered["answer"] and took < 30, (offered, took)
+assert offered["command"] == server   # offered.json is written before the call too, for a run stopped from outside
 assert "Don't offer it again" in done.stdout
 try:
     os.kill(lines[0]["pid"], 0)

@@ -57,7 +57,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
 - <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
-<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. By how the offer went: offered with its tour, add "The report waits in the notch to listen to, with a tour of the run: press Tour."; offered without it, add "The report waits in the notch to listen to."; and either way without its tour, with OrbOS's walkthrough tool, add "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json)." Not offered: nothing.>
+<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. By how the offer went: offered with its tour, add "The report waits in the notch to listen to, with a tour of the run: press Tour."; offered without it, add "The report waits in the notch to listen to."; and either way without its tour, with OrbOS's walkthrough tool, add "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json)." Not offered: nothing. Add this clause after report-offer has offered the saved copy, so the card's Full Text lacks only it.>
 
 <One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%; Antigravity Argon from 1% to 9% of its week." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
 ```
@@ -244,6 +244,7 @@ When the user has OrbOS, its MCP server (`read-aloud --mcp`) gives you `offer_re
    - **`--pictures`** shows the tasks' own pictures from the run directory in the tour.
    - **`--ask-for-tour`** only when you have `walkthrough`. A reading offered without its tour then ends by saying how to ask for it.
    - **`--harness codex`** when you are Codex (the default is `claude-code`).
+   - Give the command at least 2 minutes: the offer itself stops after 90 seconds (`--timeout`), and reading the pictures takes a moment.
 
 It writes the arguments beside the report, prints what they hold, and then offers the reading with its tour itself, once. Every field is already within the tools' limits, and words OrbOS would refuse, such as a sentence asking for a code, are left out.
 

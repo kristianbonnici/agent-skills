@@ -55,8 +55,9 @@ Facts it reads, besides run-charts' (`run-charts --help`), all optional:
 File and picture steps name paths relative to the repository, which must be the folder the
 orchestrator's harness runs in (OrbOS's server reads them in its own workspace), and report-offer
 starts OrbOS's command there too. The run's own pictures are relative to the run folder and only
-in the tour report-offer offers itself. --no-files leaves out file and picture steps (a harness
-started elsewhere).
+in the tour report-offer offers itself. --no-files leaves out the repository's file and picture
+steps (a harness started elsewhere); with --pictures the run's own pictures still show, and
+OrbOS's command then starts in the run folder.
 """
 
 from __future__ import annotations
@@ -690,6 +691,8 @@ def changes(repo: Path, task: dict, shown: set[str] = frozenset()) -> tuple[dict
     """The task's key change (path and lines at HEAD) and a picture its commits put in the repository.
     Each of the task's own commits counts on its own, so other tasks' commits between them don't."""
     key = given_change(repo, task)
+    if key and key["path"] in shown:
+        key = None
     commits = task_commits(repo, task)
     if not commits:
         return key, None
@@ -1030,18 +1033,20 @@ def call_text(answer: dict) -> tuple[str, bool]:
 
 
 def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tour: dict, alone: dict,
-          seconds: float, rebuilt=None) -> dict:
+          seconds: float, rebuilt=None, record=lambda done: None) -> dict:
     """Offers the reading with its tour through OrbOS's own command, as the run's own MCP client (with
     the user's own OrbOS, whose socket the command finds as always). A step OrbOS refuses is left
     out and the offer made again (`rebuilt(paths)` makes the tour again without those files and
     pictures); an OrbOS that can't keep a tour gets the reading alone. `uncertain`: the call went
-    out but no answer came, so the offer may have arrived."""
+    out but no answer came, so the offer may have arrived; `record(done)` keeps it before each call,
+    so a run stopped from outside still says so."""
     argv = [command, "--harness", harness, "--mcp"] + (["--pictures", str(pictures)] if pictures else [])
     done = {"offered": False, "uncertain": False, "id": None, "tour": 0, "steps": [], "answer": "", "left_out": [],
             "command": command, "pictures": str(pictures) if pictures else None}
     deadline = time.monotonic() + seconds
-    server = Server(argv, cwd)
+    server = None
     try:
+        server = Server(argv, cwd)
         def handshake() -> float:
             return max(0.5, min(HANDSHAKE_SECONDS, deadline - time.monotonic()))
         server.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
@@ -1062,6 +1067,7 @@ def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tou
             if left <= 0:
                 raise TimeoutError("OrbOS's command didn't answer in time")
             done["uncertain"] = True
+            record(done)
             text, failed = call_text(server.request("tools/call", {"name": "offer_reading", "arguments": arguments}, left))
             done["uncertain"] = False
             done["answer"] = text
@@ -1077,22 +1083,27 @@ def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tou
                 step = tour[int(refused_step.group(1)) - 1]
                 done["left_out"].append({"step": step.get("title") or step.get("kind"), "path": step.get("path"),
                                          "why": text})
-                if step.get("path") and rebuilt:
+                if step.get("path") in refused_paths:
+                    tour = []   # refused again: the reading alone
+                elif step.get("path") and rebuilt:
                     refused_paths.add(step["path"])
-                    tour = [s for s in rebuilt(frozenset(refused_paths)) if s not in refused_words]
+                    tour = [s for s in rebuilt(frozenset(refused_paths))
+                            if s not in refused_words and s.get("path") not in refused_paths]
                 else:
                     refused_words.append(step)
                     tour = [s for s in tour if s is not step]
                 continue
-            if tour and re.search(r"\btour", text, re.I):
-                tour = []   # this OrbOS can't keep a tour, or holds as many as it can: the reading alone
+            if tour and (re.search(r"\btour", text, re.I) or text.startswith("refused:")):
+                # this OrbOS can't keep a tour, holds as many as it can, or refuses its words: the reading alone
+                tour = []
                 continue
             return done
     except (OSError, TimeoutError, EOFError) as error:
         done["answer"] = str(error)
         return done
     finally:
-        server.close()
+        if server:
+            server.close()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1113,7 +1124,7 @@ def main(argv: list[str]) -> int:
                         help="only write the files; you offer reading.json with your own offer_reading")
     parser.add_argument("--read-aloud", metavar="COMMAND", help="OrbOS's command (found in the app by default)")
     parser.add_argument("--harness", default="claude-code", help="the assistant the offer comes from (default claude-code)")
-    parser.add_argument("--timeout", type=float, default=240, help="the most seconds the offer may take (default 240)")
+    parser.add_argument("--timeout", type=float, default=90, help="the most seconds the offer may take (default 90)")
     args = parser.parse_args(argv)
     facts = json.loads(Path(args.facts).read_text(errors="replace"))
     if not isinstance(facts, dict) or not isinstance(facts.get("tasks", []), list):
@@ -1161,8 +1172,10 @@ def main(argv: list[str]) -> int:
     def rebuilt(without: frozenset[str]) -> list[dict]:
         return tour(facts, markdown, repo, folder, Path(args.facts).resolve().parent, without)["steps"]
     with_tour = dict(offered, tour=rebuilt(frozenset()) if folder else walked["steps"])
-    done = offer(command, args.harness, repo or folder or Path.cwd(), folder, with_tour, alone, args.timeout, rebuilt)
-    (out / "offered.json").write_text(json.dumps(done, ensure_ascii=False, indent=2) + "\n")
+    def record(done: dict) -> None:
+        (out / "offered.json").write_text(json.dumps(done, ensure_ascii=False, indent=2) + "\n")
+    done = offer(command, args.harness, repo or folder or Path.cwd(), folder, with_tour, alone, args.timeout, rebuilt, record)
+    record(done)
     for left_out in done["left_out"]:
         print(f"report-offer: left out {left_out['step']}: {left_out['why']}")
     if done["uncertain"]:
