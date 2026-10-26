@@ -54,7 +54,7 @@ Constraints, besides those in the common file:
 
 Validation (show the output in the conversation):
 - <exact commands>
-<If a check needs the real screen: "Real-screen checks: <list>. Before them, confirm the screen is unlocked (ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked prints <true/> when locked). If it is locked or the app's window can't be captured, don't retry. List each such check under 'Couldn't check' in the handoff, and continue to the merge gate on the other checks.">
+<If a check needs the real screen: "Real-screen checks: <list>. Take the screen lease for them as the common file says (in an evening run, it waits until the owner is away, and `lease check` tells you when they come back). Before them, confirm the screen is unlocked (ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked prints <true/> when locked). If it is locked or the app's window can't be captured, don't retry. List each such check under 'Couldn't check' in the handoff, and continue to the merge gate on the other checks.">
 
 Finish and merge:
 1. Commit on <task branch> following the project's commit rules. Review the staged diff, stage explicit files, and never commit credentials, local traces or scratch output.
@@ -85,7 +85,7 @@ If your head or the merge changes after a report (review fixes, a rebase, a foll
 ```text
 Rules for every task in run <run ID>. Your brief points here, and these rules are part of it. The orchestrator adds rules at the end during the run, each with its time.
 
-The owner is away for the whole run. Never ask them anything, and never wait for them: no question tools (AskUserQuestion, request_user_input, an "ask" tool), no approval prompts. Decide yourself what is reversible and within your brief; put every other question under "Open decisions" in your handoff.
+The owner is away for the whole run. <Or, in an evening run: The owner may be at the computer this evening and asleep later.> Never ask them anything, and never wait for them: no question tools (AskUserQuestion, request_user_input, an "ask" tool), no approval prompts. Decide yourself what is reversible and within your brief; put every other question under "Open decisions" in your handoff.
 
 - Install dependencies only from existing lockfiles; never change the lockfiles.
 - No pushing, publishing, deploying, or contacting outside services. <project-specific rules, such as live API calls or secrets>.
@@ -99,6 +99,7 @@ The owner is away for the whole run. Never ask them anything, and never wait for
 - The owner's things: <from the contract: their running app, its settings and data, services, their ports>. Launch your own build by its path, with its own <settings, sockets, data folders>. Prefer launch arguments to writing the owner's settings; if a step writes one anyway, read it first and put it back right after. <Don't delete test builds' sandbox containers: macOS asks for a password.>
 - Ports and folders of other tasks<, and of the other run>: <list>. Don't stop or reuse them.
 - <If the run has leases:> Shared resources: take <resource> with `<lease folder>/bin/lease acquire <resource> --owner <owner prefix><your task ID>` only while you use it, and release it right after (`release`, or `lease run <resource> --owner ... -- <command>` for one command). Renewing is only for finishing the same check: once your turn is over and others wait, a renewal releases the lease (exit 76), so stop using the resource and queue again. If no turn comes within the wait (exit 75), list the check under "Couldn't check" and go on. Prefer checks that need no lease, such as rendering a view to an image. Once merged, don't wait for a lease.
+- <If the owner may be at the computer:> The screen only while the owner is away. Anything that moves the pointer, posts events, records or captures the real screen, opens windows on it, or plays sound out loud needs the screen lease, and its acquire waits until the owner has been away five minutes. Prepare everything first, so a turn is short. During your turn, run `<lease folder>/bin/lease check screen --owner <owner prefix><your task ID>` between steps, at a point where you have posted no events yourself for 30 seconds. On any exit but 0 (the owner is back, the screen locked, or the lease is gone), stop at the next safe point, quit what you showed, release the lease, and acquire again later. If no turn comes, merge on your other checks, and list the screen check under "Couldn't check" with the exact scene to run.
 - <If another orchestrator runs:> Another run works on <its code areas>. Don't edit them; its merges into <integration branch> are normal, so rebase onto them as onto any other.
 
 <"Help available" sections from routing.md that every task gets.>

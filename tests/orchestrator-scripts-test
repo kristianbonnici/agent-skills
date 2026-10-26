@@ -108,6 +108,94 @@ test "$status" -eq 143
 if kill -0 "$(cat "$run3/child.pid")" 2>/dev/null; then exit 1; fi
 if "$lease3" status | grep -q '"owner": "C"'; then exit 1; fi
 
+# lease: a screen that needs the owner away, against a fake ioreg whose answers come from the file
+# "owner" beside it ("<idle seconds> <locked|unlocked>"). Acquire waits, in queue order, until the
+# screen is unlocked and the owner idle long enough; check tells a holder the owner came back.
+run4="$work/run4"
+mkdir -p "$run4/bin" "$run4/fake"
+cp "$scripts/lease" "$run4/bin/lease"
+printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 15, "needs_owner_away_seconds": 300}, "gpu": {"slots": 1, "max_minutes": 30}}' > "$run4/leases.json"
+cat > "$run4/fake/ioreg" <<'EOF'
+#!/bin/sh
+read -r idle lock < "$(dirname "$0")/owner"
+case "$*" in
+  *IOHIDSystem*) printf '    | |   "HIDIdleTime" = %s000000000\n' "$idle" ;;
+  *Root*)
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>IOConsoleUsers</key><array><dict>'
+    if [ "$lock" = locked ]; then printf '<key>CGSSessionScreenIsLocked</key><true/>'; fi
+    printf '<key>kCGSSessionIDKey</key><integer>257</integer></dict></array></dict></plist>\n' ;;
+esac
+EOF
+chmod +x "$run4/fake/ioreg"
+owner() { printf '%s %s\n' "$1" "$2" > "$run4/fake/owner"; }
+LEASE_IOREG="$run4/fake/ioreg"
+export LEASE_IOREG
+lease4="$run4/bin/lease"
+check4() { status=0; "$lease4" check "$1" --owner "$2" > "$run4/check.out" || status=$?; test "$status" -eq "$3"; }
+
+owner 400 unlocked                                       # away: the screen is taken at once
+"$lease4" acquire screen --owner A --wait-minutes 0.01 >/dev/null
+check4 screen A 0
+"$lease4" status | grep -q '"idle_seconds": 400'
+owner 5 unlocked                                         # the owner comes back mid-turn
+check4 screen A 1
+grep -q 'at the computer' "$run4/check.out"
+owner 400 locked                                         # or the screen locks
+check4 screen A 2
+owner 400 unlocked
+check4 screen A 0
+"$lease4" release screen --owner A >/dev/null
+check4 screen A 3                                        # released: no longer A's
+check4 gpu A 3
+"$lease4" acquire gpu --owner A >/dev/null               # a resource without the key ignores the owner
+owner 5 locked
+check4 gpu A 0
+"$lease4" release gpu --owner A >/dev/null
+
+owner 5 unlocked                                         # at the computer: the wait runs out
+status=0
+"$lease4" acquire screen --owner B --wait-minutes 0.01 > "$run4/b.out" || status=$?
+test "$status" -eq 75
+grep -q 'at the computer (idle 5s, need 300s)' "$run4/b.out"
+owner 900 locked                                         # locked counts as not away, however idle
+status=0
+"$lease4" acquire screen --owner B --wait-minutes 0.01 > "$run4/b.out" || status=$?
+test "$status" -eq 75
+grep -q 'the screen is locked' "$run4/b.out"
+
+owner 5 unlocked                                         # B and then C wait; B first, once away
+"$lease4" acquire screen --owner B --wait-minutes 1 > "$run4/b.out" &
+waiter_b=$!
+background="$background $waiter_b"
+wait_for_status "$run4" '"screen:B"'
+"$lease4" acquire screen --owner C --wait-minutes 1 > "$run4/c.out" &
+waiter_c=$!
+background="$background $waiter_c"
+wait_for_status "$run4" '"screen:C"'
+owner 7 unlocked
+sleep 2.5                                                # a poll with a new idle time says nothing new
+owner 300 unlocked
+wait "$waiter_b"
+"$lease4" status | grep -q '"owner": "B"'
+"$lease4" status | grep -q '"screen:C"'
+test "$(grep -c 'until the owner is away' "$run4/b.out")" -eq 1
+"$lease4" release screen --owner B >/dev/null
+wait "$waiter_c"
+"$lease4" status | grep -q '"owner": "C"'
+"$lease4" release screen --owner C >/dev/null
+
+# Elsewhere than macOS, without an injected ioreg, a resource that needs the owner away is refused.
+status=0
+env -u LEASE_IOREG python3 -I - "$lease4" "$run4" > "$run4/linux.out" 2>&1 <<'EOF' || status=$?
+import runpy, sys
+lease, run = sys.argv[1:]
+sys.platform = "linux"
+sys.exit(runpy.run_path(lease, run_name="lease")["main"](["acquire", "screen", "--owner", "D", "--run", run]))
+EOF
+test "$status" -eq 2
+grep -q 'only be told on macOS' "$run4/linux.out"
+unset LEASE_IOREG
+
 # run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked
 # tasks shown dashed, no bar for a parked task; the run map from the same facts.
 mkdir -p "$work/pictures"

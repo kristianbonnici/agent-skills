@@ -1,6 +1,6 @@
 # The user's computer: permissions, staying awake, shared resources
 
-A long run happens while the user is away, on the computer they use every day. Whatever needs them (a password, a click on Allow, a setting) is done before they leave. Whatever the run touches outside the repository is left as it was found.
+A long run happens on the computer the user uses every day, while they are away or, in an evening run, sometimes still at it. Whatever needs them (a password, a click on Allow, a setting) is done before they leave. Whatever the run touches outside the repository is left as it was found.
 
 In the 2026-10-12 run, this went wrong in several ways:
 - a task's check of the login items put seven password prompts on the screen, and the user had to turn on Developer mode in the middle of the night;
@@ -78,6 +78,7 @@ caffeinate -i -d -t <seconds> &   # -i: no idle sleep; -d: keep the display on (
 - Set `-t` to the run's estimate plus a few hours, record the process ID in the ledger, and start a new one if the run outlasts it.
 - Stop it at the finish, or if the user stops the run.
 - It keeps the computer awake, but a screen lock the user set still locks it, which is why "automatic screen lock off" is in the permissions list.
+- In a run that starts while the user is at the computer, `-d` matters most once they leave: a screen that waits for them to be away ([section 6](#6-shared-resources-and-disk)) is wanted exactly when nobody touches the computer, which is when the display would otherwise sleep and lock.
 - Say in the contract that you will do this.
 
 ## 5. The user's own things
@@ -123,6 +124,12 @@ In the 2026-10-12 run, a test build opened by a bare link spoke through the user
   - Tasks hold a lease only while using it.
   - **A turn is bounded.** Renewing (acquiring again with the same owner) is only for finishing the same check. While others wait, a holder's turn lasts at most `turn_minutes` (by default the resource's `max_minutes`), counted from when the first of them began waiting. A renewal after that, or one that would leave less than a minute, releases the lease and exits 76, and the task queues again behind the others. A holder that doesn't renew keeps its lease until it expires, at most `max_minutes` after its last acquire, so a waiter waits at most about `turn_minutes` plus `max_minutes` for each holder ahead of it. Set `turn_minutes` above the longest single check.
   - **A wait is bounded too.** A task waits at most `wait_minutes` for a turn (exit 75), then lists the check under "Couldn't check" and goes on. Size it for the queue you expect: about the number of tasks that may wait at once times `turn_minutes`. Too short, and everyone behind the first waiter skips their check.
+  - **When the user may be at the computer** (an evening run, or one they don't leave at once), the contract says so, and the screen waits until they are away: give it `"needs_owner_away_seconds": 300` in `leases.json`. The first waiter in line then gets the screen only once it is unlocked and nobody has touched the keyboard, mouse or trackpad for five minutes (on macOS, `HIDIdleTime` read with `ioreg`; on other systems the script refuses a resource with the key, so leave it out and keep screen work for when the user is gone). The queue keeps its order, and the wait counts toward `wait_minutes`. The requirement lives in `leases.json`, not in each command, so no brief or task can forget it, and a run sharing the lease folder obeys it too.
+    - Everything that touches the real screen or the speakers waits for that lease: moving the pointer, posting events, recording or capturing the screen, opening windows on it, and sound out loud (a real voice, a recording's audio). Until then, tasks use what needs no lease, and silent test engines.
+    - During its turn, the holder runs `lease check screen --owner <task ID>` between steps, at a point where it has posted no events of its own for 30 seconds (`owner_back_seconds`), since any input counts. Exit 0 means go on. Anything else means stop at the next safe point, quit what is showing, release, and acquire again later: 1 the user is back, 2 the screen is locked, 3 the lease is no longer the task's. The codes 0, 1 and 2 are those of the 2026-10-26 run's `owner-away` script.
+    - A task that gets no turn all evening merges on its other checks and lists the screen check under "Couldn't check", with the exact scene to run later.
+
+    On 2026-10-19, a check's drags landed in the window the user was working in, and their own mouse spoiled the check. On 2026-10-24 and 2026-10-26, evening runs found the user at the computer when tasks wanted the screen; the 2026-10-26 run added the idle check to its briefs by hand.
   - Tasks prefer checks that need no lease; rendering a view to an image needs none.
   - A merged task never waits for a lease. Its own leases are released only once its processes have stopped ([integration.md](integration.md#cleanup-after-a-merge)).
   - When another orchestrator runs on the same computer, both use one lease folder ([routing.md](routing.md#running-beside-another-orchestrator)).
