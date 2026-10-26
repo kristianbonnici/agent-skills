@@ -252,7 +252,7 @@ It writes `reading.json` and `tour.json` beside the report, and prints what they
   - per task, its key change as a file step, and a picture its commits put in the repository;
   - a closing note with the open decisions.
 
-  At most 50 steps, with the notes several to a call. The key change is the largest block one of the task's own commits added, in the file the task changed most: source first, then docs, then examples and experiments, then tests. Only a merged task's commits on the integration branch count, and the lines are found where they are at its head. A task's `key_change` (`{"path": …, "lines": [first, last], "say": "<what the change does, never the code>"}`) overrides it.
+  At most 50 steps, with the notes several to a call, and never the same file twice. The key change is the largest block one of the task's own commits added, in the file the task changed most: source first, then docs, then examples and experiments, then tests. Only a merged task's commits on the integration branch count, and the lines are found where they are at its head. A task's `key_change` (`{"path": …, "lines": [first, last], "say": "<what the change does, never the code>"}`) overrides it. Without a `say`, the step only says the marked lines are the largest block the task added, so give one for the tasks that matter most.
 
 ### Pictures in the tour
 
@@ -262,11 +262,11 @@ OrbOS's server reads files only inside its workspace, so the tour shows only pic
 
 Call `offer_reading` with `reading.json`'s fields. It returns at once (`offered: r1`); keep the id in the ledger, so a re-posted report can withdraw it. The id only works in the same session of OrbOS's server: after a restart a withdrawal answers `not waiting`, and the old card simply waits until it expires. The card waits in the notch until the user plays or dismisses it: 8 hours unless they chose otherwise, so a report that comes at night is still there in the morning. Offer it once. An error, such as a refusal or OrbOS not opening, goes into the ledger, and the finish goes on.
 
-### The tour: after the report, only with the user there
+### The tour: after the finish, only with the user there
 
 A walkthrough's offer waits only as long as the user's question wait (3 minutes unless they chose otherwise), and a tour runs only while you make its calls. So:
 
-- **The user is at the computer** (input within the last 2 minutes; on macOS, `HIDIdleTime` from `ioreg -c IOHIDSystem`, in nanoseconds; a task's own screen checks reset it too, so make sure none runs): give the tour as below, as the very last thing of the finish, after the ledger says `finished` and the push notification. Then end the turn with one line, such as "The tour has ended." or "No tour for now: ask me to walk you through the run any time."
+- **The user is at the computer** (input within the last 2 minutes; on macOS, `HIDIdleTime` from `ioreg -c IOHIDSystem`, in nanoseconds; a task's own screen checks reset it too, so make sure none runs; on a host where you can't tell, treat the user as away): give the tour as below, after every other finish step, the ledger's `finished` and the push notification included. Your turn stays open while it runs. Then end the turn with one short line, not another report, such as "The tour has ended." or "No tour for now: ask me to walk you through the run any time."
 - **Otherwise,** don't offer it. The reading and the report's closing line tell the user to ask for it ("walk me through the run"). When they do, give it from the same `tour.json`, or a new session can, from the path the report names.
 
 To give it:

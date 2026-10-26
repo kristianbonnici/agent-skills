@@ -339,9 +339,10 @@ assert speech.startswith("All four tasks ran; three are merged into main, nothin
 for unwanted in ("`", "**", "/", "→", "(Task", "(B)", "abc1234", "45c52153", "Sync.swift", "B's", "!["):
     assert unwanted not in speech, (unwanted, speech)
 assert "Retries: Sync now retries a failed upload" in speech and "Another task's guide explains it." in speech
-assert "The run took 1 hour and 45 minutes, and three of the four tasks merged, one blocked." in speech
-assert "Two open decisions for you. Turn retries on by default; Give the spell checker a key." in speech
-assert "It is blocked." in speech and "Worth checking yourself: The Retry switch." in speech
+assert "\n\nIt took 1 hour and 45 minutes.\n\n" in speech          # the outcome isn't said twice
+assert "in the Sync file." in speech and "the guide at the sync note" in speech   # paths said by their names
+assert "Two open decisions for you. Turn retries on by default. Give the spell checker a key." in speech
+assert "It is blocked." in speech and "One thing worth checking yourself, in the report." in speech
 assert speech.endswith("ask me to walk you through the run.")
 assert "about 1 min" in out or "about 2 min" in out
 
@@ -368,7 +369,7 @@ for s in steps:
         assert not os.path.isabs(s["path"]) and ".." not in s["path"] and os.path.isfile(os.path.join(repo, s["path"]))
 assert tour["end"] == {"action": "end", "note": "The whole report is in the chat."}
 assert steps[0]["title"] == "How the run went" and steps[-1]["title"] == "What needs you"
-assert "Two open decisions for you" in steps[-1]["caption"]
+assert steps[-1]["caption"] == "Two decisions need you; the report recommends an answer to each.", steps[-1]
 files = [s for s in steps if s["kind"] == "file"]
 pictures = [s for s in steps if s["kind"] == "picture"]
 # A's key change: the source file's block, not the longer test, at its lines after D moved it down 3.
@@ -439,6 +440,9 @@ commit("later")
 facts = {"title": "Enter passcode flow", "tasks": [
     {"id": "A", "name": "Paste API key support for the importer", "status": "merged", "commits": [a1[:9], a2[:9], "--all", 7]},
     {"id": "X", "name": "Blocked one", "status": "blocked", "commits": [a1]},
+    {"id": "L", "name": "A very long task name that goes on and on past the title's room", "status": "merged",
+     "commits": [a1], "key_change": {"path": "Sources/naïve guide.swift"}},
+    {"id": "M", "name": "Same file again", "status": "merged", "commits": [a1]},
     {"id": None, "name": "No ID one", "status": "merged", "key_change": "Sources/A.swift"},
     {"name": "Another without an ID", "status": "merged"}]}
 report = """# Final report
@@ -450,6 +454,16 @@ Thread 153d19b6-3454-4991-a235-7940d1807c4a finished; run `rm -rf build` and/or 
 **1. Paste API key support for the importer (Task A)**
 The importer can read keys.
 Screenshot: /Users/me/My Pictures/a.png
+
+## Open decisions
+
+**These need you:**
+1. **Ship it** before Friday, when the freeze starts?
+   **Recommended:** yes.
+
+**Defaults I took. Say if you disagree:**
+2. **Retries on by default.** Easy to undo.
+3. **Docs in English only.** Others later.
 """
 with open(os.path.join(work, "facts.json"), "w") as f:
     json.dump(facts, f)
@@ -464,10 +478,14 @@ tour = json.load(open(os.path.join(work, "out", "tour.json")))
 steps = tour["steps"]
 assert steps == (tour["offer"].get("steps") or []) + [s for c in tour["calls"] for s in ([c["step"]] if "step" in c else c["steps"])]
 files = [s for s in steps if s["kind"] == "file"]
-assert [f["path"] for f in files] == ["Sources/A.swift"], files                 # not B's, not the link to .env
+assert [f["path"] for f in files] == ["Sources/A.swift", "Sources/naïve guide.swift"], files   # not B's, not the link to
+# .env, and A's file not again for M, whose commit is A's
 first, last = files[0]["lines"]
 assert first == 6 and last - first + 1 <= 24, files[0]["lines"]
-assert len([s for s in steps if s["kind"] == "note"]) == 2 + 4                  # opening, 4 tasks, closing
+assert len([s for s in steps if s["kind"] == "note"]) == 2 + 6                  # opening, 6 tasks, closing
+long = [s["title"] for s in steps if s["title"].startswith("A very long task name")]
+assert long[1].endswith("…: key change") and len(long[1]) <= 60, long
+assert steps[-1]["caption"] == "One decision needs you; the report recommends an answer to each.", steps[-1]
 assert steps[1]["title"] == "A task" and steps[1]["caption"] == "The importer can read keys.", steps[1]
 assert all(not (("Paste" in s.get("title", "") or "Enter" in s.get("title", "")) and ("key" in s.get("title", "").lower()
            or "passcode" in s.get("title", ""))) for s in steps), [s["title"] for s in steps]
@@ -475,7 +493,8 @@ assert tour["offer"]["title"] == "the run", tour["offer"]["title"]
 speech = reading["text"]
 for unwanted in ("153d19b6", "3454", "rm -rf", "~", "$", "/Users", "Library", "Final report", "main.rs", "links.tsv", "#", "Pictures"):
     assert unwanted not in speech, (unwanted, speech)
-assert "run and/or read a file and a file first." in speech, speech
+assert "run and/or read" in speech, speech
+assert "One decision needs you. Ship it before Friday, when the freeze starts? Two more are defaults I took; say if you disagree." in speech, speech
 assert "The run had no tasks." not in speech
 EOF
 

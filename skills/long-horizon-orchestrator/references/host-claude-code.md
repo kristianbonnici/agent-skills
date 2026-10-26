@@ -48,4 +48,4 @@ If the user has opted into multi-agent workflows (for example by saying "ultraco
 
 ## At the end
 
-Delete any cron jobs you created. Send a `PushNotification` with one line saying the run is finished, if that tool is available. If you have OrbOS's `offer_reading`, offer the report as a reading ([final-report.md](final-report.md#offer-it-to-listen-to-and-as-a-tour)). Then post the final report as your final message. Only the tour may follow it, when the user is at the computer.
+Delete any cron jobs you created. If you have OrbOS's `offer_reading`, offer the report as a reading ([final-report.md](final-report.md#offer-it-to-listen-to-and-as-a-tour)). Then post the final report as your final message, and send a `PushNotification` with one line saying the run is finished, if that tool is available. Only then, with the user at the computer, may the tour follow.

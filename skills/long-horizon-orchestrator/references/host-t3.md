@@ -188,4 +188,4 @@ When another run is active ([routing.md](routing.md#running-beside-another-orche
 5. If you have OrbOS's tools, run `scripts/report-offer` on the facts file and the saved report, and offer the reading with `offer_reading` ([final-report.md](final-report.md#offer-it-to-listen-to-and-as-a-tour)). Your thread runs at the project's root, so pass `--repo` with the integration checkout.
 6. Post the final report as your last message in your own thread, without the Mermaid charts. Leave the thread pinned and active.
 7. If any pull requests were created, link them with `link_pull_request`.
-8. If the user is at the computer and you have `walkthrough`, give the tour last of all, after the skill's remaining finish steps, and end with one line.
+8. Set the ledger to `finished` and send the push notification, as the skill's Finish says. Only then, if the user is at the computer and you have `walkthrough`, give the tour, and end with one short line.
