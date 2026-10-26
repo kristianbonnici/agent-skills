@@ -109,39 +109,51 @@ if kill -0 "$(cat "$run3/child.pid")" 2>/dev/null; then exit 1; fi
 if "$lease3" status | grep -q '"owner": "C"'; then exit 1; fi
 
 # lease: a screen that needs the owner away, against a fake ioreg whose answers come from the file
-# "owner" beside it ("<idle seconds> <locked|unlocked>"). Acquire waits, in queue order, until the
-# screen is unlocked and the owner idle long enough; check tells a holder the owner came back.
+# "owner" beside it ("<idle seconds|none> <locked|unlocked|garbage>"). Acquire waits, in queue order,
+# until the screen is unlocked and the owner idle long enough; check tells a holder the owner came
+# back; an unreadable state counts as not away.
 run4="$work/run4"
 mkdir -p "$run4/bin" "$run4/fake"
 cp "$scripts/lease" "$run4/bin/lease"
-printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 15, "needs_owner_away_seconds": 300}, "gpu": {"slots": 1, "max_minutes": 30}}' > "$run4/leases.json"
+printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 15, "needs_owner_away_seconds": 300}, "gpu": {"slots": 1, "max_minutes": 30}, "camera": {"slots": 1, "needs_owner_away_seconds": 60, "owner_back_seconds": 120}}' > "$run4/leases.json"
 cat > "$run4/fake/ioreg" <<'EOF'
 #!/bin/sh
 read -r idle lock < "$(dirname "$0")/owner"
 case "$*" in
-  *IOHIDSystem*) printf '    | |   "HIDIdleTime" = %s000000000\n' "$idle" ;;
+  *IOHIDSystem*) if [ "$idle" != none ]; then printf '    | |   "HIDIdleTime" = %s000000000\n' "$idle"; fi ;;
   *Root*)
+    if [ "$lock" = garbage ]; then echo 'not a plist'; exit 1; fi
     printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>IOConsoleUsers</key><array><dict>'
     if [ "$lock" = locked ]; then printf '<key>CGSSessionScreenIsLocked</key><true/>'; fi
     printf '<key>kCGSSessionIDKey</key><integer>257</integer></dict></array></dict></plist>\n' ;;
 esac
 EOF
 chmod +x "$run4/fake/ioreg"
-owner() { printf '%s %s\n' "$1" "$2" > "$run4/fake/owner"; }
+owner() { printf '%s %s\n' "$1" "$2" > "$run4/fake/owner.new"; mv "$run4/fake/owner.new" "$run4/fake/owner"; }
 LEASE_IOREG="$run4/fake/ioreg"
 export LEASE_IOREG
 lease4="$run4/bin/lease"
-check4() { status=0; "$lease4" check "$1" --owner "$2" > "$run4/check.out" || status=$?; test "$status" -eq "$3"; }
+check4() { status=0; "$lease4" check "$1" --owner "$2" > "$run4/check.out" 2>&1 || status=$?; test "$status" -eq "$3"; }
+acquire4() { status=0; "$lease4" acquire "$1" --owner "$2" --wait-minutes 0.01 > "$run4/acquire.out" 2>&1 || status=$?; test "$status" -eq "$3"; }
 
 owner 400 unlocked                                       # away: the screen is taken at once
-"$lease4" acquire screen --owner A --wait-minutes 0.01 >/dev/null
+acquire4 screen A 0
 check4 screen A 0
 "$lease4" status | grep -q '"idle_seconds": 400'
+"$lease4" status | grep -q '"reader": '
+grep -q 'owner read with' "$run4/locks/log.txt"
+owner 100 unlocked                                       # idle under 300 s but over 30 s: A goes on,
+check4 screen A 0                                        # while a newcomer would still wait
 owner 5 unlocked                                         # the owner comes back mid-turn
 check4 screen A 1
-grep -q 'at the computer' "$run4/check.out"
+grep -q 'back at the computer' "$run4/check.out"
+acquire4 screen A 0                                      # a renewal doesn't look (check does)
 owner 400 locked                                         # or the screen locks
 check4 screen A 2
+owner 400 garbage                                        # or its lock state can't be read
+check4 screen A 2
+owner none unlocked                                      # or the idle time can't be read
+check4 screen A 1
 owner 400 unlocked
 check4 screen A 0
 "$lease4" release screen --owner A >/dev/null
@@ -151,49 +163,66 @@ check4 gpu A 3
 owner 5 locked
 check4 gpu A 0
 "$lease4" release gpu --owner A >/dev/null
+status=0; "$lease4" check screen > /dev/null 2>&1 || status=$?; test "$status" -eq 64   # usage: not "locked"
 
-owner 5 unlocked                                         # at the computer: the wait runs out
-status=0
-"$lease4" acquire screen --owner B --wait-minutes 0.01 > "$run4/b.out" || status=$?
-test "$status" -eq 75
-grep -q 'at the computer (idle 5s, need 300s)' "$run4/b.out"
+owner 100 unlocked                                       # the resource's own thresholds
+acquire4 camera A 0
+check4 camera A 1
+"$lease4" release camera --owner A >/dev/null
+
+owner 100 unlocked                                       # not away long enough: the wait runs out
+acquire4 screen B 75
+grep -q 'at the computer (idle 100s, need 300s)' "$run4/acquire.out"
 owner 900 locked                                         # locked counts as not away, however idle
-status=0
-"$lease4" acquire screen --owner B --wait-minutes 0.01 > "$run4/b.out" || status=$?
-test "$status" -eq 75
-grep -q 'the screen is locked' "$run4/b.out"
+acquire4 screen B 75
+grep -q 'the screen is locked' "$run4/acquire.out"
+owner 900 garbage                                        # and so does a state that can't be read
+acquire4 screen B 75
+owner none unlocked
+acquire4 screen B 75
+grep -q "idle time can't be read" "$run4/acquire.out"
 
-owner 5 unlocked                                         # B and then C wait; B first, once away
-"$lease4" acquire screen --owner B --wait-minutes 1 > "$run4/b.out" &
-waiter_b=$!
+owner 5 unlocked                                         # B waits first; once the owner is away,
+"$lease4" acquire screen --owner B --wait-minutes 1 > "$run4/b.out" &   # C, behind it, doesn't get
+waiter_b=$!                                              # the screen
 background="$background $waiter_b"
 wait_for_status "$run4" '"screen:B"'
-"$lease4" acquire screen --owner C --wait-minutes 1 > "$run4/c.out" &
-waiter_c=$!
-background="$background $waiter_c"
-wait_for_status "$run4" '"screen:C"'
 owner 7 unlocked
 sleep 2.5                                                # a poll with a new idle time says nothing new
 owner 300 unlocked
+acquire4 screen C 75
 wait "$waiter_b"
 "$lease4" status | grep -q '"owner": "B"'
-"$lease4" status | grep -q '"screen:C"'
 test "$(grep -c 'until the owner is away' "$run4/b.out")" -eq 1
 "$lease4" release screen --owner B >/dev/null
-wait "$waiter_c"
-"$lease4" status | grep -q '"owner": "C"'
-"$lease4" release screen --owner C >/dev/null
+
+# A config value that isn't a number of seconds, and an ioreg that isn't there, are refused.
+printf '%s\n' '{"screen": {"slots": 1, "needs_owner_away_seconds": true}}' > "$work/run4b.json"
+mkdir -p "$work/run4b"
+cp "$work/run4b.json" "$work/run4b/leases.json"
+status=0
+"$lease4" acquire screen --owner A --run "$work/run4b" > /dev/null 2>&1 || status=$?
+test "$status" -eq 2
+status=0
+LEASE_IOREG="$run4/fake/missing" "$lease4" acquire screen --owner A > /dev/null 2>&1 || status=$?
+test "$status" -eq 2
+check_status=0
+LEASE_IOREG="$run4/fake/missing" "$lease4" check screen --owner A > /dev/null 2>&1 || check_status=$?
+test "$check_status" -eq 64
 
 # Elsewhere than macOS, without an injected ioreg, a resource that needs the owner away is refused.
-status=0
-env -u LEASE_IOREG python3 -I - "$lease4" "$run4" > "$run4/linux.out" 2>&1 <<'EOF' || status=$?
+for action in acquire check status; do
+  status=0
+  env -u LEASE_IOREG python3 -I - "$lease4" "$run4" "$action" > "$run4/linux.out" 2>&1 <<'EOF' || status=$?
 import runpy, sys
-lease, run = sys.argv[1:]
+lease, run, action = sys.argv[1:]
 sys.platform = "linux"
-sys.exit(runpy.run_path(lease, run_name="lease")["main"](["acquire", "screen", "--owner", "D", "--run", run]))
+args = [action] + (["screen", "--owner", "D"] if action != "status" else []) + ["--run", run]
+sys.exit(runpy.run_path(lease, run_name="lease")["main"](args))
 EOF
-test "$status" -eq 2
-grep -q 'only be told on macOS' "$run4/linux.out"
+  grep -q 'only be told on macOS' "$run4/linux.out"
+  case $action in acquire) test "$status" -eq 2 ;; check) test "$status" -eq 64 ;; status) test "$status" -eq 0 ;; esac
+done
 unset LEASE_IOREG
 
 # run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked

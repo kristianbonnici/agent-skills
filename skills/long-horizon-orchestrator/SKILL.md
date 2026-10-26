@@ -68,7 +68,7 @@ Put everything the user might want to decide into one message, so nothing needs 
   - privacy permissions for the harness app and for the app the tasks build or test (Accessibility, Screen Recording, Automation, …);
   - settings for the run (screen lock and Stage Manager off when anything uses the real screen);
   - the user's own things the run must leave as it found them, and the shared resources tasks take turns on (the screen, the GPU);
-  - whether the user may still be at the computer (an evening run): then the screen's lease waits until they have been away five minutes, and nothing records the screen or plays out loud before that ([references/machine.md](references/machine.md#6-shared-resources-and-disk)).
+  - whether the user may still be at the computer (an evening run): then the screen's lease waits until they have been away five minutes, nothing records the screen or plays out loud before that, and their screen lock must not start sooner ([references/machine.md](references/machine.md#6-shared-resources-and-disk)).
 
   Say that you will keep the computer awake for the whole run (`caffeinate` on macOS), and that the warm-up needs the user at the computer for about five minutes right after they approve. Approving the contract approves all of it.
 - **Estimate:** a rough duration, labelled as an estimate. Agent runs often finish much faster than planned.

@@ -35,17 +35,21 @@ When the user may be at the computer (an evening run), give the screen "needs_ow
 300. Then the first waiter in line gets the screen only once it is unlocked and nobody has touched
 the keyboard, mouse or trackpad for that long (macOS's HIDIdleTime, read with ioreg; on other
 systems a resource with the key is refused). The queue keeps its order while it waits, and the
-wait counts toward --wait-minutes. During its turn the holder runs "check" between steps; check
-says the owner is back once the idle time drops under the resource's "owner_back_seconds" (default
-30). Any input counts, so the holder checks at a point where it has posted no events of its own
-for that long. On a nonzero exit, stop at the next safe point, release, and acquire again later.
-$LEASE_IOREG replaces /usr/sbin/ioreg, for tests.
+wait counts toward --wait-minutes. A state that can't be read counts as not away.
+
+Only the first acquire waits for the owner: a renewal, and a "run" command once started, don't
+look again. So during its turn the holder runs "check" between steps; check says the owner is back
+once the idle time drops under the resource's "owner_back_seconds" (default 30). Any input counts,
+so the holder checks at a point where it has posted no events of its own for that long. On a
+nonzero exit, stop at the next safe point, release, and acquire again later. "status" shows the
+owner's state when a resource needs it. $LEASE_IOREG replaces /usr/sbin/ioreg, for tests; status
+and the log name it when set.
 
 Exit status: 0 done; 75 the wait timed out; 76 the turn is over and others wait (the lease is
 released); 124 "run" stopped the command at the end of its lease; 2 usage error.
 check: 0 you hold the lease (and the owner is away, where the resource needs that); 1 the owner is
-at the computer; 2 the screen is locked; 3 you don't hold the lease. Any nonzero status means
-stop, so a usage error (2) stops a holder too. 0, 1 and 2 mean what they mean for owner-away.
+at the computer; 2 the screen is locked, or its state can't be read; 3 you don't hold the lease;
+64 usage error. Any nonzero status means stop.
 """
 
 from __future__ import annotations
@@ -73,6 +77,8 @@ IOREG = "/usr/sbin/ioreg"
 CHECK_AT_COMPUTER = 1
 CHECK_LOCKED = 2
 CHECK_NOT_HELD = 3
+CHECK_USAGE = 64
+READ_TIMEOUT_SECONDS = 3
 
 
 class Unsupported(Exception):
@@ -89,19 +95,21 @@ class Owner:
             raise Unsupported("it can only be told on macOS (ioreg's HIDIdleTime)")
         if not os.access(self.ioreg, os.X_OK):
             raise Unsupported(f"{self.ioreg} isn't there to tell it")
+        self.injected = self.ioreg if injected else None
 
     def _ioreg(self, *args: str) -> bytes:
         try:
-            return subprocess.run([self.ioreg, *args], capture_output=True, timeout=10).stdout
+            return subprocess.run([self.ioreg, *args], capture_output=True,
+                                  timeout=READ_TIMEOUT_SECONDS).stdout
         except (OSError, subprocess.TimeoutExpired):
             return b""
 
-    def locked(self) -> bool:
-        """True when a console session's screen is locked (owner-away's CGSSessionScreenIsLocked)."""
+    def locked(self) -> bool | None:
+        """True when a console session's screen is locked (CGSSessionScreenIsLocked), None when unreadable."""
         try:
             root = plistlib.loads(self._ioreg("-n", "Root", "-d1", "-a"))
         except Exception:
-            return False
+            return None
 
         def find(value) -> bool:
             if isinstance(value, dict):
@@ -118,9 +126,12 @@ class Owner:
         return int(match.group(1)) // 1_000_000_000 if match else None
 
     def state(self, needed: float, back: bool = False) -> tuple[int, str]:
-        """(0 away, 1 at the computer, 2 locked) like owner-away, with a few words on why. With back,
-        needed is how recent an input means the owner came back."""
-        if self.locked():
+        """(0 away, 1 at the computer, 2 locked), with a few words on why. With back, needed is how
+        recent an input means the owner came back."""
+        locked = self.locked()
+        if locked is None:
+            return CHECK_LOCKED, "the screen's lock state can't be read, so it may be locked"
+        if locked:
             return CHECK_LOCKED, "the screen is locked"
         idle = self.idle_seconds()
         if idle is None:
@@ -154,6 +165,7 @@ class Leases:
             raise SystemExit(f"lease: can't read {config_path}: {error}")
 
     def log(self, line: str) -> None:
+        os.makedirs(self.locks, exist_ok=True)
         with open(self.log_path, "a") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
 
@@ -193,18 +205,25 @@ class Leases:
     def wait_minutes(self, resource: str) -> float:
         return float(self.config[resource].get("wait_minutes", DEFAULT_WAIT_MINUTES))
 
+    def seconds(self, resource: str, key: str, default: float) -> float:
+        value = self.config[resource].get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise SystemExit(f"lease: {key} of {resource} in leases.json must be a number of seconds")
+        return float(value)
+
     def owner_away_seconds(self, resource: str) -> float:
-        return float(self.config[resource].get("needs_owner_away_seconds", 0))
+        return self.seconds(resource, "needs_owner_away_seconds", 0)
 
     def owner_back_seconds(self, resource: str) -> float:
-        return float(self.config[resource].get("owner_back_seconds", DEFAULT_OWNER_BACK_SECONDS))
+        return self.seconds(resource, "owner_back_seconds", DEFAULT_OWNER_BACK_SECONDS)
 
     def owner(self, resource: str) -> Owner | None:
         """The owner reader for a resource that needs the owner away, else None; raises Unsupported."""
         return Owner() if self.owner_away_seconds(resource) > 0 else None
 
-    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float, away: Owner | None = None):
-        """Returns ("held", minutes left), ("waiting", None or (owner-away status, why)) or ("turn over", None)."""
+    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float, owner_away: bool = True):
+        """Returns ("held", minutes left), ("waiting", None), ("turn over", None), or ("ready", None) when
+        the lease would be taken but owner_away is False: read the owner's state, outside the lock."""
         need = self.slots(resource) if take_all else 1
         turn = self.turn_minutes(resource)
 
@@ -231,10 +250,8 @@ class Leases:
                 return "waiting", None
             if sum(l["slots"] for l in held) + need > self.slots(resource):
                 return "waiting", None
-            if away is not None:
-                code, why = away.state(self.owner_away_seconds(resource))
-                if code:
-                    return "waiting", (code, why)
+            if not owner_away:
+                return "ready", None
             held.append({"owner": owner, "slots": need, "expires": expires, "since": now})
             del waiting[me]
             return "held", minutes
@@ -247,12 +264,18 @@ class Leases:
             away = self.owner(resource)
         except Unsupported as error:
             print(f"lease: {resource} needs the owner away, but {error}. Remove needs_owner_away_seconds "
-                  f"from leases.json, or use {resource} only while the user is away.", file=sys.stderr)
+                  f"from leases.json to use {resource} here.", file=sys.stderr)
             return 2, None
+        if away is not None and away.injected:
+            self.log(f"owner read with {away.injected} for {resource} {owner}")
         deadline = time.time() + wait_minutes * 60
         announced = None
         while True:
-            result, left = self.try_acquire(resource, owner, take_all, minutes, away)
+            result, left = self.try_acquire(resource, owner, take_all, minutes, away is None)
+            if result == "ready":
+                code, why = away.state(self.owner_away_seconds(resource))
+                result, left = ("waiting", (code, why)) if code else \
+                    self.try_acquire(resource, owner, take_all, minutes, True)
             if result == "held":
                 self.log(f"acquire {resource} {owner} {left:.1f}m{' all' if take_all else ''}")
                 print(f"lease: {owner} holds {resource} for up to {round(left, 1):g} min")
@@ -296,7 +319,7 @@ class Leases:
             away = self.owner(resource)
         except Unsupported as error:
             print(f"lease: {resource} needs the owner away, but {error}.", file=sys.stderr)
-            return 2
+            return CHECK_USAGE
         left = self.locked(holding)
         if left is None:
             print(f"lease: {owner} doesn't hold {resource}; stop using it.")
@@ -328,12 +351,30 @@ class Leases:
 
 
 def main(argv: list[str]) -> int:
+    """Runs a lease command; a usage or configuration error exits 2, or 64 for check, where 2 means
+    the screen is locked."""
+    usage = CHECK_USAGE if argv[:1] == ["check"] else 2
+    try:
+        return command(argv, usage)
+    except SystemExit as error:
+        if isinstance(error.code, str):
+            print(error.code, file=sys.stderr)
+            return usage
+        raise
+
+
+def command(argv: list[str], usage: int) -> int:
     command_args: list[str] = []
     if "--" in argv:
         i = argv.index("--")
         argv, command_args = argv[:i], argv[i + 1:]
-    parser = argparse.ArgumentParser(prog="lease", description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            self.print_usage(sys.stderr)
+            self.exit(usage, f"{self.prog}: error: {message}\n")
+
+    parser = Parser(prog="lease", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", choices=["acquire", "release", "run", "check", "status"])
     parser.add_argument("resource", nargs="?")
     parser.add_argument("--owner")
@@ -350,6 +391,8 @@ def main(argv: list[str]) -> int:
             try:
                 owner = Owner()
                 report["owner"] = {"locked": owner.locked(), "idle_seconds": owner.idle_seconds()}
+                if owner.injected:
+                    report["owner"]["reader"] = owner.injected
             except Unsupported as error:
                 report["owner"] = f"unknown: {error}"
         print(json.dumps(report, indent=1))
@@ -357,10 +400,10 @@ def main(argv: list[str]) -> int:
     if not args.resource or args.resource not in leases.config:
         known = ", ".join(sorted(leases.config)) or "none"
         print(f"lease: name a resource from leases.json ({known})", file=sys.stderr)
-        return 2
+        return usage
     if not args.owner:
         print("lease: --owner <task ID> is required", file=sys.stderr)
-        return 2
+        return usage
     minutes = min(args.minutes, leases.max_minutes(args.resource))
     wait_minutes = args.wait_minutes if args.wait_minutes is not None else leases.wait_minutes(args.resource)
 
