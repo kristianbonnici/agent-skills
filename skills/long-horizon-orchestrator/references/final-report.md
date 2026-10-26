@@ -12,7 +12,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
 - A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
 - Show what changed: the tasks' pictures under their items ("Pictures" below), and in T3 the run map right above the report ("Run map").
-- With OrbOS's tools, offer the report to listen to, just before posting it, and as a tour at the very end of the finish when the user is at the computer ("Offer it to listen to and as a tour" below). Neither changes the report, and neither holds up the finish.
+- With OrbOS's tools, offer the report to listen to, with its tour, once, just before posting it ("Offer it to listen to, with its tour" below). The tour waits with the reading for the user to play, so no live tour is needed; give one only when the offer couldn't keep it. Neither changes the report, and neither holds up the finish.
 
 ## Template
 
@@ -57,7 +57,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
 - <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
-<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. With OrbOS's walkthrough tool, add: "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json).">
+<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. With OrbOS, add: "The report waits in the notch to listen to, with a tour of the run: press Tour." When the offer couldn't keep the tour and you have the walkthrough tool, add instead: "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json).">
 
 <One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%; Antigravity Argon from 1% to 9% of its week." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
 ```
@@ -84,8 +84,8 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 - **The whole run:** from the user's approval of the contract (its time is in the ledger) to the final report. Your own worked time is the sum of your turns in that span, from the host's per-turn records of your own thread, and the number of those turns is your wake count. If the host has no per-turn times, give the run's span only.
 - **Quota pauses:** from when the first task failed on the limit until you resumed the tasks, from the threads' failed and resumed turns, not from your forecast.
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events. For the map, add each helper's outcome (`status`) and whether it reviewed or researched (`role`).
-- **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff.
-- **Commits:** a merged task's `commits` are the ones the ledger lists for it. With them, `scripts/report-offer` finds the task's key change for the tour. To choose it yourself, give the task a `key_change` instead ([below](#offer-it-to-listen-to-and-as-a-tour)).
+- **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff, and the run's tour shows those in the run directory ([below](#pictures-in-the-tour)).
+- **Commits:** a merged task's `commits` are the ones the ledger lists for it. With them, `scripts/report-offer` finds the task's key change for the tour. To choose it yourself, give the task a `key_change` instead ([below](#offer-it-to-listen-to-with-its-tour)).
 - **Makers:** each card's mark comes from the model's name (`assets/marks/marks.json` knows about 40 makers and harnesses). When the name doesn't say who made the model, add the maker as the host's model ID names it (`"maker": "moonshotai"` for `openrouter/moonshotai/…`); a maker without a mark gets a letter.
 
 Put these facts into a JSON file in the run directory, and run `scripts/run-charts <facts.json> <run directory>/report`. It writes the run map, both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws the charts on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the map or the charts by hand: the map is tens of thousands of characters, and `linkStyle` indexes are easy to miscount.
@@ -232,39 +232,45 @@ gantt
 
 Copy the init lines of both examples as they are, so the charts look alike from one run to the next. If the user's chat view doesn't render Mermaid, the blocks still read as lists of tasks, times and links, so include them either way.
 
-## Offer it to listen to and as a tour
+## Offer it to listen to, with its tour
 
-When the user has OrbOS, its MCP server (`read-aloud --mcp`) gives you `offer_reading` and `walkthrough`, perhaps with a prefix such as `mcp__read-aloud__`. With them, the report can wait in the notch to be heard later, and be walked through card by card. Without them, skip this section silently. Never `speak` about either: nobody asked to be woken.
+When the user has OrbOS, its MCP server (`read-aloud --mcp`) gives you `offer_reading` and `walkthrough`, perhaps with a prefix such as `mcp__read-aloud__`. With them, the report waits in the notch to be heard later, and its tour waits with it: the card shows **Tour** beside **Play**, and the user plays the tour card by card whenever they like, without you. Without the tools, skip this section silently. Never `speak` about either: nobody asked to be woken.
 
-### Make the arguments
+### Offer it, just before you post the report
 
 1. Save the report as `<run directory>/report/final-report.md`, the copy the rules ask for.
-2. Run `scripts/report-offer <facts.json> <run directory>/report/final-report.md --repo <integration checkout> --ask-for-tour`.
-   - **`--ask-for-tour`** only when you have `walkthrough`. The reading then ends by saying how to ask for the tour.
-   - **`--repo`** adds the file and picture steps. OrbOS's server reads their paths relative to the folder your harness started it in, so use it only when that is the integration checkout. In T3 it is, because your thread runs at the project's root. Otherwise use `--no-files`.
+2. Run `scripts/report-offer <facts.json> <run directory>/report/final-report.md --repo <integration checkout> --pictures <run directory> --ask-for-tour`.
+   - **`--repo`** adds the file and picture steps. OrbOS's server reads their paths relative to the folder it was started in, so use it only when that is the integration checkout. In T3 it is, because your thread runs at the project's root. Otherwise use `--no-files`.
+   - **`--pictures`** shows the tasks' own pictures from the run directory in the tour.
+   - **`--ask-for-tour`** only when you have `walkthrough`. A reading offered without its tour then ends by saying how to ask for it.
+   - **`--harness codex`** when you are Codex (the default is `claude-code`).
 
-It writes `reading.json` and `tour.json` beside the report, and prints what they hold. `tour.json` has the `offer`, the `calls` that follow it, the `end`, and every step in order as `steps`. Pass them to the tools unchanged: every field is already within the tools' limits, and words OrbOS would refuse, such as a sentence asking for a code, are left out.
+It writes the arguments beside the report, prints what they hold, and then offers the reading with its tour itself, once. Every field is already within the tools' limits, and words OrbOS would refuse, such as a sentence asking for a code, are left out.
 
-- **The reading** (kind `report`): the outcome first, then what was built, what isn't finished, the open decisions by name, and what to check. It is plain speech of about two minutes, with no code, paths or IDs. The whole report is its original, under **Full Text**.
+- **The reading** (kind `report`): the outcome first, then what was built, what isn't finished, the open decisions by name, and what to check. It is plain speech of about two minutes, with no code, paths or IDs, and it ends by naming **Tour**. The whole report is its original, under **Full Text**.
 - **The tour:**
   - an opening note;
-  - per task, a note of what it built, in two sentences;
-  - per task, its key change as a file step, and a picture its commits put in the repository;
+  - per task, a note of what it built, in two sentences, and how many pictures it left;
+  - per task, its key change as a file step, its own pictures, and a picture its commits put in the repository;
   - a closing note with the open decisions.
 
-  At most 50 steps, with the notes several to a call, and never the same file twice. The key change is the largest block one of the task's own commits added, in the file the task changed most: source first, then docs, then examples and experiments, then tests. Only a merged task's commits on the integration branch count, and the lines are found where they are at its head. A task's `key_change` (`{"path": …, "lines": [first, last], "say": "<what the change does, never the code>"}`) overrides it. Without a `say`, the step only says the marked lines are the largest block the task added, so give one for the tasks that matter most.
+  At most 50 steps and about 8 pictures (one from each task in turn), never the same file twice. The key change is the largest block one of the task's own commits added, in the file the task changed most: source first, then docs, then examples and experiments, then tests. Only a merged task's commits on the integration branch count, and the lines are found where they are at its head. A task's `key_change` (`{"path": …, "lines": [first, last], "say": "<what the change does, never the code>"}`) overrides it. Without a `say`, the step only says the marked lines are the largest block the task added, so give one for the tasks that matter most.
+
+Act on its last line (also in `offered.json`):
+
+- **`offered r1, with its tour of N steps`**: done. The reading and its tour wait in the notch until the user plays or dismisses them: 8 hours unless they chose otherwise, so a report that comes at night is still there in the morning. No live tour is needed. A step OrbOS refused, such as a picture it couldn't read, was left out and the rest offered again; it names each one.
+- **`offered r1 without a tour`**: this OrbOS can't keep a tour, so it got `reading-alone.json`. The live tour below stays the way to see the run.
+- **`not offered` (exit 3)**: OrbOS's command isn't installed, `offer_reading` is switched off for you, OrbOS refused, or it didn't answer in time. If you have `offer_reading`, call it once with `reading.json`'s fields, or with `reading-alone.json`'s when your `offer_reading` has no `tour` field (an older OrbOS) or answers `refused: this OrbOS can't keep a tour`. When it refuses one of the tour's steps (`refused: The tour's Step n: …`), drop that step from `tour` and call again. An error that remains goes into the ledger, and the finish goes on.
+
+Note the outcome and the id in the ledger. The id only works in the session that offered it, and report-offer's session ends with it, so a report posted again can't withdraw the old card: it waits until the user dismisses it or it expires, beside the new one. Offer a new reading only when the outcome changed, and run report-offer with `--no-offer` when you only need the files again, as for a tour the user asks for.
 
 ### Pictures in the tour
 
-OrbOS's server reads files only inside its workspace, so the tour shows only pictures in the repository, such as a guide's screenshots that a task updated. The tasks' own pictures stay in the run directory, and each task's note says how many it left under its item in the report. Never copy them into the repository to show them.
+report-offer's own client starts OrbOS's command with the run directory as its pictures folder (`--pictures`), so a tour it offers shows the tasks' own pictures (PNG or JPEG, listed in the facts' `pictures`) with their captions. That folder serves pictures alone: OrbOS reads nothing else in the run directory, and never a name that holds secrets or a link out of it. Your own OrbOS server has no such folder, so `reading.json` and `tour.json` show only pictures in the repository, such as a guide's screenshots that a task updated, and each task's note says how many it left under its item in the report. Never copy the run's pictures into the repository to show them.
 
-### The reading: just before you post the report
+### The live tour: only when the tour didn't wait
 
-Call `offer_reading` with `reading.json`'s fields. It returns at once (`offered: r1`); keep the id in the ledger, so a re-posted report can withdraw it. The id only works in the same session of OrbOS's server: after a restart a withdrawal answers `not waiting`, and the old card simply waits until it expires. The card waits in the notch until the user plays or dismisses it: 8 hours unless they chose otherwise, so a report that comes at night is still there in the morning. Offer it once. An error, such as a refusal or OrbOS not opening, goes into the ledger, and the finish goes on.
-
-### The tour: after the finish, only with the user there
-
-A walkthrough's offer waits only as long as the user's question wait (3 minutes unless they chose otherwise), and a tour runs only while you make its calls. So:
+When the reading's tour waits in the notch, skip this. When it doesn't (an OrbOS that can't keep one, or no offer at all), the tour from `tour.json` can still be given as a live walkthrough. A walkthrough's offer waits only as long as the user's question wait (3 minutes unless they chose otherwise), and a tour runs only while you make its calls. So:
 
 - **The user is at the computer** (input within the last 2 minutes; on macOS, `HIDIdleTime` from `ioreg -c IOHIDSystem`, in nanoseconds; a task's own screen checks reset it too, so make sure none runs; on a host where you can't tell, treat the user as away): give the tour as below, after every other finish step, the ledger's `finished` and the push notification included. Your turn stays open while it runs. Then end the turn with one short line, not another report, such as "The tour has ended." or "No tour for now: ask me to walk you through the run any time."
 - **Otherwise,** don't offer it. The reading and the report's closing line tell the user to ask for it ("walk me through the run"). When they do, give it from the same `tour.json`, or a new session can, from the path the report names.

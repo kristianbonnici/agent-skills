@@ -1,25 +1,41 @@
 #!/usr/bin/env python3
 """Turn a run's facts file and final report into what the orchestrator hands OrbOS at the finish:
-the report as a reading to listen to later (`offer_reading`) and as a tour (`walkthrough`). Both
-are JSON arguments for the tools, held to their limits, so the orchestrator passes them unchanged.
+the report as a reading to listen to later, with a tour of the run that waits with it
+(`offer_reading` with its `tour`), and offer it through OrbOS's own command. All are JSON
+arguments for the tools, held to their limits, so they pass unchanged.
 
-references/final-report.md ("Offer it to listen to and as a tour") says when to use them.
+references/final-report.md ("Offer it to listen to, with its tour") says when to use them.
 
 Usage:
-  report-offer <facts.json> <report.md> [--repo <integration checkout>] [--out <folder>]
-               [--no-files] [--ask-for-tour] [--words <n>]
+  report-offer <facts.json> <report.md> [--repo <integration checkout>] [--pictures <run folder>]
+               [--out <folder>] [--no-files] [--ask-for-tour] [--words <n>]
+               [--no-offer] [--read-aloud <command>] [--harness <name>] [--timeout <seconds>]
 
 Writes into the output folder (the report's folder unless given):
 
-  reading.json   the offer_reading arguments: kind "report", a title, the text to read (plain
-                 speech, outcome first, then what was built and what needs the user, about two
-                 minutes, no code, paths or IDs) and the whole report as its original.
-  tour.json      {"offer": <the walkthrough offer, its first notes queued>,
-                  "calls": [<step calls, in order>], "end": <the end call>,
-                  "steps": [<every step in order, to send one again after a Back>]}
-                 An opening note, then per task a note (what it built, in two sentences) and,
-                 with --repo, a file step at its key change and a picture step for a picture its
-                 commits put in the repository; a closing note with the open decisions.
+  reading.json        the offer_reading arguments: kind "report", a title, the text to read (plain
+                      speech, outcome first, then what was built and what needs the user, about two
+                      minutes, no code, paths or IDs; it ends by naming Tour), the whole report as
+                      its original, and the tour as `tour`.
+  reading-alone.json  the same without the tour, for an OrbOS that can't keep one; with
+                      --ask-for-tour it ends by saying how to ask for the tour.
+  tour.json           the same tour as a live walkthrough: {"offer": <the walkthrough offer, its
+                      first notes queued>, "calls": [<step calls, in order>], "end": <the end call>,
+                      "steps": [<every step in order, to send one again after a Back>]}
+  offered.json        what the offer came to (unless --no-offer): offered, its id, the steps of the
+                      tour it kept, the steps OrbOS refused and OrbOS's answer.
+
+The tour: an opening note, then per task a note (what it built, in two sentences) and, with
+--repo, a file step at its key change and a picture step for a picture its commits put in the
+repository; a closing note with the open decisions. At most 50 steps and about 8 pictures.
+
+Then it offers the reading with its tour itself, as a short MCP client of OrbOS's bundled command
+(`read-aloud --harness <name> --mcp --pictures <run folder>`, the user's own OrbOS), so that the
+tour also shows the tasks' own pictures from the run folder, which the orchestrator's own OrbOS
+server can't read. A step OrbOS refuses is left out and the offer made again; an OrbOS that can't
+keep a tour gets reading-alone.json. Exit 0: offered (it says whether with its tour), or written
+with --no-offer; exit 3: written but not offered (no command, offer_reading off, a refusal, no
+answer within --timeout), so offer reading.json with your own offer_reading.
 
 The report is the one the skill's template describes ("## What was built" with "**1. Name
 (Task A)**" items, "## Open decisions" with numbered "**Label.**" items, and so on).
@@ -30,27 +46,40 @@ Facts it reads, besides run-charts' (`run-charts --help`), all optional:
   a task's "key_change": {"path": "Sources/Retry.swift", "lines": [42, 58], "say": "..."}
                                           the key change, chosen by the orchestrator; "say" is
                                           the narration (what the change does, never the code)
+  a task's "pictures": [{"src": ..., "caption": ...}]
+                                          with --pictures, those in the run folder (PNG or JPEG)
+                                          are shown, with their captions; src relative to the
+                                          facts file, or absolute
 
 File and picture steps name paths relative to the repository, which must be the folder the
-orchestrator's harness runs in: OrbOS's MCP server reads them in its own workspace and nowhere
-else. Run pictures outside the repository aren't shown; the task's note says it left some.
---no-files leaves out file and picture steps (a harness started elsewhere).
+orchestrator's harness runs in (OrbOS's server reads them in its own workspace), and report-offer
+starts OrbOS's command there too. The run's own pictures are relative to the run folder and only
+in the tour report-offer offers itself. --no-files leaves out file and picture steps (a harness
+started elsewhere).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import select
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 # The tools' limits, as OrbOS has them at commit a91810c8 (2026-10-24): OfferReading.swift's
-# OfferLimits, WalkthroughCall.swift's WalkthroughLimits, TourLimits, docs/assistants.md. A field
-# over its limit is refused, never cut, so every text here is cut to fit before it is written.
+# OfferLimits, WalkthroughCall.swift's WalkthroughLimits, TourLimits, docs/assistants.md; and an
+# offer's `tour` at 6632a4fd (2026-10-26): OfferTour.swift's OfferTourLimits, the walkthrough's
+# tour steps, at most 50 and 8 MB. A field over its limit is refused, never cut, so every text
+# here is cut to fit before it is written.
 READING = {"title": 80, "text": 10_000, "original": 50_000, "source": 160}
 WALK = {"title": 80, "about": 300, "note": 200, "steps": 50, "queued": 20,
         "step_title": 60, "caption": 140, "narration": 400}
@@ -61,6 +90,7 @@ PICTURE_PIXELS = 40_000_000
 PATH_CHARACTERS = 300        # a file or picture step's path
 SHOWN_LINES = 300            # the most lines a file step marks
 WORDS = 320                  # about two minutes: the offer card counts 160 words a minute
+TOUR_PICTURES = 8            # pictures in a tour: OrbOS scales each to at most 700 KB, and a waiting tour holds 8 MB
 
 # Names that hold secrets by convention, which OrbOS's server refuses (WorkspaceFile.isSecret, at
 # the same commit); left out here so a tour never trips a safety refusal.
@@ -479,7 +509,9 @@ def task_lookup(facts: dict, items: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------------------------
 # The reading
 
-def reading(facts: dict, markdown: str, budget: int = WORDS, ask_for_tour: bool = False) -> dict:
+def reading(facts: dict, markdown: str, budget: int = WORDS, ask_for_tour: bool = False, with_tour: bool = False) -> dict:
+    """The offer_reading arguments. `with_tour`: the tour comes with it, so it ends by naming Tour;
+    `ask_for_tour`: it doesn't, and it ends by saying how to ask for one."""
     TASK_IDS.update(str(t.get("id")) for t in facts.get("tasks", []) if isinstance(t, dict) and t.get("id"))
     parts = report_sections(markdown)
     intro = speakable(prose(parts.get("", "").splitlines()))
@@ -509,7 +541,8 @@ def reading(facts: dict, markdown: str, budget: int = WORDS, ask_for_tour: bool 
         if checking and with_checks:
             paragraphs.append(capitalized(f"{count(len(checking), 'thing')} worth checking yourself, in the report."))
         paragraphs.append("The whole report is in the chat, and it's under Full Text here."
-                          + (" For a tour of the run, card by card, ask me to walk you through the run." if ask_for_tour else ""))
+                          + (" For a tour of the run, card by card, press Tour." if with_tour else
+                             " For a tour of the run, card by card, ask me to walk you through the run." if ask_for_tour else ""))
         return "\n\n".join(p for p in paragraphs if p)
 
     text = ""
@@ -716,7 +749,44 @@ def note(title: str, caption: str, narration: str = "") -> dict:
     return step
 
 
-def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
+def run_pictures(task: dict, folder: Path, base: Path, shown: set[str]) -> list[dict]:
+    """The task's own pictures (its `pictures` in the facts) that are in the run's pictures folder and
+    that OrbOS's server would show from there: PNG or JPEG, no name that holds secrets, nothing
+    through a link out of the folder; each with its path relative to the folder and its caption."""
+    found = []
+    root = folder.resolve()
+    for picture in task.get("pictures") or []:
+        src = picture.get("src") if isinstance(picture, dict) else picture if isinstance(picture, str) else None
+        if not isinstance(src, str) or not src or not PICTURE_PATH.search(src):
+            continue
+        # Its folder's real path and its own name (a link there is followed only below, to see where it leads).
+        given = Path(src) if Path(src).is_absolute() else base / src
+        full = Path(os.path.realpath(given.parent)) / given.name
+        if not full.is_relative_to(root) or full == root:
+            continue
+        relative = full.relative_to(root).as_posix()
+        if (relative in shown or len(relative) > PATH_CHARACTERS or secret_file(relative) or ".." in relative.split("/")
+                or any(unicodedata.category(c) in ("Cc", "Cf") for c in relative)):
+            continue
+        real = (root / relative).resolve()
+        try:
+            within = real.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if not real.is_file() or secret_file(within) or not PICTURE_PATH.search(within):
+            continue
+        size = picture_size(real)
+        if not size or size[0] * size[1] > PICTURE_PIXELS:
+            continue
+        caption = picture.get("caption", "") if isinstance(picture, dict) else ""
+        found.append({"path": relative, "caption": caption if isinstance(caption, str) else ""})
+        shown.add(relative)
+    return found
+
+
+def tour(facts: dict, markdown: str, repo: Path | None, pictures: Path | None = None, base: Path = Path(".")) -> dict:
+    """The tour's steps (and the calls of a live walkthrough). With `pictures`, the run folder an
+    offer's server was started with (`--pictures`), the tasks' own pictures there are shown too."""
     TASK_IDS.update(str(t.get("id")) for t in facts.get("tasks", []) if isinstance(t, dict) and t.get("id"))
     parts = report_sections(markdown)
     intro = sentences(speakable(prose(parts.get("", "").splitlines())))
@@ -730,37 +800,51 @@ def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
     steps.append(note("How the run went", intro[0] if intro else run_line(facts),
                       f"{opening} I'll show each task in turn, then what needs you."))
 
-    per_task: list[list[dict]] = []
+    groups: list[dict] = []
     shown: set[str] = set()   # files and pictures an earlier task showed
     for entry in built:
         item, task = entry["item"], entry["task"]
         name = speakable(item["name"]) or speakable(str(task.get("name", ""))) or "A task"
-        said = sentences(speakable(item.get("text", ""))) or sentences(speakable(str(task.get("summary", ""))))
-        status = task.get("status", "merged")
-        state = "" if status in ("merged", "") else f"It is {OUTCOME_WORDS.get(status, status)}."
-        pictures = len(task.get("pictures") or [])
-        seen = f"It left {count(pictures, 'picture')}, under its item in the report." if pictures else ""
-        caption = " ".join(x for x in [caption_of(said[0]) if said else "", state] if x) or name
-        narration = " ".join(x for x in [" ".join(said[:2]), state, seen] if x)
-        group = [note(name, caption, narration)]
+        group = {"name": name, "task": task, "file": None, "candidates": [], "pictures": [],
+                 "said": sentences(speakable(item.get("text", ""))) or sentences(speakable(str(task.get("summary", ""))))}
         if repo is not None and task:
             key, picture = changes(repo, task, shown)
             if key:
-                step = {"kind": "file", "title": labelled(name, "key change"),
-                        "path": key["path"]}
+                step = {"kind": "file", "title": labelled(name, "key change"), "path": key["path"]}
                 if key["lines"]:
                     step["lines"] = key["lines"]
                 step["narration"] = words_fit(speakable(key["say"]) if key["say"] else
                                               "The marked lines are the largest block it added, in the file it changed most.",
                                               WALK["narration"], "The marked lines are this task's key change.")
-                group.append(step)
+                group["file"] = step
                 shown.add(key["path"])
             if picture:
-                group.append({"kind": "picture", "title": labelled(name, "a picture"),
-                              "path": picture,
-                              "narration": "A picture this task added to the project."})
+                group["candidates"].append({"path": picture, "own": False})
                 shown.add(picture)
-        per_task.append(group)
+        if pictures is not None and task:
+            group["candidates"][:0] = [dict(p, own=True) for p in run_pictures(task, pictures, base, shown)]
+        groups.append(group)
+
+    # About 8 pictures in all (each is up to 700 KB once OrbOS scales it, and a waiting tour holds
+    # 8 MB): one from each task in turn, its own pictures before the project's.
+    picked = 0
+    for round_ in range(max((len(g["candidates"]) for g in groups), default=0)):
+        for group in groups:
+            if picked < TOUR_PICTURES and round_ < len(group["candidates"]):
+                group["pictures"].append(group["candidates"][round_])
+                picked += 1
+
+    def picture_step(group: dict, n: int, picture: dict) -> dict:
+        what = "a picture" if n == 0 else f"picture {n + 1}"
+        if not picture["own"]:
+            return {"kind": "picture", "title": labelled(group["name"], what), "path": picture["path"],
+                    "narration": "A picture this task added to the project."}
+        caption = words_fit(ended(speakable(picture["caption"])), WALK["caption"], "")
+        step = {"kind": "picture", "title": labelled(group["name"], what), "path": picture["path"]}
+        return dict(step, caption=caption) if caption else dict(step, narration="A picture this task took of its work.")
+
+    per_task = [[{"kind": "note", "group": n}] + ([g["file"]] if g["file"] else [])
+                + [picture_step(g, i, p) for i, p in enumerate(g["pictures"])] for n, g in enumerate(groups)]
 
     closing = []
     if unfinished:
@@ -785,6 +869,26 @@ def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
         keep = WALK["steps"] - 3
         rest = len(per_task) - keep
         per_task = per_task[:keep] + [[note(f"{count(rest, 'more task')}", f"{count(rest, 'more task')} in the report.")]]
+
+    # Each task's note, once its pictures are known: what it built, and how many pictures it left.
+    for group_steps in per_task:
+        if "group" not in group_steps[0]:
+            continue
+        group = groups[group_steps[0]["group"]]
+        task, said = group["task"], group["said"]
+        status = task.get("status", "merged")
+        state = "" if status in ("merged", "") else f"It is {OUTCOME_WORDS.get(status, status)}."
+        left = len(task.get("pictures") or [])
+        here = sum(1 for s in group_steps if s["kind"] == "picture" and s["path"] in
+                   {p["path"] for p in group["pictures"] if p["own"]})
+        seen = ""
+        if left:
+            seen = f"It left {count(left, 'picture')}, under its item in the report"
+            seen += ("." if not here else "; the tour shows them." if here >= left
+                     else f"; the tour shows {count(here, 'of them', 'of them')}.")
+        caption = " ".join(x for x in [caption_of(said[0]) if said else "", state] if x) or group["name"]
+        narration = " ".join(x for x in [" ".join(said[:2]), state, seen] if x)
+        group_steps[0] = note(group["name"], caption, narration)
     steps += [s for g in per_task for s in g] + [final]
 
     # Calls: notes queue (up to 20 a call), file and picture steps go one to a call. The offer
@@ -810,6 +914,169 @@ def tour(facts: dict, markdown: str, repo: Path | None) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------
+# Offering it through OrbOS's bundled command: a short MCP client of `read-aloud --mcp`
+
+PROTOCOL = "2025-06-18"
+HANDSHAKE_SECONDS = 30       # the command opens OrbOS when it isn't running and waits up to 20 s for it
+TOUR_ATTEMPTS = 10           # offers with a step left out each time OrbOS refuses one
+
+
+def bundled_command(given: str | None) -> str | None:
+    """OrbOS's command: the one given, else `read-aloud` on the PATH or in ~/bin (OrbOS links it there),
+    else the app's in the Applications folders; only one bundled in an app (…/Contents/MacOS/read-aloud)."""
+    if given:
+        return given if os.path.isfile(given) and os.access(given, os.X_OK) else None
+    home = Path.home()
+    for candidate in (shutil.which("read-aloud"), home / "bin" / "read-aloud",
+                      Path("/Applications/OrbOS.app/Contents/MacOS/read-aloud"),
+                      home / "Applications" / "OrbOS.app" / "Contents" / "MacOS" / "read-aloud"):
+        if not candidate or not os.access(candidate, os.X_OK):
+            continue
+        real = Path(candidate).resolve()
+        if (real.name == "read-aloud" and real.parent.name == "MacOS" and real.parent.parent.name == "Contents"
+                and real.parent.parent.parent.suffix == ".app" and (real.parent.parent / "Info.plist").is_file()):
+            return str(real)
+    return None
+
+
+def pictures_folder(folder: str | None) -> Path | None:
+    """The run folder as the server's pictures folder, when OrbOS takes it as one: a folder, not `/`,
+    the home folder or a folder above it, nor one whose path holds a secrets' folder."""
+    if not folder:
+        return None
+    real = Path(folder).resolve()
+    home = Path.home().resolve()
+    if not real.is_dir() or real == Path("/") or real == home or home.is_relative_to(real):
+        return None
+    parts = [p.lower() for p in real.parts[1:]]
+    if any(p in SECRET_FOLDERS for p in parts) or any(a == ".config" and b == "gh" for a, b in zip(parts, parts[1:])):
+        return None
+    return real
+
+
+class Server:
+    """`read-aloud --mcp` on stdio: one JSON-RPC message a line, every wait with a deadline."""
+
+    def __init__(self, argv: list[str], cwd: Path):
+        self.errors = tempfile.TemporaryFile()
+        self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
+                                        cwd=str(cwd), start_new_session=True)
+        self.buffer = b""
+        self.next_id = 0
+
+    def send(self, message: dict) -> None:
+        self.process.stdin.write((json.dumps(message, ensure_ascii=False) + "\n").encode())
+        self.process.stdin.flush()
+
+    def line(self, deadline: float) -> bytes:
+        while b"\n" not in self.buffer:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([self.process.stdout], [], [], left)[0]:
+                raise TimeoutError("OrbOS's command didn't answer in time")
+            chunk = os.read(self.process.stdout.fileno(), 1 << 16)
+            if not chunk:
+                raise EOFError("OrbOS's command ended" + (f": {self.complaint()}" if self.complaint() else ""))
+            self.buffer += chunk
+        line, self.buffer = self.buffer.split(b"\n", 1)
+        return line
+
+    def request(self, method: str, params: dict, seconds: float) -> dict:
+        self.next_id += 1
+        self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                message = json.loads(self.line(deadline))
+            except ValueError:
+                continue
+            if not isinstance(message, dict):
+                continue
+            if "method" in message and "id" in message:   # the server asks something (a ping): answer it
+                self.send({"jsonrpc": "2.0", "id": message["id"], "result": {}} if message["method"] == "ping" else
+                          {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "not supported"}})
+            elif message.get("id") == self.next_id:
+                return message
+
+    def complaint(self) -> str:
+        self.errors.seek(0)
+        lines = self.errors.read().decode(errors="replace").strip().splitlines()
+        return lines[-1][:300] if lines else ""
+
+    def close(self) -> None:
+        try:
+            self.process.stdin.close()
+            self.process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(self.process.pid, sig)
+                    self.process.wait(timeout=3)
+                    break
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+        self.errors.close()
+
+
+def call_text(answer: dict) -> tuple[str, bool]:
+    if "error" in answer:
+        return f"error: {answer['error'].get('message', answer['error'])}", True
+    result = answer.get("result") or {}
+    content = result.get("content") or [{}]
+    return str(content[0].get("text", "")), bool(result.get("isError"))
+
+
+def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tour: dict, alone: dict,
+          seconds: float) -> dict:
+    """Offers the reading with its tour through OrbOS's own command, as the run's own MCP client (with
+    the user's own OrbOS, whose socket the command finds as always). A step OrbOS refuses is left
+    out and the offer made again; an OrbOS that can't keep a tour gets the reading alone."""
+    argv = [command, "--harness", harness, "--mcp"] + (["--pictures", str(pictures)] if pictures else [])
+    done = {"offered": False, "id": None, "tour": 0, "steps": [], "answer": "", "left_out": [], "command": command,
+            "pictures": str(pictures) if pictures else None}
+    deadline = time.monotonic() + seconds
+    server = Server(argv, cwd)
+    try:
+        server.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
+                                      "clientInfo": {"name": "report-offer", "version": "1"}}, HANDSHAKE_SECONDS)
+        server.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        tools = (server.request("tools/list", {}, HANDSHAKE_SECONDS).get("result") or {}).get("tools") or []
+        tool = next((t for t in tools if isinstance(t, dict) and t.get("name") == "offer_reading"), None)
+        if tool is None:
+            done["answer"] = "OrbOS's offer_reading isn't on for this assistant"
+            return done
+        takes_tour = "tour" in ((tool.get("inputSchema") or {}).get("properties") or {})
+        tour = list(with_tour.get("tour") or []) if takes_tour else []
+        while True:
+            arguments = dict(with_tour, tour=tour) if tour else alone
+            left = deadline - time.monotonic()
+            text, failed = call_text(server.request("tools/call", {"name": "offer_reading", "arguments": arguments},
+                                                    max(1.0, left)))
+            done["answer"] = text
+            offered = re.match(r"offered: (\w+)", text)
+            if offered and not failed:
+                kept = re.search(r"with its tour of (\d+) step", text)
+                done.update(offered=True, id=offered.group(1), tour=int(kept.group(1)) if kept and tour else 0,
+                            steps=tour if kept else [])
+                return done
+            refused_step = re.match(r"refused: the tour's step (\d+):", text, re.I)
+            if tour and refused_step and 1 <= int(refused_step.group(1)) <= len(tour) \
+                    and len(done["left_out"]) < TOUR_ATTEMPTS:
+                step = tour.pop(int(refused_step.group(1)) - 1)
+                done["left_out"].append({"step": step.get("title") or step.get("kind"), "path": step.get("path"),
+                                         "why": text})
+                continue
+            if tour and re.search(r"\btour", text, re.I):
+                tour = []   # this OrbOS can't keep a tour, or holds as many as it can: the reading alone
+                continue
+            return done
+    except (OSError, TimeoutError, EOFError) as error:
+        done["answer"] = done["answer"] or str(error)
+        return done
+    finally:
+        server.close()
+
+
+# ---------------------------------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="report-offer", description=__doc__,
@@ -817,11 +1084,17 @@ def main(argv: list[str]) -> int:
     parser.add_argument("facts")
     parser.add_argument("report")
     parser.add_argument("--repo", help="the integration checkout, which is the harness's working folder")
-    parser.add_argument("--out", help="the folder for reading.json and tour.json (the report's folder by default)")
+    parser.add_argument("--out", help="the folder for the files it writes (the report's folder by default)")
     parser.add_argument("--no-files", action="store_true", help="no file or picture steps")
     parser.add_argument("--ask-for-tour", action="store_true",
-                        help="end the reading by saying how to ask for the tour (when you have the walkthrough tool)")
+                        help="end the reading without a tour by saying how to ask for one (when you have the walkthrough tool)")
     parser.add_argument("--words", type=int, default=WORDS, help=f"the reading's most words (default {WORDS}, about two minutes)")
+    parser.add_argument("--pictures", metavar="RUN", help="the run folder: show the tasks' own pictures in it in the tour it offers")
+    parser.add_argument("--no-offer", action="store_true",
+                        help="only write the files; you offer reading.json with your own offer_reading")
+    parser.add_argument("--read-aloud", metavar="COMMAND", help="OrbOS's command (found in the app by default)")
+    parser.add_argument("--harness", default="claude-code", help="the assistant the offer comes from (default claude-code)")
+    parser.add_argument("--timeout", type=float, default=240, help="the most seconds the offer may take (default 240)")
     args = parser.parse_args(argv)
     facts = json.loads(Path(args.facts).read_text(errors="replace"))
     if not isinstance(facts, dict) or not isinstance(facts.get("tasks", []), list):
@@ -835,22 +1108,53 @@ def main(argv: list[str]) -> int:
     out = Path(args.out) if args.out else Path(args.report).resolve().parent
     out.mkdir(parents=True, exist_ok=True)
 
-    offered = reading(facts, markdown, args.words, args.ask_for_tour)
     walked = tour(facts, markdown, repo)
+    alone = reading(facts, markdown, args.words, ask_for_tour=args.ask_for_tour)
+    offered = dict(reading(facts, markdown, args.words, with_tour=True), tour=walked["steps"])
     (out / "reading.json").write_text(json.dumps(offered, ensure_ascii=False, indent=2) + "\n")
+    (out / "reading-alone.json").write_text(json.dumps(alone, ensure_ascii=False, indent=2) + "\n")
     (out / "tour.json").write_text(json.dumps(walked, ensure_ascii=False, indent=2) + "\n")
 
-    steps = walked["steps"]
-    kinds = {k: sum(1 for s in steps if s["kind"] == k) for k in ("note", "file", "picture")}
+    def described(steps: list[dict]) -> str:
+        kinds = {k: sum(1 for s in steps if s["kind"] == k) for k in ("note", "file", "picture")}
+        return f"{len(steps)} steps ({kinds['note']} notes, {kinds['file']} files, {kinds['picture']} pictures)"
     n = words(offered["text"])
     print(f"report-offer: wrote {out / 'reading.json'}: {n} words (about {max(1, round(n / 160))} min), "
-          f"{len(offered['text']):,} characters; original {len(offered['original']):,} characters")
-    print(f"report-offer: wrote {out / 'tour.json'}: {len(steps)} steps ({kinds['note']} notes, {kinds['file']} files, "
-          f"{kinds['picture']} pictures), {1 + len(walked['calls']) + 1} calls with the offer and the end")
-    for s in steps:
+          f"{len(offered['text']):,} characters; original {len(offered['original']):,} characters; "
+          f"with its tour of {described(walked['steps'])}")
+    print(f"report-offer: wrote {out / 'reading-alone.json'}: the same without the tour, for an OrbOS that can't keep one")
+    print(f"report-offer: wrote {out / 'tour.json'}: the same tour as a live walkthrough, "
+          f"{1 + len(walked['calls']) + 1} calls with the offer and the end")
+    for s in walked["steps"]:
         if s["kind"] != "note":
             where = s["path"] + (f" lines {s['lines'][0]}–{s['lines'][1]}" if s.get("lines") else "")
             print(f"  {s['kind']}: {where}")
+    if args.no_offer:
+        return 0
+
+    command = bundled_command(args.read_aloud)
+    if not command:
+        print("report-offer: not offered: OrbOS's command isn't here; offer reading.json with your own offer_reading")
+        return 3
+    folder = pictures_folder(args.pictures)
+    if args.pictures and not folder:
+        print(f"report-offer: {args.pictures} can't be the pictures folder; the tour shows the project's pictures only")
+    own = tour(facts, markdown, repo, folder, Path(args.facts).resolve().parent) if folder else walked
+    with_tour = dict(offered, tour=own["steps"])
+    done = offer(command, args.harness, repo or folder or Path.cwd(), folder, with_tour, alone, args.timeout)
+    (out / "offered.json").write_text(json.dumps(done, ensure_ascii=False, indent=2) + "\n")
+    for left_out in done["left_out"]:
+        print(f"report-offer: left out {left_out['step']}: {left_out['why']}")
+    if not done["offered"]:
+        print(f"report-offer: not offered: {done['answer']}. Offer reading.json with your own offer_reading "
+              "(reading-alone.json if it takes no tour).")
+        return 3
+    if done["tour"]:
+        print(f"report-offer: offered {done['id']}, with its tour of {done['tour']} steps: it waits in the notch, "
+              "and Tour plays it without you. No live tour is needed.")
+    else:
+        print(f"report-offer: offered {done['id']} without a tour (this OrbOS can't keep one): give the live tour from "
+              "tour.json when the user is at the computer, or when they ask.")
     return 0
 
 

@@ -321,7 +321,7 @@ with open(os.path.join(work, "report.md"), "w") as f:
 
 def run(*extra):
     out = subprocess.run([sys.executable, "-I", script, os.path.join(work, "facts.json"), os.path.join(work, "report.md"),
-                          "--out", os.path.join(work, "out"), *extra], check=True, capture_output=True, text=True).stdout
+                          "--out", os.path.join(work, "out"), "--no-offer", *extra], check=True, capture_output=True, text=True).stdout
     return (json.load(open(os.path.join(work, "out", "reading.json"))), json.load(open(os.path.join(work, "out", "tour.json"))), out)
 
 SECRET = re.compile(r"\b(api key|password|code)s?\b", re.I)
@@ -329,10 +329,12 @@ ASK = re.compile(r"\b(type|enter|paste|give|share|provide|tell|input|submit)\b",
 def asks(text):
     return any(SECRET.search(s) and ASK.search(s) for s in re.split(r"[.!?;:\n]", text))
 
-reading, tour, out = run("--repo", repo, "--ask-for-tour")
+with_tour, tour, out = run("--repo", repo, "--ask-for-tour")
+reading = json.load(open(os.path.join(work, "out", "reading-alone.json")))
 # The reading: an offer of kind report, plain speech of about two minutes, the report its original.
 assert reading["action"] == "offer" and reading["kind"] == "report" and reading["original"] == report.strip()
 assert len(reading["title"]) <= 80 and len(reading["text"]) <= 10000 and len(reading["source"]) <= 160
+assert "tour" not in reading and set(reading) == {"action", "kind", "title", "text", "original", "source"}
 speech = reading["text"]
 assert len(speech.split()) <= 320, len(speech.split())
 assert speech.startswith("All four tasks ran; three are merged into main, nothing was pushed."), speech[:120]
@@ -345,6 +347,13 @@ assert "Two open decisions for you. Turn retries on by default. Give the spell c
 assert "It is blocked." in speech and "One thing worth checking yourself, in the report." in speech
 assert speech.endswith("ask me to walk you through the run.")
 assert "about 1 min" in out or "about 2 min" in out
+# reading.json brings the tour that waits with it (offer_reading's `tour`): the same reading, ending
+# with Tour, and the tour's steps as the tool takes them; no offered.json without an offer.
+assert set(with_tour) == {"action", "kind", "title", "text", "original", "source", "tour"}
+assert with_tour["text"] == speech.replace("ask me to walk you through the run.", "press Tour."), with_tour["text"][-80:]
+assert with_tour["tour"] == tour["steps"] and 1 <= len(with_tour["tour"]) <= 50
+assert sum(1 for s in with_tour["tour"] if s["kind"] == "picture") <= 8
+assert not os.path.exists(os.path.join(work, "out", "offered.json"))
 
 # The tour: limits, notes queued (20 at most), file and picture steps one to a call, no words OrbOS refuses.
 offer = tour["offer"]
@@ -472,7 +481,7 @@ with open(os.path.join(work, "report.md"), "w") as f:
 settings = dict(os.environ, GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="color.ui", GIT_CONFIG_VALUE_0="always",
                 GIT_CONFIG_KEY_1="diff.external", GIT_CONFIG_VALUE_1="/usr/bin/true")
 subprocess.run([sys.executable, "-I", script, os.path.join(work, "facts.json"), os.path.join(work, "report.md"),
-                "--repo", repo, "--out", os.path.join(work, "out")], check=True, capture_output=True, text=True, env=settings)
+                "--repo", repo, "--out", os.path.join(work, "out"), "--no-offer"], check=True, capture_output=True, text=True, env=settings)
 reading = json.load(open(os.path.join(work, "out", "reading.json")))
 tour = json.load(open(os.path.join(work, "out", "tour.json")))
 steps = tour["steps"]
@@ -496,6 +505,165 @@ for unwanted in ("153d19b6", "3454", "rm -rf", "~", "$", "/Users", "Library", "F
 assert "run and/or read" in speech, speech
 assert "One decision needs you. Ship it before Friday, when the freeze starts? Two more are defaults I took; say if you disagree." in speech, speech
 assert "The run had no tasks." not in speech
+EOF
+
+# report-offer as its own MCP client of OrbOS's command, against a fake `read-aloud --mcp` (never a
+# real OrbOS): the handshake, the command's arguments and folder, the run's own pictures in the tour
+# (PNG and JPEG in the run folder only, about 8 in all), a refused step left out and offered again,
+# the reading alone for an OrbOS that can't keep a tour or an older one, and a server that hangs.
+python3 -I - "$scripts/report-offer" "$work/offer3" <<'EOF'
+import base64, json, os, subprocess, sys, time
+script, work = sys.argv[1], sys.argv[2]
+run_dir, repo = os.path.join(work, "run"), os.path.join(work, "repo")
+for folder in ("A/pictures", "B/pictures", "report"):
+    os.makedirs(os.path.join(run_dir, folder))
+os.makedirs(repo)
+subprocess.run(["git", "-C", repo, "init", "-q"], check=True)
+PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==")
+JPEG = b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x02\x00\x03\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xd9"
+def put(path, data):
+    with open(os.path.join(run_dir, path), "wb") as f:
+        f.write(data)
+put("A/pictures/1-card.png", PNG); put("A/pictures/2-menu.jpg", JPEG); put("A/pictures/notes.txt", b"x")
+put("A/pictures/.env.png", PNG); put("A/pictures/fake.png", b"not a picture")
+with open(os.path.join(work, "outside.png"), "wb") as f:
+    f.write(PNG)
+os.symlink(os.path.join(work, "outside.png"), os.path.join(run_dir, "A/pictures/link.png"))
+for i in range(10):
+    put(f"B/pictures/{i}.png", PNG)
+def pictures(task, names):
+    return [{"src": os.path.join(run_dir, task, "pictures", n), "caption": f"The {n} picture"} for n in names]
+facts = {"title": "Sample · pictures night", "run": {"start": "2026-10-24 01:00", "end": "2026-10-24 02:00"},
+         "tasks": [{"id": "A", "name": "Cards", "status": "merged",
+                    "pictures": pictures("A", ["1-card.png", "2-menu.jpg", "notes.txt", ".env.png", "fake.png", "link.png"])
+                                + [{"src": os.path.join(work, "outside.png"), "caption": "Outside the run"}]},
+                   {"id": "B", "name": "Menus", "status": "merged",     # relative to the facts file
+                    "pictures": [{"src": f"../B/pictures/{i}.png", "caption": f"Menu {i}"} for i in range(10)]}]}
+report = "Both tasks merged.\n\n## What was built\n\n**1. Cards (Task A)**\nCards look new.\n\n**2. Menus (Task B)**\nMenus too.\n"
+with open(os.path.join(run_dir, "report", "facts.json"), "w") as f:
+    json.dump(facts, f)
+with open(os.path.join(run_dir, "report", "final-report.md"), "w") as f:
+    f.write(report)
+
+# The fake server: logs its arguments, folder and every message; answers as OrbOS would, by mode.
+server = os.path.join(work, "fake-read-aloud")
+with open(server, "w") as f:
+    f.write(r"""#!/usr/bin/env python3
+import json, os, sys, time
+log = open(os.environ["FAKE_LOG"], "a")
+mode = os.environ["FAKE_MODE"]
+log.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "pid": os.getpid()}) + "\n"); log.flush()
+def send(m):
+    sys.stdout.write(json.dumps(m) + "\n"); sys.stdout.flush()
+schema = {"type": "object", "properties": {k: {} for k in ("action", "kind", "title", "text", "original", "source", "id")}}
+if mode != "old":
+    schema["properties"]["tour"] = {"type": "array"}
+for line in sys.stdin:
+    m = json.loads(line)
+    log.write(json.dumps(m) + "\n"); log.flush()
+    if "method" not in m:
+        continue
+    if m["method"] == "initialize":
+        send({"jsonrpc": "2.0", "id": m["id"], "result": {"protocolVersion": m["params"]["protocolVersion"],
+              "capabilities": {"tools": {}}, "serverInfo": {"name": "fake", "version": "1"}}})
+    elif m["method"] == "tools/list":
+        tools = [{"name": "speak", "inputSchema": {}}] + ([] if mode == "off" else [{"name": "offer_reading", "inputSchema": schema}])
+        send({"jsonrpc": "2.0", "id": m["id"], "result": {"tools": tools}})
+    elif m["method"] == "tools/call":
+        if mode == "hang":
+            time.sleep(60)
+        send({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "reading"}})
+        send({"jsonrpc": "2.0", "id": "ping-1", "method": "ping"})
+        tour = m["params"]["arguments"].get("tour")
+        text, error = "offered: r1. It waits in OrbOS's notch until the user plays or dismisses it.", False
+        if tour and mode == "notours":
+            text, error = ("refused: this OrbOS can't keep a tour with an offer (update it). Nothing was offered; "
+                           "offer the reading without its tour."), True
+        elif tour:
+            bad = [n for n, s in enumerate(tour) if s.get("path", "").endswith("B/pictures/1.png")]
+            if bad:
+                text, error = f"refused: The tour's Step {bad[0] + 1}: That picture isn't there. Nothing was offered.", True
+            else:
+                text = f"offered: r1, with its tour of {len(tour)} steps. It waits in OrbOS's notch."
+        send({"jsonrpc": "2.0", "id": m["id"], "result": {"content": [{"type": "text", "text": text}], "isError": error}})
+""")
+os.chmod(server, 0o755)
+
+def offer(mode, *extra):
+    log = os.path.join(work, f"{mode}.log")
+    if os.path.exists(log):
+        os.remove(log)
+    out = os.path.join(work, mode)
+    started = time.monotonic()
+    done = subprocess.run([sys.executable, "-I", script, os.path.join(run_dir, "report", "facts.json"),
+                           os.path.join(run_dir, "report", "final-report.md"), "--repo", repo, "--out", out,
+                           "--ask-for-tour", "--read-aloud", server, *extra], capture_output=True, text=True,
+                          env=dict(os.environ, FAKE_LOG=log, FAKE_MODE=mode), timeout=60)
+    lines = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
+    path = os.path.join(out, "offered.json")
+    return done, lines, (json.load(open(path)) if os.path.exists(path) else None), time.monotonic() - started
+
+# The handshake: initialize (no roots), initialized, tools/list, then the call; a ping answered.
+done, lines, offered, _ = offer("tour", "--pictures", run_dir)
+assert done.returncode == 0, done.stdout + done.stderr
+start = lines[0]
+assert start["argv"] == ["--harness", "claude-code", "--mcp", "--pictures", os.path.realpath(run_dir)], start
+assert os.path.realpath(start["cwd"]) == os.path.realpath(repo), start
+messages = lines[1:]
+assert [m.get("method") for m in messages[:3]] == ["initialize", "notifications/initialized", "tools/list"], messages[:3]
+assert messages[0]["params"]["protocolVersion"] == "2025-06-18" and messages[0]["params"]["capabilities"] == {}
+calls = [m for m in messages if m.get("method") == "tools/call"]
+assert all(c["params"]["name"] == "offer_reading" for c in calls) and len(calls) == 2, len(calls)
+assert any(m.get("id") == "ping-1" and m.get("result") == {} for m in messages)
+first, second = (c["params"]["arguments"] for c in calls)
+# A's PNG and JPEG and B's in turn, 8 in all; never the text, the secret's name, a fake picture, a
+# link out of the folder or a picture outside it.
+paths = [s["path"] for s in first["tour"] if s["kind"] == "picture"]
+assert paths == ["A/pictures/1-card.png", "A/pictures/2-menu.jpg"] + [f"B/pictures/{i}.png" for i in range(6)], paths
+assert next(s for s in first["tour"] if s.get("path") == "B/pictures/0.png")["caption"] == "Menu 0."
+cards = next(s for s in first["tour"] if s["title"] == "Cards")
+assert "It left seven pictures, under its item in the report; the tour shows two of them." in cards["narration"], cards
+# The refused step (B's 1.png) left out, and the rest offered again.
+assert len(second["tour"]) == len(first["tour"]) - 1 and "B/pictures/1.png" not in [s.get("path") for s in second["tour"]]
+assert first["text"].endswith("press Tour.") and second["text"] == first["text"]
+assert offered["offered"] and offered["id"] == "r1" and offered["tour"] == len(second["tour"]) == len(offered["steps"])
+assert offered["left_out"][0]["path"] == "B/pictures/1.png" and "No live tour is needed." in done.stdout
+# reading.json, for the orchestrator's own server (no pictures folder), has none of the run's pictures.
+own = json.load(open(os.path.join(work, "tour", "reading.json")))
+assert not [s for s in own["tour"] if s["kind"] == "picture"]
+assert "It left seven pictures, under its item in the report." in next(s for s in own["tour"] if s["title"] == "Cards")["narration"]
+
+# Without --pictures: no pictures folder for the command, and the run's pictures stay out.
+done, lines, offered, _ = offer("tour")
+assert done.returncode == 0 and lines[0]["argv"] == ["--harness", "claude-code", "--mcp"] and len(offered["steps"]) == 4, offered
+
+# An OrbOS that can't keep a tour: the reading alone, which says how to ask for the tour.
+done, lines, offered, _ = offer("notours", "--pictures", run_dir, "--harness", "codex")
+assert done.returncode == 0 and lines[0]["argv"][:2] == ["--harness", "codex"]
+calls = [m["params"]["arguments"] for m in lines[1:] if m.get("method") == "tools/call"]
+assert len(calls) == 2 and "tour" in calls[0] and "tour" not in calls[1] and calls[1]["text"].endswith("walk you through the run.")
+assert offered["offered"] and offered["tour"] == 0 and "give the live tour" in done.stdout
+# An older OrbOS, whose offer_reading takes no tour: the reading alone at once.
+done, lines, offered, _ = offer("old")
+calls = [m["params"]["arguments"] for m in lines[1:] if m.get("method") == "tools/call"]
+assert done.returncode == 0 and len(calls) == 1 and "tour" not in calls[0] and offered["tour"] == 0
+
+# offer_reading switched off, no command, a server that hangs: not offered (exit 3), the files still
+# written, and the hung server stopped.
+done, lines, offered, _ = offer("off")
+assert done.returncode == 3 and not offered["offered"] and "isn't on" in done.stdout, done.stdout
+assert os.path.exists(os.path.join(work, "off", "reading.json"))
+done = subprocess.run([sys.executable, "-I", script, os.path.join(run_dir, "report", "facts.json"),
+                       os.path.join(run_dir, "report", "final-report.md"), "--out", os.path.join(work, "none"),
+                       "--read-aloud", os.path.join(work, "missing")], capture_output=True, text=True, timeout=60)
+assert done.returncode == 3 and "isn't here" in done.stdout and os.path.exists(os.path.join(work, "none", "reading.json"))
+done, lines, offered, took = offer("hang", "--timeout", "3")
+assert done.returncode == 3 and not offered["offered"] and "in time" in offered["answer"] and took < 30, (offered, took)
+try:
+    os.kill(lines[0]["pid"], 0)
+    raise AssertionError("the hung server still runs")
+except ProcessLookupError:
+    pass
 EOF
 
 echo "orchestrator scripts: ok"

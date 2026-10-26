@@ -51,7 +51,7 @@ Codex also delivers a final-status notification for completed agents. Verify on 
 
 ## At the end
 
-Post the final report as your final message. If OrbOS's server is registered for Codex (`read-aloud --mcp --harness codex`), it has the same `offer_reading` and `walkthrough` tools: offer the reading just before the report and give the tour last, only with the user at the computer ([final-report.md](final-report.md#offer-it-to-listen-to-and-as-a-tour)).
+Post the final report as your final message. If OrbOS's server is registered for Codex (`read-aloud --mcp --harness codex`), it has the same `offer_reading` and `walkthrough` tools: offer the reading with its tour just before the report, through `scripts/report-offer --harness codex`, and give a live tour last only when the offer couldn't keep it and the user is at the computer ([final-report.md](final-report.md#offer-it-to-listen-to-with-its-tour)).
 
 ## Following up
 
