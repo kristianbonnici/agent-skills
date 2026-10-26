@@ -35,7 +35,8 @@ tour also shows the tasks' own pictures from the run folder, which the orchestra
 server can't read. A step OrbOS refuses is left out and the offer made again; an OrbOS that can't
 keep a tour gets reading-alone.json. Exit 0: offered (it says whether with its tour), or written
 with --no-offer; exit 3: written but not offered (no command, offer_reading off, a refusal, no
-answer within --timeout), so offer reading.json with your own offer_reading.
+answer to the handshake), so offer reading.json with your own offer_reading; exit 4: the offer
+went out but its answer didn't come within --timeout, so it may wait already: don't offer again.
 
 The report is the one the skill's template describes ("## What was built" with "**1. Name
 (Task A)**" items, "## Open decisions" with numbered "**Label.**" items, and so on).
@@ -242,6 +243,7 @@ def speakable(text: str) -> str:
     text = re.sub(r"~\s*(\d)", r"about \1", text)
     text = re.sub(r"(\d)\s*×|×\s*(\d)", lambda m: (m.group(1) or "") + " times " + (m.group(2) or ""), text)
     text = text.replace("&", "and").replace("…", "...")
+    text = re.sub(r"\s+·\s+", ", ", text)
     text = re.sub(r"\(\s*[,;:]?\s*\)|\(\s*,\s*", lambda m: "" if m.group(0).endswith(")") else "(", text)
     text = re.sub(r"\s+([,.;:!?])", r"\1", text)
     text = re.sub(r"([,;:])(?=[,.;:])", "", text)
@@ -784,9 +786,11 @@ def run_pictures(task: dict, folder: Path, base: Path, shown: set[str]) -> list[
     return found
 
 
-def tour(facts: dict, markdown: str, repo: Path | None, pictures: Path | None = None, base: Path = Path(".")) -> dict:
+def tour(facts: dict, markdown: str, repo: Path | None, pictures: Path | None = None, base: Path = Path("."),
+         without: frozenset[str] = frozenset()) -> dict:
     """The tour's steps (and the calls of a live walkthrough). With `pictures`, the run folder an
-    offer's server was started with (`--pictures`), the tasks' own pictures there are shown too."""
+    offer's server was started with (`--pictures`), the tasks' own pictures there are shown too.
+    `without`: files and pictures to leave out (those OrbOS refused), the notes counting without them."""
     TASK_IDS.update(str(t.get("id")) for t in facts.get("tasks", []) if isinstance(t, dict) and t.get("id"))
     parts = report_sections(markdown)
     intro = sentences(speakable(prose(parts.get("", "").splitlines())))
@@ -801,7 +805,7 @@ def tour(facts: dict, markdown: str, repo: Path | None, pictures: Path | None = 
                       f"{opening} I'll show each task in turn, then what needs you."))
 
     groups: list[dict] = []
-    shown: set[str] = set()   # files and pictures an earlier task showed
+    shown: set[str] = set(without)   # files and pictures an earlier task showed, or left out
     for entry in built:
         item, task = entry["item"], entry["task"]
         name = speakable(item["name"]) or speakable(str(task.get("name", ""))) or "A task"
@@ -1026,31 +1030,40 @@ def call_text(answer: dict) -> tuple[str, bool]:
 
 
 def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tour: dict, alone: dict,
-          seconds: float) -> dict:
+          seconds: float, rebuilt=None) -> dict:
     """Offers the reading with its tour through OrbOS's own command, as the run's own MCP client (with
     the user's own OrbOS, whose socket the command finds as always). A step OrbOS refuses is left
-    out and the offer made again; an OrbOS that can't keep a tour gets the reading alone."""
+    out and the offer made again (`rebuilt(paths)` makes the tour again without those files and
+    pictures); an OrbOS that can't keep a tour gets the reading alone. `uncertain`: the call went
+    out but no answer came, so the offer may have arrived."""
     argv = [command, "--harness", harness, "--mcp"] + (["--pictures", str(pictures)] if pictures else [])
-    done = {"offered": False, "id": None, "tour": 0, "steps": [], "answer": "", "left_out": [], "command": command,
-            "pictures": str(pictures) if pictures else None}
+    done = {"offered": False, "uncertain": False, "id": None, "tour": 0, "steps": [], "answer": "", "left_out": [],
+            "command": command, "pictures": str(pictures) if pictures else None}
     deadline = time.monotonic() + seconds
     server = Server(argv, cwd)
     try:
+        def handshake() -> float:
+            return max(0.5, min(HANDSHAKE_SECONDS, deadline - time.monotonic()))
         server.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
-                                      "clientInfo": {"name": "report-offer", "version": "1"}}, HANDSHAKE_SECONDS)
+                                      "clientInfo": {"name": "report-offer", "version": "1"}}, handshake())
         server.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        tools = (server.request("tools/list", {}, HANDSHAKE_SECONDS).get("result") or {}).get("tools") or []
+        tools = (server.request("tools/list", {}, handshake()).get("result") or {}).get("tools") or []
         tool = next((t for t in tools if isinstance(t, dict) and t.get("name") == "offer_reading"), None)
         if tool is None:
             done["answer"] = "OrbOS's offer_reading isn't on for this assistant"
             return done
         takes_tour = "tour" in ((tool.get("inputSchema") or {}).get("properties") or {})
         tour = list(with_tour.get("tour") or []) if takes_tour else []
+        refused_paths: set[str] = set()
+        refused_words: list[dict] = []   # steps refused for their words: a note, left out as it is
         while True:
             arguments = dict(with_tour, tour=tour) if tour else alone
             left = deadline - time.monotonic()
-            text, failed = call_text(server.request("tools/call", {"name": "offer_reading", "arguments": arguments},
-                                                    max(1.0, left)))
+            if left <= 0:
+                raise TimeoutError("OrbOS's command didn't answer in time")
+            done["uncertain"] = True
+            text, failed = call_text(server.request("tools/call", {"name": "offer_reading", "arguments": arguments}, left))
+            done["uncertain"] = False
             done["answer"] = text
             offered = re.match(r"offered: (\w+)", text)
             if offered and not failed:
@@ -1061,16 +1074,22 @@ def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tou
             refused_step = re.match(r"refused: the tour's step (\d+):", text, re.I)
             if tour and refused_step and 1 <= int(refused_step.group(1)) <= len(tour) \
                     and len(done["left_out"]) < TOUR_ATTEMPTS:
-                step = tour.pop(int(refused_step.group(1)) - 1)
+                step = tour[int(refused_step.group(1)) - 1]
                 done["left_out"].append({"step": step.get("title") or step.get("kind"), "path": step.get("path"),
                                          "why": text})
+                if step.get("path") and rebuilt:
+                    refused_paths.add(step["path"])
+                    tour = [s for s in rebuilt(frozenset(refused_paths)) if s not in refused_words]
+                else:
+                    refused_words.append(step)
+                    tour = [s for s in tour if s is not step]
                 continue
             if tour and re.search(r"\btour", text, re.I):
                 tour = []   # this OrbOS can't keep a tour, or holds as many as it can: the reading alone
                 continue
             return done
     except (OSError, TimeoutError, EOFError) as error:
-        done["answer"] = done["answer"] or str(error)
+        done["answer"] = str(error)
         return done
     finally:
         server.close()
@@ -1139,12 +1158,17 @@ def main(argv: list[str]) -> int:
     folder = pictures_folder(args.pictures)
     if args.pictures and not folder:
         print(f"report-offer: {args.pictures} can't be the pictures folder; the tour shows the project's pictures only")
-    own = tour(facts, markdown, repo, folder, Path(args.facts).resolve().parent) if folder else walked
-    with_tour = dict(offered, tour=own["steps"])
-    done = offer(command, args.harness, repo or folder or Path.cwd(), folder, with_tour, alone, args.timeout)
+    def rebuilt(without: frozenset[str]) -> list[dict]:
+        return tour(facts, markdown, repo, folder, Path(args.facts).resolve().parent, without)["steps"]
+    with_tour = dict(offered, tour=rebuilt(frozenset()) if folder else walked["steps"])
+    done = offer(command, args.harness, repo or folder or Path.cwd(), folder, with_tour, alone, args.timeout, rebuilt)
     (out / "offered.json").write_text(json.dumps(done, ensure_ascii=False, indent=2) + "\n")
     for left_out in done["left_out"]:
         print(f"report-offer: left out {left_out['step']}: {left_out['why']}")
+    if done["uncertain"]:
+        print(f"report-offer: may have offered: the offer went to OrbOS, but no answer came ({done['answer']}). "
+              "Don't offer it again: it may wait in the notch already.")
+        return 4
     if not done["offered"]:
         print(f"report-offer: not offered: {done['answer']}. Offer reading.json with your own offer_reading "
               "(reading-alone.json if it takes no tour).")

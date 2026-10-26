@@ -563,6 +563,11 @@ for line in sys.stdin:
     log.write(json.dumps(m) + "\n"); log.flush()
     if "method" not in m:
         continue
+    if mode == "exit":
+        sys.stderr.write("read-aloud: something went wrong\n")
+        sys.exit(1)
+    if m["method"] == "initialize" and mode == "silent":
+        time.sleep(60)
     if m["method"] == "initialize":
         send({"jsonrpc": "2.0", "id": m["id"], "result": {"protocolVersion": m["params"]["protocolVersion"],
               "capabilities": {"tools": {}}, "serverInfo": {"name": "fake", "version": "1"}}})
@@ -576,7 +581,9 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": "ping-1", "method": "ping"})
         tour = m["params"]["arguments"].get("tour")
         text, error = "offered: r1. It waits in OrbOS's notch until the user plays or dismisses it.", False
-        if tour and mode == "notours":
+        if mode == "busy":
+            text, error = "busy: you withdrew an offer moments ago, so OrbOS takes your next offer in 20 s. Nothing was offered.", True
+        elif tour and mode == "notours":
             text, error = ("refused: this OrbOS can't keep a tour with an offer (update it). Nothing was offered; "
                            "offer the reading without its tour."), True
         elif tour:
@@ -623,8 +630,10 @@ assert paths == ["A/pictures/1-card.png", "A/pictures/2-menu.jpg"] + [f"B/pictur
 assert next(s for s in first["tour"] if s.get("path") == "B/pictures/0.png")["caption"] == "Menu 0."
 cards = next(s for s in first["tour"] if s["title"] == "Cards")
 assert "It left seven pictures, under its item in the report; the tour shows two of them." in cards["narration"], cards
-# The refused step (B's 1.png) left out, and the rest offered again.
-assert len(second["tour"]) == len(first["tour"]) - 1 and "B/pictures/1.png" not in [s.get("path") for s in second["tour"]]
+# The refused step (B's 1.png) left out and the tour made again without it: another of B's pictures
+# takes its place, so the notes' counts stay right.
+assert len(second["tour"]) == len(first["tour"]) and "B/pictures/1.png" not in [s.get("path") for s in second["tour"]]
+assert [s["path"] for s in second["tour"] if s["kind"] == "picture"][-1] == "B/pictures/6.png"
 assert first["text"].endswith("press Tour.") and second["text"] == first["text"]
 assert offered["offered"] and offered["id"] == "r1" and offered["tour"] == len(second["tour"]) == len(offered["steps"])
 assert offered["left_out"][0]["path"] == "B/pictures/1.png" and "No live tour is needed." in done.stdout
@@ -657,13 +666,25 @@ done = subprocess.run([sys.executable, "-I", script, os.path.join(run_dir, "repo
                        os.path.join(run_dir, "report", "final-report.md"), "--out", os.path.join(work, "none"),
                        "--read-aloud", os.path.join(work, "missing")], capture_output=True, text=True, timeout=60)
 assert done.returncode == 3 and "isn't here" in done.stdout and os.path.exists(os.path.join(work, "none", "reading.json"))
+# A server that hangs after the call went out: the offer may have arrived (exit 4), so not again.
 done, lines, offered, took = offer("hang", "--timeout", "3")
-assert done.returncode == 3 and not offered["offered"] and "in time" in offered["answer"] and took < 30, (offered, took)
+assert done.returncode == 4 and offered["uncertain"] and "in time" in offered["answer"] and took < 30, (offered, took)
+assert "Don't offer it again" in done.stdout
 try:
     os.kill(lines[0]["pid"], 0)
     raise AssertionError("the hung server still runs")
 except ProcessLookupError:
     pass
+# OrbOS busy, a command that ends at once, a handshake that never comes: not offered (exit 3).
+done, _, offered, _ = offer("busy")
+assert done.returncode == 3 and offered["answer"].startswith("busy:") and not offered["uncertain"], offered
+done, _, offered, _ = offer("exit")
+assert done.returncode == 3 and "something went wrong" in offered["answer"], offered
+done, _, offered, took = offer("silent", "--timeout", "3")
+assert done.returncode == 3 and "in time" in offered["answer"] and not offered["uncertain"] and took < 30, (offered, took)
+# A pictures folder OrbOS wouldn't take (the home folder): none, and the project's pictures only.
+done, lines, offered, _ = offer("tour", "--pictures", os.path.expanduser("~"))
+assert done.returncode == 0 and "can't be the pictures folder" in done.stdout and "--pictures" not in lines[0]["argv"]
 EOF
 
 echo "orchestrator scripts: ok"
