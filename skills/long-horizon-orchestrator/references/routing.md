@@ -35,7 +35,7 @@ An under-powered agent on important work costs more than an over-powered one: wr
 | An advanced helper step on Gemini 4 Argon | high: `gemini-4-argon-high` (see "Advanced helper" below) |
 
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
-- **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` defaults to low.
+- **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` and `gpt-6.1-terra` default to low.
 - **In T3, the option names differ by provider:**
   - Claude: `{"id": "effort", "value": "high" | "xhigh" | "ultracode"}`. Ultracode exists only on models that list it, such as Opus and Fable, not Sonnet.
   - Codex: `{"id": "reasoningEffort", "value": "high" | "xhigh" | "ultra"}`.
@@ -165,14 +165,15 @@ Never work around a limit silently. The report says which tasks paused, for how 
 
 | Work | Prefer | Applies when | Basis |
 |---|---|---|---|
-| Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex | Codex has room for that piece | Owner's assessment, 2026-10: Codex's computer use is stronger |
+| Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex's GPT-6.1 Terra (`gpt-6.1-terra`, at high) | Codex has room for that piece | Owner's assessment, 2026-10: Codex's computer use is stronger. Owner, 2026-10-28: Terra is cheaper than Sol and faster at computer use, so it takes these steps |
 | Research and retrieval: web and documentation research, searching a codebase, logs or many files, surveying how others solve a problem, collecting facts and evidence | A fast helper (see "Fast helpers" below), as a sub-task or a research subagent inside the task | the result can be checked against its sources | Owner, 2026-10-16: use them freely for research and retrieval |
 | A simple, fully specified step: a mechanical edit from an exact rule, renames, boilerplate from a template, extracting facts from named files | A fast helper | the result is cheap to check | Owner, 2026-10 |
 | A bounded sub-task too hard for Flash: deep research and synthesis, a scoped investigation, an advisory second review, a well-specified piece of code | Gemini 4 Argon (see "Advanced helper" below) | the run's Argon budget has room, and the agent that asked can check the result | Owner, 2026-10-17 |
 | Everything else | Home harness | always | section 1 |
 
 - **A preference, not a rule.** Claude agents can do computer use too. When Codex is short on room, unavailable, or the computer-use part is trivial, keep the work on the home harness.
-- **Apply it to the smallest sensible piece.** If only one step of a task needs computer use, keep the task on the home harness and hand that one step to Codex (section 5). Move the whole task only when most of it is computer use.
+- **Apply it to the smallest sensible piece.** If only one step of a task needs computer use, keep the task on the home harness and hand that one step to Codex (section 5). Move the whole task only when most of it is computer use, and then to Terra too.
+- **Terra, not Sol, for computer use.** Since 2026-10-28 the owner's Codex plan includes GPT-6.1 Terra, which costs less of the plan than GPT-6.1 Sol and is faster at computer use (owner). Use Terra at high for computer-use steps and for a task that is mostly computer use; keep Sol for work where its extra strength is the point. Terra's cost per task-hour on the owner's plan isn't calibrated yet: record the window's change around each Terra hand-off (section 2).
 - **The user can override this.** The owner's profile (section 6) wins over this table.
 
 ### Fast helpers: Antigravity and OpenCode
@@ -263,7 +264,7 @@ Computer use works only while the Mac is awake and unlocked, and on windows the 
 This needs T3, which can launch child tasks on other providers. In T3, when a task has work suited to another provider and that provider has room, add a "Help available" section to the brief. For Codex:
 
 ```text
-Help available: for <the kind of step, for example "checking on the real screen how the app's windows look and behave">, you may hand that step to Codex. Call delegate_task with target {providerInstanceId: "codex", model: "<model id>", options: [<reasoning option>]}, mode "wait", and a self-contained description of the step, including what to report back. Use it as often as it genuinely helps, for steps where it does better than you, such as judging what is on the screen or clicking through a flow you can't script. Don't hand it work you can do as well yourself (a scripted check, a screenshot, code), and stop using it if Codex is short on room. If the hand-off fails or Codex is unavailable, do the step yourself.
+Help available: for <the kind of step, for example "checking on the real screen how the app's windows look and behave">, you may hand that step to Codex. Call delegate_task with target {providerInstanceId: "codex", model: "gpt-6.1-terra", options: [{id: "reasoningEffort", value: "high"}]}, mode "wait", and a self-contained description of the step, including what to report back. Use it as often as it genuinely helps, for steps where it does better than you, such as judging what is on the screen or clicking through a flow you can't script. Don't hand it work you can do as well yourself (a scripted check, a screenshot, code), and stop using it if Codex is short on room. If the hand-off fails or Codex is unavailable, do the step yourself.
 ```
 
 Codex hand-offs have no fixed count. Before each wave, check that Codex has room for the hand-offs you expect, and leave the section out if it doesn't.
@@ -333,7 +334,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - Copilot: <plan, e.g. student (free_educational_quota)>, Auto routing only (<model it routes to>), <n> units a month (detected <date>); usage read by `gh api /copilot_internal/user`
 
 ## Preferences
-- Prefer Codex for computer use when it has room (owner, <date>)
+- Prefer Codex for computer use when it has room, on <model, e.g. GPT-6.1 Terra> (owner, <date>)
 - Fast helpers inside tasks, for research, retrieval and simple steps: Antigravity's Gemini Flash at high; OpenCode's <models good enough> at high; never task agents (owner, <date>)
 - Advanced helper inside tasks, for bounded harder sub-tasks: Gemini 4 Argon at high, within a weekly budget per run (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)

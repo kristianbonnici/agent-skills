@@ -151,7 +151,7 @@ flowchart TB
   A["A · Settings screen<br/>1 screen check left for you"]:::high
   B1["B · Word counts<br/>crashed twice"]:::xhigh
   D["D · Spell check<br/>blocked: needs API key"]:::ultra
-  HA(["Codex · GPT-6.1 Sol (High)<br/>screen check ×1"]):::helper
+  HA(["Codex · GPT-6.1 Terra (High)<br/>screen check ×1"]):::helper
   HB(["Antigravity · Gemini 3.8 Flash (High)<br/>renames ×2"]):::helper
   B2["B · Word counts, second try"]:::xhigh
   C["C · Command line"]:::high

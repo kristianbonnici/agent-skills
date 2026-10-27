@@ -34,7 +34,7 @@ Facts file (JSON):
         "took_place_of": "",          # task ID whose finish made room for it
         "replaces": "",               # task ID of the attempt this one relaunched
         "qa": false,                  # tested the integration branch and merged its own fixes
-        "helpers": [{"label": "Codex · GPT-6.1 Sol (High)", "did": "screen check ×1"}],
+        "helpers": [{"label": "Codex · GPT-6.1 Terra (High)", "did": "screen check ×1"}],
         "status": "merged",           # merged, ready, blocked, failed, stopped, parked, replaced
         "launched": "01:00", "ended": "01:35",   # "HH:MM", or "YYYY-MM-DD HH:MM" for runs past midnight
         "worked_minutes": 30
