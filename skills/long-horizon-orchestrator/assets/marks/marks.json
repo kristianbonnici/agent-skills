@@ -1,6 +1,6 @@
 [
   {"id": "anthropic", "file": "claude.svg", "ink": "#D97757", "models": "claude|opus|sonnet|haiku|fable|anthropic", "harnesses": "claude"},
-  {"id": "openai", "file": "openai.svg", "ink": null, "models": "\\bgpt|codex|openai|chatgpt|\\bo[1-9]\\b", "harnesses": "codex"},
+  {"id": "openai", "file": "openai.svg", "ink": null, "line": "#10a37f", "models": "\\bgpt|codex|openai|chatgpt|\\bo[1-9]\\b", "harnesses": "codex"},
   {"id": "google-gemini", "file": "gemini.svg", "ink": "linear-gradient(135deg, #9168C0, #5684D1 55%, #1BA1E3)", "models": "gemini", "harnesses": "gemini"},
   {"id": "google-gemma", "file": "gemma.svg", "ink": "#446EFF", "models": "gemma"},
   {"id": "google", "file": "google.svg", "ink": "conic-gradient(from -45deg, #EB4335 0 25%, #4285F4 0 50%, #34A853 0 75%, #FBBC05 0)", "models": "google|\\bpalm\\b|lyria|nano banana|imagen|\\bveo\\b"},
@@ -34,7 +34,7 @@
   {"id": "relace", "file": "relace.svg", "ink": null, "models": "relace"},
   {"id": "aion-labs", "file": "aionlabs.svg", "ink": null, "models": "\\baion"},
   {"id": "openrouter", "file": "openrouter.svg", "ink": null, "models": "^(openrouter\\b|auto router|free models router)"},
-  {"id": "github-copilot", "file": "githubcopilot.svg", "ink": null, "harnesses": "copilot"},
+  {"id": "github-copilot", "file": "githubcopilot.svg", "ink": null, "line": "#8957e5", "harnesses": "copilot"},
   {"id": "opencode", "file": "opencode.svg", "ink": null, "harnesses": "opencode"},
   {"id": "pi", "file": "pi.svg", "ink": null, "harnesses": "^pi\\b"},
   {"id": "antigravity", "file": "antigravity.svg", "ink": "linear-gradient(135deg, #3186FF, #00B95C 40%, #FBBC04 70%, #FC413D)", "harnesses": "antigravity"}

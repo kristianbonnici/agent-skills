@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, and run-charts with its run map.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, and usage-sampler.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -353,6 +353,192 @@ if command -v node >/dev/null 2>&1; then
     "$work/charts/run-map.html" > "$work/run-map.js"
   node --check "$work/run-map.js"
 fi
+
+# run-charts without a usage folder writes none of the usage files and no usage data; naming a folder
+# that holds no samples changes nothing either (outputs are the ones above).
+test ! -e "$work/charts/usage.mmd" && test ! -e "$work/charts/usage-mac.mmd"
+test "$(wc -l < "$work/charts/summary.txt")" -eq 1
+python3 -I - "$work/charts/run-map.html" <<'EOF'
+import json, re, sys
+page = open(sys.argv[1]).read()
+assert "usage" not in json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))
+EOF
+mkdir -p "$work/nousage"
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = {"folder": sys.argv[2]}; json.dump(f, open(sys.argv[3], "w"))' \
+  "$work/facts.json" "$work/nousage" "$work/facts-empty.json"
+"$scripts/run-charts" "$work/facts-empty.json" "$work/charts-empty" >"$work/charts-empty.out" 2>"$work/charts-empty.err"
+grep -q 'no usage samples' "$work/charts-empty.err"
+for name in graph.mmd timeline.mmd summary.txt; do cmp "$work/charts/$name" "$work/charts-empty/$name"; done
+test ! -e "$work/charts-empty/usage.mmd"
+
+# run-charts with samples: the Mac's samples averaged and peaked per minute, the subscriptions' windows
+# as runs of points with the reset held and then dropped, a stale harness log and a provider with no
+# reading in the run left out, the makers' colours, the report line and the Mermaid fallback.
+mkdir -p "$work/usage"
+python3 -I - "$work/usage" <<'EOF'
+import json, os, sys
+folder = sys.argv[1]
+def line(t, **kw):
+    return json.dumps(dict(t="2026-10-29T" + t + "+02:00", **kw))
+machine = [
+    line("01:00:10", cpu=10.0, load1=1.0, mem_used_gb=30.0, mem_total_gb=64.0, gpu=40, disk_free_gb=100.0),
+    line("01:00:40", cpu=30.0, load1=1.0, mem_used_gb=34.0, mem_total_gb=64.0, gpu=60, disk_free_gb=99.0),
+    "not json at all",
+    line("01:01:20", cpu=50.0, load1=1.0, mem_used_gb=32.0, mem_total_gb=64.0, gpu=50, disk_free_gb=98.5),
+    line("07:50:00", cpu=99.0, mem_used_gb=60.0, mem_total_gb=64.0, gpu=99, disk_free_gb=1.0),  # after the run
+    '{"t": "2026-10-29T01:02',                                                                # cut off by a write in progress
+]
+open(os.path.join(folder, "machine.jsonl"), "w").write("\n".join(machine) + "\n")
+def providers(t, kind, claude, codex, observed, extra=None):
+    stamp = "2026-10-29T" + t + "+02:00"
+    out = {"claude": {"windows": {"five_hour": {"used": claude[0], "resets_at": claude[1]}, "weekly": {"used": claude[2], "resets_at": "2026-11-03T00:00:00+00:00"}},
+                      "observed_at": observed, "source": "log", "plan": "claude_max"},
+           "codex": {"windows": {"five_hour": {"used": codex[0], "resets_at": "2026-10-29T03:00:00+00:00"}, "weekly": {"used": codex[1], "resets_at": "2026-11-04T00:00:00+00:00"}},
+                     "observed_at": observed, "source": "log", "plan": "plus"}}
+    out.update(extra or {})
+    return json.dumps({"t": stamp, "kind": kind, "providers": out})
+first, second = "2026-10-29T00:00:00+00:00", "2026-10-29T05:00:00+00:00"
+ghost = {"gemini": {"windows": {"five_hour": {"used": 7.0, "resets_at": first}}, "observed_at": "2026-10-28T20:00:00+00:00"}}
+rows = [
+    providers("01:00:05", "live", (10.0, first, 40.0), (5.0, 2.0), "2026-10-28T23:00:00+00:00"),
+    providers("01:30:05", "cached", (20.0, first, 40.0), (6.0, 2.0), "2026-10-28T23:30:00+00:00"),
+    providers("01:40:05", "cached", (99.0, first, 99.0), (60.0, 60.0), "2026-10-27T23:40:00+00:00"),  # a log gone stale: dropped
+    providers("02:05:05", "cached", (1.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:05:00+00:00"),
+    providers("02:10:05", "cached", (2.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:10:00+00:00"),
+    json.dumps({"t": "2026-10-28T23:00:00+02:00", "kind": "live", "providers": ghost}),                  # the day before the run
+]
+open(os.path.join(folder, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+EOF
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = {"folder": sys.argv[2]}; json.dump(f, open(sys.argv[3], "w"))' \
+  "$work/facts.json" "$work/usage" "$work/facts-usage.json"
+"$scripts/run-charts" "$work/facts-usage.json" "$work/charts-usage" >"$work/charts-usage.out" 2>"$work/charts-usage.err"
+for name in graph.mmd timeline.mmd; do cmp "$work/charts/$name" "$work/charts-usage/$name"; done
+head -1 "$work/charts-usage/summary.txt" | cmp - "$work/charts/summary.txt"
+test "$(wc -l < "$work/charts-usage/summary.txt")" -eq 2
+sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude 5-hour window 10% → 2% (reset 1×), weekly 40% → 41%; Codex 5-hour window 5% → 6%, weekly 2% → 2%. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB.'
+grep -q 'usage.mmd and .*usage-mac.mmd' "$work/charts-usage.out"
+python3 -I - "$work/charts-usage" <<'EOF'
+import json, os, re, sys
+folder = sys.argv[1]
+page = open(os.path.join(folder, "run-map.html")).read()
+data = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))
+u = data["usage"]
+assert (u["t0"], u["t1"]) == (50, 455) and u["start"] == 50 and u["count"] == 406, u["count"]
+assert [p["id"] for p in u["providers"]] == ["claude", "codex"], [p["id"] for p in u["providers"]]   # no gemini: no reading in the run
+claude, codex = u["providers"]
+assert claude["colour"] == "#D97757" and claude["name"] == "Claude" and claude["mark"] is not None
+assert codex["colour"] == "#10a37f" and codex["plan"] == "plus"
+five = claude["five"]
+assert five["label"] == "5-hour" and claude["long"]["label"] == "Weekly" and five["resets"] == [120.0], five["resets"]
+assert len(five["segs"]) == 2 and five["segs"][0][-1] == [120.0, 20.0] and five["segs"][1][0] == [120.0, 0.0]   # held until the reset, then zero
+assert [v for seg in five["segs"] for _, v in seg] == [10.0, 20.0, 20.0, 0.0, 1.0, 2.0]                          # the stale 99 is gone
+assert [len(seg) for seg in codex["five"]["segs"]] == [4] and codex["five"]["resets"] == []
+mac = u["mac"]
+assert mac["cpu"][10] == 20.0 and mac["cpu_pk"][10] == 30.0 and mac["gpu"][10] == 50.0 and mac["gpu_pk"][10] == 60.0   # minute 01:00
+assert mac["mem"][10] == 32.0 and mac["mem_pk"][10] == 34.0 and mac["disk"][10] == 99.5 and mac["disk_pk"][10] == 99.0
+assert mac["cpu"][11] == 50.0 and mac["cpu"][12] is None and mac["mem_total"] == 64.0 and mac["samples"] == 3
+assert u["peaks"]["cpu"] == 50.0 and u["peaks"]["disk_lowest"] == 98.5
+# the page's drawing code is there
+assert 'el("section", "tl us")' in page and "timeAxis" in page
+# the Mermaid fallback: one xychart-beta per chart, a line per subscription or measure, in the makers' colours
+usage_mmd = open(os.path.join(folder, "usage.mmd")).read()
+mac_mmd = open(os.path.join(folder, "usage-mac.mmd")).read()
+assert usage_mmd.count("\n    line [") == 2 and '"plotColorPalette": "#D97757, #10a37f"' in usage_mmd and "\nxychart-beta\n" in usage_mmd
+assert "Claude orange" in usage_mmd and "Claude weekly 40% → 41%" in usage_mmd and 'y-axis "% used" 0 --> 100' in usage_mmd
+assert mac_mmd.count("\n    line [") == 3 and "CPU blue" in mac_mmd and "free disk 99.5 → 98.5 GB" in mac_mmd
+for text in (usage_mmd, mac_mmd):
+    labels = re.search(r"x-axis \[(.*)\]", text).group(1).count('"') // 2
+    assert all(len(re.search(r"line \[(.*)\]", l).group(1).split(",")) == labels for l in text.splitlines() if l.startswith("    line ["))
+EOF
+if command -v node >/dev/null 2>&1; then
+  python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
+    "$work/charts-usage/run-map.html" > "$work/run-map-usage.js"
+  node --check "$work/run-map-usage.js"
+fi
+# where a headless Chrome exists, the page draws the panel without an error (light, then dark with the crosshair)
+chrome=""
+for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
+  if command -v "$candidate" >/dev/null 2>&1; then chrome="$candidate"; break; fi
+done
+if [ -n "$chrome" ]; then
+  for hash in "fit" "dark&fit&cross=01:00"; do
+    "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
+      --dump-dom "file://$work/charts-usage/run-map.html#$hash" > "$work/dom.html" 2>/dev/null
+    grep -q 'aria-label="Usage"' "$work/dom.html"
+    if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
+    grep -q 'us-l5' "$work/dom.html"
+  done
+  grep -q 'class="us-cross"' "$work/dom.html"
+  "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
+    --dump-dom "file://$work/charts/run-map.html#fit" > "$work/dom.html" 2>/dev/null
+  grep -q 'aria-label="Timeline"' "$work/dom.html"
+  if grep -q 'aria-label="Usage"' "$work/dom.html"; then exit 1; fi        # no samples, no panel
+fi
+
+# usage-sampler: valid lines in machine.jsonl and providers.jsonl, a reading at a time, a second
+# sampler on the folder refused, and SIGTERM ends it at once, even in the middle of a slow reading.
+mkdir -p "$work/sampler/fake"
+cat > "$work/sampler/fake/provider-usage" <<'EOF'
+#!/bin/sh
+# a stand-in for provider-usage: logs its start and end, and takes a moment ("slow" beside it makes it hang)
+dir=$(dirname "$0")
+echo "+ $$" >> "$dir/reads.log"
+if [ -e "$dir/slow" ]; then echo $$ > "$dir/hung.pid"; sleep 60; fi
+sleep 0.4
+printf '%s\n' '{"providers": {"claude": {"windows": {"five_hour": {"used_percent": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset_since_observed": true}, "weekly": {"used_percent": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00", "source": "log", "plan": "claude_max"}, "antigravity": {"windows": {}, "error": "no"}}}'
+echo "- $$" >> "$dir/reads.log"
+EOF
+chmod +x "$work/sampler/fake/provider-usage"
+export USAGE_SAMPLER_MACHINE_EVERY=0.3 USAGE_SAMPLER_CACHED_EVERY=0.2 USAGE_SAMPLER_LIVE_EVERY=3600
+"$scripts/usage-sampler" "$work/sampler/out" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ "$(grep -c . "$work/sampler/out/providers.jsonl" 2>/dev/null || echo 0)" -ge 3 ]; do
+  tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1
+done
+status=0
+"$scripts/usage-sampler" "$work/sampler/out" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 || status=$?
+test "$status" -eq 3
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
+wait "$sampler"
+grep -q 'started pid' "$work/sampler/out/sampler.log" && grep -q 'stopped after .* machine samples' "$work/sampler/out/sampler.log"
+python3 -I - "$work/sampler" <<'EOF'
+import json, os, re, sys
+folder = sys.argv[1]
+machine = [json.loads(l) for l in open(os.path.join(folder, "out", "machine.jsonl"))]
+assert len(machine) >= 3
+for m in machine:
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", m["t"]), m["t"]
+    assert 0 <= m["cpu"] <= 100 and m["load1"] >= 0 and m["disk_free_gb"] > 0 and m["mem_used_gb"] >= 0 and "mem_total_gb" in m, m
+reads = [json.loads(l) for l in open(os.path.join(folder, "out", "providers.jsonl"))]
+assert reads[0]["kind"] == "live" and all(r["kind"] == "cached" for r in reads[1:]) and len(reads) >= 3
+claude = reads[0]["providers"]["claude"]
+assert claude["windows"]["five_hour"] == {"used": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset": True}
+assert claude["windows"]["weekly"] == {"used": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}
+assert "antigravity" not in reads[0]["providers"] and claude["plan"] == "claude_max"
+# one reading at a time: every start is followed by its end before the next start
+marks = [l.split()[0] for l in open(os.path.join(folder, "fake", "reads.log"))]
+assert marks[0] == "+" and all(a != b for a, b in zip(marks, marks[1:])), marks
+EOF
+# SIGTERM in the middle of a reading that hangs: the sampler ends within moments and the reading's process is gone
+touch "$work/sampler/fake/slow"
+"$scripts/usage-sampler" "$work/sampler/hung" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ -s "$work/sampler/fake/hung.pid" ]; do tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1; done
+hung=$(cat "$work/sampler/fake/hung.pid")
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
+wait "$sampler"
+tries=0
+while kill -0 "$hung" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 30; sleep 0.1; done
+grep -q 'stopped after' "$work/sampler/hung/sampler.log"
+unset USAGE_SAMPLER_MACHINE_EVERY USAGE_SAMPLER_CACHED_EVERY USAGE_SAMPLER_LIVE_EVERY
 
 # report-offer: the reading and the tour from a run's facts and report, within the tools' limits;
 # the key change found from a task's commits in a repository and moved to where it is at HEAD.

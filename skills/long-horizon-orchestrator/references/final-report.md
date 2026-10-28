@@ -31,7 +31,9 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 <The run-time line from `summary.txt` (see "The run's facts" below), for example: "Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota. The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.">
 
-<Outside T3 only: the dependency graph and the timeline; see "Run charts" below. In T3 the run map above the report shows both.>
+<With usage samples: the usage line from `summary.txt`, its second line (see "Usage graphs" below), for example: "Usage: Claude 5-hour window 2% → 31%, weekly 38% → 41%; Codex 5-hour window 0% → 22%, weekly 0% → 4%. The Mac peaked at 72% CPU, 61% GPU and 49.8 of 64 GB memory, and free disk went from 168.6 to 151.2 GB.">
+
+<Outside T3 only: the dependency graph and the timeline; see "Run charts" below, and the usage charts when there are any ("Usage graphs"). In T3 the run map above the report shows all of them.>
 
 <One or two lines the map or charts can't say on their own, such as why the pauses happened, why effort levels changed, a helper that hit a rate limit and what its work switched to, or what you changed because the user asked during the run.>
 
@@ -86,13 +88,14 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events. For the map, add each helper's outcome (`status`) and whether it reviewed or researched (`role`).
 - **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff (each `src` absolute, or relative to the facts file), and the run's tour shows those in the run directory ([below](#pictures-in-the-tour)).
 - **Commits:** a merged task's `commits` are the ones the ledger lists for it. With them, `scripts/report-offer` finds the task's key change for the tour. To choose it yourself, give the task a `key_change` instead ([below](#offer-it-to-listen-to-with-its-tour)).
+- **Usage:** the folder `scripts/usage-sampler` wrote ([machine.md](machine.md#9-the-usage-sampler)), as `"usage": {"folder": "<run directory>/usage"}`. Leave it out when the run had no sampler.
 - **Makers:** each card's mark comes from the model's name (`assets/marks/marks.json` knows about 40 makers and harnesses). When the name doesn't say who made the model, add the maker as the host's model ID names it (`"maker": "moonshotai"` for `openrouter/moonshotai/…`); a maker without a mark gets a letter.
 
 Put these facts into a JSON file in the run directory, and run `scripts/run-charts <facts.json> <run directory>/report`. It writes the run map, both charts in the style below, and the run-time line (`summary.txt`) with its totals added up. Its `--help` lists the fields. With `--render`, it also draws the charts on a white and on a black background when the Mermaid command line (`mmdc`) is available, so you can look at them before posting. Use it rather than writing the map or the charts by hand: the map is tens of thousands of characters, and `linkStyle` indexes are easy to miscount.
 
 ## Run map
 
-In T3, the report's picture of the run is the run map, drawn with `html_render` right above the report. It replaces the two Mermaid charts there. The orchestrator and its tasks are a tree of cards on a canvas the user can pan, zoom and rearrange. Each card shows the model's maker, the model and its level, the status, the one-line summary and the times. Each task's sub-agents fold out under it, and lines show what launched and what waited for what. Under the canvas, the timeline gives each agent a lane, marked with its model's maker: its turns as solid pieces and the gaps between them dimmed, the orchestrator's waits hatched, coloured lines from the orchestrator's lane where it launched each task and where the task reported back, crosses where a task stopped, a relaunch in the lane of the attempt it replaced, and quota pauses as a red band. Hovering any piece says what it was and lights up that task in the tree.
+In T3, the report's picture of the run is the run map, drawn with `html_render` right above the report. It replaces the two Mermaid charts there. The orchestrator and its tasks are a tree of cards on a canvas the user can pan, zoom and rearrange. Each card shows the model's maker, the model and its level, the status, the one-line summary and the times. Each task's sub-agents fold out under it, and lines show what launched and what waited for what. Under the canvas, the timeline gives each agent a lane, marked with its model's maker: its turns as solid pieces and the gaps between them dimmed, the orchestrator's waits hatched, coloured lines from the orchestrator's lane where it launched each task and where the task reported back, crosses where a task stopped, a relaunch in the lane of the attempt it replaced, and quota pauses as a red band. Hovering any piece says what it was and lights up that task in the tree. With usage samples, a panel under the timeline shows the subscriptions' windows and the Mac's load on the same time axis ([Usage graphs](#usage-graphs)).
 
 1. `run-charts` writes three files beside the charts: `run-map.html` (the map on its own, for a browser), `run-map.svg` (the same page, carried as an image) and `run-map-t3.html`, a short page of a few thousand characters that loads the other two, the marks and the pictures by path. It prints the height to give `html_render`.
 2. Read `run-map-t3.html` and pass it unchanged to `html_preview` once. Its console should say `run map ready` and nothing should have failed.
@@ -100,6 +103,15 @@ In T3, the report's picture of the run is the run map, drawn with `html_render` 
 4. Never paste `run-map.html` or `run-map.svg` into a tool, and never write the map's HTML yourself: either costs tens of thousands of tokens and invites typos. If the short page fails to draw, post the Mermaid charts instead and say so in one line.
 
 Outside T3, or on a host that can't show HTML, use the Mermaid charts below.
+
+## Usage graphs
+
+With a usage folder in the facts, the run map gains a usage panel right under the timeline, and `run-charts` writes `usage.mmd` and `usage-mac.mmd`, two Mermaid line charts for hosts that can't show HTML, and a second line in `summary.txt`. Nothing is drawn, and nothing is written, for a run without the folder. The panel is part of `run-map.html`, so `run-map-t3.html` shows it with no extra step, and the height `run-charts` prints already makes room for it.
+
+- **How to read it:** it shares the timeline's time axis to the minute. The top band has a line per subscription in its maker's colour: the 5-hour window as the thick line with the soft fill, the weekly (or monthly) window as the thin line, from 0 to 100% used, with each reset dotted, where the thick line drops. Below it the Mac's processor and graphics busy, its memory against the Mac's total, and its free disk: the line is the average of each minute and the faint shade behind it its peak. Quota pauses are hatched as in the timeline. Hovering in `run-map.html` shows a crosshair with the values at that minute and the tasks working then.
+- **Shared numbers:** a window's percentage counts every use of that subscription, the owner's own and any other run's, not only this run's. When another run used the same subscriptions, say so in one line under the graph, as in the report's usage line.
+- **Outside T3,** post `usage.mmd` (the subscriptions' 5-hour windows) and `usage-mac.mmd` (processor, graphics, memory) after the timeline, each in a `mermaid` block, and give the second line of `summary.txt` as the caption. The weekly windows and the free disk are in the charts' titles.
+- A provider with no reading during the run isn't drawn. A reading from a harness log older than one already taken is left out, since an idle harness's log goes stale.
 
 ## Run charts
 

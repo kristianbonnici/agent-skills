@@ -162,3 +162,12 @@ So:
 - **A task that pauses** (a usage window, a long lease wait) quits its test builds and helpers first; stop a paused task's leftovers yourself, by process ID, when it didn't.
 - **At the finish,** compare with the start snapshot, stop every leftover of the run by process ID, and list in the report's "Side effects" what you stopped, and anything of the user's that used the processor heavily for hours, so they can decide.
 
+## 9. The usage sampler
+
+The final report shows how the run used its resources: each subscription's 5-hour and weekly windows, and the Mac's processor, graphics, memory and free disk, over the run's own time axis. `scripts/usage-sampler` collects the numbers while the run goes on, and costs no model tokens: the Mac every 30 seconds from `ps`, `vm_stat`, `ioreg` and the disk; the subscriptions every 5 minutes from what the harnesses wrote to their own logs (`provider-usage --cached`), and every hour a live reading (`provider-usage`, which spends no quota). Measured on 2026-10-29: a Mac sample 0.06 s of processor time, a cached reading 0.09 s, a live reading 22 s (it starts `claude`, `codex` and `agy`), so about 30 s an hour in all (under 1% of one core), three quarters of it the hourly live reading.
+
+- **Start it in Prepare, once:** `scripts/usage-sampler <run directory>/usage > /dev/null 2>&1 &`, then record `$!` in the ledger and in `<run directory>/usage/sampler.pid`. It finds `provider-usage` beside itself. A second sampler on the same folder exits at once (code 3), so a restart that forgot to stop the first one does no harm.
+- **Stop it at the finish** with `kill <pid>` (SIGTERM), by the recorded process ID like everything else you started. It ends within a moment, stopping any reading in progress, and writes its CPU time to `usage/sampler.log`.
+- **If it dies,** start it again on the same folder: the files are appended to, and the graphs show a gap.
+- **The folder holds only numbers and times** (`machine.jsonl`, `providers.jsonl`, `sampler.log`). `scripts/run-charts` reads it when the facts file names it, and a run without the folder draws what it always drew.
+- When another run uses the same subscriptions, the windows' numbers are shared totals, not this run's: say so under the graph ([final-report.md](final-report.md#usage-graphs)).

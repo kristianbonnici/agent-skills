@@ -95,6 +95,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
   - Never stop processes you didn't start.
 - Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile.
 - Keep the computer awake until the finish ([references/machine.md](references/machine.md#4-keeping-the-computer-awake)), and record how.
+- Start the usage sampler in the background and record its process ID ([references/machine.md](references/machine.md#9-the-usage-sampler)): `scripts/usage-sampler <run directory>/usage &`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
 - Snapshot the user's own state into the run directory, and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
 - Write the common file that every brief points to, with the rules all tasks share ([references/task-brief.md](references/task-brief.md#one-common-file-for-every-brief)).
 
@@ -147,7 +148,7 @@ Launching dependent tasks is your job, not the job of the task briefs. Keeping t
 
 When every task is done, blocked or parked:
 
-1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat, any resume wake and the keep-awake, close or cancel any remaining agents, and stop the run's leftover processes: test builds, watchers, the kit's browsers, and computer-use services the run's steps started ([references/machine.md](references/machine.md#8-leftover-processes)).
+1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat, any resume wake, the keep-awake and the usage sampler (`kill <its recorded process ID>`; it ends within a moment), close or cancel any remaining agents, and stop the run's leftover processes: test builds, watchers, the kit's browsers, and computer-use services the run's steps started ([references/machine.md](references/machine.md#8-leftover-processes)).
 2. Verify the end state:
    - the integration branch log;
    - nothing was pushed;
@@ -158,7 +159,7 @@ When every task is done, blocked or parked:
 4. If the project has a quick main check, run it once on the integration branch. Run it in a detached worktree (`git worktree add --detach <run directory>/final-check <integration branch>`, then `git worktree remove --force` it, since it holds no work) when another run still works in the checkout, or when the check writes files the user's own copy uses, such as the app they have running.
 5. Remove throwaway threads or worktrees you made along the way.
 6. Take a final usage snapshot, and update the calibration in the owner's provider profile. If the profile lives in the owner's private repository, commit and push it (see [references/routing.md](references/routing.md#6-the-owners-profile)).
-7. Write the final report from [references/final-report.md](references/final-report.md), with the tasks' pictures of what changed and a picture of how the run actually went: in T3 the run map, shown with `html_render` just before the report; elsewhere its two Mermaid charts (a dependency graph and a timeline). `scripts/run-charts` draws all of them from one facts file. Save a copy next to the ledger, for the record.
+7. Write the final report from [references/final-report.md](references/final-report.md), with the tasks' pictures of what changed and a picture of how the run actually went: in T3 the run map, shown with `html_render` just before the report; elsewhere its two Mermaid charts (a dependency graph and a timeline). `scripts/run-charts` draws all of them from one facts file, with the usage graphs from the sampler's folder (`"usage": {"folder": "<run directory>/usage"}`). Save a copy next to the ledger, for the record.
 8. If you have OrbOS's `offer_reading` tool, offer the report once, as a reading to listen to later with its tour ([references/final-report.md](references/final-report.md#offer-it-to-listen-to-with-its-tour)). `scripts/report-offer` turns the facts file and the saved report into the tool's arguments and offers them through OrbOS's own command, so the tour shows the tasks' pictures too; if it can't, it says so and you call `offer_reading` yourself. It returns within moments, and the card waits in the notch for 8 hours, with **Tour** beside **Play**: the user plays the tour whenever they like, without you.
 9. **Post the report in the chat as your final message.** This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. The saved copy isn't enough; the user reads the chat.
 10. Set the ledger's status to `finished`.
@@ -207,7 +208,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - helper hand-offs (which harness, model and reasoning level, for what, how many times), and any limit a helper hit and what its work switched to;
   - events such as follow-ups, nudges, relaunches, rebases, level changes, and quota pauses with when they began and when the tasks resumed. The final report's charts are drawn from these.
 - **Usage snapshots:** from `scripts/provider-usage`, taken at the start, before each wave, on wakes near a limit and at the finish. Note other active runs sharing the subscriptions, and the reason for any task routed away from the home harness.
-- **The computer:** what the warm-up granted and what is still missing; how the computer is kept awake (on macOS, the `caffeinate` process ID); where the start snapshot of the user's state is; and what was restored at the finish.
+- **The computer:** what the warm-up granted and what is still missing; how the computer is kept awake (on macOS, the `caffeinate` process ID); the usage sampler's process ID and folder; where the start snapshot of the user's state is; and what was restored at the finish.
 - **Decisions log:** what you decided on the user's behalf, and why.
 - **Open decisions:** what the user still needs to decide, with the task that raised each one and the recommendations you and the task have for it.
 

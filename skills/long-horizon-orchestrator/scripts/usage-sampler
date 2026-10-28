@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Samples a run's resource use into <folder> until stopped (SIGTERM), for the final report's
+usage graphs (scripts/run-charts draws them). Costs no model quota and almost nothing on the Mac:
+
+  machine.jsonl    every 30 s: CPU (all cores, %), load, memory in use, GPU busy (%) and the GPU's
+                   memory in use (ioreg's IOAccelerator PerformanceStatistics, no password), free disk
+  providers.jsonl  every 5 min the subscriptions' windows as provider-usage --cached reads them from
+                   the harnesses' own logs (current while their tasks run), and every 60 min a live
+                   reading (provider-usage, no quota used; Antigravity and Copilot only read live)
+  sampler.log      one line when it starts and one when it stops, with the CPU time it used
+
+Each line is one JSON object with "t", the local time in ISO 8601 with its offset. A provider's
+window is {"used": percent, "resets_at": UTC time}, plus "reset": true when the window has reset
+since the harness last wrote it (its use is then near zero again).
+
+Readings of the subscriptions run in a thread of their own, one at a time (a reading still going
+when the next is due is skipped), so a slow live reading never holds up the Mac's samples. Only one
+sampler runs per folder: a second one exits at once. SIGTERM (or SIGINT) ends it within a moment,
+stopping a reading in progress.
+
+Usage: usage-sampler <folder> [provider-usage script]   (run it in the background; record its pid)
+The script defaults to the provider-usage next to this one. For tests, USAGE_SAMPLER_MACHINE_EVERY,
+USAGE_SAMPLER_CACHED_EVERY and USAGE_SAMPLER_LIVE_EVERY change the intervals (seconds).
+"""
+
+import fcntl
+import json
+import os
+import re
+import resource
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
+
+MACHINE_EVERY = float(os.environ.get("USAGE_SAMPLER_MACHINE_EVERY", 30))
+CACHED_EVERY = float(os.environ.get("USAGE_SAMPLER_CACHED_EVERY", 300))
+LIVE_EVERY = float(os.environ.get("USAGE_SAMPLER_LIVE_EVERY", 3600))
+READ_TIMEOUT = 120
+GB = 1024 ** 3
+
+stopping = threading.Event()
+
+
+def now():
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def run(args, timeout=20):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+CORES = os.cpu_count() or 1
+MEMORY = int(run(["sysctl", "-n", "hw.memsize"]).strip() or 0)
+
+
+def machine():
+    sample = {"t": now()}
+    cpu = sum(float(v) for v in run(["ps", "-A", "-o", "%cpu="]).split() if re.fullmatch(r"[\d.]+", v))
+    sample["cpu"] = round(min(cpu / CORES, 100.0), 1)
+    sample["load1"] = round(os.getloadavg()[0], 2)
+    vm = run(["vm_stat"])
+    page = int((re.search(r"page size of (\d+)", vm) or [0, 16384])[1])
+    pages = {k: int(v) for k, v in re.findall(r'^"?(Pages [^:"]+)"?:\s+(\d+)', vm, re.M)}
+    used = sum(pages.get(k, 0) for k in ("Pages active", "Pages wired down", "Pages occupied by compressor")) * page
+    sample["mem_used_gb"] = round(used / GB, 2)
+    sample["mem_total_gb"] = round(MEMORY / GB, 1)
+    gpu = run(["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"])
+    busy = re.search(r'"Device Utilization %"=(\d+)', gpu)
+    held = re.search(r'"In use system memory"=(\d+)', gpu)
+    if busy:
+        sample["gpu"] = int(busy[1])
+    if held:
+        sample["gpu_mem_gb"] = round(int(held[1]) / GB, 2)
+    sample["disk_free_gb"] = round(shutil.disk_usage("/System/Volumes/Data" if os.path.isdir("/System/Volumes/Data") else "/").free / GB, 1)
+    return sample
+
+
+def entry_of(data, live):
+    entry = {"t": now(), "kind": "live" if live else "cached", "providers": {}}
+    for name, p in (data.get("providers") or {}).items():
+        windows = {}
+        for key, w in (p.get("windows") or {}).items():
+            if w.get("used_percent") is None:
+                continue
+            windows[key] = {"used": w.get("used_percent"), "resets_at": w.get("resets_at")}
+            if w.get("reset_since_observed"):
+                windows[key]["reset"] = True
+        if windows:
+            entry["providers"][name] = {"windows": windows, "observed_at": p.get("observed_at"),
+                                        "source": p.get("source"), "plan": p.get("plan")}
+    return entry
+
+
+class Reader:
+    """Runs provider-usage in a thread of its own, one reading at a time."""
+
+    def __init__(self, script, path):
+        self.script, self.path = script, path
+        self.lock = threading.Lock()
+        self.child = None
+        self.thread = None
+
+    def start(self, live):
+        if not self.lock.acquire(blocking=False):
+            return False  # a reading is still going: skip this one
+        self.thread = threading.Thread(target=self._read, args=(live,), daemon=True)
+        self.thread.start()
+        return True
+
+    def _read(self, live):
+        try:
+            child = subprocess.Popen([self.script] + ([] if live else ["--cached"]), stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+            self.child = child
+            try:
+                out, _ = child.communicate(timeout=READ_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                self.kill()
+                child.communicate()
+                return
+            if stopping.is_set():
+                return
+            try:
+                data = json.loads(out)
+            except ValueError:
+                return
+            append(self.path, entry_of(data, live))
+        except OSError:
+            pass
+        finally:
+            self.child = None
+            self.lock.release()
+
+    def kill(self):
+        child = self.child
+        if child and child.poll() is None:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)  # provider-usage starts claude, codex, agy and gh
+            except OSError:
+                pass
+
+
+def append(path, record):
+    if record:
+        with open(path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+
+
+def log(folder, text):
+    with open(os.path.join(folder, "sampler.log"), "a") as f:
+        f.write(f"{now()} {text}\n")
+
+
+def cpu_seconds():
+    own, kids = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
+    return own.ru_utime + own.ru_stime + kids.ru_utime + kids.ru_stime
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise SystemExit(__doc__)
+    folder = sys.argv[1]
+    script = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.realpath(__file__)), "provider-usage")
+    os.makedirs(folder, exist_ok=True)
+    lock = open(os.path.join(folder, "sampler.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(f"usage-sampler: another sampler already writes to {folder}", file=sys.stderr)
+        return 3
+    for number in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(number, lambda *_: stopping.set())
+    reader = Reader(script, os.path.join(folder, "providers.jsonl"))
+    log(folder, f"started pid {os.getpid()}")
+    samples = 0
+    last_cached = last_live = None
+    while not stopping.is_set():
+        start = time.monotonic()
+        append(os.path.join(folder, "machine.jsonl"), machine())
+        samples += 1
+        if last_live is None or start - last_live >= LIVE_EVERY:
+            if reader.start(live=True):
+                last_live = last_cached = start
+        elif start - last_cached >= CACHED_EVERY:
+            if reader.start(live=False):
+                last_cached = start
+        stopping.wait(max(0.0, MACHINE_EVERY - (time.monotonic() - start)))
+    reader.kill()
+    if reader.thread:
+        reader.thread.join(5)
+    log(folder, f"stopped after {samples} machine samples, {cpu_seconds():.2f} s of CPU time")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
