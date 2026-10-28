@@ -226,6 +226,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-fill { fill: var(--f); }
 .us-avg { fill: none; stroke: var(--c); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
 .us-peak { fill: var(--c); opacity: .17; }
+.us-low { fill: none; stroke: var(--c); stroke-width: 1; stroke-dasharray: 2 2; opacity: .55; }
 .us-ref { stroke: var(--rm-muted); stroke-width: 1; stroke-dasharray: 3 4; opacity: .5; }
 .us-reset { stroke: var(--c); stroke-width: 1.1; stroke-dasharray: 2 3; opacity: .7; }
 .us-cross { stroke: var(--rm-fg); stroke-width: 1; opacity: .38; pointer-events: none; }
@@ -931,7 +932,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const U = F.usage; if (!U) return;
   const provs = U.providers || [], mac = U.mac;
   if (!provs.length && !mac) return;
-  const t0 = timeAxis ? timeAxis.t0 : U.t0, t1 = timeAxis ? timeAxis.t1 : U.t1;
+  const t0 = timeAxis ? timeAxis.t0 : U.t0, t1 = Math.max(t0 + 1, timeAxis ? timeAxis.t1 : U.t1);
   const runStart = ORCH.start != null ? ORCH.start : t0;
   const neutral = "color-mix(in srgb, var(--rm-fg) 62%, var(--rm-card))";
   const colourOf = p => p.colour || neutral;
@@ -1156,10 +1157,11 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       series(b, mac.mem, mac.mem_pk, "var(--rm-high)", Y, "rm-us-fm", true); hover.push({ kind: "mem", y: Y, colour: "var(--rm-high)" });
     }
     if (byId.disk) {
-      const b = byId.disk, lo0 = Math.min(...diskVals), hi0 = Math.max(...diskVals), pad = Math.max(1, (hi0 - lo0) * 0.3);
+      const b = byId.disk, lo0 = Math.min(...diskVals, ...mac.disk_pk.filter(num)), hi0 = Math.max(...diskVals), pad = Math.max(1, (hi0 - lo0) * 0.3);
       const lo = Math.floor(lo0 - pad), hi = Math.ceil(hi0 + pad), Y = Yof(b, lo, hi); Y.base = b.y + b.h - BOT;
       yt(PADL + 3, b.y + 11, hi + " GB"); yt(PADL + 3, b.y + b.h - 6, lo + " GB");
       const g = ns("g", { class: "us-g" }, lines); g.style.setProperty("--c", "var(--rm-warn)");
+      peakRuns(mac.disk_pk, Y, w, a => Math.min(...a)).forEach(r => { if (r.length > 1) ns("path", { class: "us-low", d: poly(r) }, g); });  // the lowest reading of each minute
       runs(mac.disk, Y, w).forEach(r => {
         const pts = r.map(([x, yy]) => [x, yy]);
         if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: 2 }, g); return; }
@@ -1213,7 +1215,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
         if (h.kind === "cpu") both("CPU", mac.cpu, mac.cpu_pk, h, "%", "var(--rm-xhigh)");
         if (h.kind === "gpu") both("GPU", mac.gpu, mac.gpu_pk, h, "%", "var(--rm-above)");
         if (h.kind === "mem") { const a = macAt(mac.mem, m), k = macAt(mac.mem_pk, m); if (a != null) { row(tip, "Memory", `${fmt(a)} <em>of ${fmt(mac.mem_total || 0, 0)} GB · peak</em> ${fmt(k)}`, "var(--rm-high)"); dot(h.y(a), h.colour); } }
-        if (h.kind === "disk") { const a = macAt(mac.disk, m); if (a != null) { row(tip, "Free disk", `${fmt(a)} GB`, "var(--rm-warn)"); dot(h.y(a), h.colour); } }
+        if (h.kind === "disk") { const a = macAt(mac.disk, m); if (a != null) { const lo = macAt(mac.disk_pk, m); row(tip, "Free disk", `${fmt(a)} GB` + (lo != null && lo < a ? ` <em>· lowest</em> ${fmt(lo)}` : ""), "var(--rm-warn)"); dot(h.y(a), h.colour); } }
       });
     }
     const pause = (F.pauses || []).find(p => p.start <= m && m <= p.end);

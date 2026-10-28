@@ -119,6 +119,8 @@ class Reader:
             child = subprocess.Popen([self.script] + ([] if live else ["--cached"]), stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, start_new_session=True)
             self.child = child
+            if stopping.is_set():  # the signal came between the launch and here: kill() may have missed it
+                self.kill()
             try:
                 out, _ = child.communicate(timeout=READ_TIMEOUT)
             except subprocess.TimeoutExpired:

@@ -482,7 +482,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     seen = [m for m in (minute(s) for s in stamps) if m is not None]
     if not seen:
         return None
-    t0, t1 = span if span else (min(seen), max(seen))
+    t0, t1 = span if span else (min(seen), max(min(seen) + 1, max(seen)))
     start, count = int(t0 // 1), int(t1 // 1) - int(t0 // 1) + 1
 
     # the Mac: per minute, the average and the peak of the samples in it
@@ -554,9 +554,20 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             runs: list[list[list[float]]] = []
             resets: list[float] = []
             group = prior = None
+            gaps = sorted(b[0] - a[0] for a, b in zip(points, points[1:]))
+            longest = max(25.0, 3 * gaps[len(gaps) // 2]) if gaps else 25.0   # a gap this long is a sampler that wasn't running
+            previous = None
             for m, used, reset_at, over in points:
-                if runs and (reset_at, over) == group:
+                same = runs and over == group[1] and (reset_at == group[0] or (
+                    reset_at is not None and group[0] is not None and abs(reset_at - group[0]) <= 5))  # a reset time corrected by a minute
+                if same and m - previous <= longest:
                     runs[-1].append([round(m, 2), used])
+                    previous = m
+                    continue
+                previous = m
+                if same:  # the same window after a gap: a new run, with no reset in between
+                    runs.append([[round(m, 2), used]])
+                    group, prior = (reset_at, over), reset_at
                     continue
                 begin = []
                 # the period before held its value until its window reset, and this one began at zero

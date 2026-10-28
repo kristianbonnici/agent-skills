@@ -403,7 +403,7 @@ rows = [
     providers("01:00:05", "live", (10.0, first, 40.0), (5.0, 2.0), "2026-10-28T23:00:00+00:00"),
     providers("01:30:05", "cached", (20.0, first, 40.0), (6.0, 2.0), "2026-10-28T23:30:00+00:00"),
     providers("01:40:05", "cached", (99.0, first, 99.0), (60.0, 60.0), "2026-10-27T23:40:00+00:00"),  # a log gone stale: dropped
-    providers("02:05:05", "cached", (1.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:05:00+00:00"),
+    providers("02:05:05", "cached", (1.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:05:00+00:00").replace("2026-11-04T00:00:00", "2026-11-04T00:01:00"),
     providers("02:10:05", "cached", (2.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:10:00+00:00"),
     json.dumps({"t": "2026-10-28T23:00:00+02:00", "kind": "live", "providers": ghost}),                  # the day before the run
 ]
@@ -433,6 +433,7 @@ assert five["label"] == "5-hour" and claude["long"]["label"] == "Weekly" and fiv
 assert len(five["segs"]) == 2 and five["segs"][0][-1] == [120.0, 20.0] and five["segs"][1][0] == [120.0, 0.0]   # held until the reset, then zero
 assert [v for seg in five["segs"] for _, v in seg] == [10.0, 20.0, 20.0, 0.0, 1.0, 2.0]                          # the stale 99 is gone
 assert [len(seg) for seg in codex["five"]["segs"]] == [4] and codex["five"]["resets"] == []
+assert [len(seg) for seg in codex["long"]["segs"]] == [4]                            # a reset time corrected by a minute is the same window
 mac = u["mac"]
 assert mac["cpu"][10] == 20.0 and mac["cpu_pk"][10] == 30.0 and mac["gpu"][10] == 50.0 and mac["gpu_pk"][10] == 60.0   # minute 01:00
 assert mac["mem"][10] == 32.0 and mac["mem_pk"][10] == 34.0 and mac["disk"][10] == 99.5 and mac["disk_pk"][10] == 99.0
@@ -449,6 +450,32 @@ assert mac_mmd.count("\n    line [") == 3 and "CPU blue" in mac_mmd and "free di
 for text in (usage_mmd, mac_mmd):
     labels = re.search(r"x-axis \[(.*)\]", text).group(1).count('"') // 2
     assert all(len(re.search(r"line \[(.*)\]", l).group(1).split(",")) == labels for l in text.splitlines() if l.startswith("    line ["))
+EOF
+# a sampler that wasn't running for hours leaves a gap, not a line across it; and one sample with no timed
+# task still gets a time axis of a minute at least
+mkdir -p "$work/usage-gap"
+python3 -I - "$work/usage-gap" <<'EOF'
+import json, os, sys
+rows = []
+for t in ("01:00:05", "01:05:05", "04:00:05", "04:05:05"):
+    rows.append(json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude": {"windows": {"five_hour": {"used": 3.0, "resets_at": "2026-10-29T05:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00"}}}))
+open(os.path.join(sys.argv[1], "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+open(os.path.join(sys.argv[1], "machine.jsonl"), "w").write(json.dumps({"t": "2026-10-29T10:00:30+02:00", "cpu": 5.0, "mem_used_gb": 1.0, "mem_total_gb": 8.0, "disk_free_gb": 10.0}) + "\n")
+EOF
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = {"folder": sys.argv[2]}; json.dump(f, open(sys.argv[3], "w"))' \
+  "$work/facts.json" "$work/usage-gap" "$work/facts-gap.json"
+"$scripts/run-charts" "$work/facts-gap.json" "$work/charts-gap" >/dev/null 2>&1
+printf '%s\n' '{"tasks": [{"id": "A", "name": "Never started", "level": "high", "status": "parked"}], "usage": {"folder": "'"$work/usage-gap"'"}}' > "$work/facts-lone.json"
+"$scripts/run-charts" "$work/facts-lone.json" "$work/charts-lone" >/dev/null 2>&1
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+def usage(name):
+    page = open(os.path.join(sys.argv[1], name, "run-map.html")).read()
+    return json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]
+gap = usage("charts-gap")
+assert [len(seg) for seg in gap["providers"][0]["five"]["segs"]] == [2, 2], gap["providers"][0]["five"]["segs"]
+lone = usage("charts-lone")
+assert lone["t1"] - lone["t0"] >= 1 and lone["count"] >= 2, lone
 EOF
 if command -v node >/dev/null 2>&1; then
   python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
