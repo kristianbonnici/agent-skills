@@ -18,7 +18,8 @@ Agent({
 ```
 
 - **Start from the integration branch.** The worktree is created from your current HEAD, so make sure the integration checkout is on the integration branch and that anything the task needs is committed.
-- **Use the reported branch.** The subagent gets its own branch. Use the branch name it reports, and look up its path with `git worktree list`.
+- **Use the reported branch.** The subagent gets its own branch, named only once it runs, so the brief says "your task branch is the one `git branch --show-current` prints in your worktree". Use the branch name it reports, and look up its path with `git worktree list`.
+- **Reviews from a subagent.** A subagent can't launch agents of its own, so its brief says to run the review gate's reviewers with the command-line forms in review-gate's `references/launching.md`.
 - **The brief alone.** As on every host, a task gets no `/goal` ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)): the brief's stop conditions define the end, so state them sharply. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line." That final message comes back to you.
 - **Merging.** Under the merge policy, the subagent fast-forwards the integration checkout itself (`git -C <integration checkout> merge --ff-only <branch>`).
 - **Worktree cleanup.** Claude Code removes a subagent's worktree automatically only when it has no changes, and a task with commits always has some. So once you have verified a merge, remove the worktree and delete the branch yourself, as [integration.md](integration.md) describes.
@@ -27,7 +28,7 @@ Agent({
 
 - **Waiting:** end your turn after launching. Each subagent's completion arrives as a notification. Don't poll, and don't call blocking waits.
 - **Following up:** to continue a finished subagent with its context, for example "rebase and retry the merge gate", use `SendMessage` with its agent ID or name. A new `Agent` call starts from scratch.
-- **Backup check:** usually unnecessary, because completion notifications also fire when a subagent errors out. For extra safety on very long runs, a session-only `CronCreate` job (for example hourly at an odd minute) can re-read the ledger. It expires after 7 days. Delete it at the end.
+- **Backup check, always:** completion notifications fire when a subagent finishes or errors out, not when one hangs on an approval prompt or a command. So after the first wave, create a session-only recurring `CronCreate` job every 15 minutes or less (at an odd minute) whose prompt does the "On every wake" step from the ledger. Record its ID; it expires after 7 days. Delete it at the finish, just before posting the report.
 
 ## When the usage window runs out
 

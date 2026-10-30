@@ -64,13 +64,14 @@ Finish and merge:
    git -C <integration checkout path> merge --ff-only <task branch>
    If the fast-forward fails because the branch moved, go back to step 3. Never force-update, never push.
    If one check misses narrowly while the main goal is met, don't merge, and don't loosen, skip or re-baseline the check: report status=ready with "narrow miss", the check's threshold and its results before and after your change, then stop. The orchestrator decides, and may tell you to merge.
-<For the "leave on branch" policy, replace steps 3–4 with: "Rebase onto <integration branch>, re-run validation, and stop. Do not merge.">
+<For the "leave on branch" policy, replace steps 3–4 with: "Rebase onto <integration branch, or for a task stacked on another, that task's branch>, re-run validation, and stop. Do not merge.">
 
 Blocked. Stop without merging, report the evidence, then do the report-back:
-- <conditions that genuinely need the owner: missing prerequisite, a product decision, a confirmed defect you can't fix safely, checks that cannot pass, a dirty integration checkout>
+- <conditions that genuinely need the owner: missing prerequisite, a product decision, a confirmed defect you can't fix safely, checks that cannot pass>
+- <A dirty integration checkout at the gate is not one of these either: report status=ready, and the orchestrator retries once it is clean.>
 - <A real-screen check that couldn't run is not one of these, unless it is the task's main deliverable. It goes under "Couldn't check".>
 
-The <range> estimate is a sizing guess, not a timer. Don't wait, and don't add scope to fill it.
+Estimate: <the contract's range for this task>. It is a sizing guess, not a timer. Don't wait, and don't add scope to fill it.
 
 Handoff (in your final message, and saved as <run directory>/<task ID>/handoff.md): what changed; evidence for each required item; any work handed to a helper (which harness, model and reasoning level, for what, and any switch after a limit); validation output, with the commit each check ran on (a check that ran before your final commit counts only for that commit: say so, rather than claiming it for the final head); the Review section the review gate defines, its first lines in its exact format; the commits merged (git log); "Couldn't check": checks that couldn't run and why, with what the owner should look at; untested platforms; "Pictures": if you changed something the owner can see, one to three pictures of it, each with its absolute path and a one-line caption (see the common rules); "Open decisions": questions for the owner, each with a sentence of context and your recommended answer with its reason (a recommendation only; don't build on it); elapsed time and token usage if available.
 
@@ -128,7 +129,7 @@ A task whose usage limit runs out can't send a report at all. The orchestrator n
 
 A task reports again whenever its head or its merge changes after a report: review fixes, a rebase, a follow-up, a merge it was told to do. Each report carries the next number in its request ID (`report-2`, …), and the orchestrator acts on the latest.
 
-Use `ready` when the work is reviewed and validated on its branch but not merged: the policy is "leave on branch", the merge gate failed for a reason outside the task, or one check missed narrowly and the orchestrator decides ([integration.md](integration.md#a-narrow-measured-miss)). Use `failed` for a crash or an environment problem, not for a decision.
+Use `ready` when the work is reviewed and validated on its branch but not merged: the policy is "leave on branch", the merge gate failed for a reason outside the task (a dirty integration checkout, no reviewer available, a review that didn't converge), or one check missed narrowly and the orchestrator decides ([integration.md](integration.md#a-narrow-measured-miss)). Use `failed` for a crash or an environment problem, not for a decision.
 
 ## Continuation brief
 

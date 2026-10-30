@@ -17,7 +17,7 @@ jq -c '.providers[] | select(.providerInstanceId=="claudeAgent") | .models[] | {
 - **Providers:** use only those with no `constraints`.
 - **Model options:** reasoning is passed as an option, and its name differs by provider: Claude uses `{"id": "effort", "value": "high"}`, Codex uses `{"id": "reasoningEffort", "value": "high"}`. Always set it explicitly, following [routing.md](routing.md), and use only values the catalog lists.
 - **Record your `parentThreadId`** in the ledger. Every brief's report-back instruction needs it.
-- **Record your own settings.** `t3_thread_configuration` (no `threadId`) returns your provider, model and reasoning option. Copy them into the ledger for the report's charts.
+- **Record your own settings.** `t3_thread_configure` with no `threadId` and no `modelSelection` only reads, and returns your provider, model and reasoning option (older T3 builds call it `t3_thread_configuration`). Never pass `modelSelection` for your own thread ("When a window runs out", below). Copy them into the ledger for the report's charts.
 
 ## Name your own thread
 
@@ -34,7 +34,8 @@ Omit `threadId`, so it renames your own thread. Keep the title short, such as `O
 ```text
 t3_thread_launch({
   title: "<task ID>: <short title>",
-  workspaceStrategy: {type: "worktree", baseRef: "<integration branch>", branch: "<task branch>", startFromOrigin: false},
+  workspaceStrategy: {type: "worktree", baseRef: "<integration branch; under 'leave on branch', a dependent's predecessor branch>", branch: "<task branch>", startFromOrigin: false},
+  clientRequestId: "<run>-<task>-launch",
   modelSelection: {instanceId: "<provider>", model: "<model id>", options: [<reasoning option, see routing.md>]},
   runtimeMode: "full-access",
   message: "<the brief>"
@@ -43,9 +44,10 @@ t3_thread_launch({
 
 - **Base on local commits.** With `startFromOrigin: false`, the worktree starts from local commits. Uncommitted changes are never copied, so commit anything the task needs first.
 - **Select the workspace in this call.** Never ask a task to create its own worktree from the shell: T3's thread binding would not follow it.
-- **Retries.** `t3_thread_launch` has no retry key. Keep the returned `threadId`. After an error or a lost response, check `t3_thread_list` for the title before launching again.
+- **Retries.** After an error or a lost response, call `t3_thread_launch` again with the same `clientRequestId`: it returns the thread already made instead of a second one. Keep the returned `threadId`.
+- **A top-level thread per task.** T3 makes new top-level threads only when the user asks for them; the contract says each task runs in one, and the user's approval is that request.
 - **`runtimeMode`.** The task must run commands, commit and merge without approval prompts, so use `full-access` unless the contract says otherwise.
-- **Record what actually launched.** Call `t3_thread_configuration` with the task's `threadId`, and record the provider, model and reasoning option it returns. Take the launch time from the thread's `createdAt` in `t3_thread_list`, not from your own estimate.
+- **Record what actually launched.** Call `t3_thread_configure` with the task's `threadId` and no `modelSelection`, and record the provider, model and reasoning option it returns. Take the launch time from the thread's `createdAt` in `t3_thread_list`, not from your own estimate.
 - **The brief is the only message.** Don't queue a `/goal` behind it, on any provider ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)). A Claude Code task that ends its turn while its builds or reviewers run is woken when they finish.
 
 ## Report-back: how you get woken
@@ -54,9 +56,13 @@ Put this into every brief's "Report back" section, filled in:
 
 ```text
 Call t3_thread_send with threadId "<orchestrator threadId>", mode "queue", clientRequestId "<run>-<task>-report-1" (increase the number if you report again), and this message:
-[long-horizon-orchestrator] run=<run> task=<task> status=<...>
+[long-horizon-orchestrator] run=<run, the ledger's name> task=<task> status=<...>
 branch=<...> head=<...> integrated=<yes|no>
+agent=<...> helpers=<...>
+unchecked=<...>
+prompts=<...>
 summary: <...>
+(each line as the brief's "Report-back message" describes)
 If the t3_thread_send tool is not available but the environment variable T3_ACP_MCP_NODE is set, send the same call through:
 ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" ${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call t3_thread_send '<the same arguments as JSON>'
 ```
@@ -70,14 +76,14 @@ A task can die without reporting: a provider crash, a hung command, or a turn th
 ```text
 schedule_task({
   title: "<run> heartbeat",
-  schedule: {type: "interval", everyMs: 1800000},
+  schedule: {type: "interval", everyMs: 900000},
   bindToCurrentThread: true,
   clientRequestId: "<run>-heartbeat",
-  prompt: "Heartbeat for long-horizon-orchestrator run <run>. Read the ledger at <path>. For each task marked running, check its thread with t3_thread_list or t3_thread_read. Act on anything that finished, blocked or went idle without reporting, as described in the skill's 'On every wake' step. If nothing changed, reply with one line."
+  prompt: "Heartbeat for long-horizon-orchestrator run <run>. Read the ledger at <path>; it names the skill's folder, and if you no longer have the skill's text, read its SKILL.md. For each task marked running, read its thread with t3_thread_read: a pendingRequestCount above 0 with no child process running is an approval prompt to clear. Act on anything that finished, blocked, waits on approval or went idle without reporting, as the skill's 'On every wake' step says. If nothing changed, reply with one line."
 })
 ```
 
-- **Interval:** 20–45 minutes suits long tasks. Use the shorter end when only one or two tasks are running, because then few report-backs will wake you, and a dead task waits until the next tick. Shorter intervals mostly cost tokens.
+- **Interval:** 15 minutes or less while tasks run, so an approval prompt or a dead task waits at most that long (the skill's principles). While nothing runs, waiting only for a reset, it may be longer.
 - **Record it:** keep the returned ID in the ledger, and delete the heartbeat with `delete_scheduled_task` when the run finishes.
 - **Model:** a scheduled run uses this thread's provider and model, which is one more reason never to switch your own model during a run.
 
@@ -93,7 +99,7 @@ schedule_task({
   schedule: {type: "fixed_time", timeOfDay: "<local HH:MM, about 5 minutes after resets_at>", weekdays: [<that day, 0 = Sunday>]},
   bindToCurrentThread: true,
   clientRequestId: "<run>-resume-<n>",
-  prompt: "Resume wake for long-horizon-orchestrator run <run>: the <provider> 5-hour window has reset. Read the ledger at <path>. Continue every task marked paused on its own thread, check all other tasks as in the skill's 'On every wake' step, then delete this scheduled task."
+  prompt: "Resume wake for long-horizon-orchestrator run <run>: the <provider> 5-hour window has reset. Read the ledger at <path>; it names the skill's folder, and if you no longer have the skill's text, read its SKILL.md. Continue every task marked paused on its own thread, check all other tasks as in the skill's 'On every wake' step, then delete this scheduled task."
 })
 ```
 
@@ -107,7 +113,7 @@ A crashed or provider-failed run leaves the thread with status `failed`. A resta
 
 1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what happened, and ask it to continue the brief from where it stopped.
 2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief and a fresh branch name such as `<branch>-r2`. On the old thread:
-   - remove anything still queued with `t3_queue_cancel`;
+   - remove anything still queued: `t3_queue` with `action: "list"`, then `action: "cancel"` for each (older T3 builds: `t3_queue_list`, `t3_queue_cancel`);
    - remove its worktree and branch if they hold nothing;
    - settle it.
 3. **If the nudge fails and the task did make progress,** mark it failed instead. Keep its worktree, leave its thread active and unread, and name it in the report.
@@ -139,8 +145,8 @@ A task's turn usually ends with its final message, just after the report-back. I
 
 ## Stopping a task
 
-- **A merged task that keeps working** (re-running checks, or retrying one it listed under "Couldn't check"): interrupt the turn with `t3_thread_interrupt`, and cancel anything still queued for it (`t3_queue_list`, `t3_queue_cancel`). If the thread has a goal set some other way, also queue `/goal clear` with `t3_thread_send` in mode `queue`, on the same wake: sent as a steer, it fails while a turn runs.
-- **A task the user stops:** cancel its queued messages (`t3_queue_list`, `t3_queue_cancel`), interrupt it, save its unfinished work as a patch ([integration.md](integration.md#a-task-the-user-stopped)), remove its worktree, and settle its thread.
+- **A merged task that keeps working** (re-running checks, or retrying one it listed under "Couldn't check"): interrupt the turn with `t3_thread_interrupt`, and cancel anything still queued for it (`t3_queue`, `list` then `cancel`). If the thread has a goal set some other way, also queue `/goal clear` with `t3_thread_send` in mode `queue`, on the same wake: sent as a steer, it fails while a turn runs.
+- **A task the user stops:** cancel its queued messages (`t3_queue`, `list` then `cancel`), interrupt it, save its unfinished work as a patch and keep its worktree ([integration.md](integration.md#a-task-the-user-stopped)), and settle its thread.
 
 ## When a window runs out
 
@@ -148,7 +154,7 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 - **A task stopped on quota:** leave its thread, queue and worktree alone. Schedule the resume wake. On the first wake after the reset, read the thread with `t3_thread_list`. If it isn't running again, send `t3_thread_send` in mode `"auto"`: "Your usage limit has reset. Continue the brief from where you stopped." The agent keeps its whole conversation, so it carries on where it was.
 - **Your own window is nearly used up:** schedule the resume wake, update the ledger, and end your turn.
-- **Never call `t3_thread_configure` on your own thread during a run.** In the first real run it went wrong in three ways:
+- **Never call `t3_thread_configure` with a `modelSelection` on your own thread during a run** (a call without one only reads). In the first real run a switch went wrong in three ways:
   - the call ended the calling turn on the spot, so nothing after it ran, and T3 recorded the turn as failed;
   - the first switch didn't stick: the next heartbeat ran on the old model again;
   - each call left a record that stayed "running" forever, so the thread showed "Waiting on N background tasks" with a Stop button that couldn't clear it, until the T3 server restarted.
@@ -157,7 +163,7 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 The user's active thread list should show only what still needs them. Use `t3_thread_organize`:
 
-- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Check each result: a call on another thread returns a `sequence`, while `settlesWhenTurnEnds: true` means it hit your own thread. Afterwards, `t3_thread_list({settled: false, includeSubagents: true})` should list only the threads you meant to keep.
+- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Always pass `threadId`, and never call it without one during a run, since that means your own thread. Afterwards, `t3_thread_list({settled: false, includeSubagents: true})` should list only the threads you meant to keep.
 - **Your own thread:**
   - Pin it (omit `threadId`) when the first wave launches, so it's easy to find during the run.
   - Keep it pinned after the final report. The user unpins it after reading.
@@ -181,11 +187,11 @@ When another run is active ([routing.md](routing.md#running-beside-another-orche
 
 ## When the run finishes
 
-1. Delete the heartbeat and any resume wake. `list_scheduled_tasks` should show none of this run's schedules. Stop the keep-awake too.
+1. Stop the keep-awake. Keep the heartbeat until step 7, so a turn that dies while you prepare the report is woken again.
 2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
 3. Gather the times for the report's timeline. For each task thread, and for your own thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A fast helper ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)) can collect these for all the threads, which keeps the long results out of your context; check a few of its times against the ledger. Your own turns from the approval on give your worked time and wake count, for the facts file's `run`; the approval's time is in the ledger, and the run ends with the report. Write them into the facts file, keeping each thread's turns as its `turns`, and `scripts/run-charts` draws the run map and both charts ([final-report.md](final-report.md#the-runs-facts)).
 4. Show the run map: pass `run-map-t3.html`, as `run-charts` wrote it, to `html_preview` once and then to `html_render` ([final-report.md](final-report.md#run-map)).
 5. If you have OrbOS's tools, offer the report once, with its tour, just before posting it: run `scripts/report-offer` on the facts file and the saved report with `--pictures <run directory>` (and `--harness codex` when you are Codex), and it offers them through OrbOS's own command; only if it says `not offered`, call `offer_reading` yourself ([final-report.md](final-report.md#offer-it-to-listen-to-with-its-tour)). Your thread runs at the project's root, so pass `--repo` with the integration checkout.
-6. Post the final report as your last message in your own thread, without the Mermaid charts. Leave the thread pinned and active.
-7. If any pull requests were created, link them with `link_pull_request`.
-8. Set the ledger to `finished` and send the push notification, as the skill's Finish says. No live tour when the offer kept its tour. Only when it didn't, and the user is at the computer and you have `walkthrough`, give the live tour, and end with one short line.
+6. If any pull requests were created, link them with `link_pull_request`.
+7. Before posting, as the skill's Finish says: set the ledger to `finished`, delete the heartbeat and any resume wake (`list_scheduled_tasks` should then show none of this run's schedules), and send the push notification. The report is your last message; a live tour, when the offer couldn't keep its tour, waits for the user to ask.
+8. Post the final report as your last message in your own thread, without the Mermaid charts. Leave the thread pinned and active.

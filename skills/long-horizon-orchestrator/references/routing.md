@@ -85,7 +85,7 @@ tasks that fit ≈ (100 − used_percent) / percent one task uses on that plan
   grep -l -E '^Status: (running|paused)' "${XDG_STATE_HOME:-$HOME/.local/state}"/agent-skills/long-horizon-orchestrator/*.md
   ```
 
-  A ledger without a `Status:` line that was changed in the last day may also be active. For each active run, count its running tasks on each provider and leave room for them. Name them in the contract, and in the report's usage line, because they make the usage numbers a shared total. Then coordinate with it, as below.
+  A ledger still `Status: running` that hasn't changed in six hours, whose orchestrator thread is idle (in T3, `t3_thread_read`), belongs to a run that died: don't wait on it or split code areas with it, and say so in your contract. A ledger without a `Status:` line that was changed in the last day may also be active. For each active run, count its running tasks on each provider and leave room for them. Name them in the contract, and in the report's usage line, because they make the usage numbers a shared total. Then coordinate with it, as below.
 
 ### Running beside another orchestrator
 

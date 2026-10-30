@@ -40,7 +40,7 @@ Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.
 Limits:
 
 - **A free reviewer gets its time and no more** (15 minutes). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, or no answer in its time) is dropped, except at Light, where the cross reviewer takes its place. OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, don't try the other.
-- **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Terra by the Claude model you aren't, or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, review the diff yourself in a fresh pass, and say so in the record. A reviewer that timed out may still be running: stop it before you start its replacement.
+- **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Terra by the Claude model you aren't, or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.
 
 ### Trial reviewers
 

@@ -50,7 +50,7 @@ The owner's profile ([routing.md](routing.md#6-the-owners-profile)) lists what e
 Right after approval, while the user is still at the computer (about five minutes):
 
 1. Give the user the admin block to paste into Terminal, if there is one.
-2. Make each remaining prompt appear on purpose, from the harness the tasks run under (in T3, from your own thread), so they all come at once and the user clicks Allow on each:
+2. Make each remaining prompt appear on purpose, from the harness the tasks run under (in T3, from your own thread), so they all come at once and the user clicks Allow on each. Each command waits until its prompt is answered, so never run one in the foreground: start each in the background with its output in a file in the run directory (`… > <run directory>/warmup/<name>.txt 2>&1 &`, recording its process ID), then read the files after a minute. One still running is a prompt nobody has answered: stop it by its process ID and count that permission as missing.
 
    ```sh
    osascript -e 'tell application "System Events" to get name of first process'   # Automation: System Events
@@ -64,17 +64,18 @@ Right after approval, while the user is still at the computer (about five minute
 3. Run each check again and show the result, for example "7 of 7 granted". Record it in the ledger, and in the owner's profile under this computer's "Machine" section with the date.
 4. Start keeping the computer awake (section 4).
 
-If the user doesn't wait for the warm-up, launch anyway. Tasks then skip what isn't granted and list it under "Couldn't check".
+If the user doesn't wait for the warm-up, launch anyway: the one-off wake you scheduled before posting the admin block (the skill's Prepare step) brings you back about 10 minutes later if nobody answers. Tasks then skip what isn't granted and list it under "Couldn't check".
 
 ## 4. Keeping the computer awake
 
 A sleeping computer stops every task. So, from the warm-up to the finish, keep it awake. On macOS:
 
 ```sh
-caffeinate -i -d -t <seconds> &   # -i: no idle sleep; -d: keep the display on (needed when anything uses the screen)
+nohup caffeinate -i -d -t <seconds> >/dev/null 2>&1 &   # -i: no idle sleep; -d: keep the display on (needed when anything uses the screen)
 ```
 
-- Use `-i -d` from the warm-up for as long as any task still to run may use the real screen, and `-i` alone once none will: a display kept awake while no screen work is left keeps the window server drawing for nothing (on 2026-10-22, a `-d` kept all day while every task rested made the user's Mac run warm). Never let the display sleep while screen work remains, and don't hand that to the tasks: when the display sleeps, macOS may lock the session even when the screen-lock setting reads off, and a task that wants the screen later finds it locked, with nobody to type the password. On 2026-10-23, a run started with `-i` alone, the display slept after 10 idle minutes (`pmset -g`: `displaysleep 10`), and the screen locked 10 minutes into the run although `sysadminctl -screenLock status` said off; the screen task found it locked and blocked.
+- Confirm it runs (`ps -p <pid>`) and record its process ID.
+- Use `-i -d` from the warm-up for as long as any task still to run may use the real screen, and `-i` alone once none will, counting reserve tasks and relaunches as tasks still to run: a display kept awake while no screen work is left keeps the window server drawing for nothing (on 2026-10-22, a `-d` kept all day while every task rested made the user's Mac run warm). Never let the display sleep while screen work remains, and don't hand that to the tasks: when the display sleeps, macOS may lock the session even when the screen-lock setting reads off, and a task that wants the screen later finds it locked, with nobody to type the password. On 2026-10-23, a run started with `-i` alone, the display slept after 10 idle minutes (`pmset -g`: `displaysleep 10`), and the screen locked 10 minutes into the run although `sysadminctl -screenLock status` said off; the screen task found it locked and blocked.
 - Set `-t` to the run's estimate plus a few hours, record the process ID in the ledger, and start a new one if the run outlasts it.
 - Stop it at the finish, or if the user stops the run.
 - It keeps the computer awake, but a screen lock the user set still locks it, which is why "automatic screen lock off" is in the permissions list.
@@ -89,6 +90,7 @@ In the contract, list what belongs to the user and must be left as found: their 
   - the app's settings (on macOS, `defaults export <domain> <file>` for restoring with `defaults import`, and `defaults export <domain> - > <file>.xml` for comparing: a file export is binary);
   - the list of files in `~/Library/Preferences`;
   - background services (`launchctl list`);
+  - the settings the run itself turns off or on: automatic screen lock (`sysadminctl -screenLock status`), Stage Manager (`defaults read com.apple.WindowManager GloballyEnabled`), and a Focus the user set for the run;
   - app copies registered with the system (on macOS, `"$LSREGISTER" -dump | grep '^path:'`, with `LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister`, which isn't on the PATH);
   - free disk space.
 - **Rules for the briefs:**
@@ -105,6 +107,7 @@ In the contract, list what belongs to the user and must be left as found: their 
   - restore changed settings;
   - delete leftover test files;
   - unregister builds whose worktrees were removed (on macOS, `"$LSREGISTER" -u <app>`);
+  - turn back on what the run turned off, where no password is needed (Stage Manager, with `defaults write`); a setting only the user can restore (automatic screen lock needs their password) goes in the report's "Side effects" with how to turn it back on;
   - list anything you couldn't restore under "Side effects" in the report.
 
 In the 2026-10-12 run, a test build opened by a bare link spoke through the user's live speech service and wrote into their app's history. Tests also left about 5,700 settings files, and the user's sound volume set to zero. In the 2026-10-14 run:
@@ -114,10 +117,10 @@ In the 2026-10-12 run, a test build opened by a bare link spoke through the user
 
 ## 6. Shared resources and disk
 
-- **Leases.** Some resources only one or two tasks can use at a time: the real screen, the GPU, a hardware device, a single test account. Declare them in the contract, and let tasks take turns with `scripts/lease`. Copy it into `<run directory>/bin/` at the start and write `<run directory>/leases.json` (when another run shares the computer, use one lease folder for both instead, below), for example:
+- **Leases.** Some resources only one or two tasks can use at a time: the real screen, the GPU, a hardware device, a single test account, and the processor's capacity for builds and heavy test suites (a `cpu` lease, with about one slot for every two performance cores, so timing checks aren't failed by contention). Declare them in the contract, and let tasks take turns with `scripts/lease`. Copy it into `<run directory>/bin/` at the start and write `<run directory>/leases.json` (when another run shares the computer, use one lease folder for both instead, below), for example:
 
   ```json
-  {"screen": {"slots": 1, "max_minutes": 15, "wait_minutes": 45}, "gpu": {"slots": 2, "max_minutes": 30, "wait_minutes": 60}}
+  {"screen": {"slots": 1, "max_minutes": 15, "wait_minutes": 45}, "gpu": {"slots": 2, "max_minutes": 30, "wait_minutes": 60}, "cpu": {"slots": 5, "max_minutes": 45, "wait_minutes": 150}}
   ```
 
   Briefs give tasks the command (`<run directory>/bin/lease acquire screen --owner <task ID>`). Turns are first come, first served, and a lease expires after its limit.

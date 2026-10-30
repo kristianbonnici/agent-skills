@@ -24,6 +24,9 @@ A reviewer that is limited shows it in its result or its thread: a quota or rate
 
 ## In Claude Code without T3
 
+A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3").
+
+
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
 - **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
 - **Codex Terra:** a background Bash command from the worktree:

@@ -27,13 +27,13 @@ You created these worktrees, so you remove them. Once a merge is verified, call 
 spawn_agent({
   task_name: "<task_id_lowercase>",
   message: "<the brief>",
-  fork_context: false,
+  fork_context: false,   // newer Codex builds: fork_turns: "none"; use whichever the tool lists
   model: <omit unless the contract names one>,
   reasoning_effort: <omit unless the contract names one>
 })
 ```
 
-- **Fresh context.** Use `fork_context: false`, so the task starts from the brief alone and not from your conversation.
+- **Fresh context.** Use `fork_context: false` (or, where the tool has it instead, `fork_turns: "none"`), so the task starts from the brief alone and not from your conversation.
 - **The brief alone.** As on every host, a task gets no `/goal` ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)): its brief's stop conditions define the end. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line."
 - **Concurrency.** Sessions have a limit on concurrent agents (`max_concurrent_threads_per_session`), so keep each wave within it. Finished agents count toward the limit until closed: call `close_agent` once you have handled a result.
 
@@ -45,7 +45,7 @@ A Codex orchestrator should keep its own turn going instead of ending it and hop
    `/goal Every task in the ledger at <path> is merged, ready, blocked, parked or failed, the ledger is up to date, and the final report has been posted in the chat.`
    If you can't run `/goal` yourself, put the exact line in the contract message for the user to send along with their approval.
 2. **Wait in a loop.** Call `wait_agent` on all running task IDs with the longest allowed timeout. Each return means at least one task reached a final status: handle it as described in "On every wake", launch anything it unblocked, then wait again on the remaining tasks.
-3. **On a timeout,** re-read the ledger and wait again. A timeout is not a failure.
+3. **On a timeout,** do the whole "On every wake" step (the tasks, the computer, the usage windows, the ledger), then wait again. A timeout is not a failure, and it is your heartbeat: keep `wait_agent`'s timeout at 15 minutes or less while tasks run.
 
 Codex also delivers a final-status notification for completed agents. Verify on first use whether that notification starts a new turn for an idle orchestrator. Until it is confirmed, rely on the `wait_agent` loop under your own goal.
 

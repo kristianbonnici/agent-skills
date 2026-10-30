@@ -287,8 +287,8 @@ report-offer's own client starts OrbOS's command with the run directory as its p
 
 When the reading's tour waits in the notch, skip this. When it doesn't (an OrbOS that can't keep one, or no offer at all), the tour from `tour.json` can still be given as a live walkthrough. A walkthrough's offer waits only as long as the user's question wait (3 minutes unless they chose otherwise), and a tour runs only while you make its calls. So:
 
-- **The user is at the computer** (input within the last 2 minutes; on macOS, `HIDIdleTime` from `ioreg -c IOHIDSystem`, in nanoseconds; a task's own screen checks reset it too, so make sure none runs; on a host where you can't tell, treat the user as away): give the tour as below, after every other finish step, the ledger's `finished` and the push notification included. Your turn stays open while it runs. Then end the turn with one short line, not another report, such as "The tour has ended." or "No tour for now: ask me to walk you through the run any time."
-- **Otherwise,** don't offer it. The reading and the report's closing line tell the user to ask for it ("walk me through the run"). When they do, give it from the same `tour.json`, or a new session can, from the path the report names.
+- **Not at the finish.** The report is the run's final message, so a live tour never follows it in the same turn. The report's closing line tells the user to ask for it ("walk me through the run").
+- **When they ask,** give it from the same `tour.json`, or a new session can, from the path the report names.
 
 To give it:
 

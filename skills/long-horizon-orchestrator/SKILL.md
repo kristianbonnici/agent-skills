@@ -54,11 +54,13 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 Put everything the user might want to decide into one message, so nothing needs asking later:
 
 - **Tasks:** one plain-language line each, with the waves and dependencies.
+- **How tasks run:** in T3, each task in a top-level thread of its own, which the user's approval of the contract asks for; elsewhere, as the host's subagents. Say how many tasks run at once at most on this computer, and how many of them may build or run heavy test suites at the same time (the `cpu` lease's slots, [references/machine.md](references/machine.md#6-shared-resources-and-disk)).
 - **Per task:** host or provider, model and effort, branch, exclusive resources such as test ports, the helpers it may use, and its review level (light, standard or deep, by the `review-gate` skill's rules) with the reviewers that level gives it, and, at standard and deep, its trial reviewer: GPT-6 Luna for half those tasks and Claude Haiku 5.5 for the other half, so the two can be compared. Give the reason for any task not on the home harness, and for any task above high.
 - **Usage:** each subscription's current usage in plain words, any other active run sharing them ([references/routing.md](references/routing.md#2-measure-capacity-as-plan-size-times-room-left) shows how to find them), and what the run is expected to consume. Say that work pauses when a 5-hour window runs out and resumes after its reset, at what time if that is likely.
 - **Another run:** if another orchestrator is active on this computer, what you agreed with it before the contract: the code areas each run stays out of, the shared lease folder, ports and folders, and who does the shared finish steps ([references/routing.md](references/routing.md#running-beside-another-orchestrator)).
 - **Integration branch:** the branch checked out where the run starts (`main`, `dev`, …).
-  - Default policy: each task commits, passes the review gate (the `review-gate` skill: reviewers of another model family, at a level set by what its diff touches), passes the full checks, and fast-forwards the integration branch itself. Nothing is pushed.
+  - Default policy: each task commits, passes the review gate (the `review-gate` skill: reviewers of another model family, at a level set by what its diff touches), passes the full checks, and fast-forwards the integration branch itself. Nothing is pushed, except the owner's provider profile to their private state repository when it lives there ([references/routing.md](references/routing.md#6-the-owners-profile)).
+  - One exception you may decide during the run: a task that meets its goal but misses one check narrowly may merge with a follow-up task for the miss ([references/integration.md](references/integration.md#a-narrow-measured-miss)). Say so in the contract.
   - Alternative the user may choose: leave each task on its reviewed branch for the user to merge.
 - **Blocked:** what makes a task stop without merging. Other tasks continue when one blocks. A check on the real screen that can't run (the screen is locked, or the app's window can't be captured) doesn't block a merge: the task merges on its other checks, and the report lists what still needs the user's eyes. The exception is a task whose main deliverable is that check.
 - **Pre-flight items:**
@@ -91,29 +93,29 @@ A message from the user during the run amends the contract. Quote it in the ledg
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
 - Create the ledger and the run directory (see below), and record the contract in the ledger.
 - Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configuration`). The report's charts need it.
-- Record the version of this skill and of `review-gate` (`metadata.version` in each `SKILL.md`), so later studies can compare runs by version.
+- Record the version of this skill and of `review-gate` (`metadata.version` in each `SKILL.md`), so later studies can compare runs by version, and the absolute path of this skill's folder, so a wake after a context summary can read the skill and its `scripts/` again.
 - If your thread's title doesn't say plainly which run this is, rename it so the user can tell runs apart (in T3, [references/host-t3.md](references/host-t3.md#name-your-own-thread)).
 - Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
   - Never use the user's own dev-server ports.
   - Never stop processes you didn't start.
-- Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile.
+- Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile. It must not hold up the run: before you post the admin block, schedule a one-off wake about 10 minutes later (in T3, as the resume wake is scheduled). If the user hasn't answered by then, check again what the warm-up can read without them, record what is missing, and launch.
 - Keep the computer awake until the finish ([references/machine.md](references/machine.md#4-keeping-the-computer-awake)), and record how.
-- Start the usage sampler in the background and record its process ID ([references/machine.md](references/machine.md#9-the-usage-sampler)): `scripts/usage-sampler <run directory>/usage &`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
+- Start the usage sampler in the background, detached from your shell, and record its process ID ([references/machine.md](references/machine.md#9-the-usage-sampler)): `nohup scripts/usage-sampler <run directory>/usage >/dev/null 2>&1 &`, then confirm it runs with `ps -p <pid>`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
 - Snapshot the user's own state into the run directory, and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
 - Write the common file that every brief points to, with the rules all tasks share ([references/task-brief.md](references/task-brief.md#one-common-file-for-every-brief)).
 
 ### 4. Launch the ready tasks
 
-Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, for each task whose prerequisites are merged:
+Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready`), and then the next reserve task:
 1. Write its brief from [references/task-brief.md](references/task-brief.md), and save it in the run directory.
 2. Launch it as the host reference describes.
 3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level.
 
-Launch a whole wave together, then set up the backup wake-up the host reference calls for (for example the heartbeat in T3).
+Launch a whole wave together, then set up the backup wake-up the host reference calls for (for example the heartbeat in T3), and confirm it is scheduled: in T3, `list_scheduled_tasks` shows it enabled, with its next run within the interval.
 
 ### 5. End the turn and wait to be woken
 
-After launching, end your turn. You will be woken by one of:
+After launching, end your turn (on Codex, keep it open and wait on the agents instead, as [references/host-codex.md](references/host-codex.md) describes). You will be woken by one of:
 - a task's report-back message;
 - the host's completion notification;
 - the heartbeat, which also covers a task that died without reporting;
@@ -126,7 +128,7 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
 1. **Re-read the ledger.** Your context may have been summarized since the last wake.
 2. **Find out what changed and verify it at the source.**
    - Use `git log` of the integration branch and `git merge-base --is-ancestor <task head> <integration branch>`.
-   - Check the task's thread or agent status and read its last message.
+   - Check the task's thread or agent status and read its last message, and whether it waits on an approval prompt (in T3, `pendingRequestCount` from `t3_thread_read`): a running task with a pending request and no child process running is stuck on one, so interrupt the turn and tell it how to finish without that command.
    - A report says what the task believes; git says what happened.
 3. **Act.** Follow [references/integration.md](references/integration.md):
    - **Merged:** verify the head of its latest report, mark it done and launch any task this unblocked. Then clean up, only once the task and everything it started have stopped, in the order [references/integration.md](references/integration.md#cleanup-after-a-merge) gives: stop a turn that outlived the report, check for background jobs, then for leases it holds, then remove its worktree and branch and tidy its entry in the host's task list (in T3, settle its thread). Settling a thread or closing an agent doesn't stop the jobs it started, so if anything still runs, clean up on a later wake.
@@ -141,17 +143,18 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
 4. **Check the computer** ([references/machine.md](references/machine.md#7-during-the-run)):
    - Compare the user's settings with the start snapshot. Restore at once, key by key, what a test build changed, and tell the task that did it.
    - A password or keychain dialog on the screen (on macOS, `pgrep -x SecurityAgent` finds one) means a task ran something that asks for one. Nobody will answer it: find the command, stop it by its process ID, and tell the task.
-   - Check free disk space and the keep-awake too, and look for leftover processes: a paused or merged task's test build, watcher or computer-use service still running ([references/machine.md](references/machine.md#8-leftover-processes)).
+   - Check free disk space, the keep-awake, the usage sampler (restart it on the same folder if it died) and that the heartbeat is still scheduled, and look for leftover processes: a paused or merged task's test build, watcher or computer-use service still running ([references/machine.md](references/machine.md#8-leftover-processes)).
 5. **Check the home subscription's 5-hour window.** Take a usage snapshot and compare it with the last one. If the window is nearly used up, or will run out before the next heartbeat at its current pace, schedule the resume wake now, while you still can (see [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out)). Note any fast helper the tasks found limited, and leave it out of new briefs until it recovers. The snapshot also shows Antigravity's windows: leave Flash out of new briefs while the Gemini 5-hour window is past about 85%, and Argon once the run has used its budget.
-6. **Update the ledger, then end the turn.** Write down every state change before ending, so the next wake starts from the truth.
+6. **Launch what can start:** dependents a merge unblocked, and reserve tasks while the run is under its limit on tasks at once.
+7. **Update the ledger, then end the turn.** Write down every state change before ending, so the next wake starts from the truth.
 
 Launching dependent tasks is your job, not the job of the task briefs. Keeping the chain in one place keeps the ledger accurate and lets you skip the dependents of a blocked task.
 
 ### 7. Finish
 
-When every task is done, blocked or parked:
+When no task is running, paused or able to start (every task is merged, `ready`, blocked, failed or parked; a pending task whose prerequisite will not merge in this run is parked):
 
-1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the heartbeat, any resume wake, the keep-awake and the usage sampler (`kill <its recorded process ID>`; it ends within a moment), close or cancel any remaining agents, and stop the run's leftover processes: test builds, watchers, the kit's browsers, and computer-use services the run's steps started ([references/machine.md](references/machine.md#8-leftover-processes)).
+1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the keep-awake and the usage sampler (`kill <its recorded process ID>`; it ends within a moment), close or cancel any remaining agents, and stop the run's leftover processes: test builds, watchers, the kit's browsers, and computer-use services the run's steps started ([references/machine.md](references/machine.md#8-leftover-processes)).
 2. Verify the end state:
    - the integration branch log;
    - nothing was pushed;
@@ -164,13 +167,12 @@ When every task is done, blocked or parked:
 6. Take a final usage snapshot, and update the calibration in the owner's provider profile. If the profile lives in the owner's private repository, commit and push it (see [references/routing.md](references/routing.md#6-the-owners-profile)).
 7. Write the final report from [references/final-report.md](references/final-report.md), with the tasks' pictures of what changed and a picture of how the run actually went: in T3 the run map, shown with `html_render` just before the report; elsewhere its two Mermaid charts (a dependency graph and a timeline). `scripts/run-charts` draws all of them from one facts file, with the usage graphs from the sampler's folder (`"usage": {"folder": "<run directory>/usage"}`). Save a copy next to the ledger, for the record.
 8. If you have OrbOS's `offer_reading` tool, offer the report once, as a reading to listen to later with its tour ([references/final-report.md](references/final-report.md#offer-it-to-listen-to-with-its-tour)). `scripts/report-offer` turns the facts file and the saved report into the tool's arguments and offers them through OrbOS's own command, so the tour shows the tasks' pictures too; if it can't, it says so and you call `offer_reading` yourself. It returns within moments, and the card waits in the notch for 8 hours, with **Tour** beside **Play**: the user plays the tour whenever they like, without you.
-9. **Post the report in the chat as your final message.** This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. The saved copy isn't enough; the user reads the chat.
-10. Set the ledger's status to `finished`.
-11. If the host has a push-notification tool, send one line saying the run is finished.
-12. No live tour is needed when the offered reading kept its tour. Only when it didn't (an OrbOS that can't keep one, or no offer), and you have OrbOS's `walkthrough` tool and the user is at the computer now, give the report as a live tour: an optional tail after the finish, not part of it. Your turn stays open while it runs, at most until the user stops it or leaves it 10 minutes ([references/final-report.md](references/final-report.md#the-live-tour-only-when-the-tour-didnt-wait)), so everything above is done first. End with one short line, not another report. With the user away, don't offer it: the reading and the report tell them to ask for it.
+9. Set the ledger's status to `finished`, then stop the heartbeat and any resume wake (the heartbeat stays until here, so a turn that dies while the report is prepared is woken again).
+10. If the host has a push-notification tool, send one line saying the run is finished.
+11. **Post the report in the chat as your final message.** This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. The saved copy isn't enough; the user reads the chat. Nothing comes after it in this turn.
 
-    Without OrbOS's tools, skip steps 8 and 12 silently, and never speak aloud about either.
-13. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user. A tour they ask for ("walk me through the run") isn't new work: point them to **Tour** on the waiting card, or give it from the same files.
+    Without OrbOS's tools, skip step 8 silently, and never speak aloud about it. When the offered reading couldn't keep its tour (an OrbOS that can't, or no offer), the report's last line says a live tour is available on request ([references/final-report.md](references/final-report.md#the-live-tour-only-when-the-tour-didnt-wait)).
+12. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user. A tour they ask for ("walk me through the run") isn't new work: point them to **Tour** on the waiting card, or give it from the same files.
 
 ### 8. When the user comes back
 
@@ -190,7 +192,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/<re
 ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/<repo-name>-<YYYYMMDD-HHMM>/
 ```
 
-The run directory holds everything else the run writes and needs later: briefs, task handoffs, logs you keep as evidence, and the saved copy of the final report. Never keep these in `/tmp`, which macOS clears on restart, and never link to `/tmp` from the report.
+If a ledger of that name already exists (two runs on one repository started within a minute), add `-2`. The run directory holds everything else the run writes and needs later: briefs, task handoffs, logs you keep as evidence, and the saved copy of the final report. Never keep these in `/tmp`, which macOS clears on restart, and never link to `/tmp` from the report.
 
 The ledger is your memory across context summaries, heartbeats and wakes. Its first line after the title is `Status: running`, `Status: paused until <time>` or `Status: finished`, so other runs can tell whether this one is still active. It holds:
 
@@ -200,7 +202,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - the user's approval, quoted with its time, which starts the run's clock for the report, and every amendment they sent during the run, quoted with its time;
   - the port and resource allocation;
   - any other active run: its ledger, the notes you exchanged and what you agreed.
-- **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; the versions of this skill and `review-gate`; and the IDs of the heartbeat and any resume wake.
+- **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; the versions of this skill and `review-gate`, and this skill's folder; and the IDs of the heartbeat and any resume wake.
 - **One row per task:**
   - ID, title, dependencies;
   - host, provider, model and effort, as the host reports them after launch;
@@ -225,7 +227,7 @@ Update it on every state change. Mention its path in the contract message and in
 - **The report ends the run.** A usage target is met by the plan and its reserve list, never by work added after the report.
 - **Isolation by default.** Use a separate worktree for each writing task, exclusive ports and directories, and fast-forward-only merges. A task whose fast-forward fails rebases, re-validates and tries again.
 - **Stop only what you started,** by its recorded process ID, never by a name or pattern. A pattern matches other tasks' builds and the user's own apps.
-- **Never run a command that waits for approval,** in your own thread above all. Even with permissions bypassed, Claude Code stops for approval on commands it judges dangerous, such as `rm -rf` on a path built from a shell variable (`rm -rf "$RUN/$d"`), or any `rm` inside a `sh -c` script or compound command ("This shell -c script runs rm and could not be checked"). Delete with a Bash call of its own: plain `rm` and literal absolute paths, one per argument. A prompt in a task's thread stalls that task. A prompt in your own thread stalls the whole run: the heartbeats queue behind your stuck turn, so nothing notices. On 2026-10-23, a task stopped on such a prompt; the orchestrator interrupted it, then ran the same kind of deletion itself and waited seven hours for the user to wake up and approve it. If a task's thread shows a pending request with no child process running, it is waiting for approval: interrupt the turn and tell the task how to finish without that command. On every wake, read each running task's thread for a pending approval (in T3, `pendingRequestCount` from `t3_thread_read`), and keep the heartbeat at 15 minutes or less while tasks run: on 2026-10-27 a task's approval prompt waited until the owner happened to see it.
-- **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work. Only a fast helper's work switches, between helpers, when one is limited.
-- **Never push, publish or force-update.** Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
+- **Never run a command that waits for approval,** in your own thread above all. Even with permissions bypassed, Claude Code stops for approval on commands it judges dangerous, such as `rm -rf` on a path built from a shell variable (`rm -rf "$RUN/$d"`), or any `rm` inside a `sh -c` script or compound command ("This shell -c script runs rm and could not be checked"). Delete with a Bash call of its own: plain `rm` and literal absolute paths, one per argument. A prompt in a task's thread stalls that task. A prompt in your own thread stalls the whole run: the heartbeats queue behind your stuck turn, so nothing notices. On 2026-10-23, a task stopped on such a prompt; the orchestrator interrupted it, then ran the same kind of deletion itself and waited seven hours for the user to wake up and approve it. If a task's thread shows a pending request with no child process running, it is waiting for approval: interrupt the turn and tell the task how to finish without that command. On every wake, read each running task's thread for a pending approval (step 2 of "On every wake"), and keep the heartbeat at 15 minutes or less while tasks run: on 2026-10-27 a task's approval prompt waited until the owner happened to see it.
+- **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work. Only two kinds of work move when a limit stops them: a fast helper's, between helpers, and a whole task on a free model, which moves to the next free model and then to Codex's Terra or Claude Sonnet ([references/routing.md](references/routing.md#a-task-on-a-free-model)).
+- **Never push, publish or force-update,** except the one push of the owner's provider profile to their private state repository. Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
 - **Calibrate.** Record actual task durations in the ledger and report them, so future estimates improve.
