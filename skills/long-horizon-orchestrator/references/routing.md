@@ -171,6 +171,16 @@ If a provider's weekly window runs out with work left:
 
 Never work around a limit silently. The report says which tasks paused, for how long, and why.
 
+### Claude API credits: use what would expire
+
+The owner may have Claude API credits beside the Claude subscription: in T3, a second Claude instance (`claudeAgent_claude_api`) runs the same models, billed to the credits. The credits are dollars that expire, not windows that reset, so:
+
+- **Read them in the usage snapshot.** `provider-usage` reports them under `claude_api`, from the owner's grants in `api-credits.json` beside the provider profile (each grant's amount, expiry, and the balance the Console showed when) less the API spend T3 has logged since, soonest-expiring grant first. It is an estimate; say so, with the time of the Console reading.
+- **Credits that would expire go first.** While a grant expires within about a week with money left, Claude tasks, Claude reviewers and your own wakes run on the API instance first, and the subscription is the backup. Plan the run's Claude work to use what would otherwise expire, and no more than it holds.
+- **Otherwise the subscription goes first,** and the API instance is the backup when a Claude window runs short, within what the contract allows.
+- **In the contract,** give each grant's estimated balance and expiry, and which tasks run on which Claude instance. In the report's usage line, give the credits' estimated balance at the start and the end.
+- **When the estimate runs out,** the rest of that Claude work continues on the subscription, on its own thread, as a free model's task moves on ([A task on a free model](#a-task-on-a-free-model)).
+
 ## 4. Strengths: a soft preference
 
 | Work | Prefer | Applies when | Basis |
