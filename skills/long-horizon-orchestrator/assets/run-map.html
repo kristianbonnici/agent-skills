@@ -950,8 +950,18 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const whole = v => Math.round(v) + "";
   const slotsOf = p => p.long ? [p.long, ...(p.more || [])] : [];
   const apiEnds = A ? [A.first, A.last] : null;   // the credits' dollars left at the start and the end of the run
-  const apiNote = A ? "(estimate" + (A.incomplete ? ", incomplete" : "")   // what the figures are, and what expired rather than was spent
-    + (A.expired && A.expired.length ? `; ${usd(A.expired.reduce((sum, [, v]) => sum + v, 0))} expired at ${A.expired.map(([e]) => clock(Math.floor(e))).join(" and ")}` : "") + ")" : "";
+  const sign = v => (v < 0 ? "−" : "+") + usd(Math.abs(v));
+  const apiNote = !A ? "" : (() => {   // what the figures are, and what isn't plain spending: the same words as summary.txt's
+    const bits = [], corrections = A.corrections || [];
+    if (A.expired && A.expired.length) {
+      const times = A.expired.map(([e]) => clock(Math.floor(e)));
+      bits.push(`${usd(A.expired.reduce((sum, [, v]) => sum + v, 0))} expired at ` + (times.length < 3 ? times.join(" and ") : times.slice(0, -1).join(", ") + " and " + times[times.length - 1]));
+    }
+    if ((bits.length || corrections.length) && A.spent >= 0.5) bits.push(`${usd(A.spent)} spent`);
+    const up = corrections.reduce((sum, [, v]) => sum + (v > 0 ? v : 0), 0), down = -corrections.reduce((sum, [, v]) => sum + (v < 0 ? v : 0), 0);
+    if (up >= 0.5 || down >= 0.5) bits.push("balance corrected " + [up >= 0.5 ? "+" + usd(up) : "", down >= 0.5 ? "−" + usd(down) : ""].filter(Boolean).join(" and "));
+    return "(estimate" + (A.incomplete ? ", incomplete" : "") + (bits.length ? "; " + bits.join(", ") : "") + ")";
+  })();
   const apiText = A ? `${usd(apiEnds[0])}→${usd(apiEnds[1])} left ${apiNote}` : "";
   const ends = slot => {  // a window's use at the start and the end of the run
     const pts = slot.segs.flat(), inside = pts.filter(([m]) => m >= t0 && m <= t1), use = inside.length ? inside : pts;
@@ -1237,7 +1247,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       const near = A.expiries.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`a credit expires ${clock(near)}`);
       row(tip, A.name, bits.length ? bits.join(" · ") : "<em>no reading</em>", h.colour);
       row(tip, "Over the run", apiText.replace(/&/g, "&amp;").replace(/</g, "&lt;"));
-      if ((A.corrections || []).length) row(tip, "Balance corrected", A.corrections.map(([e, v]) => `+${usd(v)} at ${clock(Math.floor(e))}`).join(", "));
+      if ((A.corrections || []).length) row(tip, "Balance corrected", A.corrections.map(([e, v]) => `${sign(v)} at ${clock(Math.floor(e))}`).join(", "));
     }
     if (mac) {
       tip.append(el("div", "sec", "This Mac"));

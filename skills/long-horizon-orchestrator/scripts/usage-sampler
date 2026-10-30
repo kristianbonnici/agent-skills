@@ -9,10 +9,12 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
                    reading (provider-usage, no quota used; Antigravity and Copilot only read live);
                    with it, the Claude API credits' estimated dollars left when the owner has a
                    credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd"}],
-                   "spent_since_usd", "balance_at" (when the Console was read), "estimate": true,
+                   "spent_since_usd", "balance_at" (when the Console was read), "api_spend_since_usd"
+                   (all the API spend since run-start, a total that only grows), "estimate": true,
                    "incomplete": true when provider-usage's log scan was cut short or met a log it
                    couldn't read}, no windows: provider-usage reads local files only; a reading
                    that is an error, such as a missing log folder, records nothing)
+  run-start        when sampling began (kept across restarts): the API spend is counted from it
   sampler.log      one line when it starts and one when it stops, with the CPU time it used
 
 Each line is one JSON object with "t", the local time in ISO 8601 with its offset. A provider's
@@ -114,6 +116,8 @@ def credits_of(p):
               for c in p.get("credits") or [] if isinstance(c, dict)]
     reads = [c.get("balance_at") for c in p.get("credits") or [] if isinstance(c, dict) and isinstance(c.get("balance_at"), str)]
     found = {"left_usd": left, "credits": grants, "observed_at": p.get("observed_at"), "plan": p.get("plan"),
+             # all the API spend T3 logged since the sampler's run began: only grows, whatever the Console reading does
+             "api_spend_since_usd": number(p.get("api_spend_since_usd")), "api_spend_since": p.get("api_spend_since"),
              "spent_since_usd": number(p.get("spent_since_usd")),   # spend since the Console reading below, so run-charts can tell spend from a correction
              "balance_at": reads[0] if reads else None, "estimate": True}
     if p.get("incomplete"):  # the scan was cut short: the balance may be too high, and the charts say so
@@ -147,8 +151,8 @@ def entry_of(data, live):
 class Reader:
     """Runs provider-usage in a thread of its own, one reading at a time."""
 
-    def __init__(self, script, path):
-        self.script, self.path = script, path
+    def __init__(self, script, path, run_start):
+        self.script, self.path, self.run_start = script, path, run_start
         self.lock = threading.Lock()
         self.child = None
         self.thread = None
@@ -162,7 +166,7 @@ class Reader:
 
     def _read(self, live):
         try:
-            child = subprocess.Popen([self.script] + ([] if live else ["--cached"]), stdout=subprocess.PIPE,
+            child = subprocess.Popen([self.script] + ([] if live else ["--cached"]) + ["--api-since", self.run_start], stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, start_new_session=True)
             self.child = child
             if stopping.is_set():  # the signal came between the launch and here: kill() may have missed it
@@ -221,6 +225,26 @@ def log(folder, text):
         f.write(f"{now()} {text}\n")
 
 
+def run_start(folder):
+    """When this folder's sampling began, kept in its run-start file so a restarted sampler goes on from the
+    same time: the API spend each reading reports is counted from it, and never restarts."""
+    path = os.path.join(folder, "run-start")
+    try:
+        with open(path) as f:
+            text = f.read().strip()
+        datetime.fromisoformat(text)
+        return text
+    except (OSError, ValueError):
+        pass
+    text = now()
+    try:
+        with open(path, "w") as f:
+            f.write(text + "\n")
+    except OSError:
+        pass
+    return text
+
+
 def cpu_seconds():
     own, kids = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
     return own.ru_utime + own.ru_stime + kids.ru_utime + kids.ru_stime
@@ -240,7 +264,7 @@ def main():
         return 3
     for number in (signal.SIGTERM, signal.SIGINT):
         signal.signal(number, lambda *_: stopping.set())
-    reader = Reader(script, os.path.join(folder, "providers.jsonl"))
+    reader = Reader(script, os.path.join(folder, "providers.jsonl"), run_start(folder))
     log(folder, f"started pid {os.getpid()}")
     samples = 0
     last_cached = last_live = None

@@ -841,22 +841,26 @@ fi
 
 # run-charts with the Claude API credits: the line, its label, the expiry in the run and the summary
 # line and usage.mmd appear when the run spent some, a grant expired during it, or an estimate was
-# incomplete; what happened comes from the samples' own counters (the spend is the rise of spent_since_usd,
-# counted from 0 when the Console reading changed; what expired is the fall beyond the spend in an interval
-# where a grant expired; a rise is a correction, neither), so spend just before an expiry is spend, and a
-# balance corrected mid-run doesn't hide the spend; a date-only expiry is UTC midnight, as provider-usage
-# reads it; a run whose credits never moved, or whose readings are junk, shows nothing new. What the page
-# draws is read from Chrome's DOM (elements, not the template's text).
-mkdir -p "$work/usage-credits" "$work/usage-still" "$work/usage-expiry" "$work/usage-mixed" "$work/usage-before" "$work/usage-correct" "$work/usage-partial"
+# incomplete; what happened is worked out between samples: the spend is the rise of the API cost T3 logged
+# since the run began (a running total that only grows; older records: the spent_since_usd counter), what
+# expired is each expiring grant's own last dollars less the spend charged to it, and what is left beyond
+# or below that is a correction, up or down, so a changed Console reading cancels or doubles no spend, spend
+# just before an expiry is spend, and a correction hides no expiry (nor an expiry a correction); a date-only
+# expiry is UTC midnight, as provider-usage reads it; a run whose credits never moved, or whose readings are
+# junk, shows nothing new. What the page draws is read from Chrome's DOM (elements, not the template's text).
+mkdir -p "$work/usage-credits" "$work/usage-still" "$work/usage-expiry" "$work/usage-mixed" "$work/usage-before" "$work/usage-correct" "$work/usage-partial" "$work/usage-refresh" "$work/usage-refresh2" "$work/usage-masked1" "$work/usage-masked2" "$work/usage-down" "$work/usage-late" "$work/usage-correctlog"
 python3 -I - "$work" <<'EOF'
 import json, os, sys
 work = sys.argv[1]
 SOON, LATER, B0 = "2026-10-29T00:45:00Z", "2026-12-02T00:00:00Z", "2026-10-28T20:00:00Z"
-def reading(t, grants, spent=0.0, read=B0, **more):
+RS = "2026-10-28T20:00:00+02:00"   # when the sampler's run began
+def reading(t, grants, spent=0.0, read=B0, run=None, **more):
     # grants: [(expires, dollars it holds)]; the reading's total is their sum; spent counts from the Console reading `read`
     api = {"left_usd": sum(h for _, h in grants), "estimate": True, "plan": "api credits", "observed_at": "2026-10-29T00:00:00+00:00",
            "spent_since_usd": spent, "balance_at": read,
            "credits": [{"expires": e, "left_usd": h, "granted_usd": 200.0, "balance_at": read} for e, h in grants]}
+    if run is not None:   # all the API spend since the run began: only grows, whatever the Console reading does
+        api.update(api_spend_since_usd=run, api_spend_since=RS)
     api.update(more)
     return json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude_api": api}})
 machine = json.dumps({"t": "2026-10-29T01:00:10+02:00", "cpu": 10.0, "mem_used_gb": 30.0, "mem_total_gb": 64.0, "disk_free_gb": 100.0})
@@ -875,30 +879,54 @@ after = lambda left: [("2026-10-29", 0.0), (LATER, left)]
 expiry = [reading("01:00:05", before), reading("01:55:05", before), reading("02:05:05", after(200.0)), reading("03:00:05", after(200.0))]
 mixed = [reading("01:00:05", before), reading("01:55:05", before, incomplete=True), reading("02:05:05", after(200.0)), reading("03:00:05", after(190.0), 10.0)]
 # 4 dollars spent just before the expiry: 110 of the 114 expired
-nearly = [reading("01:00:05", before), reading("01:55:05", before), reading("02:05:05", after(200.0), 4.0), reading("03:00:05", after(200.0), 4.0)]
+nearly = [reading("01:00:05", before, run=0.0), reading("01:55:05", before, run=0.0), reading("02:05:05", after(200.0), 4.0, run=4.0), reading("03:00:05", after(200.0), 4.0, run=4.0)]
 # Opus's sample: 158, 140, 125, a balance correction to 170 (a new Console reading, spend counts from 0 again), 165, 160: 43 spent
 later = lambda left: [(LATER, left)]
 B1 = "2026-10-29T00:20:00Z"
 correct = [reading("01:00:05", later(158.0), 10.0), reading("01:30:05", later(140.0), 28.0), reading("02:00:05", later(125.0), 43.0),
            reading("02:30:05", later(170.0), 0.0, B1), reading("03:00:05", later(165.0), 5.0, B1), reading("03:30:05", later(160.0), 10.0, B1)]
+# the Console reading refreshed mid-run: 5 spent, the refresh restarts spent_since_usd, 2 more spent: 7 in all (the old counter said 2)
+refresh = [reading("01:00:05", later(100.0), 0.0, run=0.0), reading("01:30:05", later(95.0), 5.0, run=5.0),
+           reading("02:00:05", later(95.0), 0.0, B1, run=5.0), reading("02:30:05", later(93.0), 2.0, B1, run=7.0)]
+refresh2 = refresh[:3] + [reading("02:30:05", later(95.0), 0.0, B1, run=5.0)]   # nothing spent after the refresh: still 5
+# a $40 grant expires in the same interval as a $20 (or $40) correction or new grant, with no spend: neither hides the other
+pair = lambda b: [("2026-10-29", 40.0), (LATER, 60.0)]
+masked1 = [reading("01:00:05", pair(0), run=0.0), reading("01:55:05", pair(0), run=0.0), reading("02:05:05", after(80.0), run=0.0), reading("03:00:05", after(80.0), run=0.0)]
+masked2 = masked1[:2] + [reading("02:05:05", after(100.0), run=0.0), reading("03:00:05", after(100.0), run=0.0)]
+# a lower Console balance (the likely correction: the estimate misses spend outside T3), named too: 100, 90, a new balance 70, 68
+down = [reading("01:00:05", later(100.0), 0.0, run=0.0), reading("01:30:05", later(90.0), 10.0, run=10.0),
+        reading("02:00:05", later(70.0), 0.0, B1, run=10.0), reading("02:30:05", later(68.0), 2.0, B1, run=12.0)]
+# a Console reading entered after a later sample (dated 01:20, entered by 02:00): the 9 spent are counted once, and the 4 more it shows are the correction
+late = [reading("01:00:05", later(100.0), 0.0, run=0.0), reading("01:30:05", later(95.0), 5.0, run=5.0), reading("02:00:05", later(95.0), 5.0, "2026-10-28T23:20:00Z", run=9.0)]
+# Opus's sample, with the API spend since the run began: 158, 140, 125, a new Console balance of 170, 165, 160: 43 spent, +45 corrected
+correctlog = [reading("01:00:05", later(158.0), 0.0, run=0.0), reading("01:30:05", later(140.0), 18.0, run=18.0), reading("02:00:05", later(125.0), 33.0, run=33.0),
+              reading("02:30:05", later(170.0), 0.0, B1, run=33.0), reading("03:00:05", later(165.0), 5.0, B1, run=38.0), reading("03:30:05", later(160.0), 10.0, B1, run=43.0)]
 for name, rows in (("usage-credits", spent), ("usage-still", still), ("usage-expiry", expiry), ("usage-mixed", mixed), ("usage-before", nearly),
-                   ("usage-correct", correct), ("usage-partial", partial)):
+                   ("usage-correct", correct), ("usage-partial", partial), ("usage-refresh", refresh), ("usage-refresh2", refresh2),
+                   ("usage-masked1", masked1), ("usage-masked2", masked2), ("usage-down", down), ("usage-late", late), ("usage-correctlog", correctlog)):
     open(os.path.join(work, name, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
     open(os.path.join(work, name, "machine.jsonl"), "w").write(machine + "\n")
     facts = json.load(open(os.path.join(work, "facts.json")))
     facts["usage"] = {"folder": os.path.join(work, name)}
     json.dump(facts, open(os.path.join(work, f"facts-{name}.json"), "w"))
 EOF
-for name in credits still expiry mixed before correct partial; do
+for name in credits still expiry mixed before correct partial refresh refresh2 masked1 masked2 down late correctlog; do
   "$scripts/run-charts" "$work/facts-usage-$name.json" "$work/charts-$name" >"$work/charts-$name.out" 2>"$work/charts-$name.err"
   if grep -q -E "Traceback|usage" "$work/charts-$name.err"; then exit 1; fi   # (the facts' missing picture is warned about)
 done
 mac_line='The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
 sed -n 2p "$work/charts-credits/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$142 left (estimate). $mac_line"
 sed -n 2p "$work/charts-expiry/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$114 expired at 02:00). $mac_line"
-sed -n 2p "$work/charts-mixed/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$190 left (estimate, incomplete; \$114 expired at 02:00). $mac_line"
-sed -n 2p "$work/charts-before/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$110 expired at 02:00). $mac_line"
-sed -n 2p "$work/charts-correct/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate). $mac_line"
+sed -n 2p "$work/charts-mixed/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$190 left (estimate, incomplete; \$114 expired at 02:00, \$10 spent). $mac_line"
+sed -n 2p "$work/charts-before/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$110 expired at 02:00, \$4 spent). $mac_line"
+sed -n 2p "$work/charts-correct/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45). $mac_line"
+sed -n 2p "$work/charts-correctlog/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45). $mac_line"
+sed -n 2p "$work/charts-refresh/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$93 left (estimate). $mac_line"
+sed -n 2p "$work/charts-refresh2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$95 left (estimate). $mac_line"
+sed -n 2p "$work/charts-masked1/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$80 left (estimate; \$40 expired at 02:00, balance corrected +\$20). $mac_line"
+sed -n 2p "$work/charts-masked2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$100 left (estimate; \$40 expired at 02:00, balance corrected +\$40). $mac_line"
+sed -n 2p "$work/charts-down/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$68 left (estimate; \$12 spent, balance corrected −\$20). $mac_line"
+sed -n 2p "$work/charts-late/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$95 left (estimate; \$9 spent, balance corrected +\$4). $mac_line"
 sed -n 2p "$work/charts-partial/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$158 left (estimate, incomplete). $mac_line"
 sed -n 2p "$work/charts-still/summary.txt" | grep -qx "Usage: $mac_line"
 grep -q 'Claude API credits' "$work/charts-credits.out"
@@ -907,7 +935,14 @@ test ! -e "$work/charts-still/usage.mmd"
 grep -q 'Claude API credits brown \$158 → \$142 left (estimate)' "$work/charts-credits/usage.mmd"
 grep -q 'Claude API credits brown \$314 → \$200 left (estimate; \$114 expired at 02:00)' "$work/charts-expiry/usage.mmd"
 grep -q 'Claude API credits brown \$158 → \$158 left (estimate, incomplete)' "$work/charts-partial/usage.mmd"
-grep -q 'plotColorPalette": "#9a4a2e"' "$work/charts-credits/usage.mmd" && grep -qx '    line \[100, .*\]' "$work/charts-credits/usage.mmd"
+grep -q 'plotColorPalette": "#9a4a2e"' "$work/charts-credits/usage.mmd"
+# usage.mmd names the spend and the correction, and scales to the run's highest reading, so a later spend after a correction shows
+grep -q 'Claude API credits brown \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45)' "$work/charts-correctlog/usage.mmd"
+python3 -I - "$work/charts-correctlog/usage.mmd" <<'EOF'
+import re, sys
+values = [float(v) for v in re.search(r"^    line \[(.*)\]$", open(sys.argv[1]).read(), re.M).group(1).split(",")]
+assert max(values) == 100.0 and values[-1] == 94.1 and min(values) < 75, values   # 170 is the highest reading: nothing is capped at the start's 158
+EOF
 python3 -I - "$work" <<'EOF'
 import json, os, re, sys
 def data(name):
@@ -933,13 +968,28 @@ c = data("charts-correct")["api"]                                               
 assert c["spent"] == 43.0 and c["expired"] == [] and c["corrections"] == [[150.08, 45.0]] and (c["first"], c["last"]) == (158.0, 160.0), c
 p = data("charts-partial")["api"]                                                            # nothing moved, but the estimate is flagged
 assert p["spent"] == 0.0 and p["expired"] == [] and p["incomplete"] is True, p
+# from the log's running total: the same answers, and the cases the samples' own counters got wrong
+cl = data("charts-correctlog")["api"]
+assert cl["spent"] == 43.0 and cl["expired"] == [] and [v for _, v in cl["corrections"]] == [45.0] and (cl["first"], cl["last"], cl["top"]) == (158.0, 160.0, 170.0), cl
+nl = data("charts-before")["api"]
+assert nl["spent"] == 4.0 and nl["expired"] == [[120.0, 110.0]] and nl["corrections"] == [], nl
+r1, r2 = data("charts-refresh")["api"], data("charts-refresh2")["api"]                       # a refreshed Console reading restarts spent_since_usd, not the log's total
+assert r1["spent"] == 7.0 and r1["corrections"] == [] and r1["expired"] == [], r1
+assert r2["spent"] == 5.0 and r2["corrections"] == [] and r2["expired"] == [], r2             # 5 spent and nothing after: still shown
+for name, up in (("charts-masked1", 20.0), ("charts-masked2", 40.0)):                         # the expiry and the correction in one interval, each on its own
+    k = data(name)["api"]
+    assert k["spent"] == 0.0 and k["expired"] == [[120.0, 40.0]] and [v for _, v in k["corrections"]] == [up], (name, k)
+d = data("charts-down")["api"]                                                                # a lower balance is named too: 10 + 0 + 2 spent, -20 corrected
+assert d["spent"] == 12.0 and [v for _, v in d["corrections"]] == [-20.0] and d["expired"] == [], d
+l = data("charts-late")["api"]                                                                # a reading entered late: 5 + 4 spent once, the 4 more it shows is a correction
+assert l["spent"] == 9.0 and [v for _, v in l["corrections"]] == [4.0] and (l["first"], l["last"]) == (100.0, 95.0), l
 EOF
 python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
   "$work/charts-correct/run-map.html" > "$work/run-map-credits.js"
 if command -v node >/dev/null 2>&1; then node --check "$work/run-map-credits.js"; fi
 for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    for name in credits expiry mixed before correct partial still; do
+    for name in credits expiry mixed before correct partial refresh refresh2 masked1 masked2 down late correctlog still; do
       "$candidate" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
         --dump-dom "file://$work/charts-$name/run-map.html#fit&cross=02:00" > "$work/dom-$name.html" 2>/dev/null
     done
@@ -954,8 +1004,11 @@ def label(page):
     found = re.search(r'<div class="us-prov"[^>]*><div class="tl-name"><i class="dot"></i>(?:<i class="mk"[^>]*></i>)?<span class="nm">Claude API credits</span></div><div class="tl-model"[^>]*>([^<]*)</div>', page)
     return found.group(1) if found else None
 for name, text in (("credits", "$158→$142 left (estimate)"), ("expiry", "$314→$200 left (estimate; $114 expired at 02:00)"),
-                   ("mixed", "$314→$190 left (estimate, incomplete; $114 expired at 02:00)"), ("before", "$314→$200 left (estimate; $110 expired at 02:00)"),
-                   ("correct", "$158→$160 left (estimate)"), ("partial", "$158→$158 left (estimate, incomplete)")):
+                   ("mixed", "$314→$190 left (estimate, incomplete; $114 expired at 02:00, $10 spent)"), ("before", "$314→$200 left (estimate; $110 expired at 02:00, $4 spent)"),
+                   ("correct", "$158→$160 left (estimate; $43 spent, balance corrected +$45)"), ("correctlog", "$158→$160 left (estimate; $43 spent, balance corrected +$45)"),
+                   ("partial", "$158→$158 left (estimate, incomplete)"), ("refresh", "$100→$93 left (estimate)"), ("refresh2", "$100→$95 left (estimate)"),
+                   ("masked1", "$100→$80 left (estimate; $40 expired at 02:00, balance corrected +$20)"), ("masked2", "$100→$100 left (estimate; $40 expired at 02:00, balance corrected +$40)"),
+                   ("down", "$100→$68 left (estimate; $12 spent, balance corrected −$20)"), ("late", "$100→$95 left (estimate; $9 spent, balance corrected +$4)")):
     page = dom(name)
     assert 'class="rm-error"' not in page, name
     assert label(page) == text, (name, label(page))
@@ -966,6 +1019,7 @@ for name, text in (("credits", "$158→$142 left (estimate)"), ("expiry", "$314�
     assert re.search(r'<div class="us-sec"[^>]*>API credits \(estimate\)</div>', page), name
 assert 'class="us-reset"' in band(dom("expiry")).group(1)
 assert re.search(r'<span class="k">Balance corrected</span><span class="v">\+\$45 at 02:30</span>', dom("correct"))   # the correction is named in the hover
+assert re.search(r'<span class="k">Balance corrected</span><span class="v">−\$20 at 02:00</span>', dom("down"))      # a lower balance too
 assert '<span class="k">Balance corrected</span>' not in dom("credits")   # (the script's own text has the words)
 assert label(dom("still")) is None and band(dom("still")) is None
 EOF
@@ -1219,6 +1273,13 @@ assert got["spent_since_usd"] == 67.0 and "incomplete" not in got and "error" no
 # earlier, the first grant is still open: 40 less 25, 5 and 7 leaves 3, and the later spend isn't logged yet
 early = ns["claude_api"](at("2026-10-31T02:50:00Z"))
 assert [c["left_usd"] for c in early["credits"]] == [0.0, 3.0, 200.0] and early["left_usd"] == 203.0 and early["spent_since_usd"] == 37.0, early
+# --api-since: all the API cost logged from a time on, whatever grant paid it, a total that doesn't depend on the Console reading
+now_ = at("2026-10-31T12:00:00Z")
+run_all = ns["claude_api"](now_, (at("2026-10-26T00:00:00Z"), "2026-10-26T00:00:00Z"))   # includes the 10 logged before the reading
+assert run_all["api_spend_since_usd"] == 77.0 and run_all["api_spend_since"] == "2026-10-26T00:00:00Z" and run_all["spent_since_usd"] == 67.0 and run_all["left_usd"] == 173.0, run_all
+run_late = ns["claude_api"](now_, (at("2026-10-31T02:30:00Z"), "2026-10-31T02:30:00Z"))   # the 10 at 03:00 and the 20 at 08:00
+assert run_late["api_spend_since_usd"] == 30.0 and run_late["spent_since_usd"] == 67.0, run_late
+assert "api_spend_since_usd" not in got and "api_spend_since" not in got
 # spend past a balance stops at zero; every charge goes to the soonest-expiring grant open at its time and overflows to the next
 grant = lambda expires, balance: {"expires": expires, "balance": balance}
 draw = ns["spend_from_credits"]
@@ -1295,6 +1356,14 @@ assert at("2026-11-01T02:00:00+02:00") == at("2026-11-01T00:00:00Z") == at("2026
 EOF
 credits_run() { env HOME="$work/credits/home" XDG_STATE_HOME="$1" T3_USERDATA="$work/credits/t3" CLAUDE_CONFIG_DIR="$work/credits/empty" CODEX_HOME="$work/credits/empty" COPILOT_HOME="$work/credits/empty" PATH="/usr/bin:/bin" python3 -I "$scripts/provider-usage" --cached; }
 credits_run "$work/credits/state" > "$work/credits/with.json"
+env HOME="$work/credits/home" XDG_STATE_HOME="$work/credits/state" T3_USERDATA="$work/credits/t3" CLAUDE_CONFIG_DIR="$work/credits/empty" CODEX_HOME="$work/credits/empty" COPILOT_HOME="$work/credits/empty" PATH="/usr/bin:/bin" \
+  python3 -I "$scripts/provider-usage" --cached --api-since 2026-10-26T00:00:00Z > "$work/credits/since.json"
+status=0
+env HOME="$work/credits/home" XDG_STATE_HOME="$work/credits/state" T3_USERDATA="$work/credits/t3" PATH="/usr/bin:/bin" \
+  python3 -I "$scripts/provider-usage" --cached --api-since junk > "$work/credits/junk.out" 2> "$work/credits/junk.err" || status=$?
+test "$status" -eq 2
+grep -q "isn't an ISO date or time" "$work/credits/junk.err"
+if grep -q Traceback "$work/credits/junk.err"; then exit 1; fi
 credits_run "$work/credits/empty" > "$work/credits/without.json"
 printf '%s\n' '{"grants": [' > "$work/credits/state/agent-skills/long-horizon-orchestrator/api-credits.json"
 credits_run "$work/credits/state" > "$work/credits/broken.json" 2> "$work/credits/broken.err"
@@ -1308,6 +1377,8 @@ import json, os, sys
 read = lambda name: json.load(open(os.path.join(sys.argv[1], name)))["providers"]
 with_, without, broken = read("with.json"), read("without.json"), read("broken.json")
 assert with_["claude_api"]["estimate"] is True and with_["claude_api"]["credits"] and "error" not in with_["claude_api"], with_["claude_api"]   # cached mode reads it
+since = json.load(open(os.path.join(sys.argv[1], "since.json")))["providers"]["claude_api"]   # (the Mac's own clock is "now" here, so the sum isn't fixed)
+assert "api_spend_since_usd" not in with_["claude_api"] and since["api_spend_since"] == "2026-10-26T00:00:00Z" and since["api_spend_since_usd"] >= 0 and "error" not in since, since
 assert "claude_api" not in without and set(without) == {"claude", "codex", "antigravity", "copilot"}                 # no credits file: left out, no error
 assert set(broken["claude_api"]) >= {"error", "estimate"} and "left_usd" not in broken["claude_api"], broken["claude_api"]   # a message, not a crash
 assert set(broken) - {"claude_api"} == set(without) == set(with_) - {"claude_api"}                                   # the others are as before
@@ -1323,9 +1394,10 @@ cat > "$work/sampler/fake/provider-usage" <<'EOF'
 # a stand-in for provider-usage: logs its start and end, and takes a moment ("slow" beside it makes it hang)
 dir=$(dirname "$0")
 echo "+ $$" >> "$dir/reads.log"
+echo "$*" >> "$dir/args.log"
 if [ -e "$dir/slow" ]; then echo $$ > "$dir/hung.pid"; sleep 60; fi
 sleep 0.4
-printf '%s\n' '{"providers": {"claude": {"windows": {"five_hour": {"used_percent": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset_since_observed": true}, "weekly": {"used_percent": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00", "source": "log", "plan": "claude_max"}, "antigravity": {"windows": {}, "error": "no"}, "claude_api": {"plan": "api credits", "credits": [{"expires": "2026-11-01T00:00:00Z", "granted_usd": 200.0, "left_usd": 90.5, "balance_at": "2026-10-30T21:04:00Z"}, {"expires": "2026-12-02T00:00:00Z", "granted_usd": 200.0, "left_usd": 200.0, "balance_at": "2026-10-30T21:04:00Z"}], "left_usd": 290.5, "spent_since_usd": 9.5, "observed_at": "2026-10-29T00:00:00+00:00", "estimate": true, "source": "x"}}}'
+printf '%s\n' '{"providers": {"claude": {"windows": {"five_hour": {"used_percent": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset_since_observed": true}, "weekly": {"used_percent": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00", "source": "log", "plan": "claude_max"}, "antigravity": {"windows": {}, "error": "no"}, "claude_api": {"plan": "api credits", "credits": [{"expires": "2026-11-01T00:00:00Z", "granted_usd": 200.0, "left_usd": 90.5, "balance_at": "2026-10-30T21:04:00Z"}, {"expires": "2026-12-02T00:00:00Z", "granted_usd": 200.0, "left_usd": 200.0, "balance_at": "2026-10-30T21:04:00Z"}], "left_usd": 290.5, "spent_since_usd": 9.5, "api_spend_since_usd": 12.5, "api_spend_since": "2026-10-29T00:00:00+02:00", "observed_at": "2026-10-29T00:00:00+00:00", "estimate": true, "source": "x"}}}'
 echo "- $$" >> "$dir/reads.log"
 EOF
 chmod +x "$work/sampler/fake/provider-usage"
@@ -1364,6 +1436,15 @@ api = reads[0]["providers"]["claude_api"]
 assert api["left_usd"] == 290.5 and api["estimate"] is True and "windows" not in api and api["plan"] == "api credits", api
 assert [(c["expires"], c["left_usd"]) for c in api["credits"]] == [("2026-11-01T00:00:00Z", 90.5), ("2026-12-02T00:00:00Z", 200.0)], api
 assert api["spent_since_usd"] == 9.5 and api["balance_at"] == "2026-10-30T21:04:00Z", api   # what run-charts needs to tell spending from a correction
+assert api["api_spend_since_usd"] == 12.5 and api["api_spend_since"] == "2026-10-29T00:00:00+02:00", api   # the running total of the run's API spend
+# every reading is asked for the API spend since the folder's run-start, which a restarted sampler keeps
+started = open(os.path.join(folder, "out", "run-start")).read().strip()
+args = open(os.path.join(folder, "fake", "args.log")).read().splitlines()
+assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", started) and args[0] == f"--api-since {started}" and all(a.endswith(f"--api-since {started}") for a in args), (started, args[:2])
+assert args[0] == f"--api-since {started}" and all(a.startswith("--cached") for a in args[1:]), args[:3]
+import runpy
+run_start = runpy.run_path(os.path.join(os.environ["SCRIPTS"], "usage-sampler"), run_name="sampler_start")["run_start"]
+assert run_start(os.path.join(folder, "out")) == started and run_start(os.path.join(folder, "nowhere")) is not None
 # a reading of the credits that is an error, has no number, or is the wrong shape records nothing, and never crashes
 import runpy
 entry_of = runpy.run_path(os.path.join(os.environ["SCRIPTS"], "usage-sampler"), run_name="sampler_entry")["entry_of"]

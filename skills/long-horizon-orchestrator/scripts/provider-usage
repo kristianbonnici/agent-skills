@@ -42,6 +42,10 @@ newest log files are read first, and a scan that runs out of its 40 seconds or m
 read still reports a balance, with "incomplete" saying why (it may be too high). A provider log line
 that isn't JSON, or lacks a cost, is skipped.
 
+--api-since <ISO time> (a run's start) adds "api_spend_since_usd" to claude_api: all the API cost T3 logged
+from that time on, whatever grant paid it. Unlike "spent_since_usd" it never restarts when the Console
+reading in the file is replaced, so a chart takes a stretch's spend from two readings' difference.
+
 Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME, XDG_STATE_HOME.
 """
 
@@ -656,8 +660,11 @@ def spend_from_credits(grants: list[dict], spend: list[tuple[float, float]]) -> 
     return left, drawn
 
 
-def claude_api(now: float) -> dict | None:
-    """The Claude API credits' estimated dollars left, or None when the owner has no credits file."""
+def claude_api(now: float, run_since: tuple[float, str] | None = None) -> dict | None:
+    """The Claude API credits' estimated dollars left, or None when the owner has no credits file.
+    run_since, a (time, its text) a run began at, adds "api_spend_since_usd": all the API cost T3 logged from
+    then on, whatever grant it was charged to. It is a running total that only grows, however often the
+    Console reading in the file changes, so a chart can take the spend of a stretch from two readings."""
     path = credits_file()
     try:
         raw = path.read_text(encoding="utf-8")
@@ -671,10 +678,10 @@ def claude_api(now: float) -> dict | None:
         return {"plan": "api credits", "error": f"{path} isn't usable: {exc}", "estimate": True}
     since = grants[0]["balance_at"]  # the one time the Console was read
     try:
-        spend, incomplete = api_spend(instance, since, now)
+        spend, incomplete = api_spend(instance, min(since, run_since[0]) if run_since else since, now)
     except RuntimeError as exc:  # no logs, no estimate: an error, never a balance that looks right
         return {"plan": "api credits", "error": str(exc), "estimate": True}
-    left, drawn = spend_from_credits(grants, spend)
+    left, drawn = spend_from_credits(grants, [(at, cost) for at, cost in spend if at >= since - 1e-6])
     credits = []
     for g, remaining in sorted(zip(grants, left), key=lambda pair: pair[0]["expires"]):
         expired = g["expires"] <= now
@@ -692,9 +699,20 @@ def claude_api(now: float) -> dict | None:
         "estimate": True,
         "source": f"{path} and T3's API spend for {instance}",
     }
+    if run_since:
+        out["api_spend_since_usd"] = round(sum(cost for at, cost in spend if at >= run_since[0] - 1e-6), 4)
+        out["api_spend_since"] = run_since[1]
     if incomplete:
         out["incomplete"] = incomplete + "; what is left may be too high"
     return out
+
+
+def api_since_time(text: str) -> tuple[float, str]:
+    """--api-since's value: an ISO time (a date alone, or a time with no zone, is UTC)."""
+    found = utc_seconds(text)
+    if found is None:
+        raise argparse.ArgumentTypeError(f"{text!r} isn't an ISO date or time")
+    return found, text
 
 
 def with_fallback(live, cached, use_live: bool):
@@ -713,6 +731,8 @@ def with_fallback(live, cached, use_live: bool):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cached", action="store_true", help="skip the live queries and read local logs only")
+    parser.add_argument("--api-since", type=api_since_time, metavar="TIME",
+                        help="also report the Claude API spend T3 logged since this ISO time (a run's start) as api_spend_since_usd")
     args = parser.parse_args()
     now = datetime.now(timezone.utc).timestamp()
     report = {"generated_at": iso(now), "providers": {}}
@@ -721,7 +741,7 @@ def main() -> int:
         ("codex", with_fallback(codex_live, codex, not args.cached)),
         ("antigravity", with_fallback(antigravity_live, antigravity, not args.cached)),
         ("copilot", with_fallback(copilot_live, copilot, not args.cached)),
-        ("claude_api", claude_api),  # local files only, so the same live or cached
+        ("claude_api", lambda at: claude_api(at, args.api_since)),  # local files only, so the same live or cached
     )
     for name, reader in readers:
         try:
