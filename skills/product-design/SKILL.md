@@ -62,17 +62,17 @@ That makes `${XDG_STATE_HOME:-~/.local/state}/agent-skills/product-design/runs/<
 
 Use the isolated browser wrapper unless the user chooses another browser. Its sessions are in memory only: no saved logins, cookies, or profile.
 
-Shell variables may not last from one command to the next: note the run folder's path when you create it, and start every browser command by changing into it, joined with `&&` so nothing runs if that fails. The wrapper refuses to run inside a git repository.
+Shell variables may not last from one command to the next: note the skill folder's and the run folder's paths when you have them, write both out in every browser command, and start it by changing into the run folder, joined with `&&` so nothing runs if that fails. The wrapper refuses to run inside a git repository.
 
 ```bash
-cd "<run folder>" && "$SKILL_DIR/scripts/browser" open <url> --headed
-cd "<run folder>" && "$SKILL_DIR/scripts/browser" resize 1440 1024
-cd "<run folder>" && "$SKILL_DIR/scripts/browser" snapshot
-cd "<run folder>" && "$SKILL_DIR/scripts/browser" screenshot --filename="<run folder>/01-start.png"
-cd "<run folder>" && "$SKILL_DIR/scripts/browser" close
+cd "<run folder>" && "<skill folder>/scripts/browser" open <url> --headed
+cd "<run folder>" && "<skill folder>/scripts/browser" resize 1440 1024
+cd "<run folder>" && "<skill folder>/scripts/browser" snapshot
+cd "<run folder>" && "<skill folder>/scripts/browser" screenshot --filename="<run folder>/01-start.png"
+cd "<run folder>" && "<skill folder>/scripts/browser" close
 ```
 
-- **Session:** the wrapper names the session after the current folder, so keep the run folder as the working directory for the whole run (or set `PRODUCT_DESIGN_BROWSER_SESSION`). `"$SKILL_DIR/scripts/browser" list` shows open sessions.
+- **Session:** the wrapper names the session after the current folder, so keep the run folder as the working directory for the whole run (or set `PRODUCT_DESIGN_BROWSER_SESSION`). `"<skill folder>/scripts/browser" list` shows open sessions.
 - **Viewport:** set it before each capture with `resize <width> <height>`, using the dimensions the workflow calls for (`references/ideate.md` lists them), and take a fresh snapshot after resizing. For touch or mobile emulation, open with `open <url> --mobile` or `open <url> --device "iphone 15"`. Record the viewport next to each screenshot, and compare a source and a build only at the same viewport.
 - **Clean session for verifying a shared URL:** open it in a new session name that has never held the prototype or any login (`PRODUCT_DESIGN_BROWSER_SESSION=product-design-verify`), without `--persistent`, `--profile`, or `state-load`, so no cache, cookie, or local storage from the build session can make a broken deployment look fine. Close it afterwards.
 - **Clean up:** close every browser session you opened with `close` (use the same session name), and stop any preview server you started. Do not use `close-all`; it also ends sessions you did not open.

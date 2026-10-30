@@ -47,8 +47,19 @@ def state_root() -> Path:
     return base / "agent-skills" / "product-design"
 
 
+def resolved(path: Path) -> Path:
+    """path with links resolved, though its last parts may not exist yet: the nearest existing
+    folder resolved, and the rest added to it."""
+    path = path.absolute()
+    for folder in [path, *path.parents]:
+        if folder.exists():
+            return folder.resolve() / path.relative_to(folder)
+    return path
+
+
 def inside_repository(path: Path) -> bool:
-    """Whether path is inside a git working tree (a .git folder or file in it or a parent)."""
+    """Whether path, links resolved, is inside a git working tree (a .git folder or file in it or a parent)."""
+    path = resolved(path)
     for folder in [path, *path.parents]:
         if (folder / ".git").exists():
             return True
@@ -59,10 +70,12 @@ def new_run_dir(name: str) -> Path:
     """Create a fresh evidence folder outside any repository; never reuse an existing one."""
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "run"
     runs = state_root() / "runs"
-    if inside_repository(runs.resolve() if runs.exists() else runs.parent.resolve() if runs.parent.exists() else runs):
+    if inside_repository(runs):
         # XDG_STATE_HOME points into a repository: evidence must stay out of it
         runs = Path.home() / ".local" / "state" / "agent-skills" / "product-design" / "runs"
         print(f"XDG_STATE_HOME is inside a repository; using {runs} instead", file=sys.stderr)
+        if inside_repository(runs):
+            raise SystemExit(f"{runs} is inside a repository too; set XDG_STATE_HOME to a folder outside any repository")
     runs.mkdir(parents=True, exist_ok=True)
     stem = f"{date.today().isoformat()}-{slug}"
     for attempt in range(1, 1000):
