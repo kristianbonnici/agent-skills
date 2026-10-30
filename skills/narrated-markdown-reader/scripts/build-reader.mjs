@@ -50,9 +50,16 @@ const mathBlocks = JSON.stringify(Object.fromEntries(
     .filter((block) => block.type === "math")
     .map((block) => [block.index, block.mathLines.flat()])
 )).replace(/</g, "\\u003c");
+const inlineMath = JSON.stringify(Object.fromEntries(
+  report.blocks
+    .filter((block) => block.inlineMath && block.inlineMath.length)
+    .map((block) => [block.index, block.inlineMath])
+)).replace(/</g, "\\u003c");
 
-const fragment = `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"><\/script>
+// KaTeX 0.16.11 from jsDelivr, each file checked against the SHA-384 of the exact pinned file
+// (computed from the files themselves; recompute both when the version changes).
+const fragment = `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous"><\/script>
 <div id="highlighted-report-reader">
   <div class="card reader-toolbar">
     <audio data-audio controls preload="metadata" src="./${escapeHtml(audioFilename)}">
@@ -202,7 +209,7 @@ ${report.bodyHtml}
     margin-block-start: 0.25rem;
   }
 
-  #highlighted-report-reader .report-document > :is(p, ul, ol, blockquote) {
+  #highlighted-report-reader .report-document > :is(p, ul, ol, blockquote, details, figure, .report-html) {
     margin-block: 0 1rem;
   }
 
@@ -247,6 +254,19 @@ ${report.bodyHtml}
     padding-inline: 0.1rem;
   }
 
+  #highlighted-report-reader .report-inline-math {
+    display: inline-block;
+    max-width: 100%;
+    padding-inline: 0.1rem;
+    overflow-x: auto;
+    vertical-align: baseline;
+  }
+
+  #highlighted-report-reader .report-document img {
+    max-width: 100%;
+    height: auto;
+  }
+
   #highlighted-report-reader .reader-word.is-current {
     color: var(--primary-foreground);
     background: var(--primary);
@@ -285,6 +305,7 @@ ${report.bodyHtml}
   const words = ${words};
   const sections = ${sections};
   const mathBlocks = ${mathBlocks};
+  const inlineMath = ${inlineMath};
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
   const wordElements = [];
@@ -387,7 +408,36 @@ ${report.bodyHtml}
         return;
       }
 
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      // Inline math is a unit: its words map to its span, and its rendered text is no text to match.
+      const inlineSegments = inlineMath[blockIndex] || [];
+      let pendingWords = blockWords;
+      if (inlineSegments.length) {
+        pendingWords = [];
+        blockWords.forEach((word) => {
+          const segment = inlineSegments.find((candidate) =>
+            candidate.speechStart <= word.charStart && word.charStart < candidate.speechEnd
+          );
+          if (!segment) {
+            pendingWords.push(word);
+            return;
+          }
+          const target = element.querySelector('[data-inline-math="' + segment.index + '"]');
+          if (!target) {
+            unmapped += 1;
+            return;
+          }
+          wordElements[word.index] = [target];
+        });
+      }
+
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+        acceptNode(textNode) {
+          const parent = textNode.parentElement;
+          return parent && parent.closest("[data-inline-math]")
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_ACCEPT;
+        },
+      });
       const nodes = [];
       let flatText = "";
       let node = walker.nextNode();
@@ -399,7 +449,7 @@ ${report.bodyHtml}
       }
 
       let cursor = 0;
-      blockWords.forEach((word) => {
+      pendingWords.forEach((word) => {
         const pattern = escapePattern(word.text).replace(whitespacePattern, whitespaceReplacement);
         const matcher = new RegExp(pattern, "gi");
         matcher.lastIndex = cursor;
@@ -455,6 +505,14 @@ ${report.bodyHtml}
       console.warn("KaTeX did not load; showing readable formula source instead.");
       return;
     }
+
+    root.querySelectorAll("[data-inline-math]").forEach((element) => {
+      window.katex.render(element.dataset.tex, element, {
+        displayMode: element.dataset.display === "true",
+        throwOnError: false,
+        strict: false,
+      });
+    });
 
     root.querySelectorAll("[data-math-token]").forEach((element) => {
       const identifiers = element.dataset.mathToken.split(":").map(Number);

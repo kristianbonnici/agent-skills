@@ -2,6 +2,7 @@ import asyncio
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -114,8 +115,21 @@ async def main():
     ROOT.mkdir(parents=True, exist_ok=True)
     data = json.loads(BLOCKS_PATH.read_text())
     blocks = data["blocks"]
+    if not any(block.get("text", "").strip() for block in blocks):
+        raise SystemExit(
+            f"{BLOCKS_PATH} has no spoken blocks (the Markdown is empty, or holds only images or other "
+            "content with no words to read), so there is nothing to narrate."
+        )
     chunks = make_chunks(blocks)
-    chunk_directory = Path(tempfile.mkdtemp(prefix="narrated-markdown-audio-"))
+    # The chunks live in a folder inside the work directory, removed when the run ends.
+    chunk_directory = Path(tempfile.mkdtemp(prefix=".narrated-markdown-audio-", dir=ROOT))
+    try:
+        return await narrate(blocks, chunks, chunk_directory)
+    finally:
+        shutil.rmtree(chunk_directory, ignore_errors=True)
+
+
+async def narrate(blocks, chunks, chunk_directory):
     semaphore = asyncio.Semaphore(max(1, args.concurrency))
     results = await asyncio.gather(*[
         synthesize_chunk(chunk, index, chunk_directory, semaphore)
@@ -226,7 +240,6 @@ async def main():
         "words": len(word_timings),
         "duration": round(final_duration, 3),
         "fallbackBlocks": diagnostics,
-        "temporaryChunks": str(chunk_directory),
     }, indent=2))
 
 
