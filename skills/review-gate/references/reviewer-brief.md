@@ -9,7 +9,7 @@ The change: <the objective in two to four sentences: what it is meant to do, for
 Where: <worktree or checkout path>. The diff: git -C <path> diff <base>...<head>. Read the related code and tests as well, not only the diff.
 The project's rules: <AGENTS.md, CLAUDE.md or similar, with their paths>.
 Your focus: <this reviewer's focus, for example "logic, security and what happens when things fail">. Report anything serious you find outside it too.
-<Round 2 or 3: "This round reviews only the fixes since <commit>: git -C <path> diff <commit>...<head>, and what they touch. Already raised: <one line per earlier finding>. Don't report these again, except one the fixes didn't settle: report that as 'not fixed: <the finding>', with the case that still fails.">
+<Round 2 and later: "This round reviews only the fixes since <commit>: git -C <path> diff <commit>...<head>, and what they touch. Already raised: <one line per earlier finding>. Don't report these again, except one the fixes didn't settle: report that as 'not fixed: <the finding>', with the case that still fails.">
 
 Report each issue as:
 - a short title;
