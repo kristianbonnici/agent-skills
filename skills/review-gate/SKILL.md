@@ -48,7 +48,7 @@ Two cheap models are on trial as reviewers: Codex's GPT-6 Luna and Claude Haiku 
 
 ## 3. Brief them
 
-Launch the round's reviewers in parallel, each with the same neutral brief from [references/reviewer-brief.md](references/reviewer-brief.md) and its own focus. Give the objective, the base and head, and the project's rules. Never give your transcript, your suspicions or the other reviewers' findings. Reviewers are read-only. How to launch each one on your host: [references/launching.md](references/launching.md).
+Launch the round's reviewers in parallel, each with the same neutral brief from [references/reviewer-brief.md](references/reviewer-brief.md) and its own focus. Give the objective, the base and head, and the project's rules. Never give your transcript or your suspicions, and in round 1 never the other reviewers' findings (later rounds list every finding already raised, section 5). Reviewers are read-only. How to launch each one on your host: [references/launching.md](references/launching.md).
 
 ## 4. Check each finding
 

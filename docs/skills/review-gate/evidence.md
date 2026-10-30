@@ -36,7 +36,8 @@ as rough. The per-task details stay in the owner's private records.
   the fix, and a stop when rounds stop converging.*
 - **The gate's review of its own first version** (Codex's Terra, 2026-10-30): rounds found 7, 4 and 2
   must-fixes, all real. A flat cap of three rounds stopped a review that was settling, so rounds 4 and 5
-  are allowed while each round finds fewer must-fixes than the one before. → *converging, not counting.*
+  are allowed while each round finds fewer must-fixes than the one before. Under that rule, rounds 4 and
+  5 found 1 and 0, and the review converged. → *converging, not counting.*
 - **Codex's GPT-6.1 Sol as a reviewer:** in a few tasks, it found issues that three Claude reviewers had
   missed. → *a reviewer of another family by default.*
 - **Gemini as a reviewer:** the weakest. One review declared "no defects" on evidence that didn't hold
