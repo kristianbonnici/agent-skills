@@ -85,7 +85,7 @@ tasks that fit ≈ (100 − used_percent) / percent one task uses on that plan
   grep -l -E '^Status: (running|paused)' "${XDG_STATE_HOME:-$HOME/.local/state}"/agent-skills/long-horizon-orchestrator/*.md
   ```
 
-  A ledger without a `Status:` line that was changed in the last day may also be active. For each active run, count its running tasks on each provider and leave room for them. Name them in the contract, and in the report's usage line, because they make the usage numbers a shared total. Then coordinate with it, as below.
+  A ledger without a `Status:` line (from an older version of this skill) is active too while any branch its task rows name still has a worktree (`git worktree list`), whatever its age. For each active run, count its running tasks on each provider and leave room for them. Name them in the contract, and in the report's usage line, because they make the usage numbers a shared total. Then coordinate with it, as below.
 
 ### Running beside another orchestrator
 
@@ -97,7 +97,7 @@ The owner sometimes runs two orchestrators at once on one computer, often on the
 4. **Keep ports and folders apart,** and name the other run's in your briefs as not yours to stop or reuse.
 5. **Its merges are normal movement of the integration branch.** Your tasks rebase onto them as onto any other merge. Never revert or rework the other run's merged work; tell it what you found instead.
 6. **The user's settings are shared.** Both runs' test builds may write the same settings of the user's app. When your wake's settings check ([machine.md](machine.md#7-during-the-run)) shows a change, find whose build made it, restore it, and tell that run, so it steers its task.
-7. **Agree on the shared finish.** Steps that touch what both runs share (relaunching the user's app, the final comparison of their settings) are done once, by whichever run finishes last. Each run still runs the quick main check for its own report: the first to finish in a detached worktree, the last in the checkout (SKILL.md, "Finish"). The first to finish tells the other, and the last names both runs in its report.
+7. **Agree on the shared finish.** Steps that touch what both runs share (relaunching the user's app, the final comparison of their settings) are done once, by whichever run finishes last. If the other run hasn't answered all run (it may have died with its ledger still saying `running`), write to it once more at your finish; with no answer then either, do the shared steps yourself, stop nothing of its own, and say in your report that its ledger still says `running`. Each run still runs the quick main check for its own report: the first to finish in a detached worktree, the last in the checkout (SKILL.md, "Finish"). The first to finish tells the other, and the last names both runs in its report.
 8. **Forward findings.** Anything one run learns that affects the other (a flaky check, a new rule for the briefs, a shared file that broke) goes to the other run's thread at once.
 
 ## 3. When a window runs short or runs out
