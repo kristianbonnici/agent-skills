@@ -7,7 +7,7 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 `delegate_task` with role `"review"`, one call per reviewer. Reviewers started this way aren't bound to your worktree, so the brief names its path.
 
 - **One reviewer:** mode `"wait"` with `timeoutMs` (1800000 for a paid reviewer, 900000 for a free one).
-- **Several:** launch all but the round's main paid reviewer with mode `"async"`, then the main one with mode `"wait"` and its `timeoutMs`; that wait is your deadline. When it returns, read each async reviewer's result if it has finished (its completion also wakes you). Look once with `task_status` at any still running past its own time, and stop it with `task_cancel` if it hasn't finished, counting it as limited. Don't poll between those times.
+- **Several:** launch all but the round's main paid reviewer with mode `"async"`, then the main one with mode `"wait"` and its `timeoutMs`; that wait is your deadline. When it returns, read each async reviewer's result if it has finished. For one still running, wait on its thread (`t3_thread_wait` with its `childThreadId` and `timeoutMs` set to what is left of its time); if that times out, stop it with `task_cancel` and count it as limited. Don't poll with `task_status` in between.
 - **A wait that times out** (`waitTimedOut`) doesn't stop the reviewer: stop it with `task_cancel` before you launch its replacement.
 
 | Reviewer | target |

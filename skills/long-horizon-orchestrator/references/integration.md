@@ -36,7 +36,7 @@ The integration branch may have moved, or the checkout may have been dirty at th
 
 1. Check the integration checkout. If it has tracked modifications the run didn't make, the user is probably working there. Don't touch it. Keep the task `ready` and list it in the final report.
 2. Otherwise, send the task a follow-up asking it to rebase, re-validate and retry the merge gate.
-3. If the task's agent is gone (a closed subagent or a crashed thread), do the gate yourself in its worktree: rebase, run the full validation, then fast-forward. Run the checks yourself; never merge on an old result.
+3. If the task's agent is gone (a closed subagent or a crashed thread), do the gate yourself in its worktree: rebase, run the full validation, then fast-forward. Run the checks yourself; never merge on an old result. If the rebase has a conflict whose resolution would change logic, don't resolve it yourself: abort the rebase, keep the task `ready`, and list it in the report.
 
 ## Launching dependents
 

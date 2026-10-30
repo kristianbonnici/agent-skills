@@ -63,7 +63,9 @@ Agreement between reviewers doesn't make a finding real, and "no defects" doesn'
 
 ## 5. Re-review, three rounds at most
 
-Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches, without repeating earlier findings. Free reviewers don't re-review: a logic fix that only a free reviewer asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
+Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches, without repeating earlier findings. Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
+
+A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the three rounds; if that look finds a must-fix, stop as below.
 
 Round 3 is the last. If it still finds a must-fix, stop and don't merge. Report that the review didn't converge, list the open findings, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
 
