@@ -1000,10 +1000,14 @@ class Server:
         line, self.buffer = self.buffer.split(b"\n", 1)
         return line
 
-    def request(self, method: str, params: dict, seconds: float) -> dict:
+    def request(self, method: str, params: dict, seconds: float, written=None) -> dict:
+        """Sends a request and waits for its answer; written() is called once the whole request is in the
+        pipe (a write that times out partway leaves a line the command never parses)."""
         self.next_id += 1
         deadline = time.monotonic() + seconds
         self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}, deadline)
+        if written:
+            written()
         while True:
             try:
                 message = json.loads(self.line(deadline))
@@ -1052,8 +1056,8 @@ def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tou
     the user's own OrbOS, whose socket the command finds as always). A step OrbOS refuses is left
     out and the offer made again (`rebuilt(paths)` makes the tour again without those files and
     pictures); an OrbOS that can't keep a tour gets the reading alone. `uncertain`: the call went
-    out but no answer came, so the offer may have arrived; `record(done)` keeps it before each call,
-    so a run stopped from outside still says so."""
+    out but no answer came, so the offer may have arrived; `record(done)` keeps it once each call is written
+    (a call that never went out whole can't have arrived), so a run stopped from outside still says so."""
     argv = [command, "--harness", harness, "--mcp"] + (["--pictures", str(pictures)] if pictures else [])
     done = {"offered": False, "uncertain": False, "id": None, "tour": 0, "steps": [], "answer": "", "left_out": [],
             "command": command, "pictures": str(pictures) if pictures else None}
@@ -1080,9 +1084,11 @@ def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tou
             left = deadline - time.monotonic()
             if left <= 0:
                 raise TimeoutError("OrbOS's command didn't answer in time")
-            done["uncertain"] = True
-            record(done)
-            text, failed = call_text(server.request("tools/call", {"name": "offer_reading", "arguments": arguments}, left))
+            def written():
+                done["uncertain"] = True   # from here the offer may have arrived, whatever happens next
+                record(done)
+            text, failed = call_text(server.request("tools/call", {"name": "offer_reading", "arguments": arguments},
+                                                    left, written))
             done["uncertain"] = False
             done["answer"] = text
             offered = re.match(r"offered: (\w+)", text)

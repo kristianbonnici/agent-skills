@@ -117,22 +117,29 @@ mkdir -p "$run5/bin"
 cp "$scripts/lease" "$run5/bin/lease"
 printf '%s\n' '{"printer": {"slots": 1, "max_minutes": 5}, "gpu": {"slots": 2, "max_minutes": 30}}' > "$run5/leases.json"
 lease5="$run5/bin/lease"
-"$lease5" run printer --owner C --minutes 0.03 -- sh -c 'trap "" TERM; sleep 60 & echo $! > "$1"; wait' sh "$run5/grand.pid" >/dev/null 2>&1 &
+"$lease5" run printer --owner C --minutes 0.1 -- sh -c 'trap "" TERM; sleep 60 & echo $! > "$1"; wait' sh "$run5/grand.pid" >/dev/null 2>&1 &
 runner=$!
 background="$background $runner"
 wait_for_status "$run5" '"owner": "C"'
 tries=0
-until test -s "$run5/grand.pid"; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
+until test -s "$run5/grand.pid"; do tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1; done
 grand=$(cat "$run5/grand.pid")
 background="$background $grand"
-sleep 3.5                                                # the lease ended (1.8 s), the child ignores SIGTERM
-kill -0 "$grand"                                         # still running, so the lease is still held
-"$lease5" status | grep -q '"owner": "C"'
+"$lease5" acquire printer --owner B --wait-minutes 3 >/dev/null &   # in line for the printer
+waiter=$!
+background="$background $waiter"
+# the lease ends, the command ignores SIGTERM and is killed after a grace: until it is gone, the
+# lease stays C's (so the waiter can't start on the printer beside it)
+tries=0
+while "$lease5" status | grep -q '"owner": "C"'; do tries=$((tries + 1)); test "$tries" -lt 600; sleep 0.1; done
+if kill -0 "$grand" 2>/dev/null; then exit 1; fi         # the lease was let go only once it had gone
 status=0
 wait "$runner" || status=$?
 test "$status" -eq 124
-if kill -0 "$grand" 2>/dev/null; then exit 1; fi         # killed with its group
-if "$lease5" status | grep -q '"owner": "C"'; then exit 1; fi
+wait "$waiter"                                           # then the waiter got the printer
+"$lease5" status | grep -q '"owner": "B"'
+if kill -0 "$grand" 2>/dev/null; then exit 1; fi
+"$lease5" release printer --owner B >/dev/null
 
 "$lease5" acquire printer --owner A >/dev/null           # a stop while waiting for the turn
 "$lease5" run printer --owner W --wait-minutes 1 -- true >/dev/null 2>&1 &
@@ -169,13 +176,104 @@ slots_of() { "$lease5" status | python3 -I -c 'import json, sys; print(sum(l["sl
 status=0
 "$lease5" acquire gpu --owner A --all --wait-minutes 0.01 >/dev/null || status=$?
 test "$status" -eq 75                                    # B holds the other slot: not held as --all
-test "$(slots_of A)" -eq 1 && test "$(slots_of B)" -eq 1
+test "$(slots_of A)" -eq 1
+test "$(slots_of B)" -eq 1
 "$lease5" release gpu --owner B >/dev/null
 "$lease5" acquire gpu --owner A --all --wait-minutes 0.01 >/dev/null
 test "$(slots_of A)" -eq 2                               # the renewal took the other slot
 status=0
 "$lease5" acquire gpu --owner C --wait-minutes 0.01 >/dev/null || status=$?
 test "$status" -eq 75                                    # the whole GPU is A's
+"$lease5" release gpu --owner A >/dev/null
+
+# "run": what a command that exited on its own left running is ended too, without changing its exit
+# status; a command that can't start exits 127; a stop landing just after the child started (before it
+# is noted) still ends it; killing lease itself (SIGKILL to its group) ends the command within seconds.
+status=0
+"$lease5" run printer --owner D -- sh -c 'sleep 60 & echo $! > "$1"; exit 7' sh "$run5/left.pid" >/dev/null 2>&1 || status=$?
+test "$status" -eq 7
+left=$(cat "$run5/left.pid")
+background="$background $left"
+if kill -0 "$left" 2>/dev/null; then exit 1; fi
+if "$lease5" status | grep -q '"owner": "D"'; then exit 1; fi
+status=0
+"$lease5" run printer --owner E -- /nonexistent/command >/dev/null 2>&1 || status=$?
+test "$status" -eq 127
+if "$lease5" status | grep -q '"owner": "E"'; then exit 1; fi
+
+python3 -I - "$lease5" "$run5" <<'EOF' >/dev/null
+import json, os, runpy, signal, subprocess, sys
+lease, run = sys.argv[1:]
+ns = runpy.run_path(lease, run_name="lease")
+real, started = subprocess.Popen, []
+def popen(args, *more, **keywords):
+    process = real(args, *more, **keywords)
+    if args[0] == "sleep":
+        started.append(process.pid)
+        os.kill(os.getpid(), signal.SIGTERM)   # the stop lands with the child started and not yet noted
+    return process
+subprocess.Popen = popen
+code = ns["main"](["run", "printer", "--owner", "P", "--run", run, "--", "sleep", "60"])
+assert code == 143 and len(started) == 1, (code, started)
+try:
+    os.kill(started[0], 0)
+    raise AssertionError("the child is still running")
+except ProcessLookupError:
+    pass
+state = json.load(open(os.path.join(run, "locks", "state.json")))
+assert state["leases"]["printer"] == [], state
+EOF
+
+python3 -I - "$lease5" "$run5" "$run5/killed.pid" <<'EOF'
+import os, signal, subprocess, sys, time
+lease, run, pidfile = sys.argv[1:]
+script = 'trap "" TERM; echo $$ > "$1"; while :; do sleep 1; done'
+runner = subprocess.Popen([lease, "run", "printer", "--owner", "K", "--run", run, "--", "sh", "-c", script, "sh", pidfile],
+                          start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+deadline = time.time() + 60
+while time.time() < deadline and not (os.path.exists(pidfile) and os.path.getsize(pidfile)):
+    time.sleep(0.1)
+child = int(open(pidfile).read())
+os.killpg(runner.pid, signal.SIGKILL)   # a harness killing lease and its group, as on a tool timeout
+runner.wait()
+deadline = time.time() + 90
+try:
+    while time.time() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.2)
+    else:
+        raise AssertionError("the command outlived lease")
+finally:
+    try:
+        os.killpg(child, signal.SIGKILL)
+    except OSError:
+        pass
+EOF
+"$lease5" release printer --owner K >/dev/null
+
+# A run, or an --all that times out, gives back only what it took: a lease the owner already held
+# keeps its slots and its end time, and a waiting --all renewal doesn't renew what is held.
+# succeeds when the owner's lease on the gpu has at most $2 minutes left
+at_most() { "$lease5" status | python3 -I -c 'import json, sys; sys.exit(0 if max(l["minutes_left"] for l in json.load(sys.stdin)["leases"].get("gpu", []) if l["owner"] == sys.argv[1]) <= float(sys.argv[2]) else 1)' "$1" "$2"; }
+"$lease5" acquire gpu --owner A --minutes 10 >/dev/null
+"$lease5" acquire gpu --owner B >/dev/null
+status=0
+"$lease5" acquire gpu --owner A --all --minutes 25 --wait-minutes 0.01 >/dev/null || status=$?
+test "$status" -eq 75
+test "$(slots_of A)" -eq 1
+at_most A 10.5                                           # held as it was, not renewed to 25
+status=0
+"$lease5" run gpu --owner A --all --wait-minutes 0.01 -- true >/dev/null 2>&1 || status=$?
+test "$status" -eq 75
+test "$(slots_of A)" -eq 1
+at_most A 10.5                                           # and not released by the failed run
+"$lease5" release gpu --owner B >/dev/null
+"$lease5" run gpu --owner A --all -- true >/dev/null 2>&1           # succeeds, and gives the extra slot back
+test "$(slots_of A)" -eq 1
+at_most A 10.5
 "$lease5" release gpu --owner A >/dev/null
 
 usage_error() {
@@ -458,7 +556,8 @@ fi
 
 # run-charts without a usage folder writes none of the usage files and no usage data; naming a folder
 # that holds no samples changes nothing either (outputs are the ones above).
-test ! -e "$work/charts/usage.mmd" && test ! -e "$work/charts/usage-mac.mmd"
+test ! -e "$work/charts/usage.mmd"
+test ! -e "$work/charts/usage-mac.mmd"
 test "$(wc -l < "$work/charts/summary.txt")" -eq 1
 python3 -I - "$work/charts/run-map.html" <<'EOF'
 import json, re, sys
@@ -1381,10 +1480,11 @@ started = time.monotonic()
 log = os.path.join(work, "deaf.log")
 done = subprocess.run([sys.executable, "-I", script, os.path.join(run_dir, "report", "facts.json"),
                        os.path.join(run_dir, "report", "big-report.md"), "--repo", repo, "--out", os.path.join(work, "deaf"),
-                       "--ask-for-tour", "--read-aloud", server, "--timeout", "3"], capture_output=True, text=True,
-                      env=dict(os.environ, FAKE_LOG=log, FAKE_MODE="deaf"), timeout=60)
+                       "--ask-for-tour", "--read-aloud", server, "--timeout", "20"], capture_output=True, text=True,
+                      env=dict(os.environ, FAKE_LOG=log, FAKE_MODE="deaf"), timeout=120)
 offered = json.load(open(os.path.join(work, "deaf", "offered.json")))
-assert done.returncode == 4 and offered["uncertain"] and "in time" in offered["answer"] and time.monotonic() - started < 30, (done.stdout, offered)
+# the request never went out whole, so it can't have arrived: not offered (exit 3), not "uncertain" (4)
+assert done.returncode == 3 and not offered["uncertain"] and "in time" in offered["answer"] and time.monotonic() - started < 60, (done.stdout, offered)
 assert len(json.dumps(json.load(open(os.path.join(work, "deaf", "reading.json"))), ensure_ascii=False).encode()) > 100_000
 try:
     os.kill(json.loads(open(log).readline())["pid"], 0)

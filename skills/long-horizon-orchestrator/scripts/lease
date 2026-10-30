@@ -20,11 +20,18 @@ Usage:
   --run       the run directory (default: the folder above this script's folder, or $LEASE_RUN_DIR)
 
 Turns are first come, first served for each resource. A waiter that stops asking for 15 seconds
-loses its place. "run" holds the lease only while the command runs. It starts the command in a session of its
-own, and when the lease runs out, or "run" is stopped (SIGTERM, SIGHUP, SIGINT, also while it
-waits for its turn), it sends SIGTERM to the command's whole process group, waits a few seconds
-and then kills what is left, and releases the lease only once they are gone. Asking for --all
-again while holding fewer slots takes the missing ones, or waits for them like a first acquire.
+loses its place. "run" holds the lease only while the command runs. It starts the command in a
+session of its own and stops it 2 seconds before the lease runs out (the lease is held a while
+longer then), or when "run" is stopped (SIGTERM, SIGHUP, SIGINT, also while it waits for its turn):
+SIGTERM to the command's whole process group, a few seconds to finish, then SIGKILL. The same goes
+for what a command that exited on its own left running in its group. The lease is released only
+once they are gone, and then only what "run" took: a lease the owner already held (an earlier
+acquire) goes back to the slots and the end time it had. A small watcher process, in a session of
+its own, ends the command's group if "run" itself is killed (SIGKILL), within seconds; the lease
+then runs out by itself.
+
+Asking for --all again while holding fewer slots takes the missing ones, or waits for them like a
+first acquire; if the wait times out (75) the lease held so far stays as it was, not renewed.
 
 While others wait, a holder's turn lasts at most the resource's turn_minutes (default: its
 max_minutes), counted from when the first of them began waiting, or from the holder's first
@@ -49,8 +56,8 @@ owner's state when a resource needs it. $LEASE_IOREG replaces /usr/sbin/ioreg, f
 and the log name it when set.
 
 Exit status: 0 done; 75 the wait timed out; 76 the turn is over and others wait (the lease is
-released); 124 "run" stopped the command at the end of its lease; 128 plus the signal's number
-when "run" was stopped by a signal; 2 usage error (an option or a leases.json value that isn't a
+released); 124 "run" stopped the command at the end of its lease; 127 "run" couldn't start the
+command; 128 plus the signal's number when "run" was stopped by a signal; 2 usage error (an option or a leases.json value that isn't a
 sensible number, too).
 check: 0 you hold the lease (and the owner is away, where the resource needs that); 1 the owner is
 at the computer; 2 the screen is locked, or its state can't be read; 3 you don't hold the lease;
@@ -86,6 +93,7 @@ CHECK_NOT_HELD = 3
 CHECK_USAGE = 64
 READ_TIMEOUT_SECONDS = 3
 STOP_GRACE_SECONDS = 5
+LEASE_END_MARGIN_SECONDS = 2   # "run" stops its command this long before the lease runs out
 
 
 class Unsupported(Exception):
@@ -263,15 +271,15 @@ class Leases:
                             held.remove(lease)
                             return "turn over", None
                         expires = min(expires, end)
-                    lease["expires"] = expires
                     if lease["slots"] < need:
                         # A renewal with --all while holding fewer slots: take the rest when nobody else
                         # holds any and this owner is first in line, else wait, as a first acquire does.
                         waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
                         queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
                         if queue[0][1] != me or sum(l["slots"] for l in held if l is not lease) + need > self.slots(resource):
-                            return "waiting", None
+                            return "waiting", None   # still waiting: what is held isn't renewed
                         lease["slots"] = need
+                    lease["expires"] = expires
                     waiting.pop(me, None)
                     return "held", (expires - now) / 60
             waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
@@ -339,6 +347,31 @@ class Leases:
         released = self.locked(drop)
         self.log(f"release {resource} {owner}")
         return released
+
+    def holding(self, resource: str, owner: str):
+        """(slots, expires as epoch seconds) of the owner's lease, or None."""
+        def find(state, _):
+            return next(((l["slots"], l["expires"]) for l in state["leases"].get(resource, [])
+                         if l["owner"] == owner), None)
+
+        return self.locked(find)
+
+    def give_back(self, resource: str, owner: str, prior) -> None:
+        """Ends what "run" took: the whole lease, or, when the owner held one before (prior, as holding
+        gave it), its slots and end time again. The owner's place in the queue goes too."""
+        def drop(state, now):
+            state["waiting"].pop(f"{resource}:{owner}", None)
+            kept = []
+            for lease in state["leases"].get(resource, []):
+                if lease["owner"] == owner:
+                    if prior is None or prior[1] <= now:
+                        continue
+                    lease["slots"], lease["expires"] = prior
+                kept.append(lease)
+            state["leases"][resource] = kept
+
+        self.locked(drop)
+        self.log(f"release {resource} {owner}" + (f" (back to {prior[0]} slot(s) held before)" if prior else ""))
 
     def hold(self, resource: str, owner: str, need: int, seconds: float) -> None:
         """Keeps the owner's lease for at least seconds more, or takes it again when it just ran out and
@@ -475,19 +508,23 @@ def command(argv: list[str], usage: int) -> int:
     class Stopped(Exception):
         pass
 
-    # A stop signal raises Stopped once, from here on (also while waiting for the turn), so every stop
-    # runs the cleanup below; the body clears the flag when it is done, so cleanup is never interrupted.
-    interruptible = [True]
+    # A stop signal raises Stopped once while it is safe to (also while waiting for the turn), so a stop
+    # runs the cleanup below; where it isn't (the child being started and noted), it is kept in
+    # state["pending"] and raised right after. Cleanup itself is never interrupted.
+    state = {"raise": True, "pending": None}
 
     def stop(signum, _frame):
-        if interruptible[0]:
-            interruptible[0] = False
+        if state["raise"]:
+            state["raise"] = False
             raise Stopped(signum)
+        if state["pending"] is None:
+            state["pending"] = signum
 
     for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(signum, stop)
-    process = None
+    process = watch = None
     need = leases.slots(args.resource) if args.take_all else 1
+    prior = leases.holding(args.resource, args.owner)   # what the owner held before this run
 
     def end_command():
         leases.hold(args.resource, args.owner, need, 2 * STOP_GRACE_SECONDS + 5)   # held while it ends
@@ -497,31 +534,114 @@ def command(argv: list[str], usage: int) -> int:
         try:
             code, left = leases.acquire(args.resource, args.owner, args.take_all, minutes, wait_minutes)
             if code:
-                interruptible[0] = False
+                state["raise"] = False
                 return code
+            held = leases.holding(args.resource, args.owner)
+            ends = held[1] if held else time.time()
+            state["raise"] = False
+            try:
+                watch = Watch()
+            except OSError as error:
+                print(f"lease: no watcher for the command ({error}); going on without", file=sys.stderr)
             try:
                 process = subprocess.Popen(command_args, start_new_session=True)
             except OSError as error:
                 print(f"lease: can't run {command_args[0]}: {error}", file=sys.stderr)
-                interruptible[0] = False
                 return 127
+            if watch:
+                watch.send(f"pgid {process.pid}\n")
+            state["raise"] = True
+            if state["pending"] is not None:
+                raise Stopped(state["pending"])
+            # the lease's own end, not a count from here: stopped a little before it runs out, so the
+            # lease is still ours while the command is ended
+            now = time.time()
+            wait = max(0.0, ends - min(LEASE_END_MARGIN_SECONDS, max(0.0, (ends - now) / 2)) - now)
             try:
-                code = process.wait(timeout=left * 60)
+                code = process.wait(timeout=wait)
             except subprocess.TimeoutExpired:
                 print(f"lease: stopped the command at the end of its {round(left, 1):g} min lease", file=sys.stderr)
                 end_command()
                 code = 124
-            interruptible[0] = False
+            state["raise"] = False
             return code
         except Stopped as stopped:
             if process is not None:
                 end_command()
             return 128 + stopped.args[0]
     finally:
-        interruptible[0] = False
-        if process is not None and process.poll() is None:
-            end_command()
-        leases.release(args.resource, args.owner)
+        state["raise"] = False
+        try:
+            if process is not None:
+                left_behind = process.poll() is not None and group_alive(process.pid)
+                if process.poll() is None or left_behind:
+                    if left_behind:
+                        print("lease: the command left processes running; ended them", file=sys.stderr)
+                    end_command()
+            leases.give_back(args.resource, args.owner, prior)
+        finally:
+            if watch:
+                watch.done()
+
+
+# A watcher in a session of its own, with a pipe from "run": it learns the command's process group, and if
+# the pipe closes before "run" says it is done (run was killed, so it couldn't clean up) it ends the group.
+WATCHER = r"""
+import os, signal, sys, time
+grace, pgid, pending = float(sys.argv[1]), None, b""
+while True:
+    chunk = os.read(0, 4096)
+    if not chunk:
+        break
+    pending += chunk
+    while b"\n" in pending:
+        line, pending = pending.split(b"\n", 1)
+        if line == b"done":
+            sys.exit(0)
+        if line.startswith(b"pgid "):
+            pgid = int(line[5:])
+if pgid is None:
+    sys.exit(0)
+for sig in (signal.SIGTERM, signal.SIGKILL):
+    try:
+        os.killpg(pgid, sig)
+    except OSError:
+        sys.exit(0)
+    deadline = time.monotonic() + (grace if sig == signal.SIGTERM else 2)
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except OSError:
+            sys.exit(0)
+        time.sleep(0.1)
+"""
+
+
+class Watch:
+    def __init__(self):
+        self.process = subprocess.Popen([sys.executable, "-I", "-c", WATCHER, str(STOP_GRACE_SECONDS)],
+                                        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        start_new_session=True)
+
+    def send(self, line: str) -> None:
+        try:
+            self.process.stdin.write(line.encode())
+            self.process.stdin.flush()
+        except OSError:
+            pass
+
+    def done(self) -> None:
+        """"run" ended the command itself: the watcher stands down."""
+        self.send("done\n")
+        try:
+            self.process.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
 
 
 def group_alive(pgid: int) -> bool:
@@ -538,6 +658,9 @@ def end_group(process: subprocess.Popen, grace: float = STOP_GRACE_SECONDS) -> N
     """Stops a command started in its own session with all it started: SIGTERM to its process group,
     a few seconds to finish, then SIGKILL; returns once the command has exited and the group is gone."""
     pgid = process.pid
+    process.poll()
+    if not group_alive(pgid):
+        return
     try:
         os.killpg(pgid, signal.SIGTERM)
     except OSError:
