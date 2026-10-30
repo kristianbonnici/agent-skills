@@ -748,7 +748,9 @@ def api_credits(reads: list[tuple], t0: float, t1: float, entry: dict | None, ma
     if not inside:
         return None
     spent, expired, corrections = 0.0, {}, []   # expired: expiry minute -> dollars; corrections: [minute, signed dollars]
-    usable = [r for r in inside if not r[3]]   # a scan cut short misses spend and leaves too much left: kept for the warning, not counted
+    # a scan cut short misses spend and leaves too much left: kept for the warning, not counted or drawn, unless
+    # every reading of the run is one (then they are all there is)
+    usable = [r for r in inside if not r[3]] or inside
     for a, b in zip(usable, usable[1:]):
         fall = a[1] - b[1]
         held_a, held_b, spent_a, spent_b = {}, {}, {}, {}
@@ -795,6 +797,8 @@ def api_credits(reads: list[tuple], t0: float, t1: float, entry: dict | None, ma
     incomplete = any(r[3] for r in inside)
     if spent < 0.005 and not expired and not incomplete:
         return None
+    if any(not r[3] for r in readings):
+        points = [(r[0], r[1]) for r in readings if not r[3]]
     gaps = sorted(b[0] - a[0] for a, b in zip(points, points[1:]))
     longest = max(75.0, 3 * gaps[len(gaps) // 2]) if gaps else 75.0   # a gap this long is a sampler that wasn't running: no line across it
     segs: list[list[list[float]]] = []
@@ -806,7 +810,7 @@ def api_credits(reads: list[tuple], t0: float, t1: float, entry: dict | None, ma
     marks = sorted({round(e, 2) for r in inside for e, _, _ in r[2] if t0 <= e <= t1})
     mark, ink = mark_of(entry) if entry else (None, None)
     return {"id": "claude_api", "name": "Claude API credits", "colour": line_colour(entry), "mark": mark, "ink": ink,
-            "segs": segs, "expiries": marks, "first": inside[0][1], "last": inside[-1][1], "top": max(v for _, v in points),
+            "segs": segs, "expiries": marks, "first": usable[0][1], "last": usable[-1][1], "top": max(v for _, v in points),
             "spent": round(spent, 2), "expired": [[e, v] for e, v in sorted(expired.items())],
             "corrections": corrections, "incomplete": incomplete}
 

@@ -1,5 +1,11 @@
 # review-gate changelog
 
+## 1.1.0 (2026-10-30)
+
+- A round with no independent reviewer (each one and its replacement limited) doesn't merge: in an orchestrated run the task reports `ready` with "no reviewer available" and the gate runs again once a reviewer has room (from the orchestrator's first full review).
+- A subagent that can't launch agents runs every reviewer by command line, Claude's too.
+- Rounds stop when they stop converging instead of at a flat three: rounds 4 and 5 only while each round finds fewer must-fixes; a re-review reports a finding a fix didn't settle as "not fixed".
+
 ## 1.0.0 (2026-10-30)
 
 - First release, from a study of 263 reviewed tasks in 21 orchestrated runs, Anthropic's account of
