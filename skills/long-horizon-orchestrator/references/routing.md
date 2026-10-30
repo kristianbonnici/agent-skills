@@ -136,7 +136,7 @@ Signs:
 - `provider-usage` shows its provider's window at or near 100%.
 
 Then:
-1. Leave it exactly as it is: its thread, worktree and uncommitted changes. Don't relaunch it, and don't hand it to another provider.
+1. Leave it exactly as it is: its thread, worktree and uncommitted changes. Don't relaunch it, and don't hand it to another provider (a task on a free model is the exception: [below](#a-task-on-a-free-model)).
 2. Make sure the resume wake is scheduled, and mark the task `paused` in the ledger with its expected resume time.
 3. On the first wake after the reset, check whether the task is running again. If not, continue it on the same thread: "Your usage limit has reset. Continue the brief from where you stopped." This nudge doesn't count as the task's one nudge for silence.
 
