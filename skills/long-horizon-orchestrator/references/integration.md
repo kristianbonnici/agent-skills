@@ -48,7 +48,7 @@ A dependent task launches only when every prerequisite is `merged` (or `ready`, 
 
 - Base it on the current integration branch head, or, under "leave on branch", on the predecessor's branch: in T3 that branch is the launch's `baseRef`, and its brief says to rebase onto that branch, not the integration branch.
 - Mention in its brief what the predecessors added and where. This is the context a fresh agent lacks.
-- If a prerequisite is blocked or failed, or stays `ready` without merging (under the merge policy), mark the dependents `parked` with the reason, and don't launch them. They are listed in the final report.
+- If a prerequisite is blocked or failed, or stays `ready` without merging (under the merge policy), mark the dependents `parked` with the reason, and don't launch them. If that prerequisite merges later (a retry succeeded), set them back to `pending` and launch them as usual; the finish waits for them. They are listed in the final report.
 
 ## Cleanup after a merge
 

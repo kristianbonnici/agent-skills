@@ -39,14 +39,14 @@ spawn_agent({
 
 ## Warm-up wake
 
-Codex has no scheduler, so don't end your turn after posting the warm-up's admin block: run `sleep 600` in the shell (it doesn't need the user), then check what the warm-up can read, record what is missing, and launch the first wave.
+Codex has no scheduler, so don't end your turn after posting the warm-up's admin block. Wait in short steps (`sleep 60` in the shell, up to ten times, since a long command may hit the shell's time limit), checking between them whether the user has answered or the warm-up's checks now pass. When they have, or after about 10 minutes, record what is missing, finish the rest of Prepare (the common file), and launch the first wave.
 
 ## Staying in control
 
 A Codex orchestrator should keep its own turn going instead of ending it and hoping to be woken:
 
 1. **Give yourself a goal.** After the user approves the contract, set a goal of your own:
-   `/goal Every task in the ledger at <path> is merged, ready, blocked, parked or failed, the ledger is up to date, and the final report has been posted in the chat.`
+   `/goal Every task in the ledger at <path> is merged, ready, blocked, failed, stopped or parked, the ledger is up to date, and the final report has been posted in the chat.`
    If you can't run `/goal` yourself, put the exact line in the contract message for the user to send along with their approval.
 2. **Wait in a loop.** Call `wait_agent` on all running task IDs with the longest allowed timeout. Each return means at least one task reached a final status: handle it as described in "On every wake", launch anything it unblocked, then wait again on the remaining tasks.
 3. **On a timeout,** do the whole "On every wake" step (the tasks, the computer, the usage windows, the ledger), then wait again. A timeout is not a failure, and it is your heartbeat: keep `wait_agent`'s timeout at 15 minutes or less while tasks run.

@@ -17,7 +17,7 @@ Agent({
 })
 ```
 
-- **Start from the integration branch.** The worktree is created from your current HEAD, so make sure the integration checkout is on the integration branch and that anything the task needs is committed. Under "leave on branch", a task stacked on another starts with `git merge --ff-only <predecessor branch>` in its worktree, as its brief's first step (the predecessor was rebased onto the integration branch, so this fast-forwards).
+- **Start from the integration branch.** The worktree is created from your current HEAD, so make sure the integration checkout is on the integration branch and that anything the task needs is committed. Under "leave on branch", a task stacked on another starts with `git merge --ff-only <predecessor branch>` in its worktree, as its brief's first step; if that can't fast-forward (the integration branch moved since), `git reset --hard <predecessor branch>` instead, since the new worktree holds no work yet.
 - **Use the reported branch.** The subagent gets its own branch, named only once it runs, so the brief says "your task branch is the one `git branch --show-current` prints in your worktree". Use the branch name it reports, and look up its path with `git worktree list`.
 - **Reviews from a subagent.** A subagent can't launch agents of its own, so its brief says to run the review gate's reviewers with the command-line forms in review-gate's `references/launching.md`.
 - **The brief alone.** As on every host, a task gets no `/goal` ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)): the brief's stop conditions define the end, so state them sharply. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line." That final message comes back to you.
@@ -26,7 +26,7 @@ Agent({
 
 ## Warm-up wake
 
-Before posting the warm-up's admin block, create a one-shot `CronCreate` (`recurring: false`) about 10 minutes later, whose prompt says to read the ledger (it names the skill's folder), and if the warm-up still waits for the user, record what is missing and launch the first wave. Record its ID; delete it if the user answers first.
+Before posting the warm-up's admin block, create a one-shot `CronCreate` (`recurring: false`) about 10 minutes later, whose prompt says to read the ledger (it names the skill's folder), and if the warm-up still waits for the user, record what is missing, finish the rest of Prepare (the common file), and launch the first wave. Record its ID; delete it if the user answers first.
 
 ## Waiting and following up
 
