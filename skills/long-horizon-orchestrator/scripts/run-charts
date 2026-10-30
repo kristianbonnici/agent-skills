@@ -79,10 +79,10 @@ summary.txt gets the report's run-time line: how long the run took, how much of 
 how long the orchestrator and the tasks worked, and how many tasks ran at once at most. With a
 usage folder, a second line says each subscription's use from start to end and the Mac's peaks.
 
-The usage panel sits under the timeline on the same time axis: each subscription's 5-hour window
-(a smooth line with a soft fill) and its weekly or monthly window (a thinner line) from 0 to 100%,
-in its maker's colour (assets/marks/marks.json), with window resets dotted and quota pauses hatched;
-then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
+The usage panel sits under the timeline on the same time axis: each subscription's weekly window
+(Copilot's monthly one) as a smooth line with a soft fill from 0 to 100%, in its maker's colour
+(assets/marks/marks.json), with window resets dotted; its 5-hour window is left out, and so are
+quota pauses, which the timeline hatches on the lanes they stopped; then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
 peak behind it. In run-map.html hovering shows the values at that minute and the tasks working then.
 
 --render also draws each chart on a white and on a black background with the Mermaid command
@@ -360,9 +360,18 @@ def summary(facts: dict) -> str:
     else:
         return ""
     short = (lambda v: v.split(" ")[1]) if clock.dated else (lambda v: v)
-    paused = sum(clock.minutes(p["start"], p["end"]) for p in facts.get("pauses", []))
+    # only a pause that stopped every task running then is the run's own; one that names its tasks
+    # left the others working, so it names them instead of counting as the run's paused time
+    ids = [t["id"] for t in facts["tasks"]]   # a parked task can have paused too
+    named = lambda p: [i for i in re.findall(r"[A-Za-z0-9_-]+", p.get("which", "")) if i in ids]
+    paused = sum(clock.minutes(p["start"], p["end"]) for p in facts.get("pauses", []) if not named(p))
+    some = list(dict.fromkeys(i for p in facts.get("pauses", []) for i in named(p)))
     text = f"Run time: {span(clock.minutes(start, end))} ({short(start)}–{short(end)})"
-    text += f", including {span(paused)} paused for quota." if paused else "."
+    if paused:
+        text += f", including {span(paused)} paused for quota"
+    if some:
+        text += (" and " if paused else ", with ") + (", ".join(some[:-1]) + " and " + some[-1] if len(some) > 1 else some[0]) + " paused for quota at times"
+    text += "."
     worked = sum(min(int(t.get("worked_minutes", clock.minutes(t["launched"], t["ended"]))),
                      clock.minutes(t["launched"], t["ended"])) for t in tasks)
     events = sorted([(clock.minutes(start, t["launched"]), 1) for t in tasks]
@@ -459,7 +468,8 @@ def line_colour(entry: dict | None) -> str | None:
 
 def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | None, makers: list[dict], mark_of) -> dict | None:
     """The usage panel's data: minutes on the facts' own axis (as the map's times), the Mac's samples
-    aggregated per minute (average and peak), and each subscription's windows as runs of points.
+    aggregated per minute (average and peak), and each subscription's weekly or monthly window as runs
+    of points (its 5-hour window isn't drawn).
     span is the timeline's (start, end) in minutes, or None; mark_of(entry) gives a mark's file index."""
     machine = read_lines(folder / "machine.jsonl")
     reads = read_lines(folder / "providers.jsonl")
@@ -515,7 +525,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         if not any(k in mac for k in ("cpu", "gpu", "mem", "disk")):
             mac = None
 
-    # the subscriptions: every window as runs of points, one run per reset period
+    # the subscriptions: the weekly or monthly window as runs of points, one run per reset period
     found: dict[str, dict] = {}
     newest: dict[str, datetime] = {}
     for record in reads:
@@ -545,7 +555,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     for name, info in found.items():
         entry = next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], name, re.I)), None)
         picked = {}
-        for slot, ends in (("five", ("five_hour",)), ("long", ("weekly", "monthly"))):
+        for slot, ends in (("long", ("weekly", "monthly")),):
             keys = [k for k in info["windows"] if k.endswith(ends)]
             if not keys:
                 continue
@@ -555,7 +565,9 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             resets: list[float] = []
             group = prior = None
             gaps = sorted(b[0] - a[0] for a, b in zip(points, points[1:]))
-            longest = max(25.0, 3 * gaps[len(gaps) // 2]) if gaps else 25.0   # a gap this long is a sampler that wasn't running
+            # a gap this long is a sampler that wasn't running; a weekly window hardly moves in an hour, so the
+            # hourly live readings alone (a harness's log gone stale) still make one line
+            longest = max(75.0, 3 * gaps[len(gaps) // 2]) if gaps else 75.0
             previous = None
             for m, used, reset_at, over in points:
                 same = runs and over == group[1] and (reset_at == group[0] or (
@@ -608,9 +620,9 @@ def pct(value: float) -> str:
 
 
 def said(slot: dict) -> str:
-    """A window's name inside a sentence: "weekly", "5-hour window", "Gemini 4 Argon weekly"."""
+    """A window's name inside a sentence: "weekly", "monthly", "Gemini 4 Argon weekly"."""
     label = slot["label"]
-    return label.lower() if label in ("Weekly", "Monthly") else label + (" window" if label.endswith("5-hour") else "")
+    return label.lower() if label in ("Weekly", "Monthly") else label
 
 
 def window_ends(slot: dict, t0: float, t1: float) -> tuple[float, float, int]:
@@ -625,12 +637,12 @@ def usage_line(usage: dict) -> str:
     parts = []
     for p in usage["providers"]:
         bits = []
-        for slot in ("five", "long"):
-            if p.get(slot):
-                a, b, resets = window_ends(p[slot], usage["t0"], usage["t1"])
-                bits.append(f"{said(p[slot])} {pct(a)} → {pct(b)}"
-                            + (f" (reset {resets}×)" if resets else ""))
-        parts.append(f"{p['name']} " + ", ".join(bits))
+        if p.get("long"):
+            a, b, resets = window_ends(p["long"], usage["t0"], usage["t1"])
+            bits.append(f"{said(p['long'])} {pct(a)} → {pct(b)}"
+                        + (f" (reset {resets}×)" if resets else ""))
+        if bits:
+            parts.append(f"{p['name']} " + ", ".join(bits))
     text = "Usage: " + "; ".join(parts) + "." if parts else "Usage:"
     peaks = usage.get("peaks")
     if peaks:
@@ -657,7 +669,7 @@ def clock_text(m: float) -> str:
 
 
 def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
-    """The fallback for hosts that can't show HTML: usage.mmd (the subscriptions' 5-hour windows) and
+    """The fallback for hosts that can't show HTML: usage.mmd (the subscriptions' weekly or monthly windows) and
     usage-mac.mmd (CPU, GPU and memory, the peak in each stretch), as xychart-beta line charts."""
     t0, t1 = usage["t0"], usage["t1"]
     width = next((w for w in (5, 10, 15, 30, 60, 120, 180, 240) if (t1 - t0) / w <= 24), 360)
@@ -670,9 +682,11 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
     out = {}
 
     colour_names = {"#D97757": "orange", "#10a37f": "green", "#8957e5": "purple", "#3186FF": "blue", NEUTRAL: "grey"}
-    lines, colours, names, weekly = [], [], [], []
+    lines, colours, names = [], [], []
     for p in usage["providers"]:
-        slot = p.get("five") or p.get("long")
+        slot = p.get("long")
+        if not slot:
+            continue
         points = sorted((pt for run in slot["segs"] for pt in run))
         values = []
         for s in starts:  # the last reading at or before the stretch's end, else the first one
@@ -681,13 +695,11 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
         colour = p["colour"] or NEUTRAL
         lines.append("    line [" + ", ".join(f"{v:g}" for v in values) + "]")
         colours.append(colour)
-        names.append(f"{p['name']} {colour_names.get(colour, colour)}")
-        if p.get("five") and p.get("long"):
-            a, b, _ = window_ends(p["long"], t0, t1)
-            weekly.append(f"{p['name']} {said(p['long'])} {pct(a)} → {pct(b)}")
+        a, b, _ = window_ends(slot, t0, t1)
+        names.append(f"{p['name']} {colour_names.get(colour, colour)} {said(slot)} {pct(a)} → {pct(b)}")
     if lines:
-        title = "Subscriptions' " + ("5-hour" if any(p.get("five") for p in usage["providers"]) else "longer") + " windows, % used at the end of each " \
-                f"{span(width)} · " + " · ".join(names) + (" · " + " · ".join(weekly) if weekly else "")
+        title = "Subscriptions' weekly or monthly windows, % used at the end of each " \
+                f"{span(width)} · " + " · ".join(names)
         out["usage.mmd"] = "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"', f"    x-axis [{labels}]",
                                       '    y-axis "% used" 0 --> 100'] + lines) + "\n"
 

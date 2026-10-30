@@ -184,9 +184,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .tl-conn { fill: none; stroke: var(--c); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .9; transition: opacity .15s; }
 .tl-conn.dashed { stroke-dasharray: 3 3; }
 .tl-dot { fill: var(--c); stroke: var(--rm-card); stroke-width: 2; transition: opacity .15s; }
-.tl-pband { fill: color-mix(in srgb, var(--rm-bad) 6%, transparent); }
 .tl-plane { fill: url(#rm-tl-hatch-bad); }
-.tl-plabel { fill: var(--rm-bad); font-size: 11px; font-weight: 500; }
 .tl-parked { fill: var(--rm-muted); font-size: 11.5px; font-style: italic; }
 .tl-g { transition: opacity .15s; }
 .tl.focus .tl-g:not(.on), .tl.focus [data-lane]:not(.on), .tl.focus .tl-lab:not(.on) { opacity: .28; }
@@ -220,8 +218,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-yt.r { text-anchor: end; }
 .us-g { transition: opacity .15s; }
 .us.focus .us-g:not(.on), .us.focus .us-prov:not(.on) { opacity: .25; }
-.us-l5 { fill: none; stroke: var(--c); stroke-width: 2.3; stroke-linejoin: round; stroke-linecap: round; }
-.us-ll { fill: none; stroke: var(--c); stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; opacity: .85; }
+.us-line { fill: none; stroke: var(--c); stroke-width: 2.3; stroke-linejoin: round; stroke-linecap: round; }
 .us-dot1 { fill: var(--c); }
 .us-fill { fill: var(--f); }
 .us-avg { fill: none; stroke: var(--c); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
@@ -231,7 +228,6 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-reset { stroke: var(--c); stroke-width: 1.1; stroke-dasharray: 2 3; opacity: .7; }
 .us-cross { stroke: var(--rm-fg); stroke-width: 1; opacity: .38; pointer-events: none; }
 .us-hdot { fill: var(--c); stroke: var(--rm-card); stroke-width: 2; pointer-events: none; }
-.us-hatch { fill: url(#rm-us-hatch-bad); opacity: .55; }
 .us-tip { max-width: 330px; min-width: 210px; }
 .us-tip .when { font-weight: 600; font-size: 12.5px; display: flex; gap: 6px; align-items: baseline; }
 .us-tip .when span { font-weight: 400; color: var(--rm-muted); font-size: 12px; }
@@ -804,14 +800,8 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: base + 17 }, back).textContent = clock(m);
     }
     ns("line", { class: "tl-base", x1: PADL - 4, x2: w - PADR + 4, y1: base, y2: base }, back);
-    // quota pauses: a band across the plot, and hatching over the lanes they stopped
+    // the lanes; a quota pause is hatched only over the lanes it stopped, since others may have worked on
     const gLanes = ns("g");
-    (F.pauses || []).forEach(p => {
-      const x0 = X(p.start), x1 = X(p.end);
-      addTip(ns("rect", { class: "tl-pband", x: x0, y: 0, width: Math.max(2, x1 - x0), height: H }, back), { title: "Quota pause", what: `Paused ${dur(p.end - p.start)}${p.reason ? " · " + p.reason : ""}`, meta: `${clock(p.start)}–${clock(p.end)}${p.which ? " · " + p.which : ""}` });
-      if (x1 - x0 > 70) ns("text", { class: "tl-plabel", x: x0 + 5, y: 11 }, back).textContent = `‖ paused ${dur(p.end - p.start)}`;
-    });
-    // the lanes
     const gConn = ns("g"), gDots = ns("g");
     const c0 = LH / 2, yb = c0 + BAR / 2;
     lanes.forEach((l, li) => {
@@ -926,8 +916,8 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } }).observe(plot);
 })();
 
-// the usage panel, under the timeline and on its time axis: each subscription's windows from 0 to
-// 100%, then the Mac's processor, memory and free disk, each minute's average with its peak behind it
+// the usage panel, under the timeline and on its time axis: each subscription's weekly (or monthly)
+// window from 0 to 100%, then the Mac's processor, memory and free disk, each minute's average with its peak behind it
 (() => {
   const U = F.usage; if (!U) return;
   const provs = U.providers || [], mac = U.mac;
@@ -947,7 +937,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     if (p.mark != null && FILES[p.mark]) { const i = el("i", "mk"); i.style.setProperty("--mk", `url("${FILES[p.mark]}")`); i.style.background = p.ink || "var(--rm-fg)"; return i; }
     return null;
   };
-  const shortOf = slot => /five_hour/.test(slot.id) ? "5-hour" : /monthly/.test(slot.id) ? "monthly" : "weekly";
+  const shortOf = slot => /monthly/.test(slot.id) ? "monthly" : "weekly";
   const ends = slot => {  // a window's use at the start and the end of the run
     const pts = slot.segs.flat(), inside = pts.filter(([m]) => m >= t0 && m <= t1), use = inside.length ? inside : pts;
     return [use[0][1], use[use.length - 1][1]];
@@ -969,7 +959,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 
   // the bands, top to bottom
   const bands = [];
-  if (provs.length) bands.push({ id: "subs", sec: "Subscriptions", h: Math.max(150, provs.reduce((sum, p) => sum + 20 + 15 * (p.five && p.long ? 2 : 1) + 8, 0) + 8) });
+  if (provs.length) bands.push({ id: "subs", sec: "Subscriptions", h: Math.max(120, provs.reduce((sum, p) => sum + 20 + 15 + 8, 0) + 8) });
   if (mac && (mac.cpu || mac.gpu)) bands.push({ id: "busy", sec: "This Mac", h: 80 });
   if (mac && mac.mem) bands.push({ id: "mem", h: 62, sec: bands.some(b => b.id === "busy") ? "" : "This Mac" });
   if (mac && mac.disk) bands.push({ id: "disk", h: 56, sec: bands.some(b => b.id === "busy" || b.id === "mem") ? "" : "This Mac" });
@@ -992,9 +982,9 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       const mk = markOf(p); if (mk) { mk.style.width = mk.style.height = "13px"; n.append(mk); }
       n.append(el("span", "nm", p.name));
       w.append(n);
-      ["five", "long"].filter(k => p[k]).forEach(k => { const [a, b] = ends(p[k]), md = el("div", "tl-model");
-        md.append(el("span", null, `${shortOf(p[k])} ${a === b ? pc(a) : fmt(a) + "→" + pc(b)}`)); w.append(md); });
-      w.title = (p.plan ? p.plan + " · " : "") + ["five", "long"].filter(k => p[k]).map(k => p[k].label).join(", ");
+      if (p.long) { const [a, b] = ends(p.long), md = el("div", "tl-model");
+        md.append(el("span", null, `${shortOf(p.long)} ${a === b ? pc(a) : fmt(a) + "→" + pc(b)}`)); w.append(md); }
+      w.title = (p.plan ? p.plan + " · " : "") + (p.long ? p.long.label : "");
       d.append(w); w._id = p.id; provLabs.push(w);
       w.addEventListener("mouseenter", () => focusProv(p.id)); w.addEventListener("mouseleave", () => focusProv(null));
     });
@@ -1019,11 +1009,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 
   // the legend: only what is drawn
   const sw = (html, text) => `<span>${html}${text}</span>`;
-  legend.innerHTML = (provs.some(p => p.five) ? sw('<i class="ln"></i>', "5-hour window") : "")
-    + (provs.some(p => p.long) ? sw('<i class="ln thin"></i>', "Weekly or monthly window") : "")
-    + (provs.some(p => (p.five && p.five.resets.length) || (p.long && p.long.resets.length)) ? sw('<i class="ln dot"></i>', "Reset") : "")
-    + (mac ? sw('<i class="ln"></i>', "Average per minute") + sw('<i class="pk"></i>', "Peak") : "")
-    + ((F.pauses || []).length ? sw("<i style=\"background:repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-bad) 45%, transparent) 0 1.5px, color-mix(in srgb, var(--rm-bad) 8%, transparent) 1.5px 4px)\"></i>", "Paused") : "");
+  const longs = provs.filter(p => p.long), monthly = longs.filter(p => /monthly/.test(p.long.id)).length;
+  legend.innerHTML = (longs.length ? sw('<i class="ln"></i>', !monthly ? "Weekly window" : monthly === longs.length ? "Monthly window" : "Weekly or monthly window") : "")
+    + (longs.some(p => p.long.resets.length) ? sw('<i class="ln dot"></i>', "Reset") : "")
+    + (mac ? sw('<i class="ln"></i>', "Average per minute") + sw('<i class="pk"></i>', "Peak") : "");
 
   // drawing, at the plot's width
   const PADL = 14, PADR = 14, TOP = 6, BOT = 4;
@@ -1085,8 +1074,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     svg.setAttribute("width", w); svg.setAttribute("height", H + AX); svg.setAttribute("viewBox", `0 0 ${w} ${H + AX}`);
     svg.replaceChildren(); hover = [];
     const defs = ns("defs", {}, svg);
-    defs.innerHTML = `<pattern id="rm-us-hatch-bad" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tl-bad-bg" width="5" height="5"/><line class="tl-bad-ln" x1="0" y1="0" x2="0" y2="5"/></pattern>`
-      + `<clipPath id="rm-us-clip"><rect x="${X(t0)}" y="0" width="${Math.max(1, X(t1) - X(t0))}" height="${H}"/></clipPath>`;
+    defs.innerHTML = `<clipPath id="rm-us-clip"><rect x="${X(t0)}" y="0" width="${Math.max(1, X(t1) - X(t0))}" height="${H}"/></clipPath>`;
     const fill = (id, colour, b, top, bottom) => {
       const g = ns("linearGradient", { id, gradientUnits: "userSpaceOnUse", x1: 0, x2: 0, y1: b.y, y2: b.y + b.h }, defs); g.style.setProperty("--f", colour);
       g.innerHTML = `<stop offset="0" style="stop-color:var(--f);stop-opacity:${top}"/><stop offset="1" style="stop-color:var(--f);stop-opacity:${bottom}"/>`;
@@ -1100,11 +1088,6 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: H + 17 }, back).textContent = clock(m);
     }
     ns("line", { class: "tl-base", x1: PADL - 4, x2: w - PADR + 4, y1: H + 4, y2: H + 4 }, back);
-    (F.pauses || []).forEach(p => {
-      const x0 = X(p.start), x1 = X(p.end);
-      ns("rect", { class: "tl-pband", x: x0, y: 0, width: Math.max(2, x1 - x0), height: H }, back);
-      bands.forEach(b => ns("rect", { class: "us-hatch", x: x0, y: b.y, width: Math.max(2, x1 - x0), height: b.h }, back));
-    });
     const lines = ns("g", { "clip-path": "url(#rm-us-clip)" }, svg), over = ns("g", {}, svg);
     const yt = (x, yy, text, cls) => ns("text", { class: "us-yt" + (cls ? " " + cls : ""), x, y: yy }, over).textContent = text;
 
@@ -1115,16 +1098,16 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       [...provs].reverse().forEach(p => {
         const colour = colourOf(p), g = ns("g", { class: "us-g", "data-p": p.id }, lines); g.style.setProperty("--c", colour);
         const idx = provs.indexOf(p);
-        ["long", "five"].forEach(k => {
-          const slot = p[k]; if (!slot) return;
+        const slot = p.long;
+        if (slot) {
           slot.segs.forEach(seg => {
             const pts = seg.map(([m, v]) => [X(m), Y(v)]);
-            if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: k === "five" ? 2.6 : 2 }, g); return; }
-            if (k === "five") ns("path", { class: "us-fill", d: curve(pts) + `L${f1(pts[pts.length - 1][0])} ${f1(Y(0))}L${f1(pts[0][0])} ${f1(Y(0))}Z`, style: `--f:${fill(`rm-us-f${idx}`, colour, b, .3, .02)}` }, g);
-            ns("path", { class: k === "five" ? "us-l5" : "us-ll", d: curve(pts) }, g);
+            if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: 2.6 }, g); return; }
+            ns("path", { class: "us-fill", d: curve(pts) + `L${f1(pts[pts.length - 1][0])} ${f1(Y(0))}L${f1(pts[0][0])} ${f1(Y(0))}Z`, style: `--f:${fill(`rm-us-f${idx}`, colour, b, .3, .02)}` }, g);
+            ns("path", { class: "us-line", d: curve(pts) }, g);
           });
           slot.resets.forEach(r => ns("line", { class: "us-reset", x1: X(r), x2: X(r), y1: b.y + 2, y2: b.y + b.h - 2 }, g));
-        });
+        }
         hover.push({ kind: "sub", p, y: Y, colour, g });
       });
     }
@@ -1201,9 +1184,9 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       tip.append(el("div", "sec", "Subscriptions"));
       hover.filter(h => h.kind === "sub").reverse().forEach(h => {
         const p = h.p, bits = [];
-        ["five", "long"].forEach(k => { if (!p[k]) return; const v = valueAt(p[k], m); const name = shortOf(p[k]);
-          if (v != null) { bits.push(`<em>${name}</em> ${pc(v)}`); dot(h.y(v), h.colour); }
-          const near = p[k].resets.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`↺ resets ${clock(near)}`); });
+        if (p.long) { const v = valueAt(p.long, m);
+          if (v != null) { bits.push(`<em>${shortOf(p.long)}</em> ${pc(v)}`); dot(h.y(v), h.colour); }
+          const near = p.long.resets.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`↺ resets ${clock(near)}`); }
         row(tip, p.name, bits.length ? bits.join(" · ") : "<em>no reading</em>", h.colour);
       });
     }
@@ -1218,10 +1201,8 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
         if (h.kind === "disk") { const a = macAt(mac.disk, m); if (a != null) { const lo = macAt(mac.disk_pk, m); row(tip, "Free disk", `${fmt(a)} GB` + (lo != null && lo < a ? ` <em>· lowest</em> ${fmt(lo)}` : ""), "var(--rm-warn)"); dot(h.y(a), h.colour); } }
       });
     }
-    const pause = (F.pauses || []).find(p => p.start <= m && m <= p.end);
     const who = el("div", "who2"), names = working(m);
     who.innerHTML = names.length ? `<b>Working:</b> ` + names.map(n => n.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join(", ") : "No task working";
-    if (pause) who.append(el("div", null, `‖ Quota pause${pause.reason ? " · " + pause.reason : ""}${pause.which ? " · " + pause.which : ""}`));
     tip.append(who);
     tip.hidden = false;
     const b = S.getBoundingClientRect(), pr = plot.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -1245,7 +1226,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   if (at) { show(+at[1] * 60 + +at[2] + 0.5); tip.style.transition = "none"; tip.classList.add("on"); }
   let lastW = plot.clientWidth;
   new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } }).observe(plot);
-  svg.setAttribute("aria-label", `Usage of the run, ${clock(t0)} to ${clock(t1)}: ` + [...provs.map(p => `${p.name} ` + ["five", "long"].filter(k => p[k]).map(k => `${p[k].label} ${pc(ends(p[k])[0])} to ${pc(ends(p[k])[1])}`).join(", ")),
+  svg.setAttribute("aria-label", `Usage of the run, ${clock(t0)} to ${clock(t1)}: ` + [...provs.filter(p => p.long).map(p => `${p.name} ${p.long.label} ${pc(ends(p.long)[0])} to ${pc(ends(p.long)[1])}`),
     ...(pk ? [`the Mac peaked at ${num(pk.cpu) ? fmt(pk.cpu, 0) + "% CPU" : ""}${num(pk.gpu) ? ", " + fmt(pk.gpu, 0) + "% GPU" : ""}`] : [])].join("; "));
 })();
 
