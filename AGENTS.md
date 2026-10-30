@@ -49,7 +49,6 @@ Before saying a skill is installed, run:
 ./tests/bootstrap-test
 ./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's lease and run-charts scripts, and the run map
 ./tests/skill-versions-test         # every skill's version and its changelog agree
-./tests/narrated-reader-test        # the narrated-markdown-reader's scripts offline: inline math, HTML, images, synthesis against a stand-in for edge_tts, the page's word mapping
 ```
 
 The doctor must confirm Product Design is absent from Codex discovery paths.

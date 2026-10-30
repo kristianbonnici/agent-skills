@@ -1,5 +1,9 @@
 # narrated-markdown-reader changelog
 
+## Removed (2026-10-30)
+
+The owner no longer uses this skill, so it is gone from `skills/` and from the install links. To get it back: `git checkout narrated-markdown-reader/v1.0.0 -- skills/narrated-markdown-reader`, the last released version. A 1.1.0 with fixes from its first review (inline math, HTML blocks, alt text) is in commit `ad37dc5`, untagged: its fix review found must-fixes still open (inline-math detection around `<` and `$HOME`-style text, and removed HTML still spoken), which nobody fixed, since the skill was removed.
+
 ## 1.1.0 (2026-10-30)
 
 First review (OpenCode GLM-5.3 Flash: 3 must-fix, 5 nits), fixed by Claude Sonnet 5.5, every finding checked:
