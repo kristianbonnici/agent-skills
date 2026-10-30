@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -38,8 +40,26 @@ status: not provided
 
 
 def state_root() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    # An exported but empty XDG_STATE_HOME counts as unset, as in the shell's ${XDG_STATE_HOME:-...}.
+    configured = os.environ.get("XDG_STATE_HOME")
+    base = Path(configured) if configured else Path.home() / ".local" / "state"
     return base / "agent-skills" / "product-design"
+
+
+def new_run_dir(name: str) -> Path:
+    """Create a fresh evidence folder outside any repository; never reuse an existing one."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "run"
+    runs = state_root() / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    stem = f"{date.today().isoformat()}-{slug}"
+    for attempt in range(1, 1000):
+        candidate = runs / (stem if attempt == 1 else f"{stem}-{attempt}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate
+    raise SystemExit(f"Could not create a unique run folder under {runs}")
 
 
 def init_context() -> Path:
@@ -74,7 +94,8 @@ def preflight() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("preflight", "init", "show", "path"))
+    parser.add_argument("command", choices=("preflight", "init", "show", "path", "run-dir"))
+    parser.add_argument("name", nargs="?", help="short name for run-dir, such as the product or flow")
     args = parser.parse_args()
 
     context = state_root() / "user-context.md"
@@ -85,6 +106,11 @@ def main() -> int:
         return 0
     if args.command == "path":
         print(context)
+        return 0
+    if args.command == "run-dir":
+        if not args.name:
+            parser.error("run-dir needs a short name")
+        print(new_run_dir(args.name))
         return 0
     if not context.is_file():
         print(f"No saved Product Design context at {context}", file=sys.stderr)

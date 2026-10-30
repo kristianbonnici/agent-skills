@@ -22,7 +22,7 @@ Severity:
 
 For every P0–P2, record evidence and a concrete fix, apply it, recapture at the same viewport/state, and compare again. Do not stop after fixing without a fresh comparison.
 
-Save `design-qa.md` at the project root with source and implementation paths, viewport/state, dimensions, comparison evidence, findings, iteration history, remaining P3 notes, and one final line:
+Save `design-qa.md` in the prototype's own folder when the prototype was created for this request (its root, beside `package.json`). When the work lives inside an existing app, save it in the run folder instead (`SKILL.md`, "Where evidence goes") and link it in the hand-off; never add it to the user's repository unprompted. If a `design-qa.md` already exists there, ask before replacing it. Keep the screenshots in the run folder and give their absolute paths. Include source and implementation paths, viewport/state, dimensions, comparison evidence, findings, iteration history, remaining P3 notes, and one final line:
 
 ```text
 final result: passed

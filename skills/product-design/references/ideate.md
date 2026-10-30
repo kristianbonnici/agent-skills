@@ -4,7 +4,7 @@ Use this when no visual target has been selected or the user requests alternativ
 
 ## Brief gate
 
-Identify the target, intended user, product surface, user goal, and hard constraints. Inspect relevant screenshots, images, local design-system material, and saved context directly. If a named source cannot be accessed, stop and resolve that gap.
+Identify the target, intended user, product surface, user goal, and hard constraints. If any of these five is missing, ask one brief question that requests every missing one at once, and do not ask again. Inspect relevant screenshots, images, local design-system material, and saved context directly. If a named source cannot be accessed, stop and resolve that gap.
 
 Choose dimensions before prompting:
 
@@ -15,9 +15,9 @@ Choose dimensions before prompting:
 - Component: its natural container size
 - Existing reference: match its aspect ratio and dimensions
 
-## Prompt-only generation
+## Three directions
 
-Produce exactly three independent image-generation prompts. Each direction must vary meaningfully in hierarchy, layout strategy, interaction model, or product framing—not only color.
+Provide exactly three independent directions. If the host has an image-generation tool, write the three prompts below and generate one image from each; otherwise present the three prompts for the user to generate. Each direction must vary meaningfully in hierarchy, layout strategy, interaction model, or product framing—not only color.
 
 Every prompt must:
 
@@ -29,4 +29,9 @@ Every prompt must:
 - Name the visual references that must be attached.
 - For mobile concepts, request app content only, without a device bezel or OS chrome.
 
-Give each direction a distinctive working title outside the prompt. Then tell the user to generate all three, attach the results, and choose one. Do not build until a resulting image is selected. If feedback changes a selected direction, request a revised image before implementation.
+Give each direction a distinctive working title outside the prompt.
+
+- With an image tool: generate all three, open each result to check it against the brief (dimensions, content, legible text), regenerate any that miss, show the three with their titles, and ask the user to choose one. Save the images in the run folder (`SKILL.md`, "Where evidence goes"), never in the user's repository.
+- Without an image tool: give the three titled prompts, tell the user to generate all three, attach the results, and choose one, then wait.
+
+Do not build until a resulting image is selected. If feedback changes a selected direction, request a revised image before implementation.

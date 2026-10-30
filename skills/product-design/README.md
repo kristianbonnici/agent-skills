@@ -22,7 +22,7 @@ Google Antigravity, Antigravity IDE, or Antigravity CLI:
 Use product-design to <request>
 ```
 
-OpenCode uses the checked-in command adapter at [`adapters/opencode/commands/product-design.md`](../../adapters/opencode/commands/product-design.md). Factory exposes the canonical skill as a slash command directly. Antigravity discovers the skill from its global `~/.gemini/config/skills/` location and can activate it from an explicit mention or matching request.
+OpenCode uses the checked-in command adapter at [`adapters/opencode/commands/product-design.md`](../../adapters/opencode/commands/product-design.md). Factory exposes the canonical skill as a slash command directly. Antigravity and Antigravity IDE discover the skill from `~/.gemini/config/skills/`, and Antigravity CLI from its own `~/.gemini/antigravity-cli/skills/`; each is installed there as an adapter directory of links to this source. All can activate it from an explicit mention or matching request.
 
 ## Runtime and state
 
@@ -37,6 +37,8 @@ Mutable Product Design context is shared between compatible hosts at:
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/product-design/
 ```
+
+Each run's screenshots and notes go in `runs/<date>-<name>/` under that folder, never in the user's repository.
 
 That state is intentionally outside Git. The repository reproduces behavior and wiring, not private screenshots, URLs, or product context.
 
