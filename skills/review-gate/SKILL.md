@@ -63,7 +63,7 @@ Agreement between reviewers doesn't make a finding real, and "no defects" doesn'
 
 ## 5. Re-review while it converges
 
-Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches, without repeating earlier findings. Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
+Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches: no earlier finding again, except one a fix didn't settle, reported as "not fixed". Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
 
 A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the count of rounds; if that look finds a must-fix, stop as for a review that didn't converge, below.
 
