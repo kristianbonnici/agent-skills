@@ -954,8 +954,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const apiNote = !A ? "" : (() => {   // what the figures are, and what isn't plain spending: the same words as summary.txt's
     const bits = [], corrections = A.corrections || [];
     if (A.expired && A.expired.length) {
-      const times = A.expired.map(([e]) => clock(Math.floor(e)));
-      bits.push(`${usd(A.expired.reduce((sum, [, v]) => sum + v, 0))} expired at ` + (times.length < 3 ? times.join(" and ") : times.slice(0, -1).join(", ") + " and " + times[times.length - 1]));
+      bits.push(A.expired.map(([e, v], n) => `${usd(v)} ${n ? "" : "expired "}at ${clock(Math.floor(e))}`).join(", "));   // each expiry with its own time
     }
     if ((bits.length || corrections.length) && A.spent >= 0.5) bits.push(`${usd(A.spent)} spent`);
     const up = corrections.reduce((sum, [, v]) => sum + (v > 0 ? v : 0), 0), down = -corrections.reduce((sum, [, v]) => sum + (v < 0 ? v : 0), 0);

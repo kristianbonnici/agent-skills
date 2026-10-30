@@ -33,7 +33,9 @@ may carry that same balance_at itself, as older files do; grants read at differe
 is T3's list price, so use priced or discounted differently drifts the estimate; the subscription's
 instance never counts) after balance_at is taken off the balances. Each charge goes to the
 soonest-expiring grant that hasn't expired by then, overflowing to the next once that is used up, never
-below zero; an expired grant has nothing left. "left_usd" totals the unexpired grants, "spent_since_usd" is what was taken off the
+below zero; an expired grant has nothing left. Each grant's "spent_usd" is what that allocation charged
+to it (spend logged after it expired went to the next grant), so a chart can tell a grant's own spend
+from its expiry. "left_usd" totals the unexpired grants, "spent_since_usd" is what was taken off the
 grants, and "estimate" is always true: spend by other tools, or before T3 logged it, is not seen, so
 update the file's balance when the Console is looked at again. Times keep their fractions of a
 second; a date alone is UTC midnight. Without that file the provider is left out. A file that can't
@@ -686,7 +688,8 @@ def claude_api(now: float, run_since: tuple[float, str] | None = None) -> dict |
     for g, remaining in sorted(zip(grants, left), key=lambda pair: pair[0]["expires"]):
         expired = g["expires"] <= now
         entry = {"expires": g["expires_text"], "granted_usd": round(g["granted_usd"], 2),
-                 "left_usd": 0.0 if expired else round(remaining, 2), "balance_at": g["balance_at_text"]}
+                 "left_usd": 0.0 if expired else round(remaining, 2), "balance_at": g["balance_at_text"],
+                 "spent_usd": round(g["balance"] - remaining, 2)}   # what the allocation charged to this grant since the reading
         if expired:
             entry["expired"] = True
         credits.append(entry)

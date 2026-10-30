@@ -8,7 +8,7 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
                    the harnesses' own logs (current while their tasks run), and every 60 min a live
                    reading (provider-usage, no quota used; Antigravity and Copilot only read live);
                    with it, the Claude API credits' estimated dollars left when the owner has a
-                   credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd"}],
+                   credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd", "spent_usd"}],
                    "spent_since_usd", "balance_at" (when the Console was read), "api_spend_since_usd"
                    (all the API spend since run-start, a total that only grows), "estimate": true,
                    "incomplete": true when provider-usage's log scan was cut short or met a log it
@@ -112,7 +112,8 @@ def credits_of(p):
     left = number(p.get("left_usd"))
     if left is None:
         return None
-    grants = [{"expires": c.get("expires"), "left_usd": number(c.get("left_usd")), "granted_usd": number(c.get("granted_usd"))}
+    grants = [{"expires": c.get("expires"), "left_usd": number(c.get("left_usd")), "granted_usd": number(c.get("granted_usd")),
+               "spent_usd": number(c.get("spent_usd"))}   # what provider-usage charged to this grant since the Console reading
               for c in p.get("credits") or [] if isinstance(c, dict)]
     reads = [c.get("balance_at") for c in p.get("credits") or [] if isinstance(c, dict) and isinstance(c.get("balance_at"), str)]
     found = {"left_usd": left, "credits": grants, "observed_at": p.get("observed_at"), "plan": p.get("plan"),
