@@ -219,6 +219,8 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-g { transition: opacity .15s; }
 .us.focus .us-g:not(.on), .us.focus .us-prov:not(.on) { opacity: .25; }
 .us-line { fill: none; stroke: var(--c); stroke-width: 2.3; stroke-linejoin: round; stroke-linecap: round; }
+.us-line.more { stroke-width: 1.6; stroke-dasharray: 5 3.5; }
+.tl-legend .ln.dash { border-top: 1.6px dashed var(--rm-muted); }
 .us-dot1 { fill: var(--c); }
 .us-fill { fill: var(--f); }
 .us-avg { fill: none; stroke: var(--c); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
@@ -833,8 +835,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
         });
         if (t.status === "ready") { const eg = ns("g", { class: "tl-end" }, g); ns("circle", { class: "tl-ring", cx: ps[ps.length - 1].x1 + 6, cy, r: 4 }, eg); }
         (F.pauses || []).filter(p => (p.tasks || []).includes(t.id)).forEach(p => {
-          const x0 = Math.max(X(p.start), ps[0].x0), x1 = Math.min(X(p.end), ps[ps.length - 1].x1);
-          if (x1 > x0) addTip(ns("rect", { class: "tl-plane", x: x0, y: cy - BAR / 2, width: x1 - x0, height: BAR, rx: 3 }, g), { c: "var(--rm-bad)", who, what: `Paused ${dur(p.end - p.start)}${p.reason ? " · " + p.reason : ""}`, meta: `${clock(p.start)}–${clock(p.end)}`, lane: t.id });
+          // a task parked while paused stays paused to the pause's end, past its last turn
+          const parked = l.node.status === "parked" && k === l.attempts.length - 1 && p.end > span(t)[1];
+          const x0 = Math.max(X(p.start), ps[0].x0), x1 = parked ? X(p.end) : Math.min(X(p.end), ps[ps.length - 1].x1);
+          if (x1 > x0) addTip(ns("rect", { class: "tl-plane", x: x0, y: cy - BAR / 2, width: x1 - x0, height: BAR, rx: 3 }, g), { c: "var(--rm-bad)", who, what: `Paused ${dur(p.end - p.start)}${p.reason ? " · " + p.reason : ""}` + (parked ? ", then parked: not continued in this run" : ""), meta: `${clock(p.start)}–${clock(p.end)}`, lane: t.id });
         });
         if (!l.orch && orchTimed) {
           const sx = ps[0].x0 + 1, ex = ps[ps.length - 1].x1 - 1, model = [t.model, t.effort].filter(Boolean).join(" · ");
@@ -917,7 +921,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 })();
 
 // the usage panel, under the timeline and on its time axis: each subscription's weekly (or monthly)
-// window from 0 to 100%, then the Mac's processor, memory and free disk, each minute's average with its peak behind it
+// window as the percent left, falling from 100% as it is used, and a separate limit dashed; then the Mac's processor, memory and free disk, each minute's average with its peak behind it
 (() => {
   const U = F.usage; if (!U) return;
   const provs = U.providers || [], mac = U.mac;
@@ -937,7 +941,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     if (p.mark != null && FILES[p.mark]) { const i = el("i", "mk"); i.style.setProperty("--mk", `url("${FILES[p.mark]}")`); i.style.background = p.ink || "var(--rm-fg)"; return i; }
     return null;
   };
-  const shortOf = slot => /monthly/.test(slot.id) ? "monthly" : "weekly";
+  // a window's short name: "weekly" for the plan's own, else its model's ("Gemini", "Gemini 4 Argon")
+  const shortOf = slot => /^(weekly|monthly)$/.test(slot.id) ? slot.id : slot.label.replace(/ (weekly|monthly)$/, "");
+  const whole = v => Math.round(v) + "";
+  const slotsOf = p => p.long ? [p.long, ...(p.more || [])] : [];
   const ends = slot => {  // a window's use at the start and the end of the run
     const pts = slot.segs.flat(), inside = pts.filter(([m]) => m >= t0 && m <= t1), use = inside.length ? inside : pts;
     return [use[0][1], use[use.length - 1][1]];
@@ -959,7 +966,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 
   // the bands, top to bottom
   const bands = [];
-  if (provs.length) bands.push({ id: "subs", sec: "Subscriptions", h: Math.max(120, provs.reduce((sum, p) => sum + 20 + 15 + 8, 0) + 8) });
+  if (provs.length) bands.push({ id: "subs", sec: "Subscriptions", h: Math.max(120, provs.reduce((sum, p) => sum + 20 + 15 * slotsOf(p).length + 8, 0) + 8) });
   if (mac && (mac.cpu || mac.gpu)) bands.push({ id: "busy", sec: "This Mac", h: 80 });
   if (mac && mac.mem) bands.push({ id: "mem", h: 62, sec: bands.some(b => b.id === "busy") ? "" : "This Mac" });
   if (mac && mac.disk) bands.push({ id: "disk", h: 56, sec: bands.some(b => b.id === "busy" || b.id === "mem") ? "" : "This Mac" });
@@ -982,9 +989,9 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       const mk = markOf(p); if (mk) { mk.style.width = mk.style.height = "13px"; n.append(mk); }
       n.append(el("span", "nm", p.name));
       w.append(n);
-      if (p.long) { const [a, b] = ends(p.long), md = el("div", "tl-model");
-        md.append(el("span", null, `${shortOf(p.long)} ${a === b ? pc(a) : fmt(a) + "→" + pc(b)}`)); w.append(md); }
-      w.title = (p.plan ? p.plan + " · " : "") + (p.long ? p.long.label : "");
+      slotsOf(p).forEach(slot => { const [a, b] = ends(slot), md = el("div", "tl-model");
+        md.append(el("span", null, `${shortOf(slot)} ${a === b ? whole(a) : whole(a) + "→" + whole(b)}% left`)); w.append(md); });
+      w.title = (p.plan ? p.plan + " · " : "") + slotsOf(p).map(s => s.label).join(", ");
       d.append(w); w._id = p.id; provLabs.push(w);
       w.addEventListener("mouseenter", () => focusProv(p.id)); w.addEventListener("mouseleave", () => focusProv(null));
     });
@@ -1010,8 +1017,9 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   // the legend: only what is drawn
   const sw = (html, text) => `<span>${html}${text}</span>`;
   const longs = provs.filter(p => p.long), monthly = longs.filter(p => /monthly/.test(p.long.id)).length;
-  legend.innerHTML = (longs.length ? sw('<i class="ln"></i>', !monthly ? "Weekly window" : monthly === longs.length ? "Monthly window" : "Weekly or monthly window") : "")
-    + (longs.some(p => p.long.resets.length) ? sw('<i class="ln dot"></i>', "Reset") : "")
+  legend.innerHTML = (longs.length ? sw('<i class="ln"></i>', (!monthly ? "Weekly window" : monthly === longs.length ? "Monthly window" : "Weekly or monthly window") + ", % left") : "")
+    + (longs.some(p => p.more) ? sw('<i class="ln dash"></i>', "A model's own limit") : "")
+    + (longs.some(p => slotsOf(p).some(s => s.resets.length)) ? sw('<i class="ln dot"></i>', "Reset") : "")
     + (mac ? sw('<i class="ln"></i>', "Average per minute") + sw('<i class="pk"></i>', "Peak") : "");
 
   // drawing, at the plot's width
@@ -1098,16 +1106,15 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       [...provs].reverse().forEach(p => {
         const colour = colourOf(p), g = ns("g", { class: "us-g", "data-p": p.id }, lines); g.style.setProperty("--c", colour);
         const idx = provs.indexOf(p);
-        const slot = p.long;
-        if (slot) {
+        slotsOf(p).forEach((slot, si) => {
           slot.segs.forEach(seg => {
             const pts = seg.map(([m, v]) => [X(m), Y(v)]);
-            if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: 2.6 }, g); return; }
-            ns("path", { class: "us-fill", d: curve(pts) + `L${f1(pts[pts.length - 1][0])} ${f1(Y(0))}L${f1(pts[0][0])} ${f1(Y(0))}Z`, style: `--f:${fill(`rm-us-f${idx}`, colour, b, .3, .02)}` }, g);
-            ns("path", { class: "us-line", d: curve(pts) }, g);
+            if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: si ? 2 : 2.6 }, g); return; }
+            if (!si) ns("path", { class: "us-fill", d: curve(pts) + `L${f1(pts[pts.length - 1][0])} ${f1(Y(0))}L${f1(pts[0][0])} ${f1(Y(0))}Z`, style: `--f:${fill(`rm-us-f${idx}`, colour, b, .11, 0)}` }, g);
+            ns("path", { class: "us-line" + (si ? " more" : ""), d: curve(pts) }, g);
           });
           slot.resets.forEach(r => ns("line", { class: "us-reset", x1: X(r), x2: X(r), y1: b.y + 2, y2: b.y + b.h - 2 }, g));
-        }
+        });
         hover.push({ kind: "sub", p, y: Y, colour, g });
       });
     }
@@ -1184,10 +1191,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       tip.append(el("div", "sec", "Subscriptions"));
       hover.filter(h => h.kind === "sub").reverse().forEach(h => {
         const p = h.p, bits = [];
-        if (p.long) { const v = valueAt(p.long, m);
-          if (v != null) { bits.push(`<em>${shortOf(p.long)}</em> ${pc(v)}`); dot(h.y(v), h.colour); }
-          const near = p.long.resets.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`↺ resets ${clock(near)}`); }
-        row(tip, p.name, bits.length ? bits.join(" · ") : "<em>no reading</em>", h.colour);
+        slotsOf(p).forEach(slot => { const v = valueAt(slot, m);
+          if (v != null) { bits.push(`<em>${shortOf(slot)}</em> ${pc(v)}`); dot(h.y(v), h.colour); }
+          const near = slot.resets.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`↺ resets ${clock(near)}`); });
+        row(tip, p.name, bits.length ? bits.join(" · ") + " <em>left</em>" : "<em>no reading</em>", h.colour);
       });
     }
     if (mac) {
@@ -1226,7 +1233,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   if (at) { show(+at[1] * 60 + +at[2] + 0.5); tip.style.transition = "none"; tip.classList.add("on"); }
   let lastW = plot.clientWidth;
   new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } }).observe(plot);
-  svg.setAttribute("aria-label", `Usage of the run, ${clock(t0)} to ${clock(t1)}: ` + [...provs.filter(p => p.long).map(p => `${p.name} ${p.long.label} ${pc(ends(p.long)[0])} to ${pc(ends(p.long)[1])}`),
+  svg.setAttribute("aria-label", `Usage of the run, ${clock(t0)} to ${clock(t1)}: ` + [...provs.filter(p => p.long).map(p => `${p.name} ` + slotsOf(p).map(s => `${s.label} ${pc(ends(s)[0])} to ${pc(ends(s)[1])} left`).join(", ")),
     ...(pk ? [`the Mac peaked at ${num(pk.cpu) ? fmt(pk.cpu, 0) + "% CPU" : ""}${num(pk.gpu) ? ", " + fmt(pk.gpu, 0) + "% GPU" : ""}`] : [])].join("; "));
 })();
 

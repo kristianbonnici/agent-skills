@@ -31,7 +31,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 <The run-time line from `summary.txt` (see "The run's facts" below), for example: "Run time: 6h 45m (00:50–07:35), including 1h 38m paused for quota (a pause that stopped only some tasks names them instead: 'with C and E paused for quota at times'). The orchestrator worked 25m over 18 wakes; the tasks worked 5h 06m together, with at most 4 running at once.">
 
-<With usage samples: the usage line from `summary.txt`, its second line (see "Usage graphs" below), for example: "Usage: Claude weekly 38% → 41%; Codex weekly 0% → 4%; Copilot monthly 12% → 15%. The Mac peaked at 72% CPU, 61% GPU and 49.8 of 64 GB memory, and free disk went from 168.6 to 151.2 GB.">
+<With usage samples: the usage line from `summary.txt`, its second line (see "Usage graphs" below), for example: "Usage: Claude weekly 62% → 59% left; Codex weekly 100% → 96% left; Antigravity Gemini weekly 100% → 94.6% left, Gemini 4 Argon weekly 76.7% → 58.2% left; Copilot monthly 88% → 85% left. The Mac peaked at 72% CPU, 61% GPU and 49.8 of 64 GB memory, and free disk went from 168.6 to 151.2 GB.">
 
 <Outside T3 only: the dependency graph and the timeline; see "Run charts" below, and the usage charts when there are any ("Usage graphs"). In T3 the run map above the report shows all of them.>
 
@@ -40,6 +40,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 ## Not finished
 <Only if some tasks are blocked, parked or failed, or merged with a narrow miss.>
 - **<Task>:** what's missing, why, and what it needs from you.
+- **<Task>, parked:** when it last worked and that nothing continued it after that, what its thread shows in the user's sidebar and why (a thread whose last turn ended on a quota error shows "Failed"), and that the thread and its worktree are kept for the next run, so it stays unsettled until then.
 - **<Task> merged one check short:** <the check, its result against its threshold>; <the follow-up task> carries it<, and how that ended>.
 
 ## Worth checking yourself
@@ -108,7 +109,7 @@ Outside T3, or on a host that can't show HTML, use the Mermaid charts below.
 
 With a usage folder in the facts, the run map gains a usage panel right under the timeline, and `run-charts` writes `usage.mmd` and `usage-mac.mmd`, two Mermaid line charts for hosts that can't show HTML, and a second line in `summary.txt`. Nothing is drawn, and nothing is written, for a run without the folder. The panel is part of `run-map.html`, so `run-map-t3.html` shows it with no extra step, and the height `run-charts` prints already makes room for it.
 
-- **How to read it:** it shares the timeline's time axis to the minute. The top band has a line per subscription in its maker's colour: its weekly window (Copilot's monthly one) with a soft fill, from 0 to 100% used, with each reset dotted, where the line drops. The 5-hour windows aren't drawn: they reset several times a night and say little about what the run cost. Below it the Mac's processor and graphics busy, its memory against the Mac's total, and its free disk: the line is the average of each minute and the faint shade behind it its peak. Quota pauses aren't marked in the panel; the timeline shows them on the lanes they stopped. Hovering in `run-map.html` shows a crosshair with the values at that minute and the tasks working then.
+- **How to read it:** it shares the timeline's time axis to the minute. The top band has a line per subscription in its maker's colour: the percent left of its weekly window (Copilot's monthly one) with a soft fill, falling from 100% as the run uses it, with each reset dotted, where the line jumps back up. A separate limit of one model that the run used, such as Antigravity's Gemini 4 Argon, is a dashed line in the same colour. The 5-hour windows aren't drawn: they reset several times a night and say little about what the run cost. Below it the Mac's processor and graphics busy, its memory against the Mac's total, and its free disk: the line is the average of each minute and the faint shade behind it its peak. Quota pauses aren't marked in the panel; the timeline shows them on the lanes they stopped. Hovering in `run-map.html` shows a crosshair with the values at that minute and the tasks working then.
 - **Shared numbers:** a window's percentage counts every use of that subscription, the owner's own and any other run's, not only this run's. When another run used the same subscriptions, say so in one line under the graph, as in the report's usage line.
 - **Outside T3,** post `usage.mmd` (the subscriptions' weekly or monthly windows) and `usage-mac.mmd` (processor, graphics, memory) after the timeline, each in a `mermaid` block, and give the second line of `summary.txt` as the caption. The free disk is in the second chart's title.
 - A provider with no reading during the run isn't drawn. A reading from a harness log older than one already taken is left out, since an idle harness's log goes stale.

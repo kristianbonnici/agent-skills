@@ -421,7 +421,7 @@ python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = 
 for name in graph.mmd timeline.mmd; do cmp "$work/charts/$name" "$work/charts-usage/$name"; done
 head -1 "$work/charts-usage/summary.txt" | cmp - "$work/charts/summary.txt"
 test "$(wc -l < "$work/charts-usage/summary.txt")" -eq 2
-sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude weekly 10% → 2% (reset 1×); Codex weekly 2% → 2%. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB.'
+sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude weekly 90% → 98% left (reset 1×); Codex weekly 98% → 98% left. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB.'
 grep -q 'usage.mmd and .*usage-mac.mmd' "$work/charts-usage.out"
 python3 -I - "$work/charts-usage" <<'EOF'
 import json, os, re, sys
@@ -437,8 +437,8 @@ assert codex["colour"] == "#10a37f" and codex["plan"] == "plus"
 assert "five" not in claude and "five" not in codex                                   # only the weekly or monthly window is drawn
 week = claude["long"]
 assert week["label"] == "Weekly" and week["resets"] == [120.0], week["resets"]
-assert len(week["segs"]) == 2 and week["segs"][0][-1] == [120.0, 20.0] and week["segs"][1][0] == [120.0, 0.0]   # held until the reset, then zero
-assert [v for seg in week["segs"] for _, v in seg] == [10.0, 20.0, 20.0, 0.0, 1.0, 2.0]                          # the stale 99 is gone
+assert len(week["segs"]) == 2 and week["segs"][0][-1] == [120.0, 80.0] and week["segs"][1][0] == [120.0, 100.0]  # held until the reset, then full
+assert [v for seg in week["segs"] for _, v in seg] == [90.0, 80.0, 80.0, 100.0, 99.0, 98.0]                       # percent left; the stale 99 is gone
 assert codex["long"]["resets"] == []
 assert [len(seg) for seg in codex["long"]["segs"]] == [4]                            # a reset time corrected by a minute is the same window
 mac = u["mac"]
@@ -452,7 +452,7 @@ assert 'el("section", "tl us")' in page and "timeAxis" in page
 usage_mmd = open(os.path.join(folder, "usage.mmd")).read()
 mac_mmd = open(os.path.join(folder, "usage-mac.mmd")).read()
 assert usage_mmd.count("\n    line [") == 2 and '"plotColorPalette": "#D97757, #10a37f"' in usage_mmd and "\nxychart-beta\n" in usage_mmd
-assert "Claude orange weekly 10% → 2%" in usage_mmd and "5-hour" not in usage_mmd and 'y-axis "% used" 0 --> 100' in usage_mmd
+assert "Claude orange weekly 90% → 98% left" in usage_mmd and "5-hour" not in usage_mmd and '"% left"' in usage_mmd and 'y-axis "% left" 0 --> 100' in usage_mmd
 assert mac_mmd.count("\n    line [") == 3 and "CPU blue" in mac_mmd and "free disk 99.5 → 98.5 GB" in mac_mmd
 for text in (usage_mmd, mac_mmd):
     labels = re.search(r"x-axis \[(.*)\]", text).group(1).count('"') // 2
@@ -465,7 +465,8 @@ python3 -I - "$work/usage-gap" <<'EOF'
 import json, os, sys
 rows = []
 for t in ("01:00:05", "01:05:05", "04:00:05", "04:05:05"):
-    rows.append(json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude": {"windows": {"weekly": {"used": 3.0, "resets_at": "2026-10-29T05:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00"}}}))
+    rows.append(json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude": {"windows": {"weekly": {"used": 3.0, "resets_at": "2026-10-29T05:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00"},
+        "antigravity": {"windows": {"gemini_models_five_hour": {"used": 9.0}, "gemini_models_weekly": {"used": 5.0}, "claude_and_gpt_models_weekly": {"used": 0.0}, "gemini_4_argon_weekly": {"used": 23.0}}, "observed_at": "2026-10-29T00:00:00+00:00"}}}))
 open(os.path.join(sys.argv[1], "providers.jsonl"), "w").write("\n".join(rows) + "\n")
 open(os.path.join(sys.argv[1], "machine.jsonl"), "w").write(json.dumps({"t": "2026-10-29T10:00:30+02:00", "cpu": 5.0, "mem_used_gb": 1.0, "mem_total_gb": 8.0, "disk_free_gb": 10.0}) + "\n")
 EOF
@@ -482,6 +483,9 @@ def usage(name):
 gap = usage("charts-gap")
 assert [len(seg) for seg in gap["providers"][0]["long"]["segs"]] == [2, 2], gap["providers"][0]["long"]["segs"]
 lone = usage("charts-lone")
+agy = usage("charts-gap")["providers"][1]
+assert agy["id"] == "antigravity" and agy["long"]["label"] == "Gemini weekly" and [s["label"] for s in agy["more"]] == ["Gemini 4 Argon weekly"], agy
+assert agy["more"][0]["segs"][0][0][1] == 77.0 and agy["long"]["segs"][0][-1][1] == 95.0
 assert lone["t1"] - lone["t0"] >= 1 and lone["count"] >= 2, lone
 EOF
 if command -v node >/dev/null 2>&1; then
