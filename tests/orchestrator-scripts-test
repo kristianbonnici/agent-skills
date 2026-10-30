@@ -254,6 +254,124 @@ finally:
 EOF
 "$lease5" release printer --owner K >/dev/null
 
+# lease, killed: SIGKILL the moment the command's process exists (a hook between its start and anything
+# else lease does): the watcher already knows the group, from the command's own child, and ends it; and
+# SIGKILL shortly before the lease's end: the watcher's grace doesn't outlast the lease, so a waiter
+# never starts on the resource beside a command that ignores SIGTERM.
+python3 -I - "$lease5" "$run5" "$run5/hooked.pid" "$run5/late.pid" <<'EOF'
+import os, signal, subprocess, sys, time
+lease, run, hooked, late = sys.argv[1:]
+def pid_of(path, seconds=60):
+    deadline = time.time() + seconds
+    while time.time() < deadline and not (os.path.exists(path) and os.path.getsize(path)):
+        time.sleep(0.1)
+    return int(open(path).read())
+def gone(pid, seconds):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+stubborn = 'trap "" TERM; echo $$ > "$1"; while :; do sleep 1; done'
+hook = r'''
+import os, runpy, signal, subprocess, sys
+ns = runpy.run_path(sys.argv[1], run_name="lease")
+real = subprocess.Popen
+def popen(args, *more, **keywords):
+    process = real(args, *more, **keywords)
+    if args[0] == "sh":
+        os.kill(os.getpid(), signal.SIGKILL)   # lease dies as the command's process comes to exist
+    return process
+subprocess.Popen = popen
+ns["main"](["run", "printer", "--owner", "H", "--run", sys.argv[2], "--", "sh", "-c", sys.argv[4], "sh", sys.argv[3]])
+'''
+runner = subprocess.Popen([sys.executable, "-I", "-c", hook, lease, run, hooked, stubborn], start_new_session=True,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+runner.wait()
+assert runner.returncode == -signal.SIGKILL, runner.returncode
+child = pid_of(hooked)
+try:
+    assert gone(child, 60), "the command outlived a lease killed as it started"
+finally:
+    try:
+        os.killpg(child, signal.SIGKILL)
+    except OSError:
+        pass
+subprocess.run([lease, "release", "printer", "--owner", "H", "--run", run], check=True, capture_output=True)
+
+runner = subprocess.Popen([lease, "run", "printer", "--owner", "L", "--run", run, "--minutes", "0.2", "--", "sh", "-c", stubborn,
+                           "sh", late], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+child = pid_of(late)
+started = time.time()
+waiter = subprocess.Popen([lease, "acquire", "printer", "--owner", "B", "--run", run, "--wait-minutes", "3"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(max(0, started + 9 - time.time()))          # the lease ends 12 s after it was taken
+os.killpg(runner.pid, signal.SIGKILL)
+runner.wait()
+try:
+    assert waiter.wait(timeout=120) == 0
+    try:
+        os.kill(child, 0)
+        raise AssertionError("a waiter took the slot beside the command")
+    except ProcessLookupError:
+        pass
+finally:
+    try:
+        os.killpg(child, signal.SIGKILL)
+    except OSError:
+        pass
+subprocess.run([lease, "release", "printer", "--owner", "B", "--run", run], check=True, capture_output=True)
+EOF
+
+python3 -I - "$lease5" "$run5" <<'EOF' >/dev/null
+# a stop that lands while the child starts, and a second one during the cleanup it causes: exit 128+15,
+# the child ended, no traceback
+import json, os, runpy, signal, subprocess, sys
+lease, run = sys.argv[1:]
+ns = runpy.run_path(lease, run_name="lease")
+real, started = subprocess.Popen, []
+def popen(args, *more, **keywords):
+    process = real(args, *more, **keywords)
+    if args[0] == "sleep":
+        started.append(process.pid)
+        os.kill(os.getpid(), signal.SIGTERM)
+    return process
+subprocess.Popen = popen
+hold = ns["Leases"].hold
+def hold_and_stop_again(self, *args):
+    os.kill(os.getpid(), signal.SIGTERM)       # a second SIGTERM, while the cleanup runs
+    return hold(self, *args)
+ns["Leases"].hold = hold_and_stop_again
+code = ns["main"](["run", "printer", "--owner", "Q", "--run", run, "--", "sleep", "60"])
+assert code == 143 and len(started) == 1, (code, started)
+try:
+    os.kill(started[0], 0)
+    raise AssertionError("the child is still running")
+except ProcessLookupError:
+    pass
+assert json.load(open(os.path.join(run, "locks", "state.json")))["leases"]["printer"] == []
+EOF
+
+# a run inside an earlier, longer acquire, while another waits: what is given back never reaches past the
+# end of the turn the renewal was capped at
+run6="$work/run6"
+mkdir -p "$run6/bin"
+cp "$scripts/lease" "$run6/bin/lease"
+printf '%s\n' '{"screen": {"slots": 1, "max_minutes": 30, "turn_minutes": 2}}' > "$run6/leases.json"
+lease6="$run6/bin/lease"
+"$lease6" acquire screen --owner A --minutes 30 >/dev/null
+"$lease6" acquire screen --owner B --wait-minutes 3 >/dev/null &
+waiter=$!
+background="$background $waiter"
+wait_for_status "$run6" '"screen:B"'
+"$lease6" run screen --owner A --minutes 30 -- true >/dev/null 2>&1
+"$lease6" status | python3 -I -c 'import json, sys; left = [l["minutes_left"] for l in json.load(sys.stdin)["leases"]["screen"] if l["owner"] == "A"]; sys.exit(0 if left and left[0] <= 2.1 else 1)'
+kill "$waiter"
+"$lease6" release screen --owner A >/dev/null
+
 # A run, or an --all that times out, gives back only what it took: a lease the owner already held
 # keeps its slots and its end time, and a waiting --all renewal doesn't renew what is held.
 # succeeds when the owner's lease on the gpu has at most $2 minutes left
@@ -696,18 +814,27 @@ chrome=""
 for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
   if command -v "$candidate" >/dev/null 2>&1; then chrome="$candidate"; break; fi
 done
+# Dumps a page's DOM into $work/dom.html; headless Chrome sometimes draws nothing under load, so once more
+# before failing, and its own messages are shown then.
+dump_dom() {
+  for attempt in 1 2; do
+    "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
+      --dump-dom "$1" > "$work/dom.html" 2> "$work/dom.err" || true
+    if grep -q 'aria-label="Timeline"' "$work/dom.html"; then return 0; fi
+  done
+  cat "$work/dom.err" >&2
+  return 1
+}
 if [ -n "$chrome" ]; then
   for hash in "fit" "dark&fit&cross=01:00"; do
-    "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
-      --dump-dom "file://$work/charts-usage/run-map.html#$hash" > "$work/dom.html" 2>/dev/null
+    dump_dom "file://$work/charts-usage/run-map.html#$hash"
     grep -q 'aria-label="Usage"' "$work/dom.html"
     if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
     grep -q 'us-line' "$work/dom.html"
     if grep -q -E 'tl-pband|us-hatch' "$work/dom.html"; then exit 1; fi   # pauses are hatched on their own lanes only
   done
   grep -q 'class="us-cross"' "$work/dom.html"
-  "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
-    --dump-dom "file://$work/charts/run-map.html#fit" > "$work/dom.html" 2>/dev/null
+  dump_dom "file://$work/charts/run-map.html#fit"
   grep -q 'aria-label="Timeline"' "$work/dom.html"
   if grep -q 'aria-label="Usage"' "$work/dom.html"; then exit 1; fi        # no samples, no panel
 fi
@@ -818,8 +945,7 @@ EOF
 "$scripts/run-charts" "$work/facts-html.json" "$work/charts-html" >/dev/null 2>&1
 grep -q 'esc(I.branch)' "$work/charts-html/run-map.html" && grep -q 'esc(I.head)' "$work/charts-html/run-map.html"
 if [ -n "$chrome" ]; then
-  "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
-    --dump-dom "file://$work/charts-html/run-map.html#fit" > "$work/dom.html" 2>/dev/null
+  dump_dom "file://$work/charts-html/run-map.html#fit"
   grep -q 'aria-label="Timeline"' "$work/dom.html"
   if grep -q -E 'id="pwn' "$work/dom.html"; then exit 1; fi              # no element from the facts' text
   grep -q '&lt;b id=pwn&gt;main' "$work/dom.html"

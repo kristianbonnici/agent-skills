@@ -250,11 +250,16 @@ class Leases:
         """The owner reader for a resource that needs the owner away, else None; raises Unsupported."""
         return Owner() if self.owner_away_seconds(resource) > 0 else None
 
+    def turn_end(self, state: dict, resource: str, owner: str, since: float) -> float | None:
+        """When the holder's turn ends while others wait (epoch seconds), or None when nobody waits."""
+        me = f"{resource}:{owner}"
+        others = [w["since"] for k, w in state["waiting"].items() if w["resource"] == resource and k != me]
+        return max(since, min(others)) + self.turn_minutes(resource) * 60 if others else None
+
     def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float, owner_away: bool = True):
         """Returns ("held", minutes left), ("waiting", None), ("turn over", None), or ("ready", None) when
         the lease would be taken but owner_away is False: read the owner's state, outside the lock."""
         need = self.slots(resource) if take_all else 1
-        turn = self.turn_minutes(resource)
 
         def attempt(state, now):
             held = state["leases"].setdefault(resource, [])
@@ -264,9 +269,8 @@ class Leases:
             for lease in held:
                 if lease["owner"] == owner:
                     since = lease.setdefault("since", now)
-                    others = [w["since"] for k, w in waiting.items() if w["resource"] == resource and k != me]
-                    if others:
-                        end = max(since, min(others)) + turn * 60
+                    end = self.turn_end(state, resource, owner, since)
+                    if end is not None:
                         if end - now < TURN_GRACE_SECONDS:
                             held.remove(lease)
                             return "turn over", None
@@ -358,15 +362,20 @@ class Leases:
 
     def give_back(self, resource: str, owner: str, prior) -> None:
         """Ends what "run" took: the whole lease, or, when the owner held one before (prior, as holding
-        gave it), its slots and end time again. The owner's place in the queue goes too."""
+        gave it), its slots and end time again, but never past the end of its turn while others wait
+        (the renewal "run" made was capped there). The owner's place in the queue goes too."""
         def drop(state, now):
             state["waiting"].pop(f"{resource}:{owner}", None)
             kept = []
             for lease in state["leases"].get(resource, []):
                 if lease["owner"] == owner:
-                    if prior is None or prior[1] <= now:
+                    if prior is None:
                         continue
-                    lease["slots"], lease["expires"] = prior
+                    end = self.turn_end(state, resource, owner, lease.get("since", now))
+                    expires = prior[1] if end is None else min(prior[1], end)
+                    if expires <= now:
+                        continue
+                    lease["slots"], lease["expires"] = prior[0], expires
                 kept.append(lease)
             state["leases"][resource] = kept
 
@@ -540,18 +549,17 @@ def command(argv: list[str], usage: int) -> int:
             ends = held[1] if held else time.time()
             state["raise"] = False
             try:
-                watch = Watch()
+                watch = Watch(ends)
             except OSError as error:
                 print(f"lease: no watcher for the command ({error}); going on without", file=sys.stderr)
             try:
-                process = subprocess.Popen(command_args, start_new_session=True)
+                process = start(command_args, watch)
             except OSError as error:
                 print(f"lease: can't run {command_args[0]}: {error}", file=sys.stderr)
                 return 127
-            if watch:
-                watch.send(f"pgid {process.pid}\n")
             state["raise"] = True
             if state["pending"] is not None:
+                state["raise"] = False   # one stop is being handled; a second must not interrupt its cleanup
                 raise Stopped(state["pending"])
             # the lease's own end, not a count from here: stopped a little before it runs out, so the
             # lease is still ours while the command is ended
@@ -584,11 +592,16 @@ def command(argv: list[str], usage: int) -> int:
                 watch.done()
 
 
-# A watcher in a session of its own, with a pipe from "run": it learns the command's process group, and if
-# the pipe closes before "run" says it is done (run was killed, so it couldn't clean up) it ends the group.
+# A watcher in a session of its own, with a pipe from "run". The command's own child process writes its
+# process group into the pipe before it runs the command (so there is no moment when the command runs
+# and the watcher doesn't know it), and "run" writes "done" once it has ended the command itself. If the
+# pipe closes before that, "run" was killed and couldn't clean up, so the watcher ends the group: SIGTERM,
+# a grace that never reaches past the lease's end (less a margin: nothing holds the slot any more, so
+# a waiter may take it then), then SIGKILL.
 WATCHER = r"""
 import os, signal, sys, time
-grace, pgid, pending = float(sys.argv[1]), None, b""
+grace, ends, margin = (float(v) for v in sys.argv[1:4])
+pgid, pending = None, b""
 while True:
     chunk = os.read(0, 4096)
     if not chunk:
@@ -602,24 +615,43 @@ while True:
             pgid = int(line[5:])
 if pgid is None:
     sys.exit(0)
-for sig in (signal.SIGTERM, signal.SIGKILL):
+wait = min(grace, ends - margin - time.time())
+for sig, seconds in ([(signal.SIGTERM, wait)] if wait > 0 else []) + [(signal.SIGKILL, 2)]:
     try:
         os.killpg(pgid, sig)
     except OSError:
         sys.exit(0)
-    deadline = time.monotonic() + (grace if sig == signal.SIGTERM else 2)
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
             os.killpg(pgid, 0)
         except OSError:
             sys.exit(0)
-        time.sleep(0.1)
+        time.sleep(0.05)
 """
 
 
+def start(argv: list[str], watch: Watch | None) -> subprocess.Popen:
+    """Starts the command in a session of its own. With a watcher, the child hands it the process group
+    (its own pid) before it runs the command, through a descriptor of the watcher's pipe."""
+    if watch is None:
+        return subprocess.Popen(argv, start_new_session=True)
+    fd = watch.process.stdin.fileno()
+
+    def hand_off():   # in the child, after its session began and before the command
+        try:
+            os.write(fd, f"pgid {os.getpid()}\n".encode())
+        except OSError:
+            pass
+        os.close(fd)   # the command mustn't hold the pipe open, or its closing would never show
+
+    return subprocess.Popen(argv, start_new_session=True, pass_fds=(fd,), preexec_fn=hand_off)
+
+
 class Watch:
-    def __init__(self):
-        self.process = subprocess.Popen([sys.executable, "-I", "-c", WATCHER, str(STOP_GRACE_SECONDS)],
+    def __init__(self, ends: float):
+        self.process = subprocess.Popen([sys.executable, "-I", "-c", WATCHER, str(STOP_GRACE_SECONDS),
+                                         repr(ends), str(LEASE_END_MARGIN_SECONDS)],
                                         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                         start_new_session=True)
 
