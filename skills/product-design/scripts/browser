@@ -11,7 +11,18 @@ if [ ! -x "$browser_bin" ]; then
   exit 1
 fi
 
-project_name=$(basename "${PWD:-project}" | tr -cd '[:alnum:]_-' | cut -c1-32)
-session=${PRODUCT_DESIGN_BROWSER_SESSION:-product-design-${project_name:-project}}
+# The browser writes its snapshot files into the current folder: refuse a git working tree, so
+# evidence never lands in the user's repository (run from the run folder, SKILL.md).
+if [ -z "${PRODUCT_DESIGN_ALLOW_REPO:-}" ] && command -v git >/dev/null 2>&1 \
+  && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Run browser commands from the run folder (manage_context.py run-dir), not inside a repository." >&2
+  exit 2
+fi
+
+# A session per folder: its name, cut short, plus a checksum of the whole path, so two runs with
+# long similar names never share one browser.
+project_name=$(basename "${PWD:-project}" | tr -cd '[:alnum:]_-' | cut -c1-24)
+path_sum=$(printf '%s' "${PWD:-project}" | cksum | cut -d' ' -f1)
+session=${PRODUCT_DESIGN_BROWSER_SESSION:-product-design-${project_name:-project}-$path_sum}
 
 exec "$browser_bin" "-s=$session" "$@"

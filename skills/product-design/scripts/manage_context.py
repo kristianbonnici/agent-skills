@@ -41,15 +41,28 @@ status: not provided
 
 def state_root() -> Path:
     # An exported but empty XDG_STATE_HOME counts as unset, as in the shell's ${XDG_STATE_HOME:-...}.
+    # A relative one counts as unset too (the XDG spec says so), so state never lands in the current folder.
     configured = os.environ.get("XDG_STATE_HOME")
-    base = Path(configured) if configured else Path.home() / ".local" / "state"
+    base = Path(configured) if configured and os.path.isabs(configured) else Path.home() / ".local" / "state"
     return base / "agent-skills" / "product-design"
+
+
+def inside_repository(path: Path) -> bool:
+    """Whether path is inside a git working tree (a .git folder or file in it or a parent)."""
+    for folder in [path, *path.parents]:
+        if (folder / ".git").exists():
+            return True
+    return False
 
 
 def new_run_dir(name: str) -> Path:
     """Create a fresh evidence folder outside any repository; never reuse an existing one."""
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "run"
     runs = state_root() / "runs"
+    if inside_repository(runs.resolve() if runs.exists() else runs.parent.resolve() if runs.parent.exists() else runs):
+        # XDG_STATE_HOME points into a repository: evidence must stay out of it
+        runs = Path.home() / ".local" / "state" / "agent-skills" / "product-design" / "runs"
+        print(f"XDG_STATE_HOME is inside a repository; using {runs} instead", file=sys.stderr)
     runs.mkdir(parents=True, exist_ok=True)
     stem = f"{date.today().isoformat()}-{slug}"
     for attempt in range(1, 1000):

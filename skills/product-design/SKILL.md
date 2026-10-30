@@ -62,13 +62,14 @@ That makes `${XDG_STATE_HOME:-~/.local/state}/agent-skills/product-design/runs/<
 
 Use the isolated browser wrapper unless the user chooses another browser. Its sessions are in memory only: no saved logins, cookies, or profile.
 
+Shell variables may not last from one command to the next: note the run folder's path when you create it, and start every browser command by changing into it, joined with `&&` so nothing runs if that fails. The wrapper refuses to run inside a git repository.
+
 ```bash
-cd "$RUN"
-"$SKILL_DIR/scripts/browser" open <url> --headed
-"$SKILL_DIR/scripts/browser" resize 1440 1024
-"$SKILL_DIR/scripts/browser" snapshot
-"$SKILL_DIR/scripts/browser" screenshot --filename="$RUN/01-start.png"
-"$SKILL_DIR/scripts/browser" close
+cd "<run folder>" && "$SKILL_DIR/scripts/browser" open <url> --headed
+cd "<run folder>" && "$SKILL_DIR/scripts/browser" resize 1440 1024
+cd "<run folder>" && "$SKILL_DIR/scripts/browser" snapshot
+cd "<run folder>" && "$SKILL_DIR/scripts/browser" screenshot --filename="<run folder>/01-start.png"
+cd "<run folder>" && "$SKILL_DIR/scripts/browser" close
 ```
 
 - **Session:** the wrapper names the session after the current folder, so keep the run folder as the working directory for the whole run (or set `PRODUCT_DESIGN_BROWSER_SESSION`). `"$SKILL_DIR/scripts/browser" list` shows open sessions.
