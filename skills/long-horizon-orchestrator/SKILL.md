@@ -2,7 +2,7 @@
 name: long-horizon-orchestrator
 description: Run a set of long-running agent tasks to completion while the user is away. Launch each task as its own agent (T3 threads on any provider, Claude Code background subagents, or Codex subagents). Get woken automatically when a task finishes or blocks, launch dependent tasks once their prerequisites are merged, and have finished work reviewed, checked and merged into the branch the run started from. End with a plain-language report of what was built, open decisions and next steps. Use whenever the user wants several tasks run in parallel or overnight, asks you to launch, coordinate, chain or babysit agents or follow-up tasks, says "launch everything and merge it", or wants work to continue while they sleep or step away, even if they never say "orchestrate". If no task list exists yet, plan one first and get a single approval.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Long-Horizon Orchestrator
@@ -33,8 +33,8 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 - **Real capacity.** Check usage with `scripts/provider-usage`, and judge it against plan size, never by raw percentage. 30% left of a Max 20x plan and of a Plus plan are very different amounts of work. Count other active runs that share the same subscriptions.
 - **Strengths are soft preferences.** Example: computer-use steps go to Codex's GPT-6.1 Terra when Codex has room. Prefer handing off just that step over moving the whole task. Hand off as often as it genuinely helps, with no fixed count, but only for work the helper is better at, or, for the fast helpers below, research and simple steps that save the task agent's context.
 - **Reasoning errs upward.** Never use low. Use medium only for very simple steps and high for real tasks. Use extra high only when you see a real benefit from the extra thinking, and name it in the contract. Use Ultracode (Claude Code) or Ultra (Codex) sparingly, only when the task clearly gains from parallel sub-agents, and name that gain in the contract. The multi-agent modes use up a usage window much faster than a single agent. Always set the level explicitly; never inherit a default.
-- **Fast helpers take research and simple steps inside tasks.** Antigravity's Gemini Flash and OpenCode's two good free models (DeepSeek V4.1 Flash, GLM-5.3 Flash), all at high reasoning, take research and retrieval (web and documentation research, searching code and logs, collecting facts) and simple, fully specified steps, as a sub-task or as a research subagent running beside the task's agent. GitHub Copilot (Auto routing, GPT-5.6 Luna) is the backup when those are limited, within a monthly budget. That agent checks what they return. They are never task agents, reviewers, merge gates or orchestrators.
-- **Gemini 4 Argon takes harder sub-tasks, sparingly.** Antigravity's stronger model, at high reasoning, takes sub-tasks too hard for Flash but still bounded: deep research and synthesis, a scoped investigation, an advisory second review, a well-specified piece of code. It has a small weekly quota of its own, so the contract gives it a budget, and the agent that asked still checks its work and decides.
+- **Fast helpers take research and simple steps inside tasks.** Antigravity's Gemini Flash and OpenCode's two good free models (DeepSeek V4.1 Flash, GLM-5.3 Flash), all at high reasoning, take research and retrieval (web and documentation research, searching code and logs, collecting facts) and simple, fully specified steps, as a sub-task or as a research subagent running beside the task's agent. GitHub Copilot (Auto routing, GPT-5.6 Luna) is the backup when those are limited, within a monthly budget. That agent checks what they return. They are never merge gates or orchestrators, and task agents only when the user asks for it; OpenCode's free models review only where the `review-gate` skill's levels put them.
+- **Gemini 4 Argon takes harder sub-tasks, sparingly.** Antigravity's stronger model, at high reasoning, takes sub-tasks too hard for Flash but still bounded: deep research and synthesis, a scoped investigation, a well-specified piece of code. It doesn't review: Gemini reviews were weak in past runs. It has a small weekly quota of its own, so the contract gives it a budget, and the agent that asked still checks its work and decides.
 - **Quota pauses work; it never moves it.** You and every task stay on the subscription the contract assigned. When a 5-hour window runs out, the affected work pauses and resumes on the same thread after the reset, woken by a wake-up you schedule in advance. Never switch your own model, and never hand a task to another subscription, because of quota. Fast helpers are the exception, because the run isn't sized on them: a helper that hits a rate limit or slows down hands its work to the next helper (on OpenCode, its other free model first, then the other provider), and when all are limited, back to the agent that asked. Argon's work goes straight back to the agent that asked. A whole task given to a free or low-cost model is the other exception: when a limit stops it, it moves at once between OpenCode's and Antigravity's Gemini models, and when they are all limited to Codex's Terra or Claude Sonnet, always and without asking; it never waits for the user ([references/routing.md](references/routing.md#a-task-on-a-free-model)).
 
 ## Workflow
@@ -54,11 +54,11 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 Put everything the user might want to decide into one message, so nothing needs asking later:
 
 - **Tasks:** one plain-language line each, with the waves and dependencies.
-- **Per task:** host or provider, model and effort, branch, exclusive resources such as test ports, and the helpers it may use. Give the reason for any task not on the home harness, and for any task above high.
+- **Per task:** host or provider, model and effort, branch, exclusive resources such as test ports, the helpers it may use, and its review level (light, standard or deep, by the `review-gate` skill's rules) with the reviewers that level gives it. Give the reason for any task not on the home harness, and for any task above high.
 - **Usage:** each subscription's current usage in plain words, any other active run sharing them ([references/routing.md](references/routing.md#2-measure-capacity-as-plan-size-times-room-left) shows how to find them), and what the run is expected to consume. Say that work pauses when a 5-hour window runs out and resumes after its reset, at what time if that is likely.
 - **Another run:** if another orchestrator is active on this computer, what you agreed with it before the contract: the code areas each run stays out of, the shared lease folder, ports and folders, and who does the shared finish steps ([references/routing.md](references/routing.md#running-beside-another-orchestrator)).
 - **Integration branch:** the branch checked out where the run starts (`main`, `dev`, …).
-  - Default policy: each task commits, gets an independent review, passes the full checks, and fast-forwards the integration branch itself. Nothing is pushed.
+  - Default policy: each task commits, passes the review gate (the `review-gate` skill: reviewers of another model family, at a level set by what its diff touches), passes the full checks, and fast-forwards the integration branch itself. Nothing is pushed.
   - Alternative the user may choose: leave each task on its reviewed branch for the user to merge.
 - **Blocked:** what makes a task stop without merging. Other tasks continue when one blocks. A check on the real screen that can't run (the screen is locked, or the app's window can't be captured) doesn't block a merge: the task merges on its other checks, and the report lists what still needs the user's eyes. The exception is a task whose main deliverable is that check.
 - **Pre-flight items:**
@@ -91,6 +91,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
 - Create the ledger and the run directory (see below), and record the contract in the ledger.
 - Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configuration`). The report's charts need it.
+- Record the version of this skill and of `review-gate` (`metadata.version` in each `SKILL.md`), so later studies can compare runs by version.
 - If your thread's title doesn't say plainly which run this is, rename it so the user can tell runs apart (in T3, [references/host-t3.md](references/host-t3.md#name-your-own-thread)).
 - Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
   - Never use the user's own dev-server ports.
@@ -199,7 +200,7 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - the user's approval, quoted with its time, which starts the run's clock for the report, and every amendment they sent during the run, quoted with its time;
   - the port and resource allocation;
   - any other active run: its ledger, the notes you exchanged and what you agreed.
-- **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; and the IDs of the heartbeat and any resume wake.
+- **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; the versions of this skill and `review-gate`; and the IDs of the heartbeat and any resume wake.
 - **One row per task:**
   - ID, title, dependencies;
   - host, provider, model and effort, as the host reports them after launch;

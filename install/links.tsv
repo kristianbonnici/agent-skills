@@ -16,3 +16,6 @@ codex	link	skills/remote-session-reporting	~/.codex/skills/remote-session-report
 claude	link	skills/remote-session-reporting	~/.claude/skills/remote-session-reporting
 claude	link	skills/long-horizon-task-planner	~/.claude/skills/long-horizon-task-planner
 claude	link	skills/long-horizon-orchestrator	~/.claude/skills/long-horizon-orchestrator
+codex	link	skills/review-gate	~/.agents/skills/review-gate
+codex	link	skills/review-gate	~/.codex/skills/review-gate
+claude	link	skills/review-gate	~/.claude/skills/review-gate

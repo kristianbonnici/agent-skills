@@ -1,5 +1,17 @@
 # long-horizon-orchestrator changelog
 
+## 1.1.0 (2026-10-30)
+
+- Every task passes the new `review-gate` skill instead of "fresh reviewer agents" of the task's own
+  choosing; the contract shows each task's review level and reviewers, and counts the paid reviews in
+  each subscription's expected use. Past runs used one to five reviewers per task with no stated rule
+  ([review-gate's evidence](../review-gate/evidence.md)).
+- The orchestrator says in the common file when Codex is short for reviews (weekly past about 80%,
+  5-hour past about 85%, or a reviewer stopped by a limit), so tasks use the Claude substitute.
+- OpenCode's free models may review where the review gate puts them; Gemini 4 Argon no longer takes
+  advisory reviews (Gemini reviews were the weakest in past runs).
+- The ledger records this skill's and `review-gate`'s versions, so runs can be compared by version.
+
 ## 1.0.0 (2026-10-30)
 
 - First versioned release: the skill as it stood on 2026-10-30, after about 25 real runs. Earlier

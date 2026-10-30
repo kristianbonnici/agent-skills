@@ -178,7 +178,7 @@ Never work around a limit silently. The report says which tasks paused, for how 
 | Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex's GPT-6.1 Terra (`gpt-6.1-terra`, at high) | Codex has room for that piece | Owner's assessment, 2026-10: Codex's computer use is stronger. Owner, 2026-10-28: Terra is cheaper than Sol and faster at computer use, so it takes these steps |
 | Research and retrieval: web and documentation research, searching a codebase, logs or many files, surveying how others solve a problem, collecting facts and evidence | A fast helper (see "Fast helpers" below), as a sub-task or a research subagent inside the task | the result can be checked against its sources | Owner, 2026-10-16: use them freely for research and retrieval |
 | A simple, fully specified step: a mechanical edit from an exact rule, renames, boilerplate from a template, extracting facts from named files | A fast helper | the result is cheap to check | Owner, 2026-10 |
-| A bounded sub-task too hard for Flash: deep research and synthesis, a scoped investigation, an advisory second review, a well-specified piece of code | Gemini 4 Argon (see "Advanced helper" below) | the run's Argon budget has room, and the agent that asked can check the result | Owner, 2026-10-17 |
+| A bounded sub-task too hard for Flash: deep research and synthesis, a scoped investigation, a well-specified piece of code | Gemini 4 Argon (see "Advanced helper" below) | the run's Argon budget has room, and the agent that asked can check the result | Owner, 2026-10-17 |
 | Everything else | Home harness | always | section 1 |
 
 - **A preference, not a rule.** Claude agents can do computer use too. When Codex is short on room, unavailable, or the computer-use part is trivial, keep the work on the home harness.
@@ -205,7 +205,7 @@ Flash models stay fast at high reasoning, and since they are less capable to beg
 
 You may use them too, for the run's own chores: collecting thread times for the report's charts, condensing handoffs, research while planning. On 2026-10-15, one of each did such a read-only collection job correctly.
 
-**What they never take:** a whole task, a design decision, a bug with an unknown cause, code changes that need judgment, a review, the merge gate, or the orchestration, not even as a stand-in while the home window resets (section 3). They are never task agents.
+**What they never take:** a whole task, a design decision, a bug with an unknown cause, code changes that need judgment, the merge gate, or the orchestration, not even as a stand-in while the home window resets (section 3). They are task agents only when the user asks for it ([A task on a free model](#a-task-on-a-free-model)). OpenCode's free models review only where the `review-gate` skill's levels put them ([Reviews](#reviews-the-review-gate)); Gemini doesn't review.
 
 **Every result is checked** by the agent that asked, before it relies on it. For research, the helper gives a source for each claim (a link, or a file and line), and the agent checks the claims it builds on. For a step, a diff, a test or a quick read.
 
@@ -243,7 +243,6 @@ Copilot (`acpRegistry_copilot`, model `default`, no options) is a third fast hel
 Antigravity's `gemini-4-argon-high` is clearly stronger than Flash and much cheaper for the run than another home-harness agent. It takes sub-tasks that need more judgment than Flash can give, but are still bounded and checkable:
 - **Deep research and synthesis:** comparing designs or libraries against the task's criteria, explaining how an unfamiliar part of the code works, condensing a long specification into the decisions it forces.
 - **A scoped investigation:** tracing where a failure could come from within named files or logs, and ranking the likely causes with evidence. The task's agent decides what the cause is and how to fix it.
-- **An advisory second review** of a diff or a plan, beside the task's own reviewers. It adds findings; it never replaces a reviewer and is never the merge gate.
 - **A well-specified piece of code:** a self-contained function, module or test suite against a given interface, which the task's agent reads, tests and owns.
 
 What it never takes is the same as for the fast helpers: a whole task (unless the user routes one there in the contract), a design decision, the merge gate, or the orchestration.
@@ -255,6 +254,12 @@ What it never takes is the same as for the fast helpers: a whole task (unless th
 - **When Argon is limited** (a quota error, or the budget is used), its work goes back to the agent that asked. Don't hand it to Flash or OpenCode, which can't do it well.
 
 Calls, targets and checks work as for the fast helpers (section 5), with `{providerInstanceId: "antigravity", model: "gemini-4-argon-high"}`.
+
+### Reviews: the review gate
+
+Every task passes the `review-gate` skill before its merge gate. It picks a level from what the task's diff touches (light, standard or deep) and the reviewers for that level: a paid reviewer of another model family, Codex's GPT-6.1 Terra first for a Claude task, with OpenCode's free models added where they help most for least. In the contract, give each task the level you expect, from its scope; the task raises it if its diff turns out to touch a deep area.
+
+**Codex is short for reviews** when its weekly window is past about 80%, its 5-hour window past about 85%, or a task reports a Codex reviewer stopped by a limit. Then say so in the common file ("Codex is short: the review gate uses its Claude substitute"), steer the running tasks with the same line, and take it back when Codex has room again. Count the reviews in each subscription's expected use: each task's level says how many paid reviews it takes, and one more for each round after a logic fix.
 
 ### Computer use needs the screen
 
@@ -296,7 +301,7 @@ Call delegate_task with role "research" (or "general" for a step) and either mod
 2. {providerInstanceId: "<second>", model: "<model>"<, options>}
 3. {providerInstanceId: "<third>", model: "<model>"<, options>}
 4. {providerInstanceId: "<backup>", model: "default"} (the backup: only when the targets above are limited)
-Use no other model of these providers. Tell the helper to stay read-only (apart from the files a step names), never to commit or merge, not to use tools that reach the owner's apps or services, and never to ask the user anything. Check every result before you rely on it: check the claims you build on against their sources, and diff or test a step. Never hand a helper a decision, code that needs judgment, a review or the merge gate.
+Use no other model of these providers. Tell the helper to stay read-only (apart from the files a step names), never to commit or merge, not to use tools that reach the owner's apps or services, and never to ask the user anything. Check every result before you rely on it: check the claims you build on against their sources, and diff or test a step. Never hand a helper a decision, code that needs judgment or the merge gate; reviews go through the review gate.
 A helper is limited when it reports a quota or rate-limit (429) error or "Upstream request failed", or when it is far slower than the same kind of work was earlier. A wait that returns waitTimedOut, or an async lane with nothing new in its child thread for <n> minutes, is the sign: look at task_status, and if it is still working without progress, it is limited. Then cancel it with task_cancel and give the same prompt to the next target; when all are limited, do the work yourself. Note each switch, and which helpers you used for what, in your handoff.
 ```
 

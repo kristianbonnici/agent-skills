@@ -1,0 +1,7 @@
+interface:
+  display_name: "Review Gate"
+  short_description: "Independent multi-model review before a change merges"
+  default_prompt: "Use $review-gate to have this change reviewed by other models before it merges: choose the level from what the diff touches, verify each finding, and fix what is real."
+
+policy:
+  allow_implicit_invocation: true
