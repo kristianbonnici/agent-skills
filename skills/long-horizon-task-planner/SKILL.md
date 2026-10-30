@@ -2,7 +2,7 @@
 name: long-horizon-task-planner
 description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight agent tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks; long-horizon-orchestrator does that.
 metadata:
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Long-Horizon Task Planner
@@ -33,7 +33,7 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
    - Read every applicable project instruction file, including `AGENTS.md` and `CLAUDE.md` when present, and relevant project documentation first.
    - Identify the current project phase, explicit decisions, lifecycle statuses, active work, nearest open questions, deferred areas, and unmet prerequisites before treating repository gaps as candidates.
    - Inspect repository status, workspace structure, manifests, CI, tests, recent history, hotspots, TODOs, documentation, and non-code assets relevant to the chosen portfolio lens.
-   - Preserve dirty worktrees. Run only safe, non-mutating diagnostics needed to substantiate a candidate.
+   - Preserve dirty worktrees. Run only safe, non-mutating diagnostics needed to substantiate a candidate: nothing that changes tracked files or anything outside the project.
    - Use only already-installed local tooling. Do not invoke package runners or commands that can download, install, update, or rewrite dependencies during discovery.
 
 2. Read [references/discovery-and-ranking.md](references/discovery-and-ranking.md).

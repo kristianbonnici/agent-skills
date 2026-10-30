@@ -14,7 +14,7 @@ Start with the instructions and sources of truth closest to the working director
 - Design systems, screenshots, prototypes, content, brand assets, motion assets, social workflows, research notes, data, and operational playbooks when present
 - Available local tools and installed skills that can provide a real validation loop
 
-Prefer targeted searches and representative file reads over indiscriminate repository dumps. Safe diagnostics may populate ignored caches or build outputs, but must not edit tracked files, install dependencies, rewrite lockfiles, or repair the project. Use only executables already present in the repository or system. Do not use auto-download or ephemeral-install commands such as `npx -y`, `npm exec` when the package is absent, `pnpm dlx`, `yarn dlx`, `bunx`, `uvx`, or equivalent package runners during discovery.
+Prefer targeted searches and representative file reads over indiscriminate repository dumps. Safe diagnostics read: they may populate ignored caches or build outputs, but must not edit tracked files, install dependencies, rewrite lockfiles, repair the project, or change anything outside it (no databases, containers, services or network calls with side effects). Skip a check that would run for more than a minute or two; name it as a candidate's validation instead. Use only executables already present in the repository or system. Do not use auto-download or ephemeral-install commands such as `npx -y`, `npm exec` when the package is absent, `pnpm dlx`, `yarn dlx`, `bunx`, `uvx`, or equivalent package runners during discovery.
 
 ## Portfolio Framing
 

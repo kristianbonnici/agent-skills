@@ -2,7 +2,7 @@
 name: agent-ready-repo
 description: Assess and improve repository readiness for AI coding agents when initializing a project, onboarding agents to an existing codebase, or maintaining its working environment. Audit setup, instructions, verification, architecture, and session continuity; propose evidence-backed changes and implement them only when explicitly requested. Use for repository-wide agent readiness or recurring workflow failures, not ordinary feature implementation or isolated prompt tuning.
 metadata:
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Agent-Ready Repo
@@ -52,5 +52,5 @@ Use [working contracts](references/working-contracts.md) to specify initializati
 
 ## References for maintaining this skill
 
-- Read [source rationale](references/sources.md) when checking provenance, updating recommendations, or explaining evidence and limitations. It is not required for every repository audit.
+- The sources behind these recommendations, and the course they adapt, are in the agent-skills repository's `docs/skills/agent-ready-repo/` (evidence.md, lesson-coverage.md), for maintainers; they aren't needed for an audit.
 - Read [behavioral evaluation scenarios](references/evaluation.md) when changing this skill or testing its behavior. These scenarios validate the skill, not the readiness of every target project.

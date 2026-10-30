@@ -2,16 +2,16 @@
 name: remote-session-reporting
 description: Report work through the chat itself while the user is away from their computer and following the session remotely, for example from a phone through Remote Control or a cloud session. Send screenshots of UI changes, paste changed prose, summarize code and check results, and ask decisions inline, because the user cannot open local files, diffs, terminals, browser panes, or localhost pages. Use whenever the user says they are remote, on their phone, away from the computer, using remote control, or asks to see pictures or have results pasted into chat, and keep using it until they say they are back at the computer.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Remote Session Reporting
 
-While the user is remote, the chat is their only window into the work. They can read messages and open files you send through the host's file-sharing tool. They cannot open local paths, file links, diff or terminal panes, the agent's browser, or `localhost` URLs. Anything you only describe or link, they cannot check.
+While the user is remote, the chat is their only window into the work. They can usually read messages and open files you send through the host's file-sharing tool (check that the host has one, and that what you sent arrived). They cannot open local paths, file links, diff or terminal panes, the agent's browser, or `localhost` URLs. Anything you only describe or link, they cannot check.
 
 ## When it applies
 
-Start when the user says they are remote or asks to see results in chat ("I'm on my phone", "I'm in remote use", "send pictures", "paste the text here"). The mode lasts across turns. Stop when they say they are back ("I'm on my computer again"); from then on, do not resend screenshots or paste content they can now open themselves.
+Start when the user says they are remote or asks to see results in chat ("I'm on my phone", "I'm in remote use", "send pictures", "paste the text here"). The mode lasts across turns. Stop when they say they are back ("I'm on my computer again"), or when they clearly are: they mention local paths, windows or panes in front of them, or edit files themselves. A single request for one screenshot while they are at the computer doesn't start the mode. From then on, do not resend screenshots or paste content they can now open themselves.
 
 If you are unsure whether the user can see local files, ask once rather than guessing.
 
