@@ -840,74 +840,109 @@ if [ -n "$chrome" ]; then
 fi
 
 # run-charts with the Claude API credits: the line, its label, the expiry in the run and the summary
-# line and usage.mmd appear only when the dollars left changed during the run; a run whose credits
-# never moved, or whose readings are junk, shows nothing new; the run's first reading is where it starts.
-mkdir -p "$work/usage-credits" "$work/usage-still"
+# line and usage.mmd appear when the run spent some or a grant expired during it, the expired dollars
+# named apart from the spent ones (a date-only expiry is UTC midnight, as provider-usage reads it); a
+# run whose credits never moved, or whose readings are junk, shows nothing new; the run's first reading
+# is where it starts. What the page draws is read from Chrome's DOM (elements, not the template's text).
+mkdir -p "$work/usage-credits" "$work/usage-still" "$work/usage-expiry" "$work/usage-mixed"
 python3 -I - "$work" <<'EOF'
 import json, os, sys
 work = sys.argv[1]
-def reading(t, left, expires=("2026-10-29T00:45:00Z", "2026-12-02T00:00:00Z")):
-    api = {"left_usd": left, "estimate": True, "plan": "api credits", "observed_at": "2026-10-29T00:00:00+00:00",
-           "credits": [{"expires": expires[0], "left_usd": 0.0, "granted_usd": 200.0}, {"expires": expires[1], "left_usd": left, "granted_usd": 200.0}]}
+SOON, LATER = "2026-10-29T00:45:00Z", "2026-12-02T00:00:00Z"
+def reading(t, grants, **more):
+    # grants: [(expires, dollars it holds)]; the reading's total is their sum
+    api = {"left_usd": sum(h for _, h in grants), "estimate": True, "plan": "api credits", "observed_at": "2026-10-29T00:00:00+00:00",
+           "credits": [{"expires": e, "left_usd": h, "granted_usd": 200.0} for e, h in grants]}
+    api.update(more)
     return json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude_api": api}})
 machine = json.dumps({"t": "2026-10-29T01:00:10+02:00", "cpu": 10.0, "mem_used_gb": 30.0, "mem_total_gb": 64.0, "disk_free_gb": 100.0})
-moved = [reading("00:40:05", 170.0),                                           # before the run starts at 00:50: not its first reading
-         reading("01:00:05", 158.4), reading("02:00:05", 150.0), reading("03:00:05", 142.2),
-         json.dumps({"t": "2026-10-29T03:05:00+02:00", "providers": {"claude_api": {"left_usd": "lots", "credits": "none"}}}),
-         json.dumps({"t": "2026-10-29T03:06:00+02:00", "providers": {"claude_api": {"error": "can't read"}}}),
-         json.dumps({"t": "2026-10-29T03:07:00+02:00", "providers": {"claude_api": {"left_usd": -5}}}),
-         json.dumps({"t": "2026-10-29T03:08:00+02:00", "providers": {"claude_api": "broken"}})]
-still = [reading("01:00:05", 158.4), reading("02:00:05", 158.4), reading("03:00:05", 158.4)]
-for name, rows in (("usage-credits", moved), ("usage-still", still)):
+junk = [json.dumps({"t": "2026-10-29T03:05:00+02:00", "providers": {"claude_api": {"left_usd": "lots", "credits": "none"}}}),
+        json.dumps({"t": "2026-10-29T03:06:00+02:00", "providers": {"claude_api": {"error": "can't read"}}}),
+        json.dumps({"t": "2026-10-29T03:07:00+02:00", "providers": {"claude_api": {"left_usd": -5}}}),
+        json.dumps({"t": "2026-10-29T03:08:00+02:00", "providers": {"claude_api": "broken"}})]
+spent = [reading("00:40:05", [(SOON, 0.0), (LATER, 170.0)]),                  # before the run starts at 00:50: not its first reading
+         reading("01:00:05", [(SOON, 0.0), (LATER, 158.4)]), reading("02:00:05", [(SOON, 0.0), (LATER, 150.0)]),
+         reading("03:00:05", [(SOON, 0.0), (LATER, 142.2)])] + junk
+still = [reading(t, [(SOON, 0.0), (LATER, 158.4)]) for t in ("01:00:05", "02:00:05", "03:00:05")]   # a grant with nothing in it expires
+# 114 dollars expire at 02:00 local (a date alone, 2026-10-29, is UTC midnight): nothing spent, then 10 dollars spent
+before = [("2026-10-29", 114.0), (LATER, 200.0)]
+expiry = [reading("01:00:05", before), reading("01:55:05", before), reading("02:05:05", [("2026-10-29", 0.0), (LATER, 200.0)]),
+          reading("03:00:05", [("2026-10-29", 0.0), (LATER, 200.0)])]
+mixed = [reading("01:00:05", before), reading("01:55:05", before, incomplete=True), reading("02:05:05", [("2026-10-29", 0.0), (LATER, 200.0)]),
+         reading("03:00:05", [("2026-10-29", 0.0), (LATER, 190.0)])]
+for name, rows in (("usage-credits", spent), ("usage-still", still), ("usage-expiry", expiry), ("usage-mixed", mixed)):
     open(os.path.join(work, name, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
     open(os.path.join(work, name, "machine.jsonl"), "w").write(machine + "\n")
     facts = json.load(open(os.path.join(work, "facts.json")))
     facts["usage"] = {"folder": os.path.join(work, name)}
     json.dump(facts, open(os.path.join(work, f"facts-{name}.json"), "w"))
 EOF
-"$scripts/run-charts" "$work/facts-usage-credits.json" "$work/charts-credits" >"$work/charts-credits.out" 2>"$work/charts-credits.err"
-"$scripts/run-charts" "$work/facts-usage-still.json" "$work/charts-still" >/dev/null 2>"$work/charts-still.err"
-if grep -q -E "Traceback|usage" "$work/charts-credits.err"; then exit 1; fi   # (the facts' missing picture is warned about)
-sed -n 2p "$work/charts-credits/summary.txt" | grep -qx 'Usage: Claude API credits $158 → $142 left (estimate). The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
-sed -n 2p "$work/charts-still/summary.txt" | grep -qx 'Usage: The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
+for name in credits still expiry mixed; do
+  "$scripts/run-charts" "$work/facts-usage-$name.json" "$work/charts-$name" >"$work/charts-$name.out" 2>"$work/charts-$name.err"
+  if grep -q -E "Traceback|usage" "$work/charts-$name.err"; then exit 1; fi   # (the facts' missing picture is warned about)
+done
+mac_line='The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
+sed -n 2p "$work/charts-credits/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$142 left (estimate). $mac_line"
+sed -n 2p "$work/charts-expiry/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$114 expired at 02:00). $mac_line"
+sed -n 2p "$work/charts-mixed/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$190 left (estimate, incomplete; \$114 expired at 02:00). $mac_line"
+sed -n 2p "$work/charts-still/summary.txt" | grep -qx "Usage: $mac_line"
 grep -q 'Claude API credits' "$work/charts-credits.out"
 if grep -q 'API credits' "$work/charts-still/summary.txt" "$work/charts-still/usage-mac.mmd"; then exit 1; fi
 test ! -e "$work/charts-still/usage.mmd"
 grep -q 'Claude API credits brown \$158 → \$142 left (estimate)' "$work/charts-credits/usage.mmd"
+grep -q 'Claude API credits brown \$314 → \$200 left (estimate; \$114 expired at 02:00)' "$work/charts-expiry/usage.mmd"
 grep -q 'plotColorPalette": "#9a4a2e"' "$work/charts-credits/usage.mmd" && grep -qx '    line \[100, .*\]' "$work/charts-credits/usage.mmd"
 python3 -I - "$work" <<'EOF'
 import json, os, re, sys
 def data(name):
     page = open(os.path.join(sys.argv[1], name, "run-map.html")).read()
-    return json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"], page
-u, page = data("charts-credits")
+    return json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]
+u = data("charts-credits")
 api = u["api"]
 assert api["name"] == "Claude API credits" and api["colour"] == "#D97757" and api["mark"] is not None, api
 assert api["first"] == 158.4 and api["last"] == 142.2 and api["top"] == 170.0, api            # from the run's first reading (01:00), not the one at 00:40
+assert api["spent"] == 16.2 and api["expired"] == [] and api["incomplete"] is False, api
 assert api["expiries"] == [165.0], api["expiries"]                                           # 02:45 local, inside the run (the other grant's is far after it)
 assert [[v for _, v in seg] for seg in api["segs"]] == [[170.0, 158.4, 150.0, 142.2]], api["segs"]   # one run; the junk readings aren't points
 assert u["providers"] == [] and u["mac"] is not None
-# the page draws it: a band, dashed and without a fill, the expiries, the label and the legend
-for text in ("byId.api", "Claude API credits", "us-line more", "A credit expires", "(estimate)"):
-    assert text in page, text
-assert 'class: "us-fill"' not in page.split("// the Claude API credits")[1].split("// the Mac")[0]
-still, _ = data("charts-still")
-assert "api" not in still                                                                    # the credits never moved: nothing new
-plain, _ = data("charts-usage")
-assert "api" not in plain
+assert "api" not in data("charts-still")                                                     # the credits never moved: nothing new
+assert "api" not in data("charts-usage")
+e = data("charts-expiry")["api"]                                                             # 114 dollars expired, none spent
+assert e["spent"] == 0.0 and e["expired"] == [[120.0, 114.0]] and e["first"] == 314.0 and e["last"] == 200.0 and e["expiries"] == [120.0], e   # 02:00 local: UTC midnight, not local
+m = data("charts-mixed")["api"]
+assert m["spent"] == 10.0 and m["expired"] == [[120.0, 114.0]] and m["incomplete"] is True and m["last"] == 190.0, m
 EOF
 python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
-  "$work/charts-credits/run-map.html" > "$work/run-map-credits.js"
+  "$work/charts-expiry/run-map.html" > "$work/run-map-credits.js"
 if command -v node >/dev/null 2>&1; then node --check "$work/run-map-credits.js"; fi
 for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    "$candidate" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
-      --dump-dom "file://$work/charts-credits/run-map.html#fit&cross=02:00" > "$work/dom.html" 2>/dev/null
-    if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
-    grep -q 'Claude API credits' "$work/dom.html"
-    grep -q 'us-line more' "$work/dom.html"
-    grep -q 'class="us-reset"' "$work/dom.html"
-    grep -q '\$158 → \$142 left' "$work/dom.html"
+    for name in credits expiry mixed still; do
+      "$candidate" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
+        --dump-dom "file://$work/charts-$name/run-map.html#fit&cross=02:00" > "$work/dom-$name.html" 2>/dev/null
+    done
+    # the drawn elements only: the label's own element, the band's rendered paths and the hover's row
+    python3 -I - "$work" <<'EOF'
+import os, re, sys
+def dom(name):
+    return open(os.path.join(sys.argv[1], f"dom-{name}.html"), encoding="utf-8").read()
+def band(page):
+    return re.search(r'<g class="us-g" data-p="claude_api"[^>]*>(.*?)</g>', page, re.S)
+def label(page):
+    found = re.search(r'<div class="us-prov"[^>]*><div class="tl-name"><i class="dot"></i>(?:<i class="mk"[^>]*></i>)?<span class="nm">Claude API credits</span></div><div class="tl-model"[^>]*>([^<]*)</div>', page)
+    return found.group(1) if found else None
+for name, text in (("credits", "$158→$142 left (estimate)"), ("expiry", "$314→$200 left (estimate; $114 expired at 02:00)"),
+                   ("mixed", "$314→$190 left (estimate, incomplete; $114 expired at 02:00)")):
+    page = dom(name)
+    assert 'class="rm-error"' not in page, name
+    assert label(page) == text, (name, label(page))
+    drawn = band(page)
+    assert drawn and 'class="us-line more"' in drawn.group(1) and "us-fill" not in drawn.group(1) and 'class="us-reset"' in drawn.group(1), name
+    assert re.search(r'<span class="k">Over the run</span><span class="v">' + re.escape(text.replace("&", "&amp;")) + '</span>', page), name
+    assert re.search(r'<div class="sec">Claude API credits \(estimate\)</div>', page), name
+    assert re.search(r'<div class="us-sec"[^>]*>API credits \(estimate\)</div>', page), name
+assert label(dom("still")) is None and band(dom("still")) is None
+EOF
     break
   fi
 done
@@ -1128,8 +1163,8 @@ open(os.path.join(logs, "events.b.log.1"), "w").write("\n".join(second) + "\n")
 old = os.path.join(logs, "events.old.log")        # untouched since before every balance: not read at all
 open(old, "w").write(line("2026-10-31T01:00:00.000Z", api, 1000.0, {"claude-opus-5-5": 1000.0}) + "\n")
 recent = datetime(2026, 10, 31, 10, 0, tzinfo=timezone.utc).timestamp()
-for name in ("events.a.log", "events.b.log.1"):
-    os.utime(os.path.join(logs, name), (recent, recent))
+for name, age in (("events.a.log", 0), ("events.b.log.1", 100)):   # events.a.log is the newest
+    os.utime(os.path.join(logs, name), (recent - age, recent - age))
 os.utime(old, (1.76e9, 1.76e9))
 grants = {"instance": "claudeAgent_claude_api", "grants": [
     {"granted": "2026-10-08", "amount_usd": 200.0, "expires": "2026-12-02T00:00:00Z", "balance_usd": 200.0, "balance_at": "2026-10-30T21:00:00Z"},
@@ -1146,6 +1181,7 @@ folder = sys.argv[2]
 os.environ.update(T3_USERDATA=os.path.join(folder, "t3"), XDG_STATE_HOME=os.path.join(folder, "state"), HOME=os.path.join(folder, "home"))
 ns = runpy.run_path(sys.argv[1], run_name="provider_usage_credits")
 at = ns["utc_seconds"]
+api_globals = ns["claude_api"].__globals__
 got = ns["claude_api"](at("2026-10-31T12:00:00Z"))
 credits = got["credits"]
 assert [c["expires"] for c in credits] == ["2026-10-29", "2026-10-31T06:00:00Z", "2026-12-02T00:00:00Z"], credits   # soonest first
@@ -1159,8 +1195,48 @@ early = ns["claude_api"](at("2026-10-31T02:50:00Z"))
 assert [c["left_usd"] for c in early["credits"]] == [0.0, 3.0, 200.0] and early["left_usd"] == 203.0 and early["spent_since_usd"] == 47.0, early
 # spend past a balance stops at zero, and a grant isn't drawn before its balance_at or after its expiry
 grant = lambda expires, balance_at, balance: {"expires": expires, "balance_at": balance_at, "balance": balance}
-assert ns["spend_from_credits"]([grant(100.0, 0.0, 5.0)], [(10.0, 3.0), (20.0, 5.0), (30.0, 1.0)]) == [0.0]
-assert ns["spend_from_credits"]([grant(100.0, 50.0, 5.0), grant(200.0, 0.0, 9.0)], [(10.0, 2.0), (60.0, 4.0), (150.0, 1.0)]) == [1.0, 6.0]
+draw = ns["spend_from_credits"]
+assert draw([grant(100.0, 0.0, 5.0)], [(10.0, 3.0), (20.0, 5.0), (30.0, 1.0)]) == ([0.0], 5.0)
+# a charge goes to the soonest-expiring grant open then; one logged before that grant's balance was read is in the balance already
+assert draw([grant(100.0, 50.0, 5.0), grant(200.0, 0.0, 9.0)], [(10.0, 2.0), (60.0, 4.0), (150.0, 1.0)]) == ([1.0, 8.0], 5.0)
+noon, one, two, three = 12 * 3600.0, 13 * 3600.0, 14 * 3600.0, 15 * 3600.0
+a, b = grant(two + 1e6, two, 90.0), grant(two + 2e6, noon, 100.0)   # A (soonest to expire): 90 at 2 p.m.; B: 100 at noon
+assert draw([a, b], [(one, 10.0)]) == ([90.0, 100.0], 0.0)          # the 10 at 1 p.m. was A's: B keeps its 100
+assert draw([a, b], [(one, 10.0), (three, 5.0)]) == ([85.0, 100.0], 5.0)
+assert draw([a, b], [(three, 95.0)]) == ([0.0, 95.0], 95.0)         # A's 90 used up, the overflow to B
+# the fractions of a second count
+frac = ns["utc_seconds"]
+assert frac("2026-10-31T12:00:00.250Z") - frac("2026-10-31T12:00:00Z") == 0.25 and frac("2026-10-31 12:00:00.5+02:00") == frac("2026-10-31T10:00:00.5Z")
+reading_at = frac("2026-10-31T12:00:00.900Z")
+assert draw([grant(1e12, reading_at, 50.0)], [(frac("2026-10-31T12:00:00.100Z"), 7.0), (frac("2026-10-31T12:00:00.950Z"), 3.0)]) == ([47.0], 3.0)
+# no log folder, no estimate: an error and no balance; a scan that runs out of time or meets a log it can't read
+# still gives the balance, flagged incomplete, and reads the newest files first
+os.environ["T3_USERDATA"] = os.path.join(folder, "nowhere")
+missing = ns["claude_api"](at("2026-10-31T12:00:00Z"))
+assert "error" in missing and "missing" in missing["error"] and "left_usd" not in missing and missing["estimate"] is True, missing
+os.environ["T3_USERDATA"] = os.path.join(folder, "t3")
+api_globals["CREDITS_SCAN_SECONDS"] = -1
+cut = ns["claude_api"](at("2026-10-31T12:00:00Z"))
+assert "incomplete" in cut and "left_usd" in cut and "error" not in cut and cut["left_usd"] > 173.0, cut
+api_globals["CREDITS_SCAN_SECONDS"] = 40
+class Clock:   # the scan's clock: its first two looks are early, then every look is past the deadline
+    calls = 0
+    @staticmethod
+    def monotonic():
+        Clock.calls += 1
+        return 0.0 if Clock.calls <= 2 else 1e6
+real_time = api_globals["time"]
+api_globals["time"] = Clock
+newest_first = ns["claude_api"](at("2026-10-31T12:00:00Z"))
+api_globals["time"] = real_time
+# events.a.log is the newest, read whole; the older events.b.log.1 not at all: 47 of the 77 dollars
+assert "incomplete" in newest_first and newest_first["spent_since_usd"] == 47.0, newest_first
+unreadable = os.path.join(folder, "t3", "logs", "provider", "events.locked.log")
+open(unreadable, "w").write("x\n")
+os.chmod(unreadable, 0)
+locked = ns["claude_api"](at("2026-10-31T12:00:00Z"))
+os.remove(unreadable)
+assert "couldn't be read" in locked.get("incomplete", "") or os.geteuid() == 0, locked
 # what can't be read as grants
 for bad in ([], {"grants": "x"}, {"grants": []}, {"grants": [{"expires": "2026-11-01"}]}, {"instance": "a b", "grants": [{}]}):
     try:
@@ -1241,6 +1317,9 @@ junk = {"providers": {"claude_api": {"error": "x", "estimate": True}, "x": "brok
 assert list(entry_of(junk, False)["providers"]) == ["claude"], entry_of(junk, False)
 assert "claude_api" not in entry_of({"providers": {"claude_api": {"left_usd": "lots"}}}, True)["providers"]
 assert entry_of({"providers": {"claude_api": {"left_usd": 5, "credits": ["x", {"left_usd": None}]}}}, True)["providers"]["claude_api"]["left_usd"] == 5
+# a scan cut short is kept as a flag, and a complete one has none
+cut = entry_of({"providers": {"claude_api": {"left_usd": 5, "incomplete": "the log scan stopped after 40 s"}}}, False)["providers"]["claude_api"]
+assert cut["incomplete"] is True and "incomplete" not in entry_of({"providers": {"claude_api": {"left_usd": 5}}}, False)["providers"]["claude_api"], cut
 # one reading at a time: every start is followed by its end before the next start
 marks = [l.split()[0] for l in open(os.path.join(folder, "fake", "reads.log"))]
 assert marks[0] == "+" and all(a != b for a, b in zip(marks, marks[1:])), marks

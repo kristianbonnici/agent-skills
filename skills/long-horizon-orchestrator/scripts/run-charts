@@ -78,8 +78,10 @@ been rendered. run-map.html is the same map on its own, to open in a browser.
 summary.txt gets the report's run-time line: how long the run took, how much of it was paused,
 how long the orchestrator and the tasks worked, and how many tasks ran at once at most. With a
 usage folder, a second line says each subscription's use from start to end and the Mac's peaks,
-and, when the run used the owner's Claude API credits, their estimated dollars left in whole
-dollars ("Claude API credits $158 → $142 left (estimate)").
+and, when the run spent some of the owner's Claude API credits or a grant of them expired during it,
+their estimated dollars left in whole dollars, the expired part named apart from the spent
+("Claude API credits $314 → $200 left (estimate; $114 expired at 02:00)"; "estimate, incomplete" when
+the sampler's log scan was cut short).
 
 The usage panel sits under the timeline on the same time axis: each subscription's weekly window
 (Copilot's monthly one), for each subscription the run used, as the percent left, a smooth line falling from 100% as it is used,
@@ -87,11 +89,13 @@ and a separate limit in use during the run (Antigravity's Gemini 4 Argon) as a d
 (assets/marks/marks.json), with window resets dotted (a reading of a window that has reset since it was
 read is no point: the line holds to the reset and goes on from the next reading taken after it); its 5-hour window is left out, and so are
 quota pauses, which the timeline hatches on the lanes they stopped; then, when the run used the Claude API
-credits (the sampler's "claude_api" readings, an estimate by provider-usage: the dollars left of every
-unexpired grant changed during the run), a band of their own: dollars left from the run's first reading,
-a dashed line in Claude's colour with no fill, each grant's expiry that falls in the run dotted, and the
-label "Claude API credits $X → $Y left" (whole dollars, "estimate" in the hover and the legend); a run
-that never touched the credits shows none of it (usage.mmd draws it as a share of the dollars at the
+credits (the sampler's "claude_api" readings, an estimate by provider-usage from T3's list-price costs: the
+run spent some of them, or a grant expired during it; a fall in the dollars left is split into what the
+grants held when they expired and the rest, spent; a date alone as an expiry is UTC midnight), a band of
+their own: dollars left from the run's first reading, a dashed line in Claude's colour with no fill, each
+grant's expiry that falls in the run dotted, and the label "Claude API credits $X→$Y left (estimate; $N
+expired at 02:00)" (whole dollars; the same text in the hover); a run that never touched the credits
+shows none of it (usage.mmd draws it as a share of the dollars at the
 start, a darker orange line, since a chart can't dash it); then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
 peak behind it. In run-map.html hovering shows the values at that minute and the tasks working then.
 
@@ -109,7 +113,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -449,6 +453,18 @@ def is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def expiry_time(value, zone=None):
+    """A grant's expiry as the local wall clock of the sampler's times, as provider-usage reads it: a
+    date alone, or a time with no zone, is UTC. None for anything else."""
+    try:
+        moment = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (moment.astimezone(zone) if zone is not None else moment).replace(tzinfo=None)
+
+
 def local_time(value, zone=None):
     """A sampler time as the local wall clock it was written in (the facts' own clock), else None."""
     try:
@@ -545,8 +561,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     # the subscriptions: the weekly or monthly window as runs of points, one run per reset period
     found: dict[str, dict] = {}
     newest: dict[str, datetime] = {}
-    api_reads: list[tuple[float, float]] = []   # (minute, dollars left) of the Claude API credits
-    api_expiries: set[float] = set()
+    api_reads: list[tuple[float, float, list[tuple[float, float]], bool]] = []   # the Claude API credits' readings
     for record in reads:
         moment = local_time(record["t"])
         m = minute(moment)
@@ -562,11 +577,15 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         for name, p in providers_now.items():
             if name == "claude_api":   # dollars left, not a window: kept apart below
                 if isinstance(p, dict) and is_number(p.get("left_usd")) and p["left_usd"] >= 0:
-                    api_reads.append((m, float(p["left_usd"])))
+                    grants = []   # (minute it expires, dollars it held)
                     for credit in p.get("credits") if isinstance(p.get("credits"), list) else []:
-                        ends_at = minute(local_time(credit.get("expires"), zone)) if isinstance(credit, dict) else None
-                        if ends_at is not None:
-                            api_expiries.add(round(ends_at, 2))
+                        if not isinstance(credit, dict):
+                            continue
+                        ends_at = minute(expiry_time(credit.get("expires"), zone))
+                        held = credit.get("left_usd")
+                        if ends_at is not None and is_number(held) and held >= 0:
+                            grants.append((ends_at, float(held)))
+                    api_reads.append((m, float(p["left_usd"]), grants, bool(p.get("incomplete"))))
                 continue
             if not isinstance(p, dict) or not isinstance(p.get("windows"), dict):
                 continue
@@ -666,7 +685,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             mark, ink = mark_of(entry) if entry else (None, None)
             providers.append({"id": name, "name": PROVIDER_NAMES.get(name, name.title()), "plan": info["plan"],
                               "colour": line_colour(entry), "mark": mark, "ink": ink, **picked})
-    api = api_credits(api_reads, api_expiries, t0, t1, next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], "claude", re.I)), None), mark_of)
+    api = api_credits(api_reads, t0, t1, next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], "claude", re.I)), None), mark_of)
     if not mac and not providers and not api:
         return None
     data = {"t0": t0, "t1": t1, "start": start, "count": count, "providers": providers, "mac": mac}
@@ -685,27 +704,53 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     return data
 
 
-def api_credits(reads: list[tuple[float, float]], expiries: set[float], t0: float, t1: float, entry: dict | None, mark_of) -> dict | None:
+def api_credits(reads: list[tuple[float, float, list[tuple[float, float]], bool]], t0: float, t1: float, entry: dict | None, mark_of) -> dict | None:
     """The Claude API credits' line: the dollars left of every unexpired grant (provider-usage's estimate,
-    as the sampler recorded it) as runs of (minute, dollars), and the minutes inside the run where a grant
-    expires. None unless the dollars left changed during the run: a run that never touched the credits
-    shows nothing. Claude's colour, drawn dashed by the page."""
-    points = sorted({m: v for m, v in sorted(reads)}.items())   # two readings at the same moment: the later one
-    inside = [p for p in points if t0 <= p[0] <= t1]
-    if len({round(v, 2) for _, v in inside}) < 2:
+    as the sampler recorded it) as runs of (minute, dollars), and the minutes where a grant expires inside
+    the run. The fall in dollars is split into what a grant held when it expired (taken from the last
+    reading before its expiry) and the rest, spent. None unless the run spent some or a grant expired
+    during it: a run that never touched the credits shows nothing. Claude's colour, drawn dashed by the page.
+    reads are (minute, dollars left, [(expiry minute, dollars it held)], incomplete)."""
+    latest = {r[0]: r for r in sorted(reads, key=lambda r: r[0])}   # two readings at the same moment: the later one
+    readings = sorted(latest.values(), key=lambda r: r[0])
+    points = [(r[0], r[1]) for r in readings]
+    inside = [r for r in readings if t0 <= r[0] <= t1]
+    if not inside:
+        return None
+    expired: dict[float, float] = {}   # expiry minute -> dollars that expired then
+    for a, b in zip(inside, inside[1:]):
+        for ends_at, held in a[2]:
+            if a[0] <= ends_at < b[0] and held > 0:
+                expired[round(ends_at, 2)] = round(expired.get(round(ends_at, 2), 0.0) + held, 2)
+    first, last = inside[0][1], inside[-1][1]
+    lost = sum(expired.values())
+    spent = max(0.0, first - last - lost)
+    if spent < 0.005 and lost < 0.005:
         return None
     gaps = sorted(b[0] - a[0] for a, b in zip(points, points[1:]))
-    longest = max(75.0, 3 * gaps[len(gaps) // 2])   # a gap this long is a sampler that wasn't running: no line across it
+    longest = max(75.0, 3 * gaps[len(gaps) // 2]) if gaps else 75.0   # a gap this long is a sampler that wasn't running: no line across it
     segs: list[list[list[float]]] = []
     for m, v in points:
         if segs and m - segs[-1][-1][0] <= longest:
             segs[-1].append([round(m, 2), round(v, 2)])
         else:
             segs.append([[round(m, 2), round(v, 2)]])
+    marks = sorted({round(e, 2) for r in inside for e, _ in r[2] if t0 <= e <= t1})
     mark, ink = mark_of(entry) if entry else (None, None)
     return {"id": "claude_api", "name": "Claude API credits", "colour": line_colour(entry), "mark": mark, "ink": ink,
-            "segs": segs, "expiries": sorted(e for e in expiries if t0 <= e <= t1),
-            "first": inside[0][1], "last": inside[-1][1], "top": max(v for _, v in points)}
+            "segs": segs, "expiries": marks, "first": first, "last": last, "top": max(v for _, v in points),
+            "spent": round(spent, 2), "expired": [[e, v] for e, v in sorted(expired.items())],
+            "incomplete": any(r[3] for r in inside)}
+
+
+def api_note(api: dict) -> str:
+    """The parenthesis after the credits' dollars: "(estimate)", "(estimate, incomplete; $114 expired at 02:00)"."""
+    note = "estimate" + (", incomplete" if api.get("incomplete") else "")
+    if api.get("expired"):
+        total = sum(v for _, v in api["expired"])
+        times = [clock_text(e) for e, _ in api["expired"]]
+        note += f"; {dollars(total)} expired at " + (" and ".join(times) if len(times) < 3 else ", ".join(times[:-1]) + " and " + times[-1])
+    return f"({note})"
 
 
 def dollars(value: float) -> str:
@@ -744,7 +789,7 @@ def usage_line(usage: dict) -> str:
             parts.append(f"{p['name']} " + ", ".join(bits))
     api = usage.get("api")
     if api:
-        parts.append(f"Claude API credits {dollars(api['first'])} → {dollars(api['last'])} left (estimate)")
+        parts.append(f"Claude API credits {dollars(api['first'])} → {dollars(api['last'])} left {api_note(api)}")
     text = "Usage: " + "; ".join(parts) + "." if parts else "Usage:"
     peaks = usage.get("peaks")
     if peaks:
@@ -772,7 +817,7 @@ def clock_text(m: float) -> str:
 
 def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
     """The fallback for hosts that can't show HTML: usage.mmd (the subscriptions' weekly or monthly windows, % left,
-    and the Claude API credits as a share of the dollars at the start, when the run used them) and
+    and the Claude API credits as a share of the dollars at the start, when the run spent some or they expired) and
     usage-mac.mmd (CPU, GPU and memory, the peak in each stretch), as xychart-beta line charts."""
     t0, t1 = usage["t0"], usage["t1"]
     width = next((w for w in (5, 10, 15, 30, 60, 120, 180, 240) if (t1 - t0) / w <= 24), 360)
@@ -807,7 +852,7 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
             values.append(round(min(100.0, 100 * (before[-1] if before else points[0][1]) / base), 1))
         lines.append("    line [" + ", ".join(f"{v:g}" for v in values) + "]")
         colours.append("#9a4a2e")
-        names.append(f"Claude API credits brown {dollars(api['first'])} → {dollars(api['last'])} left (estimate)")
+        names.append(f"Claude API credits brown {dollars(api['first'])} → {dollars(api['last'])} left {api_note(api)}")
     if lines:
         title = ("Subscriptions' weekly or monthly windows, % left" if subs else "Claude API credits, % of the dollars at the start") \
                 + f" at the end of each {span(width)} · " + " · ".join(names) \

@@ -136,7 +136,7 @@ Signs:
 - `provider-usage` shows its provider's window at or near 100%.
 
 Then:
-1. Leave it exactly as it is: its thread, worktree and uncommitted changes. Don't relaunch it, and don't hand it to another provider (a task on a free model is the exception: [below](#a-task-on-a-free-model)).
+1. Leave it exactly as it is: its thread, worktree and uncommitted changes. Don't relaunch it, and don't hand it to another provider. The exceptions: a task on a free model ([below](#a-task-on-a-free-model)), and Claude work between the subscription and the owner's API credits as the contract allows ([Claude API credits](#claude-api-credits-use-what-would-expire)).
 2. Make sure the resume wake is scheduled, and mark the task `paused` in the ledger with its expected resume time.
 3. On the first wake after the reset, check whether the task is running again. If not, continue it on the same thread: "Your usage limit has reset. Continue the brief from where you stopped." This nudge doesn't count as the task's one nudge for silence.
 
@@ -175,11 +175,13 @@ Never work around a limit silently. The report says which tasks paused, for how 
 
 The owner may have Claude API credits beside the Claude subscription: in T3, a second Claude instance (`claudeAgent_claude_api`) runs the same models, billed to the credits. The credits are dollars that expire, not windows that reset, so:
 
-- **Read them in the usage snapshot.** `provider-usage` reports them under `claude_api`, from the owner's grants in `api-credits.json` beside the provider profile (each grant's amount, expiry, and the balance the Console showed when) less the API spend T3 has logged since, soonest-expiring grant first. It is an estimate; say so, with the time of the Console reading.
-- **Credits that would expire go first.** While a grant expires within about a week with money left, Claude tasks, Claude reviewers and your own wakes run on the API instance first, and the subscription is the backup. Plan the run's Claude work to use what would otherwise expire, and no more than it holds.
-- **Otherwise the subscription goes first,** and the API instance is the backup when a Claude window runs short, within what the contract allows.
-- **In the contract,** give each grant's estimated balance and expiry, and which tasks run on which Claude instance. In the report's usage line, give the credits' estimated balance at the start and the end.
-- **When the estimate runs out,** the rest of that Claude work continues on the subscription, on its own thread, as a free model's task moves on ([A task on a free model](#a-task-on-a-free-model)).
+- **Read them in the usage snapshot.** `provider-usage` reports them under `claude_api`: the owner's grants in `api-credits.json` beside the provider profile (each grant's amount, expiry, and the balance the Console showed, with when), less the API spend T3 has logged since at list prices, soonest-expiring grant first. It is an estimate; say so, with the time of the Console reading. An estimate marked `incomplete`, or an error, counts as nothing left.
+- **Choose each task's Claude instance at launch, in the contract.** While a grant expires within about a week with money left, Claude tasks and Claude reviewers run on the API instance first, sized to use what would otherwise expire and no more. Otherwise they run on the subscription. Your own thread stays on the instance it runs on.
+- **Keep a reserve.** Launch no new work on the API instance once the estimate is below about $20 for each API task already running: costs reach the logs only as each result ends, so the estimate trails what running tasks spend. With no payment method on the account (the owner's case on 2026-10-30), running out ends in errors, not charges; with one, it would bill, so keep to the reserve strictly.
+- **Moves, at most once each way per task, never back:**
+  - to the subscription, when the credits' estimate runs out (or the API instance reports the credits used up): the rest of that task continues on the subscription, on its own thread, as a free model's task moves on ([A task on a free model](#a-task-on-a-free-model));
+  - to the API instance, only if the contract allows it (the owner uses the credits as a backup), when the task's Claude subscription window is used up and its reset is hours away, and only within the reserve. A task that came from the API instance never goes back to it.
+- **In the contract,** give each grant's estimated balance and expiry, which tasks run on which Claude instance, and whether work may move to the API instance as a backup. In the report's usage line, give the credits' estimated balance at the start and the end, with what expired during the run apart from what was spent.
 
 ## 4. Strengths: a soft preference
 

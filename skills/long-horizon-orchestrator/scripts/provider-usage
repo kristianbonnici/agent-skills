@@ -27,14 +27,19 @@ grants are in ${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orches
 {"instance": "claudeAgent_claude_api", "grants": [{"granted": "2026-10-08", "amount_usd": 200.0,
 "expires": "2026-11-01T00:00:00Z", "balance_usd": 158.34, "balance_at": "2026-10-30T21:04:00Z"}]},
 the balance the Console showed at balance_at. What T3 Code logged since for that provider instance
-(the Claude result lines of the API instance in the provider logs, their per-model costUSD; the
-subscription's instance never counts) is taken off the balance, each spend drawn from the soonest
-expiring grant that is open at that moment, never below zero; an expired grant has nothing left.
-"left_usd" totals the unexpired grants, "spent_since_usd" is what was logged since the earliest
-balance_at, and "estimate" is always true: spend by other tools, or before T3 logged it, is not
-seen, so update the file's balance when the Console is looked at again. Without that file the
-provider is left out; a file that can't be read gives an "error" instead. A provider log line that
-isn't JSON, or lacks a cost, is skipped.
+(the Claude result lines of the API instance in the provider logs, their per-model costUSD, which
+is T3's list price, so use priced or discounted differently drifts the estimate; the subscription's
+instance never counts) is taken off the balance. Each charge goes to the soonest-expiring grant that
+hasn't expired by then, overflowing to the next once that is used up, never below zero; a charge
+logged before that grant's balance_at is already in its balance and is skipped; an expired grant has
+nothing left. "left_usd" totals the unexpired grants, "spent_since_usd" is what was taken off the
+grants, and "estimate" is always true: spend by other tools, or before T3 logged it, is not seen, so
+update the file's balance when the Console is looked at again. Times keep their fractions of a
+second; a date alone is UTC midnight. Without that file the provider is left out. A file that can't
+be read, or a T3 log folder that is missing or can't be listed, gives an "error" and no balance. The
+newest log files are read first, and a scan that runs out of its 40 seconds or meets a log it can't
+read still reports a balance, with "incomplete" saying why (it may be too high). A provider log line
+that isn't JSON, or lacks a cost, is skipped.
 
 Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME, XDG_STATE_HOME.
 """
@@ -488,7 +493,7 @@ def copilot(now: float) -> dict:
 # --- Claude API credits: an estimate from the owner's grants and T3's logged API spend ---------
 
 CREDITS_SCAN_SECONDS = 40   # the logs are large; a scan that runs this long stops and says it is partial
-ISO_STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$")
+ISO_STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$")
 
 
 def credits_file() -> Path:
@@ -497,19 +502,20 @@ def credits_file() -> Path:
 
 
 def utc_seconds(value) -> float | None:
-    """An ISO date or time ("2026-11-01", "2026-11-01T00:00:00Z", with an offset or fraction) as epoch
-    seconds, a time with no zone being UTC; None for anything else."""
+    """An ISO date or time ("2026-11-01", "2026-11-01T00:00:00.250Z", with an offset or fraction) as epoch
+    seconds, fractions kept, a date or time with no zone being UTC (a date alone is UTC midnight); None
+    for anything else."""
     match = ISO_STAMP.match(value.strip()) if isinstance(value, str) else None
     if not match:
         return None
-    date, hour, minute, second, zone = match.groups()
+    date, hour, minute, second, fraction, zone = match.groups()
     try:
         moment = datetime.fromisoformat(f"{date}T{hour or '00'}:{minute or '00'}:{second or '00'}")
         if zone and zone != "Z":
             sign = -1 if zone[0] == "-" else 1
             digits = zone[1:].replace(":", "")
             moment -= sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
-        return moment.replace(tzinfo=timezone.utc).timestamp()
+        return moment.replace(tzinfo=timezone.utc).timestamp() + (float("0." + fraction) if fraction else 0.0)
     except (ValueError, OverflowError):
         return None
 
@@ -544,20 +550,24 @@ def credit_grants(config) -> tuple[str, list[dict]]:
     return instance, grants
 
 
-def api_spend(instance: str, since: float, now: float) -> tuple[list[tuple[float, float]], bool]:
-    """The API instance's spend logged at or after `since`, as (time, dollars) in time order, and whether
-    the scan was cut short. A result line's dollars are its model_usage_since_last_result costUSDs; a line
+def api_spend(instance: str, since: float, now: float) -> tuple[list[tuple[float, float]], str | None]:
+    """The API instance's spend logged at or after `since`, as (time, dollars) in time order, and why the
+    scan is incomplete (it ran out of time, or a log couldn't be read), else None. Raises RuntimeError when the
+    log folder is missing or can't be listed: with no logs there is no spend to count. The newest files go
+    first, so a scan cut short misses the oldest spend, not the latest. A result line's dollars are its model_usage_since_last_result costUSDs; a line
     without a usable one counts the rise of total_cost_usd over the session's previous line (its first line, the
     whole total). Lines of the subscription's instance, or that aren't JSON, or have no cost, are skipped."""
     logs = Path(os.environ.get("T3_USERDATA", Path.home() / ".t3" / "userdata")) / "logs" / "provider"
     marker = f"provider-instance:{instance}:"
     deadline = time.monotonic() + CREDITS_SCAN_SECONDS
-    records, seen, partial = [], set(), False
+    records, seen, partial, unreadable = [], set(), False, 0
+    if not logs.is_dir():
+        raise RuntimeError(f"T3's provider log folder {logs} is missing, so the API spend can't be counted")
     try:
         files = [(p.stat().st_mtime, p) for p in logs.glob("events.*.log*") if p.is_file()]
-    except OSError:
-        return [], False
-    for _, path in sorted(f for f in files if f[0] >= since - 60):  # a file untouched since the balance can't hold newer spend
+    except OSError as exc:
+        raise RuntimeError(f"T3's provider log folder {logs} can't be read ({type(exc).__name__}), so the API spend can't be counted")
+    for _, path in sorted((f for f in files if f[0] >= since - 60), reverse=True):  # newest first; a file untouched since the balance can't hold newer spend
         try:
             with path.open("rb") as handle:
                 for number, raw in enumerate(handle):
@@ -592,6 +602,7 @@ def api_spend(instance: str, since: float, now: float) -> tuple[list[tuple[float
                         since_last = sum(costs) if costs else None  # no usable cost: the total's rise instead
                     records.append((at, session, total, since_last))
         except OSError:
+            unreadable += 1
             continue
         if partial:
             break
@@ -607,26 +618,38 @@ def api_spend(instance: str, since: float, now: float) -> tuple[list[tuple[float
         previous[session] = total
         if cost > 0 and since - 1e-6 <= at <= now + 60:
             spend.append((at, cost))
-    return spend, partial
+    reason = None
+    if partial:
+        reason = f"the log scan stopped after {CREDITS_SCAN_SECONDS} s, so the oldest spend may be missing"
+    if unreadable:
+        reason = (reason + "; " if reason else "") + f"{unreadable} log file(s) couldn't be read"
+    return spend, reason
 
 
-def spend_from_credits(grants: list[dict], spend: list[tuple[float, float]]) -> list[float]:
-    """What each grant has left (in the grants' order) after the spend, in time order: each charge is
-    drawn from the soonest-expiring grant that was open then (read before it, not yet expired) and still
-    has something left, then from the next, never below zero. A grant that expires keeps no balance."""
+def spend_from_credits(grants: list[dict], spend: list[tuple[float, float]]) -> tuple[list[float], float]:
+    """What each grant has left (in the grants' order) after the spend, and the dollars taken off, charges
+    in time order. A charge goes to the soonest-expiring grant that hasn't expired at that time, and
+    overflows to the next one once that is used up, never below zero. A grant whose balance_at is later
+    than the charge already has it in its reading, so the charge (and any overflow past it) is skipped."""
     left = [g["balance"] for g in grants]
     order = sorted(range(len(grants)), key=lambda i: grants[i]["expires"])
+    drawn = 0.0
     for at, cost in spend:
         for i in order:
+            g = grants[i]
             if cost <= 0:
                 break
-            g = grants[i]
-            if not (g["balance_at"] <= at < g["expires"]) or left[i] <= 0:
+            if g["expires"] <= at:
+                continue
+            if g["balance_at"] > at:
+                break  # this charge is in the grant's reading already, and so is any overflow past it
+            if left[i] <= 0:
                 continue
             take = min(left[i], cost)
             left[i] -= take
             cost -= take
-    return left
+            drawn += take
+    return left, drawn
 
 
 def claude_api(now: float) -> dict | None:
@@ -643,8 +666,11 @@ def claude_api(now: float) -> dict | None:
     except ValueError as exc:
         return {"plan": "api credits", "error": f"{path} isn't usable: {exc}", "estimate": True}
     since = min(g["balance_at"] for g in grants)
-    spend, partial = api_spend(instance, since, now)
-    left = spend_from_credits(grants, spend)
+    try:
+        spend, incomplete = api_spend(instance, since, now)
+    except RuntimeError as exc:  # no logs, no estimate: an error, never a balance that looks right
+        return {"plan": "api credits", "error": str(exc), "estimate": True}
+    left, drawn = spend_from_credits(grants, spend)
     credits = []
     for g, remaining in sorted(zip(grants, left), key=lambda pair: pair[0]["expires"]):
         expired = g["expires"] <= now
@@ -657,13 +683,13 @@ def claude_api(now: float) -> dict | None:
         "plan": "api credits",
         "credits": credits,
         "left_usd": round(sum(c["left_usd"] for c in credits), 2),
-        "spent_since_usd": round(sum(cost for _, cost in spend), 2),
+        "spent_since_usd": round(drawn, 2),
         "observed_at": iso(now),
         "estimate": True,
         "source": f"{path} and T3's API spend for {instance}",
     }
-    if partial:
-        out["incomplete"] = "the log scan stopped early, so the spend (and what is left) may be off"
+    if incomplete:
+        out["incomplete"] = incomplete + ", so what is left may be too high"
     return out
 
 
