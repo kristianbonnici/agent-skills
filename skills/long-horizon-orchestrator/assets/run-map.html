@@ -322,6 +322,7 @@ const count = st => tasks.filter(t => t.status === st).length;
 const subs = nodes.reduce((s, n) => s + n.helpers.reduce((a, h) => a + (h.count || 1), 0), 0);
 const allTimes = [ORCH.start, ORCH.end, ...tasks.flatMap(t => [t.launched, t.ended])].filter(v => v != null);
 const span0 = ORCH.start != null ? ORCH.start : Math.min(...allTimes), span1 = ORCH.end != null ? ORCH.end : Math.max(...allTimes);
+const esc = v => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");   // facts' text, for the few places that build HTML
 const stats = el("div", "rm-stats"); const stat = h => { const s = el("span"); s.innerHTML = h; stats.append(s); };
 stat(`<b>${tasks.length}</b> task agent${tasks.length === 1 ? "" : "s"}`);
 if (subs) stat(`<b>${subs}</b> sub-agent${subs === 1 ? "" : "s"}`);
@@ -329,7 +330,7 @@ stat(`<b class="ok">${count("merged")}</b> merged`);
 ["blocked", "failed", "parked"].forEach(st => { if (count(st)) stat(`<b class="bad">${count(st)}</b> ${st}`); });
 if (allTimes.length) stat(`<b>${dur(span1 - span0)}</b>`);
 const I = F.integration || {};
-if (I.branch) stat(`${I.branch}${I.head ? ` <b>${I.head}</b>` : ""}${I.ci === "passed" ? ' · CI <b class="ok">✓</b>' : I.ci === "failed" ? ' · CI <b class="bad">✕</b>' : ""}`);
+if (I.branch) stat(`${esc(I.branch)}${I.head ? ` <b>${esc(I.head)}</b>` : ""}${I.ci === "passed" ? ' · CI <b class="ok">✓</b>' : I.ci === "failed" ? ' · CI <b class="bad">✕</b>' : ""}`);
 head.append(title, stats); root.append(head);
 const controls = el("div", "rm-controls"); root.append(controls);
 function control(label, on, fn) { const b = el("button", "rm-toggle"); b.type = "button"; b.innerHTML = `<span class="dot"></span>${label}`; b.setAttribute("aria-pressed", String(on));
@@ -878,7 +879,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   function stats() {
     const outcome = {}; lanes.forEach(l => { if (!l.orch) outcome[l.node.status] = (outcome[l.node.status] || 0) + 1; });
     const bad = Object.keys(outcome).some(k => k !== "merged");
-    const bits = [Object.entries(outcome).sort((a, b) => (b[0] === "merged") - (a[0] === "merged") || b[1] - a[1]).map(([k, v]) => `<b>${v}</b> ${k}`).join(", "), `${clock(t0)}–${clock(t1)}`, `<b>${dur(t1 - t0)}</b>`];
+    const bits = [Object.entries(outcome).sort((a, b) => (b[0] === "merged") - (a[0] === "merged") || b[1] - a[1]).map(([k, v]) => `<b>${v}</b> ${esc(k)}`).join(", "), `${clock(t0)}–${clock(t1)}`, `<b>${dur(t1 - t0)}</b>`];
     if (work > 0) bits.push(`${dur(work)} of work` + (work / (t1 - t0) >= 1.05 ? `, <b>${(work / (t1 - t0)).toFixed(1)}×</b> faster than one at a time` : ""));
     if (peak > 1) bits.push(`up to ${peak} at once`);
     statsEl.innerHTML = (bad ? ICON.warn : ICON.ok) + bits.map(b => `<span>${b}</span>`).join('<span class="sep">·</span>');

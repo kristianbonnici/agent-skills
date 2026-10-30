@@ -1,5 +1,18 @@
 # long-horizon-orchestrator changelog
 
+## 1.2.0 (2026-10-30)
+
+The skill's first full review: its instructions by Codex GPT-6.1 Terra (safety), Claude Sonnet 5.5 (a whole run) and OpenCode DeepSeek V4.1 Flash (an open look); its scripts by Terra and OpenCode GLM-5.3 Flash. Every finding was checked against the files; the script fixes are by Claude Sonnet 5.5.
+- **A run that the owner leaves at once still starts:** the warm-up schedules a wake before the admin block and runs its permission prompts in the background.
+- **The finish can't strand the run:** the ledger is set finished, the heartbeat deleted and the notification sent before the report, which is the last message.
+- **No task waits forever:** the finish counts `ready` tasks as done and parks their dependents; a dirty checkout is retried on later wakes; a task with no independent reviewer waits for one instead of merging unreviewed.
+- **Stacks and stopped tasks:** under "leave on branch" a dependent starts from its predecessor's branch; a stopped task keeps its worktree.
+- **The contract says what the run will do:** the one push (the owner's profile), the narrow-miss exception, a T3 thread per task, tasks at once and a `cpu` lease for builds.
+- **Wakes check more:** the heartbeat is 15 minutes or less and checks approval prompts; every wake checks the heartbeat, the sampler and reserve tasks.
+- **Hosts:** T3's current tool names and the launch's retry key; Codex's `fork_turns` and timeouts as full wakes; Claude Code's backup check always on, and command-line reviewers from a subagent.
+- **The owner's settings:** screen lock, Stage Manager and Focus are in the snapshot and restored where possible.
+- **Scripts:** `lease run` ends a command's whole process group and holds the lease until it has stopped, survives a stop at any moment, and refuses bad input; `--all` renewals take every slot; `provider-usage` can't stall on a half line and skips malformed log lines; the sampler's timeout covers a slow live reading, kills its children's group, records failed measures as gaps and keeps going after a write error; `run-charts` never shows a reset window as full until a real reading, skips malformed records and explains bad facts in one sentence; `report-offer`'s writes are bounded; the run map escapes the branch, head and status.
+
 ## 1.1.0 (2026-10-30)
 
 - Every task passes the new `review-gate` skill instead of "fresh reviewer agents" of the task's own

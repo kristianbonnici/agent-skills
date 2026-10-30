@@ -968,12 +968,25 @@ class Server:
         self.errors = tempfile.TemporaryFile()
         self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
                                         cwd=str(cwd), start_new_session=True)
+        os.set_blocking(self.process.stdin.fileno(), False)   # a write waits only as long as the deadline allows
         self.buffer = b""
         self.next_id = 0
 
-    def send(self, message: dict) -> None:
-        self.process.stdin.write((json.dumps(message, ensure_ascii=False) + "\n").encode())
-        self.process.stdin.flush()
+    def send(self, message: dict, deadline: float | None = None) -> None:
+        """Writes one message under a deadline: a command that stopped reading would fill the pipe and
+        hold a plain write for ever. Too late counts as the command not answering, as a read does."""
+        if deadline is None:
+            deadline = time.monotonic() + HANDSHAKE_SECONDS
+        pending = memoryview((json.dumps(message, ensure_ascii=False) + "\n").encode())
+        fd = self.process.stdin.fileno()
+        while pending:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([], [fd], [], left)[1]:
+                raise TimeoutError("OrbOS's command didn't take the message in time")
+            try:
+                pending = pending[os.write(fd, pending):]
+            except BlockingIOError:
+                continue
 
     def line(self, deadline: float) -> bytes:
         while b"\n" not in self.buffer:
@@ -989,8 +1002,8 @@ class Server:
 
     def request(self, method: str, params: dict, seconds: float) -> dict:
         self.next_id += 1
-        self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
         deadline = time.monotonic() + seconds
+        self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}, deadline)
         while True:
             try:
                 message = json.loads(self.line(deadline))
@@ -1000,7 +1013,8 @@ class Server:
                 continue
             if "method" in message and "id" in message:   # the server asks something (a ping): answer it
                 self.send({"jsonrpc": "2.0", "id": message["id"], "result": {}} if message["method"] == "ping" else
-                          {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "not supported"}})
+                          {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": "not supported"}},
+                          deadline)
             elif message.get("id") == self.next_id:
                 return message
 
@@ -1051,7 +1065,7 @@ def offer(command: str, harness: str, cwd: Path, pictures: Path | None, with_tou
             return max(0.5, min(HANDSHAKE_SECONDS, deadline - time.monotonic()))
         server.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
                                       "clientInfo": {"name": "report-offer", "version": "1"}}, handshake())
-        server.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        server.send({"jsonrpc": "2.0", "method": "notifications/initialized"}, deadline)
         tools = (server.request("tools/list", {}, handshake()).get("result") or {}).get("tools") or []
         tool = next((t for t in tools if isinstance(t, dict) and t.get("name") == "offer_reading"), None)
         if tool is None:

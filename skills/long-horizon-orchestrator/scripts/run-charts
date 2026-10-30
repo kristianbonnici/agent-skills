@@ -82,7 +82,8 @@ usage folder, a second line says each subscription's use from start to end and t
 The usage panel sits under the timeline on the same time axis: each subscription's weekly window
 (Copilot's monthly one), for each subscription the run used, as the percent left, a smooth line falling from 100% as it is used,
 and a separate limit in use during the run (Antigravity's Gemini 4 Argon) as a dashed line, in its maker's colour
-(assets/marks/marks.json), with window resets dotted; its 5-hour window is left out, and so are
+(assets/marks/marks.json), with window resets dotted (a reading of a window that has reset since it was
+read is no point: the line holds to the reset and goes on from the next reading taken after it); its 5-hour window is left out, and so are
 quota pauses, which the timeline hatches on the lanes they stopped; then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
 peak behind it. In run-map.html hovering shows the values at that minute and the tasks working then.
 
@@ -95,6 +96,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -421,7 +423,7 @@ def read_lines(path: Path) -> list[dict]:
     """The sampler's JSON lines; a line cut off by a sampler still writing, or not JSON, is skipped."""
     out = []
     try:
-        text = path.read_text()
+        text = path.read_text(errors="replace")   # a byte that isn't UTF-8 spoils its own line only
     except OSError:
         return out
     for line in text.splitlines():
@@ -432,6 +434,11 @@ def read_lines(path: Path) -> list[dict]:
         if isinstance(record, dict) and isinstance(record.get("t"), str):
             out.append(record)
     return out
+
+
+def is_number(value) -> bool:
+    """A finite number that isn't a boolean."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def local_time(value, zone=None):
@@ -508,7 +515,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         avg: list = [None] * count
         top: list = [None] * count
         for i, records in buckets.items():
-            values = [r[key] for r in records if isinstance(r.get(key), (int, float))]
+            values = [r[key] for r in records if is_number(r.get(key))]
             if values and 0 <= i < count:
                 avg[i], top[i] = round(sum(values) / len(values), 1), round(peak(values), 1)
         return avg, top
@@ -518,7 +525,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         mac = {}
         for key, name, peak in (("cpu", "cpu", max), ("gpu", "gpu", max), ("mem_used_gb", "mem", max), ("disk_free_gb", "disk", min)):
             mac[name], mac[name + "_pk"] = series(key, peak)
-        totals = [r["mem_total_gb"] for rs in buckets.values() for r in rs if isinstance(r.get("mem_total_gb"), (int, float))]
+        totals = [r["mem_total_gb"] for rs in buckets.values() for r in rs if is_number(r.get("mem_total_gb"))]
         mac["mem_total"] = totals[-1] if totals else None
         mac["samples"] = sum(len(v) for v in buckets.values())
         for name in ("cpu", "gpu", "mem", "disk"):
@@ -535,8 +542,16 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         m = minute(moment)
         if m is None or not (t0 - 10 <= m <= t1 + 10):
             continue
-        zone = datetime.fromisoformat(record["t"]).tzinfo
-        for name, p in (record.get("providers") or {}).items():
+        try:
+            zone = datetime.fromisoformat(record["t"].replace("Z", "+00:00")).tzinfo
+        except ValueError:
+            continue
+        providers_now = record.get("providers")
+        if not isinstance(providers_now, dict):   # a record of the wrong shape is skipped
+            continue
+        for name, p in providers_now.items():
+            if not isinstance(p, dict) or not isinstance(p.get("windows"), dict):
+                continue
             try:  # a cached reading older than one already taken is a harness log that went stale: left out
                 seen_at = datetime.fromisoformat(str(p.get("observed_at")).replace("Z", "+00:00"))
                 seen_at = seen_at if seen_at.tzinfo else seen_at.replace(tzinfo=zone)
@@ -546,13 +561,15 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
                 if name in newest and seen_at < newest[name]:
                     continue
                 newest[name] = seen_at
-            for key, w in (p.get("windows") or {}).items():
-                if not isinstance(w.get("used"), (int, float)):
+            for key, w in p["windows"].items():
+                if not isinstance(w, dict) or not is_number(w.get("used")):
                     continue
                 resets = local_time(w.get("resets_at"), zone)
+                # A window that has reset since it was read says nothing about its use now: kept as a
+                # reset only, with no value, until a reading from after the reset comes.
                 over = bool(w.get("reset")) or (resets is not None and resets <= moment)
                 found.setdefault(name, {"plan": p.get("plan"), "windows": {}})["windows"].setdefault(key, []).append(
-                    (m, 0.0 if over else float(w["used"]), minute(resets), over))
+                    (m, float(w["used"]), minute(resets), over))
     providers = []
     for name, info in found.items():
         entry = next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], name, re.I)), None)
@@ -567,7 +584,16 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             # hourly live readings alone (a harness's log gone stale) still make one line
             longest = max(75.0, 3 * gaps[len(gaps) // 2]) if gaps else 75.0
             previous = None
+            lapsed = None   # where a window reset with no reading since: the next run begins there, at zero
             for m, used, reset_at, over in points:
+                if over:
+                    # the window reset since it was read: no point (its use now is unknown), but the period
+                    # before holds its value to the reset, which is marked
+                    if runs and prior is not None and runs[-1][-1][0] < prior <= m:
+                        runs[-1].append([round(prior, 2), runs[-1][-1][1]])
+                        resets.append(round(prior, 2))
+                        lapsed = round(prior, 2)
+                    continue
                 same = runs and over == group[1] and (reset_at == group[0] or (
                     reset_at is not None and group[0] is not None and abs(reset_at - group[0]) <= 5))  # a reset time corrected by a minute
                 if same and m - previous <= longest:
@@ -585,11 +611,14 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
                     runs[-1].append([round(prior, 2), runs[-1][-1][1]])
                     begin = [[round(prior, 2), 0.0]]
                     resets.append(round(prior, 2))
+                elif lapsed is not None:   # held and marked above, when its reset showed in a stale reading
+                    begin = [[lapsed, 0.0]]
+                lapsed = None
                 runs.append(begin + [[round(m, 2), used]])
                 group, prior = (reset_at, over), reset_at
             # a reset just after the last reading, inside the run, is marked too (later ones would be a guess)
             last, tail = points[-1][0], points[-1][2]
-            if tail is not None and not points[-1][3] and last <= tail <= last + 10 and t0 <= tail <= t1:
+            if runs and tail is not None and not points[-1][3] and last <= tail <= last + 10 and t0 <= tail <= t1:
                 resets.append(round(tail, 2))
             resets = sorted({r for r in resets if t0 <= r <= t1})
             segs = [[[m, round(100 - used, 1)] for m, used in run] for run in runs]
@@ -609,7 +638,9 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             main = next((k for k in longs if k in ("weekly", "monthly")), None) or max(longs, key=lambda k: len(info["windows"][k]))
             more = [slot for slot in (slot_of(k) for k in longs if k != main) if moved(slot)]
             first = slot_of(main)
-            if more or moved(first):
+            if not first["segs"]:   # only stale readings of it: nothing to draw, so the next window leads
+                first, more = (more[0], more[1:]) if more else (None, [])
+            if first and (more or moved(first)):
                 picked["long"] = first
             if more:
                 picked["more"] = more
@@ -924,6 +955,84 @@ def run_map(facts: dict, data: dict, paths: list[str], folder: Path) -> tuple[in
     return len(stub), 900 + 46 * lanes + extra  # the canvas, then a lane per agent; generous: html_render shrinks the frame to the page
 
 
+def check_time(value, where: str) -> None:
+    """Stops with one sentence unless value is "HH:MM" or "YYYY-MM-DD HH:MM" and a real time."""
+    if isinstance(value, str):
+        for form in ("%H:%M", "%Y-%m-%d %H:%M"):
+            try:
+                datetime.strptime(value, form)
+                return
+            except ValueError:
+                pass
+    raise SystemExit(f"run-charts: {where} is {value!r}, which isn't a time (HH:MM, or YYYY-MM-DD HH:MM for a run past midnight)")
+
+
+def check_facts(facts) -> None:
+    """Stops with one sentence naming the problem when the facts' shape or times can't be drawn."""
+    if not isinstance(facts, dict):
+        raise SystemExit("run-charts: the facts file must hold a JSON object")
+    tasks = facts.get("tasks")
+    if not isinstance(tasks, list):
+        raise SystemExit('run-charts: the facts need a "tasks" list')
+
+    def objects(owner: str, items, key: str) -> list[dict]:
+        if items is None:
+            return []
+        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+            raise SystemExit(f"run-charts: {owner}'s {key!r} must be a list of objects")
+        return items
+
+    def pairs(owner: str, item: dict) -> None:
+        for turn in item.get("turns") or []:
+            if not isinstance(turn, list) or len(turn) != 2:
+                raise SystemExit(f"run-charts: {owner}'s turns must each be a [start, end] pair")
+            for value in turn:
+                check_time(value, f"a turn of {owner}")
+
+    def minutes(owner: str, key: str, value) -> None:
+        if value is not None and not (is_number(value) and value >= 0):
+            raise SystemExit(f"run-charts: {owner}'s {key} must be a number of minutes, 0 or more")
+
+    for n, t in enumerate(tasks, 1):
+        if not isinstance(t, dict):
+            raise SystemExit(f"run-charts: task {n} must be an object")
+        for key in ("id", "name"):
+            if not isinstance(t.get(key), str) or not t[key].strip():
+                raise SystemExit(f'run-charts: task {n} needs a text "{key}"')
+        owner = f"task {t['id']}"
+        for key in ("launched", "ended"):
+            if t.get(key):
+                check_time(t[key], f"{owner}'s {key}")
+        minutes(owner, "worked_minutes", t.get("worked_minutes"))
+        if not isinstance(t.get("needs") or [], list):
+            raise SystemExit(f'run-charts: {owner}\'s "needs" must be a list of task IDs')
+        pairs(owner, t)
+        objects(owner, t.get("helpers"), "helpers")
+        for picture in objects(owner, t.get("pictures"), "pictures"):
+            if not isinstance(picture.get("src"), str):
+                raise SystemExit(f'run-charts: a picture of {owner} needs a "src"')
+    for n, p in enumerate(objects("the run", facts.get("pauses"), "pauses"), 1):
+        for key in ("start", "end"):
+            check_time(p.get(key), f"pause {n}'s {key}")
+    run = facts.get("run")
+    if run is not None:
+        if not isinstance(run, dict):
+            raise SystemExit('run-charts: "run" must be an object')
+        for key in ("start", "end"):
+            if run.get(key):
+                check_time(run[key], f"the run's {key}")
+        minutes("the run", "worked_minutes", run.get("worked_minutes"))
+        pairs("the run", run)
+        objects("the run", run.get("helpers"), "helpers")
+    for key in ("integration", "usage"):
+        if facts.get(key) is not None and not isinstance(facts[key], dict):
+            raise SystemExit(f'run-charts: "{key}" must be an object')
+    integration = facts.get("integration") or {}
+    for key in ("branch", "head", "ci"):
+        if integration.get(key) is not None and not isinstance(integration[key], str):
+            raise SystemExit(f'run-charts: integration "{key}" must be text')
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="run-charts", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -932,11 +1041,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--puppeteer-config")
     args = parser.parse_args(argv)
-    facts = json.loads(Path(args.facts).read_text())
-    ids = [t["id"] for t in facts.get("tasks", [])]
+    try:
+        facts = json.loads(Path(args.facts).read_text())
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"run-charts: can't read {args.facts}: {error}")
+    check_facts(facts)
+    ids = [t["id"] for t in facts["tasks"]]
     if len(ids) != len(set(ids)):
         raise SystemExit("run-charts: task IDs must be unique")
-    for t in facts.get("tasks", []):
+    for t in facts["tasks"]:
         for ref in (t.get("needs") or []) + [t.get("took_place_of"), t.get("replaces")]:
             if ref and ref not in ids:
                 raise SystemExit(f"run-charts: task {t['id']} refers to unknown task {ref}")

@@ -80,16 +80,19 @@ def claude(now: float) -> dict:
             match = pattern.search(line)
             if not match:
                 continue
-            info = json.loads(match.group(1))
-            stamp = re.match(r"\[([^\]]+)\]", line)
-            observed = (
-                datetime.fromisoformat(stamp.group(1).replace("Z", "+00:00")).timestamp()
-                if stamp
-                else path.stat().st_mtime
-            )
-            for name, w in (info.get("unifiedWindows") or {}).items():
-                key = "weekly" if name == "seven_day" else name
-                out["windows"][key] = window(100 * float(w.get("utilization", 0)), w.get("resetsAt"), now)
+            try:
+                info = json.loads(match.group(1))  # a line cut off or garbled is skipped, as the next older one is tried
+                try:
+                    observed = datetime.fromisoformat(re.match(r"\[([^\]]+)\]", line).group(1).replace("Z", "+00:00")).timestamp()
+                except (AttributeError, ValueError):
+                    observed = path.stat().st_mtime
+                windows = {}
+                for name, w in (info.get("unifiedWindows") or {}).items():
+                    key = "weekly" if name == "seven_day" else name
+                    windows[key] = window(100 * float(w.get("utilization", 0)), w.get("resetsAt"), now)
+            except (ValueError, TypeError, AttributeError):
+                continue
+            out["windows"] = windows
             out["status"] = info.get("status")
             out["observed_at"] = iso(observed)
             out["source"] = str(path)
@@ -192,7 +195,6 @@ def codex_live(now: float) -> dict:
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
         cwd=tempfile.gettempdir(),
     )
     try:
@@ -202,45 +204,64 @@ def codex_live(now: float) -> dict:
             {"jsonrpc": "2.0", "method": "initialized"},
             {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": None},
         ):
-            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.write((json.dumps(message) + "\n").encode())
         proc.stdin.flush()
         deadline = time.monotonic() + LIVE_TIMEOUT
+        pending = b""
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([proc.stdout], [], [], 1)
+            # Raw reads under the deadline, split into lines here: readline() would block on a line the
+            # server began and never finished.
+            ready, _, _ = select.select([proc.stdout], [], [], min(1, max(0.0, deadline - time.monotonic())))
             if not ready:
                 continue
-            line = proc.stdout.readline()
-            if not line:
+            chunk = os.read(proc.stdout.fileno(), 65536)
+            if not chunk:
                 break
-            try:
-                reply = json.loads(line)
-            except ValueError:
-                continue
-            if reply.get("id") != 2:
-                continue
-            if "error" in reply:
-                raise RuntimeError(f"account/rateLimits/read failed: {reply['error']}")
-            result = reply.get("result") or {}
-            limits = result.get("rateLimits") or {}
-            out = {
-                "plan": limits.get("planType"),
-                "windows": codex_windows(
-                    limits.get("primary"), limits.get("secondary"), now, ("usedPercent", "windowDurationMins")
-                ),
-                "observed_at": iso(now),
-                "source": "live: codex app-server account/rateLimits/read",
-            }
-            if limits.get("rateLimitReachedType"):
-                out["status"] = "rejected"
-            credits = (result.get("rateLimitResetCredits") or {}).get("credits") or []
-            available = sum(1 for c in credits if c.get("status") == "available")
-            if available:
-                out["reset_credits_available"] = available  # the user's to spend, never the orchestrator's
-            return out
+            pending += chunk
+            *lines, pending = pending.split(b"\n")
+            if len(pending) > TAIL_BYTES:
+                raise RuntimeError("codex app-server sent a line that is too long")
+            for line in lines:
+                try:
+                    reply = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(reply, dict) or reply.get("id") != 2:
+                    continue
+                return codex_reply(reply, now)
         raise RuntimeError("codex app-server gave no rate limits in time")
     finally:
         proc.kill()
         proc.wait()
+        for pipe in (proc.stdin, proc.stdout):
+            try:
+                pipe.close()
+            except OSError:
+                pass
+
+
+def codex_reply(reply: dict, now: float) -> dict:
+    """The rate limits in the app server's answer to account/rateLimits/read."""
+    if "error" in reply:
+        raise RuntimeError(f"account/rateLimits/read failed: {reply['error']}")
+    result = reply.get("result") or {}
+    limits = result.get("rateLimits") or {}
+    out = {
+        "plan": limits.get("planType"),
+        "windows": codex_windows(
+            limits.get("primary"), limits.get("secondary"), now, ("usedPercent", "windowDurationMins")
+        ),
+        "observed_at": iso(now),
+        "source": "live: codex app-server account/rateLimits/read",
+    }
+    if limits.get("rateLimitReachedType"):
+        out["status"] = "rejected"
+    credits = (result.get("rateLimitResetCredits") or {}).get("credits") or []
+    available = sum(1 for c in credits if c.get("status") == "available")
+    if available:
+        out["reset_credits_available"] = available  # the user's to spend, never the orchestrator's
+    return out
+
 
 def codex_windows(primary: dict | None, secondary: dict | None, now: float, keys) -> dict:
     windows = {}
@@ -427,13 +448,16 @@ def copilot(now: float) -> dict:
     for path in home.glob("*/events.jsonl"):
         if path.stat().st_mtime < month.timestamp():
             continue
-        last = None
-        for line in tail_lines(path):
-            if '"session.usage_checkpoint"' in line:
-                last = line
-        if last:
-            used += json.loads(last).get("data", {}).get("totalNanoAiu", 0) / 1e9
+        for line in reversed(tail_lines(path)):  # the newest checkpoint that parses
+            if '"session.usage_checkpoint"' not in line:
+                continue
+            try:
+                units = json.loads(line).get("data", {}).get("totalNanoAiu", 0) / 1e9
+            except (ValueError, TypeError, AttributeError):
+                continue
+            used += units
             sessions += 1
+            break
     return {
         "plan": None,
         "windows": {},

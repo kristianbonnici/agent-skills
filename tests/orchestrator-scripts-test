@@ -108,6 +108,103 @@ test "$status" -eq 143
 if kill -0 "$(cat "$run3/child.pid")" 2>/dev/null; then exit 1; fi
 if "$lease3" status | grep -q '"owner": "C"'; then exit 1; fi
 
+# lease: "run" stops the command's whole process group, a grandchild that ignores SIGTERM too, and
+# releases the lease only once it is gone; a stop while waiting, or right after the lease is taken,
+# releases it; --all on a renewal takes the other slots (or waits for them); nonsense numbers are
+# usage errors (2; 64 for check), never tracebacks.
+run5="$work/run5"
+mkdir -p "$run5/bin"
+cp "$scripts/lease" "$run5/bin/lease"
+printf '%s\n' '{"printer": {"slots": 1, "max_minutes": 5}, "gpu": {"slots": 2, "max_minutes": 30}}' > "$run5/leases.json"
+lease5="$run5/bin/lease"
+"$lease5" run printer --owner C --minutes 0.03 -- sh -c 'trap "" TERM; sleep 60 & echo $! > "$1"; wait' sh "$run5/grand.pid" >/dev/null 2>&1 &
+runner=$!
+background="$background $runner"
+wait_for_status "$run5" '"owner": "C"'
+tries=0
+until test -s "$run5/grand.pid"; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
+grand=$(cat "$run5/grand.pid")
+background="$background $grand"
+sleep 3.5                                                # the lease ended (1.8 s), the child ignores SIGTERM
+kill -0 "$grand"                                         # still running, so the lease is still held
+"$lease5" status | grep -q '"owner": "C"'
+status=0
+wait "$runner" || status=$?
+test "$status" -eq 124
+if kill -0 "$grand" 2>/dev/null; then exit 1; fi         # killed with its group
+if "$lease5" status | grep -q '"owner": "C"'; then exit 1; fi
+
+"$lease5" acquire printer --owner A >/dev/null           # a stop while waiting for the turn
+"$lease5" run printer --owner W --wait-minutes 1 -- true >/dev/null 2>&1 &
+waiter=$!
+background="$background $waiter"
+wait_for_status "$run5" '"printer:W"'
+kill -TERM "$waiter"
+status=0
+wait "$waiter" || status=$?
+test "$status" -eq 143
+if "$lease5" status | grep -q 'printer:W'; then exit 1; fi
+"$lease5" release printer --owner A >/dev/null
+
+python3 -I - "$lease5" "$run5" <<'EOF'
+# a stop signal right after the lease was taken: exits 128+15 and the lease is released
+import json, os, runpy, signal, sys
+lease, run = sys.argv[1:]
+ns = runpy.run_path(lease, run_name="lease")
+real = ns["Leases"].acquire
+def acquire_then_stop(self, *args):
+    result = real(self, *args)
+    os.kill(os.getpid(), signal.SIGTERM)
+    return result
+ns["Leases"].acquire = acquire_then_stop
+code = ns["main"](["run", "printer", "--owner", "S", "--run", run, "--", "sleep", "30"])
+assert code == 143, code
+state = json.load(open(os.path.join(run, "locks", "state.json")))
+assert state["leases"]["printer"] == [] and not state["waiting"], state
+EOF
+
+slots_of() { "$lease5" status | python3 -I -c 'import json, sys; print(sum(l["slots"] for l in json.load(sys.stdin)["leases"].get("gpu", []) if l["owner"] == sys.argv[1]))' "$1"; }
+"$lease5" acquire gpu --owner A >/dev/null
+"$lease5" acquire gpu --owner B >/dev/null
+status=0
+"$lease5" acquire gpu --owner A --all --wait-minutes 0.01 >/dev/null || status=$?
+test "$status" -eq 75                                    # B holds the other slot: not held as --all
+test "$(slots_of A)" -eq 1 && test "$(slots_of B)" -eq 1
+"$lease5" release gpu --owner B >/dev/null
+"$lease5" acquire gpu --owner A --all --wait-minutes 0.01 >/dev/null
+test "$(slots_of A)" -eq 2                               # the renewal took the other slot
+status=0
+"$lease5" acquire gpu --owner C --wait-minutes 0.01 >/dev/null || status=$?
+test "$status" -eq 75                                    # the whole GPU is A's
+"$lease5" release gpu --owner A >/dev/null
+
+usage_error() {
+  status=0
+  "$@" > "$run5/usage.out" 2>&1 || status=$?
+  test "$status" -eq "$expected"
+  if grep -q Traceback "$run5/usage.out"; then exit 1; fi
+}
+expected=2
+usage_error "$lease5" acquire printer --owner A --minutes 0
+usage_error "$lease5" acquire printer --owner A --minutes -5
+usage_error "$lease5" acquire printer --owner A --minutes nan
+usage_error "$lease5" acquire printer --owner A --wait-minutes -1
+usage_error "$lease5" run printer --owner A --minutes 0 -- true
+expected=64
+usage_error "$lease5" check printer --owner A --minutes 0
+expected=2
+n=0
+for config in '{"printer": {"slots": "two"}}' '{"printer": {"slots": 0}}' '{"printer": {"slots": 1.5}}' \
+    '{"printer": {"max_minutes": -1}}' '{"printer": {"max_minutes": "soon"}}' '{"printer": {"max_minutes": NaN}}' \
+    '{"printer": {"turn_minutes": 0}}' '{"printer": {"wait_minutes": -3}}' '{"printer": 5}' '[]'; do
+  n=$((n + 1))
+  mkdir -p "$work/badconfig$n"
+  printf '%s\n' "$config" > "$work/badconfig$n/leases.json"
+  usage_error "$lease5" acquire printer --owner A --run "$work/badconfig$n"
+done
+expected=64
+usage_error "$lease5" check printer --owner A --run "$work/badconfig1"
+
 # lease: a screen that needs the owner away, against a fake ioreg whose answers come from the file
 # "owner" beside it ("<idle seconds|none> <locked|unlocked|garbage>"). Acquire waits, in queue order,
 # until the screen is unlocked and the owner idle long enough; check tells a holder the owner came
@@ -516,6 +613,180 @@ if [ -n "$chrome" ]; then
   if grep -q 'aria-label="Usage"' "$work/dom.html"; then exit 1; fi        # no samples, no panel
 fi
 
+# run-charts: a window that has reset since it was last read gets no point after the reset (its use
+# then is unknown): the period before holds to the reset, the reset is marked, and the line goes on
+# only from a reading taken after it; records and providers of the wrong shape, and bytes that aren't
+# UTF-8, are skipped; facts that can't be drawn stop with one sentence and write nothing.
+mkdir -p "$work/usage-stale" "$work/usage-stale2" "$work/usage-bad"
+python3 -I - "$work" <<'EOF'
+import json, math, os, sys
+work = sys.argv[1]
+def row(t, used, resets="2026-10-29T00:00:00+00:00", observed="2026-10-28T23:00:00+00:00", reset=False, extra=None):
+    window = {"used": used, "resets_at": resets}
+    if reset:
+        window["reset"] = True
+    return json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached",
+                       "providers": {"claude": {"windows": {"weekly": window}, "observed_at": observed}}})
+before = [row("01:00:05", 10.0), row("01:30:05", 20.0)]
+stale = [row("02:05:05", 20.0, reset=True), row("02:35:05", 20.0, reset=True), row("03:30:05", 20.0, reset=True)]
+fresh = [row("04:05:05", 1.0, resets="2026-10-30T00:00:00+00:00", observed="2026-10-29T02:00:00+00:00")]
+def write(name, lines, machine=None):
+    with open(os.path.join(work, name, "providers.jsonl"), "wb") as f:
+        f.write(b"\n".join(l if isinstance(l, bytes) else l.encode() for l in lines) + b"\n")
+    if machine is not None:
+        with open(os.path.join(work, name, "machine.jsonl"), "wb") as f:
+            f.write(b"\n".join(machine) + b"\n")
+write("usage-stale", before + stale)
+write("usage-stale2", before + stale + fresh)
+T = "2026-10-29T01:10:00+02:00"
+odd = [json.dumps(r).encode() for r in (
+    {"t": T, "providers": []}, {"t": T, "providers": ["claude"]}, {"t": T, "providers": {"claude": None}},
+    {"t": T, "providers": {"claude": {"windows": []}}}, {"t": T, "providers": {"claude": {"windows": {"weekly": None}}}},
+    {"t": T, "providers": {"claude": {"windows": {"weekly": {"used": "a lot"}}}}},
+    {"t": T, "providers": {"claude": {"windows": {"weekly": {"used": math.nan}}}}},
+    {"t": "not a time", "providers": {}}, {"t": T, "providers": 5})]
+write("usage-bad", before[:1] + odd + [b"\xff\xfe broken \xc3(", b""] + before[1:] + stale + fresh,
+      machine=[json.dumps({"t": T, "cpu": 20.0, "mem_used_gb": 4.0, "mem_total_gb": 16.0, "disk_free_gb": 10.0}).encode(),
+               b"\xff\xfe not utf-8 \xc3(", json.dumps({"t": T, "cpu": "high", "gpu": math.nan}).encode()])
+for name in ("usage-stale", "usage-stale2", "usage-bad"):
+    f = json.load(open(os.path.join(work, "facts.json")))
+    f["usage"] = {"folder": os.path.join(work, name)}
+    json.dump(f, open(os.path.join(work, f"facts-{name}.json"), "w"))
+EOF
+for name in usage-stale usage-stale2 usage-bad; do
+  "$scripts/run-charts" "$work/facts-$name.json" "$work/charts-$name" >"$work/charts-$name.out" 2>"$work/charts-$name.err"
+done
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+def week(name):
+    page = open(os.path.join(sys.argv[1], name, "run-map.html")).read()
+    data = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))
+    assert "NaN" not in re.search(r"const DATA = (\{.*?\});\n", page).group(1)
+    return data["usage"]["providers"][0]["long"]
+stale = week("charts-usage-stale")
+assert [v for seg in stale["segs"] for _, v in seg] == [90.0, 80.0, 80.0], stale   # held to the reset, then nothing
+assert stale["segs"][-1][-1][0] == 120.0 and stale["resets"] == [120.0], stale
+for name in ("charts-usage-stale2", "charts-usage-bad"):
+    later = week(name)
+    assert [len(seg) for seg in later["segs"]] == [3, 2] and later["resets"] == [120.0], (name, later)
+    assert later["segs"][1][0] == [120.0, 100.0] and later["segs"][1][1][1] == 99.0, (name, later)
+EOF
+grep -q 'Usage: Claude weekly 90% → ' "$work/charts-usage-stale/summary.txt"
+python3 -I - "$scripts/run-charts" "$work" <<'EOF'
+import json, os, subprocess, sys
+script, work = sys.argv[1:]
+good = json.load(open(os.path.join(work, "facts.json")))
+def with_(**changes):
+    out = json.loads(json.dumps(good))
+    out.update(changes)
+    return out
+def task(**kw):
+    return dict({"id": "A", "name": "x", "level": "high"}, **kw)
+cases = {
+    "no tasks": {"run": {}}, "tasks not a list": {"tasks": {}}, "not an object": [],
+    "no id": {"tasks": [{"name": "x"}]}, "no name": {"tasks": [{"id": "A"}]},
+    "bad launch": {"tasks": [task(launched="24:30", ended="23:00")]},
+    "bad pause": with_(pauses=[{"start": "24:30", "end": "01:00"}]),
+    "bad run end": with_(run={"start": "00:50", "end": "24:30"}),
+    "bad turn": {"tasks": [task(turns=[["01:00"]])]},
+    "bad minutes": {"tasks": [task(worked_minutes="lots")]},
+    "bad picture": {"tasks": [task(pictures=[{"caption": "no src"}])]},
+    "bad branch": with_(integration={"branch": ["main"]}),
+}
+for n, (name, facts) in enumerate(cases.items()):
+    path, out = os.path.join(work, f"bad-facts-{n}.json"), os.path.join(work, f"bad-facts-{n}-out")
+    json.dump(facts, open(path, "w"))
+    done = subprocess.run([sys.executable, "-I", script, path, out], capture_output=True, text=True)
+    assert done.returncode != 0 and "Traceback" not in done.stderr and done.stderr.startswith("run-charts: "), (name, done.stderr)
+    assert len(done.stderr.strip().splitlines()) == 1 and not os.path.exists(out), (name, done.stderr)
+# a facts file that isn't JSON, or isn't UTF-8
+for n, data in enumerate((b"{not json", b'{"tasks": [], "x": "\xff\xfe"}')):
+    path = os.path.join(work, f"worse-facts-{n}.json")
+    open(path, "wb").write(data)
+    done = subprocess.run([sys.executable, "-I", script, path, os.path.join(work, f"worse-facts-{n}-out")], capture_output=True, text=True)
+    assert done.returncode != 0 and "Traceback" not in done.stderr and done.stderr.startswith("run-charts: "), (n, done.stderr)
+EOF
+
+# the run map puts the branch and head into HTML only escaped
+python3 -I - "$work" <<'EOF'
+import json, os, sys
+work = sys.argv[1]
+f = json.load(open(os.path.join(work, "facts.json")))
+f["integration"] = {"branch": "<b id=pwn>main", "head": "<i id=pwn2>abc", "ci": "passed"}
+f["tasks"][0]["status"] = "<u id=pwn3>merged"
+json.dump(f, open(os.path.join(work, "facts-html.json"), "w"))
+EOF
+"$scripts/run-charts" "$work/facts-html.json" "$work/charts-html" >/dev/null 2>&1
+grep -q 'esc(I.branch)' "$work/charts-html/run-map.html" && grep -q 'esc(I.head)' "$work/charts-html/run-map.html"
+if [ -n "$chrome" ]; then
+  "$chrome" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
+    --dump-dom "file://$work/charts-html/run-map.html#fit" > "$work/dom.html" 2>/dev/null
+  grep -q 'aria-label="Timeline"' "$work/dom.html"
+  if grep -q -E 'id="pwn' "$work/dom.html"; then exit 1; fi              # no element from the facts' text
+  grep -q '&lt;b id=pwn&gt;main' "$work/dom.html"
+fi
+
+# provider-usage: a Codex app server that writes half a line and stalls is given up on at the deadline
+# (not waited on for ever) and stopped; a line split across reads is put together; one malformed line in
+# Claude's cached log or Copilot's is skipped, the newest one that parses used.
+mkdir -p "$work/pu/bin" "$work/pu/t3/logs/provider" "$work/pu/copilot/session-state/s1" "$work/pu/claude"
+cat > "$work/pu/bin/codex" <<'EOF'
+#!/usr/bin/env python3
+# a stand-in for `codex app-server`: "stall" answers with half a line and hangs, else the answer comes in two pieces
+import json, os, sys, time
+open(os.environ["FAKE_CODEX_PID"], "w").write(str(os.getpid()))
+answer = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"rateLimits": {"planType": "plus",
+    "primary": {"usedPercent": 12.5, "windowDurationMins": 300, "resetsAt": 1893456000},
+    "secondary": {"usedPercent": 40, "windowDurationMins": 10080, "resetsAt": 1893999999}}}}) + "\n"
+sys.stdin.readline(); sys.stdin.readline(); sys.stdin.readline()
+cut = len(answer) // 2
+sys.stdout.write(answer[:cut]); sys.stdout.flush()
+if os.environ["FAKE_CODEX_MODE"] == "stall":
+    time.sleep(60)
+time.sleep(0.4)
+sys.stdout.write(answer[cut:]); sys.stdout.flush()
+time.sleep(60)
+EOF
+chmod +x "$work/pu/bin/codex"
+printf '%s\n' '[2026-10-29T10:00:00.000Z] x {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"seven_day":{"utilization":0.25,"resetsAt":1893456000}}}}' \
+  '[2026-10-29T11:00:00.000Z] x {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"seven_day":{"utilization":0.9,"resetsAt":}}}}' \
+  > "$work/pu/t3/logs/provider/events.1.log"
+printf '%s\n' '{"type":"session.usage_checkpoint","data":{"totalNanoAiu":2000000000}}' \
+  '{"type":"session.usage_checkpoint","data":{"totalNanoAiu":' > "$work/pu/copilot/session-state/s1/events.jsonl"
+PATH="$work/pu/bin:$PATH" T3_USERDATA="$work/pu/t3" COPILOT_HOME="$work/pu/copilot" CLAUDE_CONFIG_DIR="$work/pu/claude" \
+FAKE_CODEX_PID="$work/pu/codex.pid" python3 -I - "$scripts/provider-usage" <<'EOF'
+import os, runpy, sys, time
+ns = runpy.run_path(sys.argv[1], run_name="provider_usage")
+now = time.time()
+live = ns["codex_live"].__globals__   # the functions' own globals, which the copy runpy returns isn't
+live["LIVE_TIMEOUT"] = 2
+os.environ["FAKE_CODEX_MODE"] = "stall"
+started = time.monotonic()
+try:
+    ns["codex_live"](now)
+    raise AssertionError("a stalled server gave an answer")
+except RuntimeError as error:
+    assert "in time" in str(error), error
+assert time.monotonic() - started < 6, time.monotonic() - started
+pid = int(open(os.environ["FAKE_CODEX_PID"]).read())
+time.sleep(0.2)
+try:
+    os.kill(pid, 0)
+    raise AssertionError("the stalled server still runs")
+except ProcessLookupError:
+    pass
+os.environ["FAKE_CODEX_MODE"] = "split"
+live["LIVE_TIMEOUT"] = 10
+got = ns["codex_live"](now)
+assert got["plan"] == "plus" and got["windows"]["five_hour"]["used_percent"] == 12.5 and got["windows"]["weekly"]["used_percent"] == 40.0, got
+# the newest line of Claude's log is cut off: the one before it is used
+claude = ns["claude"](now)
+assert "error" not in claude and claude["windows"]["weekly"]["used_percent"] == 25.0, claude
+# and the newest Copilot checkpoint that parses
+copilot = ns["copilot"](now)
+assert copilot["local_units_used_this_month"] == 2.0 and copilot["local_sessions_this_month"] == 1, copilot
+EOF
+
 # usage-sampler: valid lines in machine.jsonl and providers.jsonl, a reading at a time, a second
 # sampler on the folder refused, and SIGTERM ends it at once, even in the middle of a slow reading.
 mkdir -p "$work/sampler/fake"
@@ -579,6 +850,76 @@ wait "$sampler"
 tries=0
 while kill -0 "$hung" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 30; sleep 0.1; done
 grep -q 'stopped after' "$work/sampler/hung/sampler.log"
+# A reading that outlives its provider-usage (a descendant still holds the output) is ended at the
+# timeout, the whole group, and the next readings go on; the timeout covers a live reading's worst case.
+python3 -I - "$scripts/usage-sampler" "$scripts/provider-usage" <<'EOF'
+import runpy, sys
+sampler = runpy.run_path(sys.argv[1], run_name="usage_sampler_check")
+live = runpy.run_path(sys.argv[2], run_name="provider_usage_check")["LIVE_TIMEOUT"]
+assert sampler["LIVE_TIMEOUT"] == live and sampler["READ_TIMEOUT"] >= sampler["LIVE_CALLS"] * live + 30, (sampler["READ_TIMEOUT"], live)
+EOF
+mkdir -p "$work/sampler/fake2"
+cat > "$work/sampler/fake2/provider-usage" <<'EOF'
+#!/bin/sh
+# prints a reading and exits, leaving a child that holds its output
+dir=$(dirname "$0")
+echo "+ $$" >> "$dir/reads.log"
+sleep 300 &
+echo $! >> "$dir/holders.pid"
+printf '%s\n' '{"providers": {}}'
+EOF
+chmod +x "$work/sampler/fake2/provider-usage"
+USAGE_SAMPLER_READ_TIMEOUT=2 "$scripts/usage-sampler" "$work/sampler/held" "$work/sampler/fake2/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ "$(grep -c '^+' "$work/sampler/fake2/reads.log" 2>/dev/null || echo 0)" -ge 2 ]; do
+  tries=$((tries + 1)); test "$tries" -lt 150; sleep 0.1
+done
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 80; sleep 0.1; done
+wait "$sampler"
+for holder in $(cat "$work/sampler/fake2/holders.pid"); do
+  tries=0
+  while kill -0 "$holder" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 30; sleep 0.1; done
+done
+
+# ps and vm_stat that fail: the sample says null for CPU and memory, not an idle Mac
+mkdir -p "$work/sampler/failing"
+for tool in ps vm_stat; do printf '#!/bin/sh\nexit 1\n' > "$work/sampler/failing/$tool"; chmod +x "$work/sampler/failing/$tool"; done
+PATH="$work/sampler/failing:$PATH" "$scripts/usage-sampler" "$work/sampler/nulls" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ -s "$work/sampler/nulls/machine.jsonl" ]; do tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1; done
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 80; sleep 0.1; done
+wait "$sampler"
+python3 -I - "$work/sampler/nulls/machine.jsonl" <<'EOF'
+import json, sys
+first = json.loads(open(sys.argv[1]).readline())
+assert first["cpu"] is None and first["mem_used_gb"] is None and first["load1"] >= 0 and first["disk_free_gb"] > 0, first
+EOF
+
+# a machine.jsonl that can't be written (a folder is in its place): logged once, the sampling goes on
+rm -f "$work/sampler/fake/slow"
+mkdir -p "$work/sampler/stuck/machine.jsonl"
+"$scripts/usage-sampler" "$work/sampler/stuck" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ "$(grep -c . "$work/sampler/stuck/providers.jsonl" 2>/dev/null || echo 0)" -ge 2 ]; do
+  tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1
+done
+kill -0 "$sampler"
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 80; sleep 0.1; done
+wait "$sampler"
+test "$(grep -c 'machine sample failed' "$work/sampler/stuck/sampler.log")" -eq 1
+grep -q 'stopped after 0 machine samples' "$work/sampler/stuck/sampler.log"
 unset USAGE_SAMPLER_MACHINE_EVERY USAGE_SAMPLER_CACHED_EVERY USAGE_SAMPLER_LIVE_EVERY
 
 # report-offer: the reading and the tour from a run's facts and report, within the tools' limits;
@@ -921,6 +1262,8 @@ for line in sys.stdin:
     elif m["method"] == "tools/list":
         tools = [{"name": "speak", "inputSchema": {}}] + ([] if mode == "off" else [{"name": "offer_reading", "inputSchema": schema}])
         send({"jsonrpc": "2.0", "id": m["id"], "result": {"tools": tools}})
+        if mode == "deaf":
+            time.sleep(60)   # stops reading, so a large offer fills the pipe
     elif m["method"] == "tools/call":
         if mode == "hang":
             time.sleep(60)
@@ -1028,6 +1371,24 @@ assert "Don't offer it again" in done.stdout
 try:
     os.kill(lines[0]["pid"], 0)
     raise AssertionError("the hung server still runs")
+except ProcessLookupError:
+    pass
+# A server that stops reading its input after the handshake, and an offer too large for the pipe (a long
+# report, in 3-byte characters): the write is bounded by the deadline too, so it ends as a hang does.
+with open(os.path.join(run_dir, "report", "big-report.md"), "w") as f:
+    f.write("Both tasks merged.\n\n## What was built\n\n" + ("**1. Cards (Task A)**\n" + "日" * 300 + "\n\n") * 400)
+started = time.monotonic()
+log = os.path.join(work, "deaf.log")
+done = subprocess.run([sys.executable, "-I", script, os.path.join(run_dir, "report", "facts.json"),
+                       os.path.join(run_dir, "report", "big-report.md"), "--repo", repo, "--out", os.path.join(work, "deaf"),
+                       "--ask-for-tour", "--read-aloud", server, "--timeout", "3"], capture_output=True, text=True,
+                      env=dict(os.environ, FAKE_LOG=log, FAKE_MODE="deaf"), timeout=60)
+offered = json.load(open(os.path.join(work, "deaf", "offered.json")))
+assert done.returncode == 4 and offered["uncertain"] and "in time" in offered["answer"] and time.monotonic() - started < 30, (done.stdout, offered)
+assert len(json.dumps(json.load(open(os.path.join(work, "deaf", "reading.json"))), ensure_ascii=False).encode()) > 100_000
+try:
+    os.kill(json.loads(open(log).readline())["pid"], 0)
+    raise AssertionError("the deaf server still runs")
 except ProcessLookupError:
     pass
 # OrbOS busy, a command that ends at once, a handshake that never comes: not offered (exit 3).

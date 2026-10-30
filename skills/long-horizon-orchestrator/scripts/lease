@@ -20,8 +20,11 @@ Usage:
   --run       the run directory (default: the folder above this script's folder, or $LEASE_RUN_DIR)
 
 Turns are first come, first served for each resource. A waiter that stops asking for 15 seconds
-loses its place. "run" holds the lease only while the command runs, stops the command when the
-lease runs out, and releases the lease if it is stopped itself.
+loses its place. "run" holds the lease only while the command runs. It starts the command in a session of its
+own, and when the lease runs out, or "run" is stopped (SIGTERM, SIGHUP, SIGINT, also while it
+waits for its turn), it sends SIGTERM to the command's whole process group, waits a few seconds
+and then kills what is left, and releases the lease only once they are gone. Asking for --all
+again while holding fewer slots takes the missing ones, or waits for them like a first acquire.
 
 While others wait, a holder's turn lasts at most the resource's turn_minutes (default: its
 max_minutes), counted from when the first of them began waiting, or from the holder's first
@@ -46,7 +49,9 @@ owner's state when a resource needs it. $LEASE_IOREG replaces /usr/sbin/ioreg, f
 and the log name it when set.
 
 Exit status: 0 done; 75 the wait timed out; 76 the turn is over and others wait (the lease is
-released); 124 "run" stopped the command at the end of its lease; 2 usage error.
+released); 124 "run" stopped the command at the end of its lease; 128 plus the signal's number
+when "run" was stopped by a signal; 2 usage error (an option or a leases.json value that isn't a
+sensible number, too).
 check: 0 you hold the lease (and the owner is away, where the resource needs that); 1 the owner is
 at the computer; 2 the screen is locked, or its state can't be read; 3 you don't hold the lease;
 64 usage error. Any nonzero status means stop.
@@ -57,6 +62,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import math
 import os
 import plistlib
 import re
@@ -79,6 +85,7 @@ CHECK_LOCKED = 2
 CHECK_NOT_HELD = 3
 CHECK_USAGE = 64
 READ_TIMEOUT_SECONDS = 3
+STOP_GRACE_SECONDS = 5
 
 
 class Unsupported(Exception):
@@ -163,6 +170,8 @@ class Leases:
                 self.config = json.load(f)
         except (OSError, ValueError) as error:
             raise SystemExit(f"lease: can't read {config_path}: {error}")
+        if not isinstance(self.config, dict) or not all(isinstance(v, dict) for v in self.config.values()):
+            raise SystemExit(f"lease: {config_path} must hold an object with one object for each resource")
 
     def log(self, line: str) -> None:
         os.makedirs(self.locks, exist_ok=True)
@@ -193,17 +202,29 @@ class Leases:
             os.replace(self.state_path + ".new", self.state_path)
             return result
 
+    def number(self, resource: str, key: str, default: float, positive: bool = True) -> float:
+        """A number from leases.json: finite, above zero (or zero or more), else a usage error."""
+        value = self.config[resource].get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+                or value < 0 or (positive and value == 0):
+            raise SystemExit(f"lease: {key} of {resource} in leases.json must be a number of minutes"
+                             f"{' above zero' if positive else ''}")
+        return float(value)
+
     def slots(self, resource: str) -> int:
-        return int(self.config[resource].get("slots", 1))
+        value = self.config[resource].get("slots", 1)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise SystemExit(f"lease: slots of {resource} in leases.json must be a whole number, 1 or more")
+        return value
 
     def max_minutes(self, resource: str) -> float:
-        return float(self.config[resource].get("max_minutes", 30))
+        return self.number(resource, "max_minutes", 30)
 
     def turn_minutes(self, resource: str) -> float:
-        return float(self.config[resource].get("turn_minutes", self.max_minutes(resource)))
+        return self.number(resource, "turn_minutes", self.max_minutes(resource))
 
     def wait_minutes(self, resource: str) -> float:
-        return float(self.config[resource].get("wait_minutes", DEFAULT_WAIT_MINUTES))
+        return self.number(resource, "wait_minutes", DEFAULT_WAIT_MINUTES, positive=False)
 
     def seconds(self, resource: str, key: str, default: float) -> float:
         value = self.config[resource].get(key, default)
@@ -243,6 +264,15 @@ class Leases:
                             return "turn over", None
                         expires = min(expires, end)
                     lease["expires"] = expires
+                    if lease["slots"] < need:
+                        # A renewal with --all while holding fewer slots: take the rest when nobody else
+                        # holds any and this owner is first in line, else wait, as a first acquire does.
+                        waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
+                        queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
+                        if queue[0][1] != me or sum(l["slots"] for l in held if l is not lease) + need > self.slots(resource):
+                            return "waiting", None
+                        lease["slots"] = need
+                    waiting.pop(me, None)
                     return "held", (expires - now) / 60
             waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
             queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
@@ -303,11 +333,27 @@ class Leases:
             held = state["leases"].get(resource, [])
             kept = [l for l in held if l["owner"] != owner]
             state["leases"][resource] = kept
+            state["waiting"].pop(f"{resource}:{owner}", None)   # a stopped waiter leaves its place too
             return len(held) - len(kept)
 
         released = self.locked(drop)
         self.log(f"release {resource} {owner}")
         return released
+
+    def hold(self, resource: str, owner: str, need: int, seconds: float) -> None:
+        """Keeps the owner's lease for at least seconds more, or takes it again when it just ran out and
+        the slots are free: while "run" ends a command, nobody else may start on the resource."""
+        def keep(state, now):
+            held = state["leases"].setdefault(resource, [])
+            mine = next((l for l in held if l["owner"] == owner), None)
+            if mine is None:
+                if sum(l["slots"] for l in held) + need > self.slots(resource):
+                    return
+                mine = {"owner": owner, "slots": need, "since": now, "expires": now}
+                held.append(mine)
+            mine["expires"] = max(mine["expires"], now + seconds)
+
+        self.locked(keep)
 
     def check(self, resource: str, owner: str) -> int:
         """Whether the holder may go on: 0, or why it should stop (see the exit statuses)."""
@@ -404,6 +450,14 @@ def command(argv: list[str], usage: int) -> int:
     if not args.owner:
         print("lease: --owner <task ID> is required", file=sys.stderr)
         return usage
+    if not math.isfinite(args.minutes) or args.minutes <= 0:
+        print("lease: --minutes must be a number above zero", file=sys.stderr)
+        return usage
+    if args.wait_minutes is not None and (not math.isfinite(args.wait_minutes) or args.wait_minutes < 0):
+        print("lease: --wait-minutes must be a number, zero or more", file=sys.stderr)
+        return usage
+    leases.slots(args.resource)
+    leases.turn_minutes(args.resource)
     minutes = min(args.minutes, leases.max_minutes(args.resource))
     wait_minutes = args.wait_minutes if args.wait_minutes is not None else leases.wait_minutes(args.resource)
 
@@ -417,37 +471,91 @@ def command(argv: list[str], usage: int) -> int:
     if not command_args:
         print("lease: run needs -- <command>", file=sys.stderr)
         return 2
-    code, left = leases.acquire(args.resource, args.owner, args.take_all, minutes, wait_minutes)
-    if code:
-        return code
 
     class Stopped(Exception):
         pass
 
+    # A stop signal raises Stopped once, from here on (also while waiting for the turn), so every stop
+    # runs the cleanup below; the body clears the flag when it is done, so cleanup is never interrupted.
+    interruptible = [True]
+
     def stop(signum, _frame):
-        raise Stopped(signum)
+        if interruptible[0]:
+            interruptible[0] = False
+            raise Stopped(signum)
 
     for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(signum, stop)
     process = None
+    need = leases.slots(args.resource) if args.take_all else 1
+
+    def end_command():
+        leases.hold(args.resource, args.owner, need, 2 * STOP_GRACE_SECONDS + 5)   # held while it ends
+        end_group(process)
+
     try:
-        process = subprocess.Popen(command_args)
         try:
-            return process.wait(timeout=left * 60)
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            print(f"lease: stopped the command at the end of its {round(left, 1):g} min lease", file=sys.stderr)
-            return 124
-    except Stopped as stopped:
-        if process is not None and process.poll() is None:
-            process.terminate()
+            code, left = leases.acquire(args.resource, args.owner, args.take_all, minutes, wait_minutes)
+            if code:
+                interruptible[0] = False
+                return code
             try:
-                process.wait(timeout=10)
+                process = subprocess.Popen(command_args, start_new_session=True)
+            except OSError as error:
+                print(f"lease: can't run {command_args[0]}: {error}", file=sys.stderr)
+                interruptible[0] = False
+                return 127
+            try:
+                code = process.wait(timeout=left * 60)
             except subprocess.TimeoutExpired:
-                process.kill()
-        return 128 + stopped.args[0]
+                print(f"lease: stopped the command at the end of its {round(left, 1):g} min lease", file=sys.stderr)
+                end_command()
+                code = 124
+            interruptible[0] = False
+            return code
+        except Stopped as stopped:
+            if process is not None:
+                end_command()
+            return 128 + stopped.args[0]
     finally:
+        interruptible[0] = False
+        if process is not None and process.poll() is None:
+            end_command()
         leases.release(args.resource, args.owner)
+
+
+def group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def end_group(process: subprocess.Popen, grace: float = STOP_GRACE_SECONDS) -> None:
+    """Stops a command started in its own session with all it started: SIGTERM to its process group,
+    a few seconds to finish, then SIGKILL; returns once the command has exited and the group is gone."""
+    pgid = process.pid
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except OSError:
+        pass
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        process.poll()   # reaps the command itself, whose zombie would keep the group alive
+        if not group_alive(pgid):
+            return
+        time.sleep(0.05)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        pass
+    process.wait()
+    deadline = time.monotonic() + grace
+    while group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
 
 
 if __name__ == "__main__":

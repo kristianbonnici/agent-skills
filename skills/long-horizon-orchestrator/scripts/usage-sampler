@@ -11,7 +11,8 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
 
 Each line is one JSON object with "t", the local time in ISO 8601 with its offset. A provider's
 window is {"used": percent, "resets_at": UTC time}, plus "reset": true when the window has reset
-since the harness last wrote it (its use is then near zero again).
+since the harness last wrote it (its use is then near zero again). A machine measure whose command
+failed (ps, vm_stat) is null in that line, never a zero; a write that fails is logged and sampling goes on.
 
 Readings of the subscriptions run in a thread of their own, one at a time (a reading still going
 when the next is due is skipped), so a slow live reading never holds up the Mac's samples. Only one
@@ -20,7 +21,8 @@ stopping a reading in progress.
 
 Usage: usage-sampler <folder> [provider-usage script]   (run it in the background; record its pid)
 The script defaults to the provider-usage next to this one. For tests, USAGE_SAMPLER_MACHINE_EVERY,
-USAGE_SAMPLER_CACHED_EVERY and USAGE_SAMPLER_LIVE_EVERY change the intervals (seconds).
+USAGE_SAMPLER_CACHED_EVERY and USAGE_SAMPLER_LIVE_EVERY change the intervals (seconds), and
+USAGE_SAMPLER_READ_TIMEOUT the longest a reading may take.
 """
 
 import fcntl
@@ -39,7 +41,11 @@ from datetime import datetime
 MACHINE_EVERY = float(os.environ.get("USAGE_SAMPLER_MACHINE_EVERY", 30))
 CACHED_EVERY = float(os.environ.get("USAGE_SAMPLER_CACHED_EVERY", 300))
 LIVE_EVERY = float(os.environ.get("USAGE_SAMPLER_LIVE_EVERY", 3600))
-READ_TIMEOUT = 120
+# A live reading asks Claude, Codex, Antigravity (two commands) and Copilot in turn, each for up to
+# provider-usage's LIVE_TIMEOUT (45 s), so the reading may take 5 of them, and gets a minute more.
+LIVE_TIMEOUT = 45
+LIVE_CALLS = 5
+READ_TIMEOUT = float(os.environ.get("USAGE_SAMPLER_READ_TIMEOUT", LIVE_TIMEOUT * LIVE_CALLS + 60))
 GB = 1024 ** 3
 
 stopping = threading.Event()
@@ -50,28 +56,32 @@ def now():
 
 
 def run(args, timeout=20):
+    """A command's output, or None when it can't run, times out or fails (not an empty reading)."""
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
+        done = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return None
+    return done.stdout if done.returncode == 0 else None
 
 
 CORES = os.cpu_count() or 1
-MEMORY = int(run(["sysctl", "-n", "hw.memsize"]).strip() or 0)
+MEMORY = int((run(["sysctl", "-n", "hw.memsize"]) or "").strip() or 0)
 
 
 def machine():
     sample = {"t": now()}
-    cpu = sum(float(v) for v in run(["ps", "-A", "-o", "%cpu="]).split() if re.fullmatch(r"[\d.]+", v))
-    sample["cpu"] = round(min(cpu / CORES, 100.0), 1)
+    # A measure whose command failed is null, so the chart shows a gap, never a false idle Mac.
+    cpus = [float(v) for v in (run(["ps", "-A", "-o", "%cpu="]) or "").split() if re.fullmatch(r"[\d.]+", v)]
+    sample["cpu"] = round(min(sum(cpus) / CORES, 100.0), 1) if cpus else None
     sample["load1"] = round(os.getloadavg()[0], 2)
-    vm = run(["vm_stat"])
+    vm = run(["vm_stat"]) or ""
     page = int((re.search(r"page size of (\d+)", vm) or [0, 16384])[1])
     pages = {k: int(v) for k, v in re.findall(r'^"?(Pages [^:"]+)"?:\s+(\d+)', vm, re.M)}
-    used = sum(pages.get(k, 0) for k in ("Pages active", "Pages wired down", "Pages occupied by compressor")) * page
-    sample["mem_used_gb"] = round(used / GB, 2)
-    sample["mem_total_gb"] = round(MEMORY / GB, 1)
-    gpu = run(["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"])
+    wanted = ("Pages active", "Pages wired down", "Pages occupied by compressor")
+    used = sum(pages.get(k, 0) for k in wanted) * page
+    sample["mem_used_gb"] = round(used / GB, 2) if all(k in pages for k in wanted) else None
+    sample["mem_total_gb"] = round(MEMORY / GB, 1) if MEMORY else None
+    gpu = run(["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"]) or ""
     busy = re.search(r'"Device Utilization %"=(\d+)', gpu)
     held = re.search(r'"In use system memory"=(\d+)', gpu)
     if busy:
@@ -124,8 +134,9 @@ class Reader:
             try:
                 out, _ = child.communicate(timeout=READ_TIMEOUT)
             except subprocess.TimeoutExpired:
+                # Stuck, or a descendant holds the pipe after provider-usage itself exited.
                 self.kill()
-                child.communicate()
+                self.close(child)
                 return
             if stopping.is_set():
                 return
@@ -142,11 +153,25 @@ class Reader:
 
     def kill(self):
         child = self.child
-        if child and child.poll() is None:
+        if child:
             try:
-                os.killpg(child.pid, signal.SIGKILL)  # provider-usage starts claude, codex, agy and gh
+                # The whole group, even when provider-usage itself has exited: what it started
+                # (claude, codex, agy, gh) may still run and hold its output.
+                os.killpg(child.pid, signal.SIGKILL)
             except OSError:
                 pass
+
+    @staticmethod
+    def close(child):
+        """Reaps the killed reading, waiting at most a moment, and lets go of its pipe."""
+        try:
+            child.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            child.stdout.close()
+        except OSError:
+            pass
 
 
 def append(path, record):
@@ -183,10 +208,20 @@ def main():
     log(folder, f"started pid {os.getpid()}")
     samples = 0
     last_cached = last_live = None
+    last_error = None
     while not stopping.is_set():
         start = time.monotonic()
-        append(os.path.join(folder, "machine.jsonl"), machine())
-        samples += 1
+        try:
+            append(os.path.join(folder, "machine.jsonl"), machine())
+            samples += 1
+            last_error = None
+        except OSError as error:  # a full disk or a folder gone for a moment must not end the night's sampling
+            if str(error) != last_error:
+                last_error = str(error)
+                try:
+                    log(folder, f"machine sample failed, going on: {error}")
+                except OSError:
+                    pass
         if last_live is None or start - last_live >= LIVE_EVERY:
             if reader.start(live=True):
                 last_live = last_cached = start
