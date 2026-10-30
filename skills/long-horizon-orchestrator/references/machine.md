@@ -86,7 +86,7 @@ nohup caffeinate -i -d -t <seconds> >/dev/null 2>&1 &   # -i: no idle sleep; -d:
 
 In the contract, list what belongs to the user and must be left as found: their running copy of the app, its settings and data, services it depends on, its link scheme and app identity, their other apps' windows, and their dev-server ports.
 
-- **Snapshot at the start**, into the run directory. Adapt it to the project, for example:
+- **Snapshot at the start**, into the run directory, before the warm-up changes any setting. Adapt it to the project, for example:
   - the app's settings (on macOS, `defaults export <domain> <file>` for restoring with `defaults import`, and `defaults export <domain> - > <file>.xml` for comparing: a file export is binary);
   - the list of files in `~/Library/Preferences`;
   - background services (`launchctl list`);

@@ -92,21 +92,21 @@ A message from the user during the run amends the contract. Quote it in the ledg
 
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
 - Create the ledger and the run directory (see below), and record the contract in the ledger.
-- Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configuration`). The report's charts need it.
+- Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configure` without a `modelSelection`, which only reads). The report's charts need it.
 - Record the version of this skill and of `review-gate` (`metadata.version` in each `SKILL.md`), so later studies can compare runs by version, and the absolute path of this skill's folder, so a wake after a context summary can read the skill and its `scripts/` again.
 - If your thread's title doesn't say plainly which run this is, rename it so the user can tell runs apart (in T3, [references/host-t3.md](references/host-t3.md#name-your-own-thread)).
 - Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
   - Never use the user's own dev-server ports.
   - Never stop processes you didn't start.
-- Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile. It must not hold up the run: before you post the admin block, schedule a one-off wake about 10 minutes later (in T3, as the resume wake is scheduled). If the user hasn't answered by then, check again what the warm-up can read without them, record what is missing, and launch.
+- Snapshot the user's own state into the run directory before the warm-up changes anything (it may turn off screen lock or Stage Manager), and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
+- Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile. It must not hold up the run: before you post the admin block, set up a wake about 10 minutes later, as your host reference's "Warm-up wake" says, and record it in the ledger. If the user answers first, delete it and go on. If it fires, check again what the warm-up can read without them, record what is missing, delete it, and launch.
 - Keep the computer awake until the finish ([references/machine.md](references/machine.md#4-keeping-the-computer-awake)), and record how.
-- Start the usage sampler in the background, detached from your shell, and record its process ID ([references/machine.md](references/machine.md#9-the-usage-sampler)): `nohup scripts/usage-sampler <run directory>/usage >/dev/null 2>&1 &`, then confirm it runs with `ps -p <pid>`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
-- Snapshot the user's own state into the run directory, and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
+- Start the usage sampler in the background, detached from your shell, and record its process ID ([references/machine.md](references/machine.md#9-the-usage-sampler)): `nohup <skill folder>/scripts/usage-sampler <run directory>/usage >/dev/null 2>&1 & echo $!` in one shell call (the next call is a new shell), then confirm it runs with `ps -p <pid>`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
 - Write the common file that every brief points to, with the rules all tasks share ([references/task-brief.md](references/task-brief.md#one-common-file-for-every-brief)).
 
 ### 4. Launch the ready tasks
 
-Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready`), and then the next reserve task:
+Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready` because of that policy, not for a review that didn't converge or found no reviewer), and then the next reserve task:
 1. Write its brief from [references/task-brief.md](references/task-brief.md), and save it in the run directory.
 2. Launch it as the host reference describes.
 3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level.
@@ -152,7 +152,7 @@ Launching dependent tasks is your job, not the job of the task briefs. Keeping t
 
 ### 7. Finish
 
-When no task is running, paused or able to start (every task is merged, `ready`, blocked, failed or parked; a pending task whose prerequisite will not merge in this run is parked):
+When no task is running, paused or able to start (every task is merged, `ready`, blocked, failed, stopped or parked; a pending task whose prerequisite will not merge in this run is parked). One exception: a task `ready` only because no reviewer had room, or because the integration checkout was dirty, is retried before the finish when a reviewer's window resets within about six hours: schedule a resume wake for that reset (or, for the checkout, a wake an hour later, once), and finish when that wake has run the retry. Then:
 
 1. Wait for any merged task that is still running to go idle, and finish its cleanup. Then stop the keep-awake and the usage sampler (`kill <its recorded process ID>`; it ends within a moment), close or cancel any remaining agents, and stop the run's leftover processes: test builds, watchers, the kit's browsers, and computer-use services the run's steps started ([references/machine.md](references/machine.md#8-leftover-processes)).
 2. Verify the end state:
@@ -167,11 +167,11 @@ When no task is running, paused or able to start (every task is merged, `ready`,
 6. Take a final usage snapshot, and update the calibration in the owner's provider profile. If the profile lives in the owner's private repository, commit and push it (see [references/routing.md](references/routing.md#6-the-owners-profile)).
 7. Write the final report from [references/final-report.md](references/final-report.md), with the tasks' pictures of what changed and a picture of how the run actually went: in T3 the run map, shown with `html_render` just before the report; elsewhere its two Mermaid charts (a dependency graph and a timeline). `scripts/run-charts` draws all of them from one facts file, with the usage graphs from the sampler's folder (`"usage": {"folder": "<run directory>/usage"}`). Save a copy next to the ledger, for the record.
 8. If you have OrbOS's `offer_reading` tool, offer the report once, as a reading to listen to later with its tour ([references/final-report.md](references/final-report.md#offer-it-to-listen-to-with-its-tour)). `scripts/report-offer` turns the facts file and the saved report into the tool's arguments and offers them through OrbOS's own command, so the tour shows the tasks' pictures too; if it can't, it says so and you call `offer_reading` yourself. It returns within moments, and the card waits in the notch for 8 hours, with **Tour** beside **Play**: the user plays the tour whenever they like, without you.
-9. Set the ledger's status to `finished`, then stop the heartbeat and any resume wake (the heartbeat stays until here, so a turn that dies while the report is prepared is woken again).
+9. Set the ledger's status to `finished`, then stop the heartbeat, the warm-up wake if it is still there, and any resume wake (the heartbeat stays until here, so a turn that dies while the report is prepared is woken again).
 10. If the host has a push-notification tool, send one line saying the run is finished.
 11. **Post the report in the chat as your final message.** This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. The saved copy isn't enough; the user reads the chat. Nothing comes after it in this turn.
 
-    Without OrbOS's tools, skip step 8 silently, and never speak aloud about it. When the offered reading couldn't keep its tour (an OrbOS that can't, or no offer), the report's last line says a live tour is available on request ([references/final-report.md](references/final-report.md#the-live-tour-only-when-the-tour-didnt-wait)).
+    Without OrbOS's tools, skip step 8 silently, and never speak aloud about it. When the offered reading couldn't keep its tour (an OrbOS that can't, or no offer) and you have OrbOS's `walkthrough` tool, the report's last line says a live tour is available on request ([references/final-report.md](references/final-report.md#the-live-tour-only-when-the-tour-didnt-wait)).
 12. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user. A tour they ask for ("walk me through the run") isn't new work: point them to **Tour** on the waiting card, or give it from the same files.
 
 ### 8. When the user comes back
@@ -202,12 +202,12 @@ The ledger is your memory across context summaries, heartbeats and wakes. Its fi
   - the user's approval, quoted with its time, which starts the run's clock for the report, and every amendment they sent during the run, quoted with its time;
   - the port and resource allocation;
   - any other active run: its ledger, the notes you exchanged and what you agreed.
-- **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; the versions of this skill and `review-gate`, and this skill's folder; and the IDs of the heartbeat and any resume wake.
+- **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; the versions of this skill and `review-gate`, and this skill's folder; and the IDs of the heartbeat, the warm-up wake and any resume wake.
 - **One row per task:**
   - ID, title, dependencies;
   - host, provider, model and effort, as the host reports them after launch;
   - thread or agent ID, branch, worktree path, ports;
-  - status (`pending`, `running`, `paused`, `merged`, `ready`, `blocked`, `failed`, `parked`);
+  - status (`pending`, `running`, `paused`, `merged`, `ready`, `blocked`, `failed`, `stopped`, `parked`); a `ready` task also notes why it isn't merged ("leave on branch", "narrow miss", "review didn't converge", "no reviewer available", "checkout dirty");
   - launch and finish times taken from the host's timestamps, never estimated; merged commits; notes;
   - the harness, model and reasoning level of every agent that worked on it, including a relaunched attempt;
   - helper hand-offs (which harness, model and reasoning level, for what, how many times), and any limit a helper hit and what its work switched to;

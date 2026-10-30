@@ -14,7 +14,7 @@ A newer variant may expose `followup_task`, `send_message` and `list_agents` ins
 Codex subagents share your working directory. Parallel writing tasks would collide, so create one worktree per task before spawning it, outside the repository directory:
 
 ```sh
-git worktree add "<repo parent>/<repo>-worktrees/<task branch>" -b <task branch> <integration branch>
+git worktree add "<repo parent>/<repo>-worktrees/<task branch>" -b <task branch> <integration branch, or under "leave on branch" the predecessor's branch for a stacked task>
 ```
 
 Put that path in the brief's constraints: "Work only in `<path>`; run every command there."
@@ -37,6 +37,10 @@ spawn_agent({
 - **The brief alone.** As on every host, a task gets no `/goal` ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)): its brief's stop conditions define the end. Replace the brief's "Report back" section with: "End with the handoff as your final message. Its first line must be the `[long-horizon-orchestrator]` status line."
 - **Concurrency.** Sessions have a limit on concurrent agents (`max_concurrent_threads_per_session`), so keep each wave within it. Finished agents count toward the limit until closed: call `close_agent` once you have handled a result.
 
+## Warm-up wake
+
+Codex has no scheduler, so don't end your turn after posting the warm-up's admin block: run `sleep 600` in the shell (it doesn't need the user), then check what the warm-up can read, record what is missing, and launch the first wave.
+
 ## Staying in control
 
 A Codex orchestrator should keep its own turn going instead of ending it and hoping to be woken:
@@ -51,7 +55,7 @@ Codex also delivers a final-status notification for completed agents. Verify on 
 
 ## At the end
 
-Post the final report as your final message. If OrbOS's server is registered for Codex (`read-aloud --mcp --harness codex`), it has the same `offer_reading` and `walkthrough` tools: offer the reading with its tour just before the report, through `scripts/report-offer --harness codex`, and give a live tour last only when the offer couldn't keep it and the user is at the computer ([final-report.md](final-report.md#offer-it-to-listen-to-with-its-tour)).
+In the skill's Finish order: if OrbOS's server is registered for Codex (`read-aloud --mcp --harness codex`), it has the same `offer_reading` and `walkthrough` tools: offer the reading with its tour, through `scripts/report-offer --harness codex` ([final-report.md](final-report.md#offer-it-to-listen-to-with-its-tour)). Set the ledger to `finished`, then post the final report as your final message. A live tour, when the offer couldn't keep one, waits for the user to ask.
 
 ## Following up
 

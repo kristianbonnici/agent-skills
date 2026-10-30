@@ -89,6 +89,10 @@ schedule_task({
 
 Every wake, not only a heartbeat, should check all running tasks. In testing, a crashed task was usually caught when another task's report woke the orchestrator.
 
+## Warm-up wake: when the user may leave before answering
+
+Before posting the warm-up's admin block, schedule a fixed-time wake for about 10 minutes later, as the resume wake below is scheduled (its weekday the day it falls on, which past midnight is the next day), with the prompt: "Warm-up wake for long-horizon-orchestrator run <run>. Read the ledger at <path>; it names the skill's folder. If the warm-up is still waiting for the user, check what it can read without them, record what is missing, and launch the first wave. Then delete this scheduled task." Record its ID in the ledger. If the user answers first, delete it then.
+
 ## Resume wake: after a usage window resets
 
 The scheduler has no one-off schedule, so use a fixed-time schedule for the reset day and delete it once it has fired:

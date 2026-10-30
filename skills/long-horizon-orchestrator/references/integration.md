@@ -83,7 +83,7 @@ Cleanup is for merged work only. A blocked, failed, parked or ready-but-not-merg
 
 ## A task the user stopped
 
-Nothing of it merges. Keep its work in case the user wants it later:
+Nothing of it merges. Mark it `stopped` and park its dependents. Keep its work in case the user wants it later:
 1. Save everything uncommitted as a patch: `git -C <worktree> add -A && git -C <worktree> diff --cached --binary > <run directory>/stopped/<branch>.patch`. If its branch has commits (`git log <integration branch>..<branch>`), save them as well with `git format-patch -o <run directory>/stopped/<branch>/ <integration branch>..<branch>`.
 2. Keep its worktree and branch: they also hold what the patch can't, such as files git ignores. Name them in the report for the user to delete once they've decided.
 3. Record in the ledger and the report how to pick it up again: in its worktree as it is, or on a new branch from the integration branch with `git am` of the saved commits first, then `git apply` of the patch.

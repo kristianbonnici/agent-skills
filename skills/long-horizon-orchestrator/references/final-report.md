@@ -12,7 +12,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
 - A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
 - Show what changed: the tasks' pictures under their items ("Pictures" below), and in T3 the run map right above the report ("Run map").
-- With OrbOS's tools, offer the report to listen to, with its tour, once, just before posting it ("Offer it to listen to, with its tour" below). The tour waits with the reading for the user to play, so no live tour is needed; give one only when the offer couldn't keep it. Neither changes the report, and neither holds up the finish.
+- With OrbOS's tools, offer the report to listen to, with its tour, once, just before posting it ("Offer it to listen to, with its tour" below). The tour waits with the reading for the user to play, so no live tour is needed. When the offer couldn't keep it, give one only when the user asks for it after the report. Neither changes the report, and neither holds up the finish.
 
 ## Template
 
