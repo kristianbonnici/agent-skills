@@ -6,7 +6,10 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
                    memory in use (ioreg's IOAccelerator PerformanceStatistics, no password), free disk
   providers.jsonl  every 5 min the subscriptions' windows as provider-usage --cached reads them from
                    the harnesses' own logs (current while their tasks run), and every 60 min a live
-                   reading (provider-usage, no quota used; Antigravity and Copilot only read live)
+                   reading (provider-usage, no quota used; Antigravity and Copilot only read live);
+                   with it, the Claude API credits' estimated dollars left when the owner has a
+                   credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd"}],
+                   "estimate": true}, no windows: provider-usage reads local files only)
   sampler.log      one line when it starts and one when it stops, with the CPU time it used
 
 Each line is one JSON object with "t", the local time in ISO 8601 with its offset. A provider's
@@ -92,9 +95,34 @@ def machine():
     return sample
 
 
+def number(value):
+    """A finite number that isn't a boolean, else None."""
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and abs(value) != float("inf")
+    return value if ok else None
+
+
+def credits_of(p):
+    """The Claude API credits' estimated dollars left, as provider-usage reports them, or None when
+    that reading has no figure (an error, or a malformed one)."""
+    left = number(p.get("left_usd"))
+    if left is None:
+        return None
+    grants = [{"expires": c.get("expires"), "left_usd": number(c.get("left_usd")), "granted_usd": number(c.get("granted_usd"))}
+              for c in p.get("credits") or [] if isinstance(c, dict)]
+    return {"left_usd": left, "credits": grants, "observed_at": p.get("observed_at"), "plan": p.get("plan"),
+            "spent_since_usd": number(p.get("spent_since_usd")), "estimate": True}
+
+
 def entry_of(data, live):
     entry = {"t": now(), "kind": "live" if live else "cached", "providers": {}}
     for name, p in (data.get("providers") or {}).items():
+        if not isinstance(p, dict):
+            continue
+        if name == "claude_api":  # dollars, not windows: its own record
+            found = credits_of(p)
+            if found:
+                entry["providers"][name] = found
+            continue
         windows = {}
         for key, w in (p.get("windows") or {}).items():
             if w.get("used_percent") is None:

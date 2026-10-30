@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Print subscription usage and reset times for Claude, Codex, Antigravity and Copilot as JSON.
+"""Print subscription usage and reset times for Claude, Codex, Antigravity and Copilot as JSON,
+and the estimated dollars left of the owner's Claude API credits.
 
 Read-only. By default each provider is asked directly, through its own CLI and
 sign-in, so the numbers include use from other devices and apps:
@@ -20,13 +21,29 @@ so it is read live only. A window whose reset time has passed is flagged as
 reset. When nothing can be read, the provider gets an "error" instead of the
 script failing.
 
-Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME.
+Claude API credits ("claude_api", in live and --cached mode alike, since it reads only local
+files): no API reports an individual account's credit balance, so it is estimated. The owner's
+grants are in ${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orchestrator/api-credits.json:
+{"instance": "claudeAgent_claude_api", "grants": [{"granted": "2026-10-08", "amount_usd": 200.0,
+"expires": "2026-11-01T00:00:00Z", "balance_usd": 158.34, "balance_at": "2026-10-30T21:04:00Z"}]},
+the balance the Console showed at balance_at. What T3 Code logged since for that provider instance
+(the Claude result lines of the API instance in the provider logs, their per-model costUSD; the
+subscription's instance never counts) is taken off the balance, each spend drawn from the soonest
+expiring grant that is open at that moment, never below zero; an expired grant has nothing left.
+"left_usd" totals the unexpired grants, "spent_since_usd" is what was logged since the earliest
+balance_at, and "estimate" is always true: spend by other tools, or before T3 logged it, is not
+seen, so update the file's balance when the Console is looked at again. Without that file the
+provider is left out; a file that can't be read gives an "error" instead. A provider log line that
+isn't JSON, or lacks a cost, is skipped.
+
+Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME, XDG_STATE_HOME.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import select
@@ -468,6 +485,188 @@ def copilot(now: float) -> dict:
     }
 
 
+# --- Claude API credits: an estimate from the owner's grants and T3's logged API spend ---------
+
+CREDITS_SCAN_SECONDS = 40   # the logs are large; a scan that runs this long stops and says it is partial
+ISO_STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$")
+
+
+def credits_file() -> Path:
+    state = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(state) / "agent-skills" / "long-horizon-orchestrator" / "api-credits.json"
+
+
+def utc_seconds(value) -> float | None:
+    """An ISO date or time ("2026-11-01", "2026-11-01T00:00:00Z", with an offset or fraction) as epoch
+    seconds, a time with no zone being UTC; None for anything else."""
+    match = ISO_STAMP.match(value.strip()) if isinstance(value, str) else None
+    if not match:
+        return None
+    date, hour, minute, second, zone = match.groups()
+    try:
+        moment = datetime.fromisoformat(f"{date}T{hour or '00'}:{minute or '00'}:{second or '00'}")
+        if zone and zone != "Z":
+            sign = -1 if zone[0] == "-" else 1
+            digits = zone[1:].replace(":", "")
+            moment -= sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:]))
+        return moment.replace(tzinfo=timezone.utc).timestamp()
+    except (ValueError, OverflowError):
+        return None
+
+
+def money(value) -> float | None:
+    """A finite, non-negative number of dollars that isn't a boolean, else None."""
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    return float(value) if ok else None
+
+
+def credit_grants(config) -> tuple[str, list[dict]]:
+    """The instance's name and the grants that have an expiry, a balance and the time it was read;
+    a grant missing any of them is skipped. Raises ValueError when the file isn't what it should be."""
+    if not isinstance(config, dict) or not isinstance(config.get("grants"), list):
+        raise ValueError('expected an object with a "grants" list')
+    instance = config.get("instance") or "claudeAgent_claude_api"
+    if not isinstance(instance, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", instance):
+        raise ValueError('"instance" must be the provider instance\'s name')
+    grants = []
+    for grant in config["grants"]:
+        if not isinstance(grant, dict):
+            continue
+        expires, balance_at, balance = utc_seconds(grant.get("expires")), utc_seconds(grant.get("balance_at")), money(grant.get("balance_usd"))
+        if expires is None or balance_at is None or balance is None:
+            continue
+        granted = money(grant.get("amount_usd"))
+        grants.append({"expires": expires, "balance_at": balance_at, "balance": balance,
+                       "granted_usd": granted if granted is not None else balance,
+                       "expires_text": grant.get("expires"), "balance_at_text": grant.get("balance_at")})
+    if not grants:
+        raise ValueError("no grant has an expiry, a balance_usd and a balance_at")
+    return instance, grants
+
+
+def api_spend(instance: str, since: float, now: float) -> tuple[list[tuple[float, float]], bool]:
+    """The API instance's spend logged at or after `since`, as (time, dollars) in time order, and whether
+    the scan was cut short. A result line's dollars are its model_usage_since_last_result costUSDs; a line
+    without a usable one counts the rise of total_cost_usd over the session's previous line (its first line, the
+    whole total). Lines of the subscription's instance, or that aren't JSON, or have no cost, are skipped."""
+    logs = Path(os.environ.get("T3_USERDATA", Path.home() / ".t3" / "userdata")) / "logs" / "provider"
+    marker = f"provider-instance:{instance}:"
+    deadline = time.monotonic() + CREDITS_SCAN_SECONDS
+    records, seen, partial = [], set(), False
+    try:
+        files = [(p.stat().st_mtime, p) for p in logs.glob("events.*.log*") if p.is_file()]
+    except OSError:
+        return [], False
+    for _, path in sorted(f for f in files if f[0] >= since - 60):  # a file untouched since the balance can't hold newer spend
+        try:
+            with path.open("rb") as handle:
+                for number, raw in enumerate(handle):
+                    if number % 2048 == 0 and time.monotonic() > deadline:
+                        partial = True
+                        break
+                    if b'"total_cost_usd"' not in raw or marker.encode() not in raw:
+                        continue
+                    text = raw.decode("utf-8", errors="replace")
+                    stamp = re.match(r"\[([^\]]+)\]", text)
+                    at = utc_seconds(stamp.group(1)) if stamp else None
+                    start = text.find("{")
+                    if at is None or start < 0:
+                        continue
+                    try:
+                        record = json.loads(text[start:])
+                        session = record["providerSessionId"]
+                        payload = record["event"]["payload"]
+                        total = money(payload["total_cost_usd"])
+                    except (ValueError, KeyError, TypeError):
+                        continue
+                    if not isinstance(session, str) or marker not in session or not isinstance(payload, dict) or total is None:
+                        continue
+                    if isinstance(payload.get("uuid"), str):
+                        if (session, payload["uuid"]) in seen:
+                            continue  # the same result logged twice
+                        seen.add((session, payload["uuid"]))
+                    models = payload.get("model_usage_since_last_result")
+                    since_last = None
+                    if isinstance(models, dict):
+                        costs = [c for c in (money(m.get("costUSD")) for m in models.values() if isinstance(m, dict)) if c is not None]
+                        since_last = sum(costs) if costs else None  # no usable cost: the total's rise instead
+                    records.append((at, session, total, since_last))
+        except OSError:
+            continue
+        if partial:
+            break
+    records.sort(key=lambda r: r[0])
+    previous: dict[str, float] = {}
+    spend = []
+    for at, session, total, since_last in records:
+        if since_last is not None:
+            cost = since_last
+        else:  # no per-model costs on this line: the rise in the session's running total
+            before = previous.get(session)
+            cost = total - before if before is not None and total >= before else total
+        previous[session] = total
+        if cost > 0 and since - 1e-6 <= at <= now + 60:
+            spend.append((at, cost))
+    return spend, partial
+
+
+def spend_from_credits(grants: list[dict], spend: list[tuple[float, float]]) -> list[float]:
+    """What each grant has left (in the grants' order) after the spend, in time order: each charge is
+    drawn from the soonest-expiring grant that was open then (read before it, not yet expired) and still
+    has something left, then from the next, never below zero. A grant that expires keeps no balance."""
+    left = [g["balance"] for g in grants]
+    order = sorted(range(len(grants)), key=lambda i: grants[i]["expires"])
+    for at, cost in spend:
+        for i in order:
+            if cost <= 0:
+                break
+            g = grants[i]
+            if not (g["balance_at"] <= at < g["expires"]) or left[i] <= 0:
+                continue
+            take = min(left[i], cost)
+            left[i] -= take
+            cost -= take
+    return left
+
+
+def claude_api(now: float) -> dict | None:
+    """The Claude API credits' estimated dollars left, or None when the owner has no credits file."""
+    path = credits_file()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        return {"plan": "api credits", "error": f"can't read {path}: {type(exc).__name__}", "estimate": True}
+    try:
+        instance, grants = credit_grants(json.loads(raw))
+    except ValueError as exc:
+        return {"plan": "api credits", "error": f"{path} isn't usable: {exc}", "estimate": True}
+    since = min(g["balance_at"] for g in grants)
+    spend, partial = api_spend(instance, since, now)
+    left = spend_from_credits(grants, spend)
+    credits = []
+    for g, remaining in sorted(zip(grants, left), key=lambda pair: pair[0]["expires"]):
+        expired = g["expires"] <= now
+        entry = {"expires": g["expires_text"], "granted_usd": round(g["granted_usd"], 2),
+                 "left_usd": 0.0 if expired else round(remaining, 2), "balance_at": g["balance_at_text"]}
+        if expired:
+            entry["expired"] = True
+        credits.append(entry)
+    out = {
+        "plan": "api credits",
+        "credits": credits,
+        "left_usd": round(sum(c["left_usd"] for c in credits), 2),
+        "spent_since_usd": round(sum(cost for _, cost in spend), 2),
+        "observed_at": iso(now),
+        "estimate": True,
+        "source": f"{path} and T3's API spend for {instance}",
+    }
+    if partial:
+        out["incomplete"] = "the log scan stopped early, so the spend (and what is left) may be off"
+    return out
+
+
 def with_fallback(live, cached, use_live: bool):
     def read(now: float) -> dict:
         if not use_live:
@@ -492,10 +691,13 @@ def main() -> int:
         ("codex", with_fallback(codex_live, codex, not args.cached)),
         ("antigravity", with_fallback(antigravity_live, antigravity, not args.cached)),
         ("copilot", with_fallback(copilot_live, copilot, not args.cached)),
+        ("claude_api", claude_api),  # local files only, so the same live or cached
     )
     for name, reader in readers:
         try:
-            report["providers"][name] = reader(now)
+            found = reader(now)
+            if found is not None:  # claude_api is left out when the owner has no credits file
+                report["providers"][name] = found
         except Exception as exc:  # report, never crash the orchestrator
             report["providers"][name] = {"error": f"{type(exc).__name__}: {exc}"}
     json.dump(report, sys.stdout, indent=2)

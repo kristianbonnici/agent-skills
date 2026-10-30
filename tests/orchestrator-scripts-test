@@ -839,6 +839,79 @@ if [ -n "$chrome" ]; then
   if grep -q 'aria-label="Usage"' "$work/dom.html"; then exit 1; fi        # no samples, no panel
 fi
 
+# run-charts with the Claude API credits: the line, its label, the expiry in the run and the summary
+# line and usage.mmd appear only when the dollars left changed during the run; a run whose credits
+# never moved, or whose readings are junk, shows nothing new; the run's first reading is where it starts.
+mkdir -p "$work/usage-credits" "$work/usage-still"
+python3 -I - "$work" <<'EOF'
+import json, os, sys
+work = sys.argv[1]
+def reading(t, left, expires=("2026-10-29T00:45:00Z", "2026-12-02T00:00:00Z")):
+    api = {"left_usd": left, "estimate": True, "plan": "api credits", "observed_at": "2026-10-29T00:00:00+00:00",
+           "credits": [{"expires": expires[0], "left_usd": 0.0, "granted_usd": 200.0}, {"expires": expires[1], "left_usd": left, "granted_usd": 200.0}]}
+    return json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude_api": api}})
+machine = json.dumps({"t": "2026-10-29T01:00:10+02:00", "cpu": 10.0, "mem_used_gb": 30.0, "mem_total_gb": 64.0, "disk_free_gb": 100.0})
+moved = [reading("00:40:05", 170.0),                                           # before the run starts at 00:50: not its first reading
+         reading("01:00:05", 158.4), reading("02:00:05", 150.0), reading("03:00:05", 142.2),
+         json.dumps({"t": "2026-10-29T03:05:00+02:00", "providers": {"claude_api": {"left_usd": "lots", "credits": "none"}}}),
+         json.dumps({"t": "2026-10-29T03:06:00+02:00", "providers": {"claude_api": {"error": "can't read"}}}),
+         json.dumps({"t": "2026-10-29T03:07:00+02:00", "providers": {"claude_api": {"left_usd": -5}}}),
+         json.dumps({"t": "2026-10-29T03:08:00+02:00", "providers": {"claude_api": "broken"}})]
+still = [reading("01:00:05", 158.4), reading("02:00:05", 158.4), reading("03:00:05", 158.4)]
+for name, rows in (("usage-credits", moved), ("usage-still", still)):
+    open(os.path.join(work, name, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+    open(os.path.join(work, name, "machine.jsonl"), "w").write(machine + "\n")
+    facts = json.load(open(os.path.join(work, "facts.json")))
+    facts["usage"] = {"folder": os.path.join(work, name)}
+    json.dump(facts, open(os.path.join(work, f"facts-{name}.json"), "w"))
+EOF
+"$scripts/run-charts" "$work/facts-usage-credits.json" "$work/charts-credits" >"$work/charts-credits.out" 2>"$work/charts-credits.err"
+"$scripts/run-charts" "$work/facts-usage-still.json" "$work/charts-still" >/dev/null 2>"$work/charts-still.err"
+if grep -q -E "Traceback|usage" "$work/charts-credits.err"; then exit 1; fi   # (the facts' missing picture is warned about)
+sed -n 2p "$work/charts-credits/summary.txt" | grep -qx 'Usage: Claude API credits $158 → $142 left (estimate). The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
+sed -n 2p "$work/charts-still/summary.txt" | grep -qx 'Usage: The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
+grep -q 'Claude API credits' "$work/charts-credits.out"
+if grep -q 'API credits' "$work/charts-still/summary.txt" "$work/charts-still/usage-mac.mmd"; then exit 1; fi
+test ! -e "$work/charts-still/usage.mmd"
+grep -q 'Claude API credits brown \$158 → \$142 left (estimate)' "$work/charts-credits/usage.mmd"
+grep -q 'plotColorPalette": "#9a4a2e"' "$work/charts-credits/usage.mmd" && grep -qx '    line \[100, .*\]' "$work/charts-credits/usage.mmd"
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+def data(name):
+    page = open(os.path.join(sys.argv[1], name, "run-map.html")).read()
+    return json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"], page
+u, page = data("charts-credits")
+api = u["api"]
+assert api["name"] == "Claude API credits" and api["colour"] == "#D97757" and api["mark"] is not None, api
+assert api["first"] == 158.4 and api["last"] == 142.2 and api["top"] == 170.0, api            # from the run's first reading (01:00), not the one at 00:40
+assert api["expiries"] == [165.0], api["expiries"]                                           # 02:45 local, inside the run (the other grant's is far after it)
+assert [[v for _, v in seg] for seg in api["segs"]] == [[170.0, 158.4, 150.0, 142.2]], api["segs"]   # one run; the junk readings aren't points
+assert u["providers"] == [] and u["mac"] is not None
+# the page draws it: a band, dashed and without a fill, the expiries, the label and the legend
+for text in ("byId.api", "Claude API credits", "us-line more", "A credit expires", "(estimate)"):
+    assert text in page, text
+assert 'class: "us-fill"' not in page.split("// the Claude API credits")[1].split("// the Mac")[0]
+still, _ = data("charts-still")
+assert "api" not in still                                                                    # the credits never moved: nothing new
+plain, _ = data("charts-usage")
+assert "api" not in plain
+EOF
+python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
+  "$work/charts-credits/run-map.html" > "$work/run-map-credits.js"
+if command -v node >/dev/null 2>&1; then node --check "$work/run-map-credits.js"; fi
+for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    "$candidate" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
+      --dump-dom "file://$work/charts-credits/run-map.html#fit&cross=02:00" > "$work/dom.html" 2>/dev/null
+    if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
+    grep -q 'Claude API credits' "$work/dom.html"
+    grep -q 'us-line more' "$work/dom.html"
+    grep -q 'class="us-reset"' "$work/dom.html"
+    grep -q '\$158 → \$142 left' "$work/dom.html"
+    break
+  fi
+done
+
 # run-charts: a window that has reset since it was last read gets no point after the reset (its use
 # then is unknown): the period before holds to the reset, the reset is marked, and the line goes on
 # only from a reading taken after it; records and providers of the wrong shape, and bytes that aren't
@@ -1012,6 +1085,107 @@ copilot = ns["copilot"](now)
 assert copilot["local_units_used_this_month"] == 2.0 and copilot["local_sessions_this_month"] == 1, copilot
 EOF
 
+# provider-usage's Claude API credits: only the API instance's spend counts (never the subscription's),
+# the soonest-expiring grant is drawn first and the next takes what it can't cover, an expired grant has
+# nothing left and spend after its expiry never touches it, a grant is only drawn from after its own
+# balance_at, a result logged twice counts once, a line with no per-model costs counts the rise of its
+# session's total, malformed lines are skipped, a log untouched since the balance is not read, spend is
+# never taken below zero, no credits file leaves the provider out, and a malformed file is an error, not a crash.
+mkdir -p "$work/credits/t3/logs/provider" "$work/credits/state/agent-skills/long-horizon-orchestrator" "$work/credits/home" "$work/credits/empty"
+python3 -I - "$work/credits" <<'EOF'
+import json, os, sys
+from datetime import datetime, timezone
+folder = sys.argv[1]
+logs = os.path.join(folder, "t3", "logs", "provider")
+api = "provider-session:provider-instance:claudeAgent_claude_api:thread:t1:u1"
+api2 = "provider-session:provider-instance:claudeAgent_claude_api:thread:t2:u2"
+sub = "provider-session:provider-instance:claudeAgent:thread:t3:u3"
+def line(stamp, session, total, models=None, uuid=None):
+    payload = {"type": "result", "total_cost_usd": total, "uuid": uuid or stamp, "usage": {"input_tokens": 3}}
+    if models is not None:
+        payload["model_usage_since_last_result"] = {name: {"costUSD": cost, "costBasis": "list"} for name, cost in models.items()}
+    record = {"provider": "claudeAgent", "kind": "protocol", "providerSessionId": session, "event": {"direction": "incoming", "payload": payload}}
+    return f"[{stamp}] NTIVE: " + json.dumps(record)
+first = [
+    line("2026-10-26T12:00:00.000Z", api, 10.0, {"claude-opus-5-5": 10.0}),                  # only the expired grant was open then
+    line("2026-10-30T22:00:00.000Z", api, 20.0, {"claude-opus-5-5": 24.0, "claude-haiku-5-5": 1.0}),   # 25, from the soonest grant open
+    line("2026-10-30T22:00:00.000Z", api, 20.0, {"claude-opus-5-5": 24.0, "claude-haiku-5-5": 1.0}),   # the same result logged again
+    line("2026-10-30T22:30:00.000Z", sub, 500.0, {"claude-opus-5-5": 500.0}),                # the subscription: not counted
+    line("2026-10-30T23:00:00.000Z", api2, 5.0),                                             # no per-model costs: 5, the session's first total
+    line("2026-10-31T02:00:00.000Z", api2, 12.0),                                            # ... then the rise, 7
+    '[2026-10-31T02:30:00.000Z] NTIVE: {"providerSessionId": "provider-instance:claudeAgent_claude_api:", "total_cost_usd": 9.9, "event": {"pay',  # cut off
+    'NTIVE: no stamp provider-instance:claudeAgent_claude_api: "total_cost_usd": 7',         # not a log line
+    line("2026-10-31T02:40:00.000Z", api, 20.0, {"claude-opus-5-5": "lots", "claude-haiku-5-5": -4.0}),  # no usable cost: the total hasn't risen
+    line("2026-10-31T02:45:00.000Z", api, "x", {"claude-opus-5-5": 50.0}),                   # a total that isn't a number
+    "",
+]
+second = [
+    line("2026-10-31T03:00:00.000Z", api, 40.0, {"claude-opus-5-5": 10.0}),                  # 3 left in the first grant, 7 from the next
+    line("2026-10-31T08:00:00.000Z", api, 60.0, {"claude-opus-5-5": 20.0}),                  # the first grant has expired: the next
+]
+open(os.path.join(logs, "events.a.log"), "w", errors="replace").write("\n".join(first) + "\n")
+open(os.path.join(logs, "events.b.log.1"), "w").write("\n".join(second) + "\n")
+old = os.path.join(logs, "events.old.log")        # untouched since before every balance: not read at all
+open(old, "w").write(line("2026-10-31T01:00:00.000Z", api, 1000.0, {"claude-opus-5-5": 1000.0}) + "\n")
+recent = datetime(2026, 10, 31, 10, 0, tzinfo=timezone.utc).timestamp()
+for name in ("events.a.log", "events.b.log.1"):
+    os.utime(os.path.join(logs, name), (recent, recent))
+os.utime(old, (1.76e9, 1.76e9))
+grants = {"instance": "claudeAgent_claude_api", "grants": [
+    {"granted": "2026-10-08", "amount_usd": 200.0, "expires": "2026-12-02T00:00:00Z", "balance_usd": 200.0, "balance_at": "2026-10-30T21:00:00Z"},
+    {"granted": "2026-10-01", "amount_usd": 100.0, "expires": "2026-10-31T06:00:00Z", "balance_usd": 40.0, "balance_at": "2026-10-30T21:00:00Z"},
+    {"granted": "2026-09-01", "amount_usd": 50.0, "expires": "2026-10-29", "balance_usd": 50.0, "balance_at": "2026-10-25T00:00:00Z"},
+    {"granted": "2026-09-01", "amount_usd": 50.0, "expires": "soon", "balance_usd": 50.0, "balance_at": "2026-10-25T00:00:00Z"},   # no usable expiry: skipped
+    "not a grant",
+]}
+json.dump(grants, open(os.path.join(folder, "state", "agent-skills", "long-horizon-orchestrator", "api-credits.json"), "w"))
+EOF
+python3 -I - "$scripts/provider-usage" "$work/credits" <<'EOF'
+import os, runpy, sys
+folder = sys.argv[2]
+os.environ.update(T3_USERDATA=os.path.join(folder, "t3"), XDG_STATE_HOME=os.path.join(folder, "state"), HOME=os.path.join(folder, "home"))
+ns = runpy.run_path(sys.argv[1], run_name="provider_usage_credits")
+at = ns["utc_seconds"]
+got = ns["claude_api"](at("2026-10-31T12:00:00Z"))
+credits = got["credits"]
+assert [c["expires"] for c in credits] == ["2026-10-29", "2026-10-31T06:00:00Z", "2026-12-02T00:00:00Z"], credits   # soonest first
+assert [c["left_usd"] for c in credits] == [0.0, 0.0, 173.0], credits    # the expired hold nothing; 200 - 7 - 20
+assert [c.get("expired") for c in credits] == [True, True, None] and credits[2]["granted_usd"] == 200.0 and credits[2]["balance_at"] == "2026-10-30T21:00:00Z"
+assert got["left_usd"] == 173.0 and got["estimate"] is True and got["plan"] == "api credits" and got["observed_at"].startswith("2026-10-31T12:00:00"), got
+# 10 + 25 + 5 + 7 + 10 + 20: not the subscription's 500, the duplicate, the old file, the broken lines or the total that isn't a number
+assert got["spent_since_usd"] == 77.0 and "incomplete" not in got and "error" not in got, got
+# earlier, the first grant is still open: 40 less 25, 5 and 7 leaves 3, and the later spend isn't logged yet
+early = ns["claude_api"](at("2026-10-31T02:50:00Z"))
+assert [c["left_usd"] for c in early["credits"]] == [0.0, 3.0, 200.0] and early["left_usd"] == 203.0 and early["spent_since_usd"] == 47.0, early
+# spend past a balance stops at zero, and a grant isn't drawn before its balance_at or after its expiry
+grant = lambda expires, balance_at, balance: {"expires": expires, "balance_at": balance_at, "balance": balance}
+assert ns["spend_from_credits"]([grant(100.0, 0.0, 5.0)], [(10.0, 3.0), (20.0, 5.0), (30.0, 1.0)]) == [0.0]
+assert ns["spend_from_credits"]([grant(100.0, 50.0, 5.0), grant(200.0, 0.0, 9.0)], [(10.0, 2.0), (60.0, 4.0), (150.0, 1.0)]) == [1.0, 6.0]
+# what can't be read as grants
+for bad in ([], {"grants": "x"}, {"grants": []}, {"grants": [{"expires": "2026-11-01"}]}, {"instance": "a b", "grants": [{}]}):
+    try:
+        ns["credit_grants"](bad)
+        raise AssertionError(bad)
+    except ValueError:
+        pass
+assert at("2026-11-01T02:00:00+02:00") == at("2026-11-01T00:00:00Z") == at("2026-11-01") and at("junk") is None and at(5) is None
+EOF
+credits_run() { env HOME="$work/credits/home" XDG_STATE_HOME="$1" T3_USERDATA="$work/credits/t3" CLAUDE_CONFIG_DIR="$work/credits/empty" CODEX_HOME="$work/credits/empty" COPILOT_HOME="$work/credits/empty" PATH="/usr/bin:/bin" python3 -I "$scripts/provider-usage" --cached; }
+credits_run "$work/credits/state" > "$work/credits/with.json"
+credits_run "$work/credits/empty" > "$work/credits/without.json"
+printf '%s\n' '{"grants": [' > "$work/credits/state/agent-skills/long-horizon-orchestrator/api-credits.json"
+credits_run "$work/credits/state" > "$work/credits/broken.json" 2> "$work/credits/broken.err"
+test ! -s "$work/credits/broken.err"
+python3 -I - "$work/credits" <<'EOF'
+import json, os, sys
+read = lambda name: json.load(open(os.path.join(sys.argv[1], name)))["providers"]
+with_, without, broken = read("with.json"), read("without.json"), read("broken.json")
+assert with_["claude_api"]["estimate"] is True and with_["claude_api"]["credits"] and "error" not in with_["claude_api"], with_["claude_api"]   # cached mode reads it
+assert "claude_api" not in without and set(without) == {"claude", "codex", "antigravity", "copilot"}                 # no credits file: left out, no error
+assert set(broken["claude_api"]) >= {"error", "estimate"} and "left_usd" not in broken["claude_api"], broken["claude_api"]   # a message, not a crash
+assert set(broken) - {"claude_api"} == set(without) == set(with_) - {"claude_api"}                                   # the others are as before
+EOF
+
 # usage-sampler: valid lines in machine.jsonl and providers.jsonl, a reading at a time, a second
 # sampler on the folder refused, and SIGTERM ends it at once, even in the middle of a slow reading.
 mkdir -p "$work/sampler/fake"
@@ -1022,7 +1196,7 @@ dir=$(dirname "$0")
 echo "+ $$" >> "$dir/reads.log"
 if [ -e "$dir/slow" ]; then echo $$ > "$dir/hung.pid"; sleep 60; fi
 sleep 0.4
-printf '%s\n' '{"providers": {"claude": {"windows": {"five_hour": {"used_percent": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset_since_observed": true}, "weekly": {"used_percent": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00", "source": "log", "plan": "claude_max"}, "antigravity": {"windows": {}, "error": "no"}}}'
+printf '%s\n' '{"providers": {"claude": {"windows": {"five_hour": {"used_percent": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset_since_observed": true}, "weekly": {"used_percent": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00", "source": "log", "plan": "claude_max"}, "antigravity": {"windows": {}, "error": "no"}, "claude_api": {"plan": "api credits", "credits": [{"expires": "2026-11-01T00:00:00Z", "granted_usd": 200.0, "left_usd": 90.5, "balance_at": "2026-10-30T21:04:00Z"}, {"expires": "2026-12-02T00:00:00Z", "granted_usd": 200.0, "left_usd": 200.0, "balance_at": "2026-10-30T21:04:00Z"}], "left_usd": 290.5, "spent_since_usd": 9.5, "observed_at": "2026-10-29T00:00:00+00:00", "estimate": true, "source": "x"}}}'
 echo "- $$" >> "$dir/reads.log"
 EOF
 chmod +x "$work/sampler/fake/provider-usage"
@@ -1042,7 +1216,7 @@ tries=0
 while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
 wait "$sampler"
 grep -q 'started pid' "$work/sampler/out/sampler.log" && grep -q 'stopped after .* machine samples' "$work/sampler/out/sampler.log"
-python3 -I - "$work/sampler" <<'EOF'
+SCRIPTS="$scripts" python3 -I - "$work/sampler" <<'EOF'
 import json, os, re, sys
 folder = sys.argv[1]
 machine = [json.loads(l) for l in open(os.path.join(folder, "out", "machine.jsonl"))]
@@ -1056,6 +1230,17 @@ claude = reads[0]["providers"]["claude"]
 assert claude["windows"]["five_hour"] == {"used": 4.0, "resets_at": "2026-10-29T03:30:00+00:00", "reset": True}
 assert claude["windows"]["weekly"] == {"used": 38.0, "resets_at": "2026-11-03T00:00:00+00:00"}
 assert "antigravity" not in reads[0]["providers"] and claude["plan"] == "claude_max"
+# the Claude API credits go in as dollars left with each grant's expiry, no windows
+api = reads[0]["providers"]["claude_api"]
+assert api["left_usd"] == 290.5 and api["estimate"] is True and "windows" not in api and api["plan"] == "api credits", api
+assert [(c["expires"], c["left_usd"]) for c in api["credits"]] == [("2026-11-01T00:00:00Z", 90.5), ("2026-12-02T00:00:00Z", 200.0)], api
+# a reading of the credits that is an error, has no number, or is the wrong shape records nothing, and never crashes
+import runpy
+entry_of = runpy.run_path(os.path.join(os.environ["SCRIPTS"], "usage-sampler"), run_name="sampler_entry")["entry_of"]
+junk = {"providers": {"claude_api": {"error": "x", "estimate": True}, "x": "broken", "claude": {"windows": {"weekly": {"used_percent": 3.0}}}}}
+assert list(entry_of(junk, False)["providers"]) == ["claude"], entry_of(junk, False)
+assert "claude_api" not in entry_of({"providers": {"claude_api": {"left_usd": "lots"}}}, True)["providers"]
+assert entry_of({"providers": {"claude_api": {"left_usd": 5, "credits": ["x", {"left_usd": None}]}}}, True)["providers"]["claude_api"]["left_usd"] == 5
 # one reading at a time: every start is followed by its end before the next start
 marks = [l.split()[0] for l in open(os.path.join(folder, "fake", "reads.log"))]
 assert marks[0] == "+" and all(a != b for a, b in zip(marks, marks[1:])), marks

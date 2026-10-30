@@ -77,14 +77,22 @@ been rendered. run-map.html is the same map on its own, to open in a browser.
 
 summary.txt gets the report's run-time line: how long the run took, how much of it was paused,
 how long the orchestrator and the tasks worked, and how many tasks ran at once at most. With a
-usage folder, a second line says each subscription's use from start to end and the Mac's peaks.
+usage folder, a second line says each subscription's use from start to end and the Mac's peaks,
+and, when the run used the owner's Claude API credits, their estimated dollars left in whole
+dollars ("Claude API credits $158 → $142 left (estimate)").
 
 The usage panel sits under the timeline on the same time axis: each subscription's weekly window
 (Copilot's monthly one), for each subscription the run used, as the percent left, a smooth line falling from 100% as it is used,
 and a separate limit in use during the run (Antigravity's Gemini 4 Argon) as a dashed line, in its maker's colour
 (assets/marks/marks.json), with window resets dotted (a reading of a window that has reset since it was
 read is no point: the line holds to the reset and goes on from the next reading taken after it); its 5-hour window is left out, and so are
-quota pauses, which the timeline hatches on the lanes they stopped; then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
+quota pauses, which the timeline hatches on the lanes they stopped; then, when the run used the Claude API
+credits (the sampler's "claude_api" readings, an estimate by provider-usage: the dollars left of every
+unexpired grant changed during the run), a band of their own: dollars left from the run's first reading,
+a dashed line in Claude's colour with no fill, each grant's expiry that falls in the run dotted, and the
+label "Claude API credits $X → $Y left" (whole dollars, "estimate" in the hover and the legend); a run
+that never touched the credits shows none of it (usage.mmd draws it as a share of the dollars at the
+start, a darker orange line, since a chart can't dash it); then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
 peak behind it. In run-map.html hovering shows the values at that minute and the tasks working then.
 
 --render also draws each chart on a white and on a black background with the Mermaid command
@@ -537,6 +545,8 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     # the subscriptions: the weekly or monthly window as runs of points, one run per reset period
     found: dict[str, dict] = {}
     newest: dict[str, datetime] = {}
+    api_reads: list[tuple[float, float]] = []   # (minute, dollars left) of the Claude API credits
+    api_expiries: set[float] = set()
     for record in reads:
         moment = local_time(record["t"])
         m = minute(moment)
@@ -550,6 +560,14 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         if not isinstance(providers_now, dict):   # a record of the wrong shape is skipped
             continue
         for name, p in providers_now.items():
+            if name == "claude_api":   # dollars left, not a window: kept apart below
+                if isinstance(p, dict) and is_number(p.get("left_usd")) and p["left_usd"] >= 0:
+                    api_reads.append((m, float(p["left_usd"])))
+                    for credit in p.get("credits") if isinstance(p.get("credits"), list) else []:
+                        ends_at = minute(local_time(credit.get("expires"), zone)) if isinstance(credit, dict) else None
+                        if ends_at is not None:
+                            api_expiries.add(round(ends_at, 2))
+                continue
             if not isinstance(p, dict) or not isinstance(p.get("windows"), dict):
                 continue
             try:  # a cached reading older than one already taken is a harness log that went stale: left out
@@ -648,9 +666,12 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             mark, ink = mark_of(entry) if entry else (None, None)
             providers.append({"id": name, "name": PROVIDER_NAMES.get(name, name.title()), "plan": info["plan"],
                               "colour": line_colour(entry), "mark": mark, "ink": ink, **picked})
-    if not mac and not providers:
+    api = api_credits(api_reads, api_expiries, t0, t1, next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], "claude", re.I)), None), mark_of)
+    if not mac and not providers and not api:
         return None
     data = {"t0": t0, "t1": t1, "start": start, "count": count, "providers": providers, "mac": mac}
+    if api:
+        data["api"] = api
     if mac:
         data["peaks"] = {
             "cpu": max((v for v in mac.get("cpu_pk", []) if v is not None), default=None),
@@ -662,6 +683,34 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             "disk_lowest": min((v for v in mac.get("disk_pk", []) if v is not None), default=None),
         }
     return data
+
+
+def api_credits(reads: list[tuple[float, float]], expiries: set[float], t0: float, t1: float, entry: dict | None, mark_of) -> dict | None:
+    """The Claude API credits' line: the dollars left of every unexpired grant (provider-usage's estimate,
+    as the sampler recorded it) as runs of (minute, dollars), and the minutes inside the run where a grant
+    expires. None unless the dollars left changed during the run: a run that never touched the credits
+    shows nothing. Claude's colour, drawn dashed by the page."""
+    points = sorted({m: v for m, v in sorted(reads)}.items())   # two readings at the same moment: the later one
+    inside = [p for p in points if t0 <= p[0] <= t1]
+    if len({round(v, 2) for _, v in inside}) < 2:
+        return None
+    gaps = sorted(b[0] - a[0] for a, b in zip(points, points[1:]))
+    longest = max(75.0, 3 * gaps[len(gaps) // 2])   # a gap this long is a sampler that wasn't running: no line across it
+    segs: list[list[list[float]]] = []
+    for m, v in points:
+        if segs and m - segs[-1][-1][0] <= longest:
+            segs[-1].append([round(m, 2), round(v, 2)])
+        else:
+            segs.append([[round(m, 2), round(v, 2)]])
+    mark, ink = mark_of(entry) if entry else (None, None)
+    return {"id": "claude_api", "name": "Claude API credits", "colour": line_colour(entry), "mark": mark, "ink": ink,
+            "segs": segs, "expiries": sorted(e for e in expiries if t0 <= e <= t1),
+            "first": inside[0][1], "last": inside[-1][1], "top": max(v for _, v in points)}
+
+
+def dollars(value: float) -> str:
+    """Whole dollars, halves rounding up."""
+    return f"${math.floor(value + 0.5):,}"
 
 
 def pct(value: float) -> str:
@@ -693,6 +742,9 @@ def usage_line(usage: dict) -> str:
                         + (f" (reset {resets}×)" if resets else ""))
         if bits:
             parts.append(f"{p['name']} " + ", ".join(bits))
+    api = usage.get("api")
+    if api:
+        parts.append(f"Claude API credits {dollars(api['first'])} → {dollars(api['last'])} left (estimate)")
     text = "Usage: " + "; ".join(parts) + "." if parts else "Usage:"
     peaks = usage.get("peaks")
     if peaks:
@@ -719,7 +771,8 @@ def clock_text(m: float) -> str:
 
 
 def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
-    """The fallback for hosts that can't show HTML: usage.mmd (the subscriptions' weekly or monthly windows, % left) and
+    """The fallback for hosts that can't show HTML: usage.mmd (the subscriptions' weekly or monthly windows, % left,
+    and the Claude API credits as a share of the dollars at the start, when the run used them) and
     usage-mac.mmd (CPU, GPU and memory, the peak in each stretch), as xychart-beta line charts."""
     t0, t1 = usage["t0"], usage["t1"]
     width = next((w for w in (5, 10, 15, 30, 60, 120, 180, 240) if (t1 - t0) / w <= 24), 360)
@@ -744,9 +797,21 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
         colours.append(colour)
         a, b, _ = window_ends(slot, t0, t1)
         names.append(f"{p['name']} {colour_names.get(colour, colour)} {said(slot)} {pct(a)} → {pct(b)} left")
+    api, subs = usage.get("api"), len(lines)
+    if api:  # the credits' dollars as a share of what the run started with, in a darker orange than the subscription's line (a chart can't dash it)
+        points = sorted((pt for run in api["segs"] for pt in run))
+        base = api["first"] or api["top"] or 1
+        values = []
+        for s in starts:
+            before = [v for m, v in points if m <= s + width]
+            values.append(round(min(100.0, 100 * (before[-1] if before else points[0][1]) / base), 1))
+        lines.append("    line [" + ", ".join(f"{v:g}" for v in values) + "]")
+        colours.append("#9a4a2e")
+        names.append(f"Claude API credits brown {dollars(api['first'])} → {dollars(api['last'])} left (estimate)")
     if lines:
-        title = "Subscriptions' weekly or monthly windows, % left at the end of each " \
-                f"{span(width)} · " + " · ".join(names)
+        title = ("Subscriptions' weekly or monthly windows, % left" if subs else "Claude API credits, % of the dollars at the start") \
+                + f" at the end of each {span(width)} · " + " · ".join(names) \
+                + (" · the API credits' line is % of the dollars at the start" if subs and api else "")
         out["usage.mmd"] = "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"', f"    x-axis [{labels}]",
                                       '    y-axis "% left" 0 --> 100'] + lines) + "\n"
 
@@ -951,7 +1016,7 @@ def run_map(facts: dict, data: dict, paths: list[str], folder: Path) -> tuple[in
     lanes = sum(1 for t in facts["tasks"] if not t.get("replaces")) + (1 if (facts.get("run") or {}).get("start") else 0)
     extra = 0
     if data.get("usage"):  # the usage panel: its subscriptions band, the Mac's three and its frame
-        extra = 140 + (190 if data["usage"]["providers"] else 0) + (250 if data["usage"]["mac"] else 0)
+        extra = 140 + (190 if data["usage"]["providers"] else 0) + (110 if data["usage"].get("api") else 0) + (250 if data["usage"]["mac"] else 0)
     return len(stub), 900 + 46 * lanes + extra  # the canvas, then a lane per agent; generous: html_render shrinks the frame to the page
 
 

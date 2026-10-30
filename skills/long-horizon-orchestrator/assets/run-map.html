@@ -922,11 +922,13 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 })();
 
 // the usage panel, under the timeline and on its time axis: each subscription's weekly (or monthly)
-// window as the percent left, falling from 100% as it is used, and a separate limit dashed; then the Mac's processor, memory and free disk, each minute's average with its peak behind it
+// window as the percent left, falling from 100% as it is used, and a separate limit dashed; the Claude API credits,
+// when the run used them, as the estimated dollars left (dashed, in Claude's colour, each grant's expiry dotted);
+// then the Mac's processor, memory and free disk, each minute's average with its peak behind it
 (() => {
   const U = F.usage; if (!U) return;
-  const provs = U.providers || [], mac = U.mac;
-  if (!provs.length && !mac) return;
+  const provs = U.providers || [], mac = U.mac, A = U.api;
+  if (!provs.length && !mac && !A) return;
   const t0 = timeAxis ? timeAxis.t0 : U.t0, t1 = Math.max(t0 + 1, timeAxis ? timeAxis.t1 : U.t1);
   const runStart = ORCH.start != null ? ORCH.start : t0;
   const neutral = "color-mix(in srgb, var(--rm-fg) 62%, var(--rm-card))";
@@ -934,6 +936,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const num = v => v != null;
   const fmt = (v, d = 1) => (+v.toFixed(d)).toString();
   const pc = v => fmt(v) + "%";
+  const usd = v => "$" + Math.floor(v + 0.5).toLocaleString("en-US");   // whole dollars, halves up
 
   // the frame, laid out like the timeline's so the two share one plot width
   const S = el("section", "tl us"); S.setAttribute("aria-label", "Usage"); root.append(S);
@@ -946,6 +949,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const shortOf = slot => /^(weekly|monthly)$/.test(slot.id) ? slot.id : slot.label.replace(/ (weekly|monthly)$/, "");
   const whole = v => Math.round(v) + "";
   const slotsOf = p => p.long ? [p.long, ...(p.more || [])] : [];
+  const apiEnds = A ? [A.first, A.last] : null;   // the credits' dollars left at the start and the end of the run
   const ends = slot => {  // a window's use at the start and the end of the run
     const pts = slot.segs.flat(), inside = pts.filter(([m]) => m >= t0 && m <= t1), use = inside.length ? inside : pts;
     return [use[0][1], use[use.length - 1][1]];
@@ -968,6 +972,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   // the bands, top to bottom
   const bands = [];
   if (provs.length) bands.push({ id: "subs", sec: "Subscriptions", h: Math.max(120, provs.reduce((sum, p) => sum + 20 + 15 * slotsOf(p).length + 8, 0) + 8) });
+  if (A) bands.push({ id: "api", sec: "API credits (estimate)", h: 70 });
   if (mac && (mac.cpu || mac.gpu)) bands.push({ id: "busy", sec: "This Mac", h: 80 });
   if (mac && mac.mem) bands.push({ id: "mem", h: 62, sec: bands.some(b => b.id === "busy") ? "" : "This Mac" });
   if (mac && mac.disk) bands.push({ id: "disk", h: 56, sec: bands.some(b => b.id === "busy" || b.id === "mem") ? "" : "This Mac" });
@@ -997,6 +1002,16 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       w.addEventListener("mouseenter", () => focusProv(p.id)); w.addEventListener("mouseleave", () => focusProv(null));
     });
   }
+  if (byId.api) {
+    const d = lab(byId.api), w = el("div", "us-prov"), n = el("div", "tl-name");
+    w.style.setProperty("--c", colourOf(A)); n.append(el("i", "dot"));
+    const mk = markOf(A); if (mk) { mk.style.width = mk.style.height = "13px"; n.append(mk); }
+    n.append(el("span", "nm", A.name)); w.append(n);
+    w.append(el("div", "tl-model", `${apiEnds[0] === apiEnds[1] ? usd(apiEnds[0]) : usd(apiEnds[0]) + " → " + usd(apiEnds[1])} left (estimate)`));
+    w.title = "An estimate: the credits' balance when the owner last looked, less the API spend T3 Code logged since";
+    d.append(w); w._id = A.id; provLabs.push(w);
+    w.addEventListener("mouseenter", () => focusProv(A.id)); w.addEventListener("mouseleave", () => focusProv(null));
+  }
   const labelLine = (b, items) => {
     const d = lab(b);
     items.forEach(([colour, name, sub]) => {
@@ -1020,7 +1035,9 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const longs = provs.filter(p => p.long), monthly = longs.filter(p => /monthly/.test(p.long.id)).length;
   legend.innerHTML = (longs.length ? sw('<i class="ln"></i>', (!monthly ? "Weekly window" : monthly === longs.length ? "Monthly window" : "Weekly or monthly window") + ", % left") : "")
     + (longs.some(p => p.more) ? sw('<i class="ln dash"></i>', "A model's own limit") : "")
+    + (A ? sw('<i class="ln dash"></i>', "Claude API credits, $ left (estimate)") : "")
     + (longs.some(p => slotsOf(p).some(s => s.resets.length)) ? sw('<i class="ln dot"></i>', "Reset") : "")
+    + (A && A.expiries.length ? sw('<i class="ln dot"></i>', "A credit expires") : "")
     + (mac ? sw('<i class="ln"></i>', "Average per minute") + sw('<i class="pk"></i>', "Peak") : "");
 
   // drawing, at the plot's width
@@ -1118,6 +1135,20 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       });
     }
 
+    // the Claude API credits: dollars left, a dashed line with no fill, each grant's expiry dotted
+    if (byId.api) {
+      const b = byId.api, top = Math.max(A.top, 1), Y = Yof(b, 0, top), colour = colourOf(A);
+      [[top, usd(top)], [0, "$0"]].forEach(([v, text]) => { const yy = Y(v); ns("line", { class: "tl-grid", x1: PADL, x2: w - PADR, y1: yy, y2: yy, opacity: 0 }, back); yt(PADL + 3, v === 0 ? yy - 3 : yy + 10, text); });
+      const g = ns("g", { class: "us-g", "data-p": A.id }, lines); g.style.setProperty("--c", colour);
+      A.segs.forEach(seg => {
+        const pts = seg.map(([m, v]) => [X(m), Y(v)]);
+        if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: 2 }, g); return; }
+        ns("path", { class: "us-line more", d: curve(pts) }, g);
+      });
+      A.expiries.forEach(r => ns("line", { class: "us-reset", x1: X(r), x2: X(r), y1: b.y + 2, y2: b.y + b.h - 2 }, g));
+      hover.push({ kind: "api", y: Y, colour, g });
+    }
+
     // the Mac
     const series = (b, arr, pkArr, colour, y, id, withFill, name) => {
       const g = ns("g", { class: "us-g" }, lines); g.style.setProperty("--c", colour);
@@ -1196,6 +1227,13 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
         row(tip, p.name, bits.length ? bits.join(" · ") + " <em>left</em>" : "<em>no reading</em>", h.colour);
       });
     }
+    if (byId.api) {
+      const h = hover.find(h => h.kind === "api"), v = valueAt({ segs: A.segs }, m), bits = [];
+      tip.append(el("div", "sec", "Claude API credits (estimate)"));
+      if (v != null) { bits.push(`${usd(v)} <em>left</em>`); dot(h.y(v), h.colour); }
+      const near = A.expiries.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`a credit expires ${clock(near)}`);
+      row(tip, A.name, bits.length ? bits.join(" · ") : "<em>no reading</em>", h.colour);
+    }
     if (mac) {
       tip.append(el("div", "sec", "This Mac"));
       const both = (name, avg, pkv, h, unit, colour) => { const a = macAt(avg, m), k = macAt(pkv, m); if (a == null) return;
@@ -1233,6 +1271,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   let lastW = plot.clientWidth;
   new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } }).observe(plot);
   svg.setAttribute("aria-label", `Usage of the run, ${clock(t0)} to ${clock(t1)}: ` + [...provs.filter(p => p.long).map(p => `${p.name} ` + slotsOf(p).map(s => `${s.label} ${pc(ends(s)[0])} to ${pc(ends(s)[1])} left`).join(", ")),
+    ...(A ? [`${A.name} ${usd(apiEnds[0])} to ${usd(apiEnds[1])} left (estimate)`] : []),
     ...(pk ? [`the Mac peaked at ${num(pk.cpu) ? fmt(pk.cpu, 0) + "% CPU" : ""}${num(pk.gpu) ? ", " + fmt(pk.gpu, 0) + "% GPU" : ""}`] : [])].join("; "));
 })();
 
