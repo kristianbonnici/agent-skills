@@ -39,12 +39,12 @@ Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.
 
 Limits:
 
-- **A free reviewer is never waited for.** One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, or no answer in its time) is dropped, except at Light, where the cross reviewer takes its place. OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, don't try the other.
+- **A free reviewer gets its time and no more** (15 minutes). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, or no answer in its time) is dropped, except at Light, where the cross reviewer takes its place. OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, don't try the other.
 - **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Terra by the Claude model you aren't, or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, review the diff yourself in a fresh pass, and say so in the record. A reviewer that timed out may still be running: stop it before you start its replacement.
 
 ### Trial reviewers
 
-Two cheap models are on trial as reviewers: Codex's GPT-6 Luna and Claude Haiku 5.5, at high reasoning. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a limited trial reviewer is dropped, never replaced or waited for. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether either earns a regular place.
+Two cheap models are on trial as reviewers: Codex's GPT-6 Luna and Claude Haiku 5.5, at high reasoning. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether either earns a regular place.
 
 ## 3. Brief them
 
@@ -65,7 +65,7 @@ Agreement between reviewers doesn't make a finding real, and "no defects" doesn'
 
 Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches, without repeating earlier findings. Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
 
-A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the three rounds; if that look finds a must-fix, stop as below.
+A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the three rounds; if that look finds a must-fix, stop as for a review that didn't converge, below.
 
 Round 3 is the last. If it still finds a must-fix, stop and don't merge. Report that the review didn't converge, list the open findings, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
 

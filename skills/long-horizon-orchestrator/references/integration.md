@@ -28,7 +28,7 @@ A task may report more than once: after review fixes, a rebase or a follow-up. A
 
 ## A review that didn't converge
 
-A task whose review gate still found a must-fix after three rounds reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate, and never do the gate yourself: its change has a known defect. Keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
+A task whose review gate stopped with a must-fix open, after three rounds or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate, and never do the gate yourself: its change has a known defect. Keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
 
 ## A task that is ready but not merged
 
