@@ -140,6 +140,15 @@ Then:
 2. Make sure the resume wake is scheduled, and mark the task `paused` in the ledger with its expected resume time.
 3. On the first wake after the reset, check whether the task is running again. If not, continue it on the same thread: "Your usage limit has reset. Continue the brief from where you stopped." This nudge doesn't count as the task's one nudge for silence.
 
+### A task on a free model
+
+A free model's limit isn't a window the run was sized on, and its reset can't be read or scheduled: on 2026-10-29, OpenCode's free limit stopped DeepSeek and GLM together, for the whole Mac, six minutes into the run, and again 33 minutes after a reset 2h 15m later. Task C waited out both and was parked unfinished. So a task given to a free model doesn't pause:
+
+1. **In the contract,** each such task names its fallback, which the user approves with the rest: the next free option that isn't stopped by the same limit, then a paid model with room. OpenCode's free limit covers all its free models, so the other OpenCode model is no fallback for it. For a small, well-specified task, Antigravity's Gemini Flash at high is the usual first fallback while the Gemini windows have room, then Codex's GPT-6.1 Terra or Claude Sonnet at high.
+2. **When the limit stops it** (its thread fails or stops on "Free usage limit reached", or a rate-limit error that a retry a few minutes later still gets), save its uncommitted changes as a patch in the run directory, note in the ledger what it finished, and launch the fallback at once on its own thread with the same brief, the same branch and worktree where the host allows (else a new one with the patch applied), and a handoff note: what is done, what is left, where the patch is.
+3. **Don't wait for the free model,** and don't move the task back when it recovers. If the fallback is limited too, take the next one in the contract's list; only when the list runs out does the task pause, or park at the end of the run.
+4. **In the report,** say which model finished the task and when it moved.
+
 ### Your own quota
 
 You run on the home subscription too, and you stay there. Never switch your own thread to another provider or model to keep going. In T3, a self-switch ends your turn on the spot and leaves stale records behind (see [host-t3.md](host-t3.md#when-a-window-runs-out)).
@@ -363,6 +372,7 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
   - Name any other active run that shares the subscriptions.
   - Give the reason for each task routed away from the home harness.
   - Say which tasks may use the fast helpers, and for what.
+  - For each task given to a free model, its fallbacks in order ([A task on a free model](#a-task-on-a-free-model)).
   - Give the run's Argon budget, in points of its weekly window, and which tasks may use it.
 - **In the report:**
   - Add one line on usage, before and after.
