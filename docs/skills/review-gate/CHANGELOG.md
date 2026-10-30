@@ -11,5 +11,6 @@
   join at deep, and stand in for the lost family when Codex is short; never in later rounds, never
   waited for. Gemini doesn't review.
 - A replacement for a limited reviewer is never a model already reviewing that round; a timed-out reviewer is stopped before its replacement starts; in T3, the main reviewer's wait is the round's deadline.
+- Trial reviewers (owner, 2026-10-30): GPT-6 Luna and Claude Haiku 5.5 add one cheap extra review in round 1 at Standard and Deep, recorded `trial=yes`, to learn whether cheaper models can take regular places.
 - Findings sorted must-fix, nit, pre-existing or rejected; re-review only after a logic fix, the fix's
   diff only, no repeats, at most three rounds; a fixed record format for later studies.

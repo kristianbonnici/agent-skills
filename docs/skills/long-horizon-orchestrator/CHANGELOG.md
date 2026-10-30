@@ -10,6 +10,7 @@
   5-hour past about 85%, or a reviewer stopped by a limit), so tasks use the Claude substitute.
 - OpenCode's free models may review where the review gate puts them; Gemini 4 Argon no longer takes
   advisory reviews (Gemini reviews were the weakest in past runs).
+- The contract splits the review gate's trial reviewers, GPT-6 Luna and Claude Haiku 5.5, half and half across the standard and deep tasks.
 - The ledger records this skill's and `review-gate`'s versions, so runs can be compared by version.
 - A task whose review didn't converge stays `ready` with its open findings, and is never sent back to the merge gate; a conflict resolution that changed logic after the review goes back to the cross reviewer (from the gate's first review, by Codex's Terra).
 

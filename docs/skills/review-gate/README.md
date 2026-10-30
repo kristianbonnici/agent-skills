@@ -44,6 +44,11 @@ flowchart TD
   and only where they help most for least: alone on light changes, as an extra voice on deep ones, and
   in place of the lost family when Codex is short. They are dropped, never waited for, when limited.
 - **Gemini doesn't review:** its reviews were the weakest in past runs.
+- **Trial reviewers:** GPT-6 Luna and Claude Haiku 5.5 add one cheap extra review in round 1 at
+  Standard and Deep, split half and half across a run's tasks. Their findings are checked and fixed
+  like any other, but the gate never rests on them. Once each has about 20 reviews, a study compares
+  them with Terra and Sonnet: must-fixes found, must-fixes nobody else found, and findings rejected.
+  One that holds up could take Terra's or Sonnet's place at Light, or stand in when Codex is short.
 
 ## The record
 

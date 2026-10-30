@@ -17,12 +17,15 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 | Claude Opus 5.5 | `{providerInstanceId: "claudeAgent", model: "claude-opus-5-5", options: [{id: "effort", value: "high"}]}` |
 | DeepSeek V4.1 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/deepseek-v4.1-flash-free", options: [{id: "variant", value: "high"}]}` |
 | GLM-5.3 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/glm-5.3-flash-free", options: [{id: "variant", value: "high"}]}` |
+| GPT-6 Luna (trial) | `{providerInstanceId: "codex", model: "gpt-6-luna", options: [{id: "reasoningEffort", value: "high"}]}` |
+| Claude Haiku 5.5 (trial) | `{providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{id: "effort", value: "high"}]}` |
 
 A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed".
 
 ## In Claude Code without T3
 
-- **Claude reviewers:** the `Agent` tool, `model: "opus"` or `"sonnet"`, a general-purpose agent, run in the background so they work in parallel.
+- **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
+- **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
 - **Codex Terra:** a background Bash command from the worktree:
 
   ```sh
