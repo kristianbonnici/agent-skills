@@ -410,7 +410,7 @@ rows = [
     providers("01:30:05", "cached", (20.0, first, 40.0), (6.0, 2.0), "2026-10-28T23:30:00+00:00"),
     providers("01:40:05", "cached", (99.0, first, 99.0), (60.0, 60.0), "2026-10-27T23:40:00+00:00"),  # a log gone stale: dropped
     providers("02:05:05", "cached", (1.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:05:00+00:00").replace("2026-11-04T00:00:00", "2026-11-04T00:01:00"),
-    providers("02:10:05", "cached", (2.0, second, 41.0), (6.0, 2.0), "2026-10-29T00:10:00+00:00"),
+    providers("02:10:05", "cached", (2.0, second, 41.0), (6.0, 3.0), "2026-10-29T00:10:00+00:00"),
     json.dumps({"t": "2026-10-28T23:00:00+02:00", "kind": "live", "providers": ghost}),                  # the day before the run
 ]
 open(os.path.join(folder, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
@@ -421,7 +421,7 @@ python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = 
 for name in graph.mmd timeline.mmd; do cmp "$work/charts/$name" "$work/charts-usage/$name"; done
 head -1 "$work/charts-usage/summary.txt" | cmp - "$work/charts/summary.txt"
 test "$(wc -l < "$work/charts-usage/summary.txt")" -eq 2
-sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude weekly 90% → 98% left (reset 1×); Codex weekly 98% → 98% left. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB.'
+sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude weekly 90% → 98% left (reset 1×); Codex weekly 98% → 97% left. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB.'
 grep -q 'usage.mmd and .*usage-mac.mmd' "$work/charts-usage.out"
 python3 -I - "$work/charts-usage" <<'EOF'
 import json, os, re, sys
@@ -464,9 +464,10 @@ mkdir -p "$work/usage-gap"
 python3 -I - "$work/usage-gap" <<'EOF'
 import json, os, sys
 rows = []
-for t in ("01:00:05", "01:05:05", "04:00:05", "04:05:05"):
-    rows.append(json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude": {"windows": {"weekly": {"used": 3.0, "resets_at": "2026-10-29T05:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00"},
-        "antigravity": {"windows": {"gemini_models_five_hour": {"used": 9.0}, "gemini_models_weekly": {"used": 5.0}, "claude_and_gpt_models_weekly": {"used": 0.0}, "gemini_4_argon_weekly": {"used": 23.0}}, "observed_at": "2026-10-29T00:00:00+00:00"}}}))
+for i, t in enumerate(("01:00:05", "01:05:05", "04:00:05", "04:05:05")):
+    rows.append(json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude": {"windows": {"weekly": {"used": 3.0 + i, "resets_at": "2026-10-29T05:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00"},
+        "copilot": {"windows": {"monthly": {"used": 2.5}}, "observed_at": "2026-10-29T00:00:00+00:00"},   # never used in the run: not shown
+        "antigravity": {"windows": {"gemini_models_five_hour": {"used": 9.0}, "gemini_models_weekly": {"used": 5.0 + i}, "claude_and_gpt_models_weekly": {"used": 10.0}, "gemini_4_argon_weekly": {"used": 23.0 + 2 * i}}, "observed_at": "2026-10-29T00:00:00+00:00"}}}))
 open(os.path.join(sys.argv[1], "providers.jsonl"), "w").write("\n".join(rows) + "\n")
 open(os.path.join(sys.argv[1], "machine.jsonl"), "w").write(json.dumps({"t": "2026-10-29T10:00:30+02:00", "cpu": 5.0, "mem_used_gb": 1.0, "mem_total_gb": 8.0, "disk_free_gb": 10.0}) + "\n")
 EOF
@@ -483,9 +484,10 @@ def usage(name):
 gap = usage("charts-gap")
 assert [len(seg) for seg in gap["providers"][0]["long"]["segs"]] == [2, 2], gap["providers"][0]["long"]["segs"]
 lone = usage("charts-lone")
+assert [p["id"] for p in usage("charts-gap")["providers"]] == ["claude", "antigravity"]   # Copilot, unused, left out
 agy = usage("charts-gap")["providers"][1]
 assert agy["id"] == "antigravity" and agy["long"]["label"] == "Gemini weekly" and [s["label"] for s in agy["more"]] == ["Gemini 4 Argon weekly"], agy
-assert agy["more"][0]["segs"][0][0][1] == 77.0 and agy["long"]["segs"][0][-1][1] == 95.0
+assert agy["more"][0]["segs"][0][0][1] == 77.0 and agy["long"]["segs"][-1][-1][1] == 92.0   # Claude and GPT's limit, unmoved, left out
 assert lone["t1"] - lone["t0"] >= 1 and lone["count"] >= 2, lone
 EOF
 if command -v node >/dev/null 2>&1; then

@@ -1105,12 +1105,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       [[100, "100%"], [50, "50%"], [0, "0"]].forEach(([v, text]) => { const yy = Y(v); ns("line", { class: "tl-grid", x1: PADL, x2: w - PADR, y1: yy, y2: yy, opacity: v === 50 ? .5 : 0 }, back); yt(PADL + 3, v === 0 ? yy - 3 : yy + 10, text); });
       [...provs].reverse().forEach(p => {
         const colour = colourOf(p), g = ns("g", { class: "us-g", "data-p": p.id }, lines); g.style.setProperty("--c", colour);
-        const idx = provs.indexOf(p);
         slotsOf(p).forEach((slot, si) => {
           slot.segs.forEach(seg => {
             const pts = seg.map(([m, v]) => [X(m), Y(v)]);
             if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: si ? 2 : 2.6 }, g); return; }
-            if (!si) ns("path", { class: "us-fill", d: curve(pts) + `L${f1(pts[pts.length - 1][0])} ${f1(Y(0))}L${f1(pts[0][0])} ${f1(Y(0))}Z`, style: `--f:${fill(`rm-us-f${idx}`, colour, b, .11, 0)}` }, g);
             ns("path", { class: "us-line" + (si ? " more" : ""), d: curve(pts) }, g);
           });
           slot.resets.forEach(r => ns("line", { class: "us-reset", x1: X(r), x2: X(r), y1: b.y + 2, y2: b.y + b.h - 2 }, g));

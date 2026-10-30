@@ -80,7 +80,7 @@ how long the orchestrator and the tasks worked, and how many tasks ran at once a
 usage folder, a second line says each subscription's use from start to end and the Mac's peaks.
 
 The usage panel sits under the timeline on the same time axis: each subscription's weekly window
-(Copilot's monthly one) as the percent left, a smooth line with a soft fill falling from 100% as it is used,
+(Copilot's monthly one), for each subscription the run used, as the percent left, a smooth line falling from 100% as it is used,
 and a separate limit in use during the run (Antigravity's Gemini 4 Argon) as a dashed line, in its maker's colour
 (assets/marks/marks.json), with window resets dotted; its 5-hour window is left out, and so are
 quota pauses, which the timeline hatches on the lanes they stopped; then the Mac's CPU and GPU busy, memory in use and free disk, as the average per minute with its
@@ -595,16 +595,22 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             segs = [[[m, round(100 - used, 1)] for m, used in run] for run in runs]
             return {"id": key, "label": window_name(key), "segs": segs, "resets": resets}
 
+        def moved(slot: dict) -> bool:
+            """Whether the run used the window: it changed during the run, or reset."""
+            return bool(slot["resets"]) or len({v for run in slot["segs"] for m, v in run if t0 <= m <= t1}) > 1
+
         # the weekly or monthly windows: the plan's own first (a key of just "weekly" or "monthly", else
         # the one read most often), then each separate limit (a model's own, as Antigravity's Gemini 4
-        # Argon) that was in use during the run; the 5-hour windows aren't drawn
+        # Argon) that the run used; a subscription none of whose windows moved isn't shown at all, and
+        # the 5-hour windows aren't drawn
         longs = [k for k in info["windows"] if k.endswith(("weekly", "monthly"))]
         picked = {}
         if longs:
             main = next((k for k in longs if k in ("weekly", "monthly")), None) or max(longs, key=lambda k: len(info["windows"][k]))
-            used = lambda k: any(v > 0 for m, v, _, _ in info["windows"][k] if t0 <= m <= t1)
-            picked["long"] = slot_of(main)
-            more = [slot_of(k) for k in longs if k != main and used(k)]
+            more = [slot for slot in (slot_of(k) for k in longs if k != main) if moved(slot)]
+            first = slot_of(main)
+            if more or moved(first):
+                picked["long"] = first
             if more:
                 picked["more"] = more
         if picked:
