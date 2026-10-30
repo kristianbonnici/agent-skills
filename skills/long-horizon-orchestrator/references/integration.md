@@ -26,9 +26,13 @@ Record the merged commits in the ledger. If the report says `merged` but git dis
 
 A task may report more than once: after review fixes, a rebase or a follow-up. Act on its latest report, verify that report's head, and record the commits it merged.
 
+## A review that didn't converge
+
+A task whose review gate still found a must-fix after three rounds reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate, and never do the gate yourself: its change has a known defect. Keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
+
 ## A task that is ready but not merged
 
-The integration branch may have moved, or the checkout may have been dirty at the gate. (A task that stopped because one check missed narrowly is a different case: see "A narrow, measured miss" above.) Either way:
+The integration branch may have moved, or the checkout may have been dirty at the gate. (A task that stopped because one check missed narrowly, or whose review didn't converge, is a different case: see the sections above.) Either way:
 
 1. Check the integration checkout. If it has tracked modifications the run didn't make, the user is probably working there. Don't touch it. Keep the task `ready` and list it in the final report.
 2. Otherwise, send the task a follow-up asking it to rebase, re-validate and retry the merge gate.

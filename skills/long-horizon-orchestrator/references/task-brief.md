@@ -59,7 +59,7 @@ Validation (show the output in the conversation):
 Finish and merge:
 1. Commit on <task branch> following the project's commit rules. Review the staged diff, stage explicit files, and never commit credentials, local traces or scratch output.
 2. Pass the review gate: follow the `review-gate` skill (the common file says where it is) at level <light, standard or deep>, or higher if your diff touches a deep area. It chooses your reviewers, and you check every finding and fix the real ones with tests, as additional commits. A review that doesn't converge in three rounds means stop: report status=ready with the open findings.
-3. Rebase onto the latest <integration branch>. Resolve conflicts by meaning. Regenerate generated files rather than hand-merging them. Re-run the full validation.
+3. Rebase onto the latest <integration branch>. Resolve conflicts by meaning. Regenerate generated files rather than hand-merging them. Re-run the full validation. If resolving a conflict changed logic (not only generated files, docs or imports), send the resolution's diff to your cross reviewer as a review-gate round, within its three.
 4. Merge gate: only if every check passes and no confirmed defect remains, confirm that <integration checkout path> is on <integration branch> with no tracked modifications, then run:
    git -C <integration checkout path> merge --ff-only <task branch>
    If the fast-forward fails because the branch moved, go back to step 3. Never force-update, never push.

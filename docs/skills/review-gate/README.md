@@ -21,6 +21,7 @@ flowchart TD
   sort -->|"deep: a must-fix only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
   second --> sort
   sort -->|a must-fix changed logic| rereview["Re-review the fix's diff only,<br/>paid reviewers, no repeated findings"]
+  rebase["Rebase: a conflict resolution<br/>that changed logic"] --> rereview
   rereview -->|round 3 still finds a must-fix| stop([Stop: report not converging,<br/>don't merge])
   rereview --> sort
   sort -->|nothing left to fix| record([Record the Review section,<br/>go to the merge gate])
@@ -31,7 +32,7 @@ flowchart TD
 | Level | Round 1 | Later rounds |
 |---|---|---|
 | Light | one free reviewer; if both are limited, the cross reviewer | the cross reviewer, only after a logic fix |
-| Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the must-fix |
+| Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the must-fix, or the cross reviewer for a fix only a free reviewer asked for |
 | Deep | two paid reviewers, different focus, + a free reviewer if one answers | the paid reviewers who found must-fixes |
 
 - **Paid reviewers** run at high reasoning: Codex's GPT-6.1 Terra (preferred to Sol, which costs more of

@@ -21,11 +21,24 @@ for path in skills:
     if not head:
         problems.append(f"{name}: no front matter")
         continue
-    found = re.search(r"^metadata:\n(?:[ \t]+.*\n)*?[ \t]+version:[ \t]*['\"]?([^'\"\s]+)", head.group(1) + "\n", re.M)
-    if not found:
+    # metadata.version: a key directly under metadata, at its children's own indentation (a deeper
+    # "version" belongs to another key)
+    lines, version = head.group(1).splitlines(), None
+    if "metadata:" in lines:
+        children = []
+        for line in lines[lines.index("metadata:") + 1:]:
+            if line.strip() and not line[0].isspace():
+                break
+            if line.strip():
+                children.append(line)
+        depth = min((len(c) - len(c.lstrip()) for c in children), default=0)
+        for c in children:
+            found = re.fullmatch(r"version:[ \t]*['\"]?([^'\"\s]+)['\"]?[ \t]*", c[depth:]) if len(c) - len(c.lstrip()) == depth else None
+            if found:
+                version = found.group(1)
+    if not version:
         problems.append(f"{name}: no metadata.version in its front matter")
         continue
-    version = found.group(1)
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         problems.append(f"{name}: version {version!r} isn't MAJOR.MINOR.PATCH")
     log = root / "docs" / "skills" / name / "CHANGELOG.md"

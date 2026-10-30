@@ -1,10 +1,14 @@
 # Launching reviewers
 
-Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15; one that hasn't answered by then counts as limited (SKILL.md, section 2).
+Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
 
 ## In T3
 
-`delegate_task` with role `"review"`, one call per reviewer. For one reviewer, use mode `"wait"` with `timeoutMs` (1800000 for a paid reviewer, 900000 for a free one). For several, use mode `"async"` for each: each one's completion wakes you, and you read its result then. Reviewers started this way aren't bound to your worktree, so the brief names its path.
+`delegate_task` with role `"review"`, one call per reviewer. Reviewers started this way aren't bound to your worktree, so the brief names its path.
+
+- **One reviewer:** mode `"wait"` with `timeoutMs` (1800000 for a paid reviewer, 900000 for a free one).
+- **Several:** launch all but the round's main paid reviewer with mode `"async"`, then the main one with mode `"wait"` and its `timeoutMs`; that wait is your deadline. When it returns, read each async reviewer's result if it has finished (its completion also wakes you). Look once with `task_status` at any still running past its own time, and stop it with `task_cancel` if it hasn't finished, counting it as limited. Don't poll between those times.
+- **A wait that times out** (`waitTimedOut`) doesn't stop the reviewer: stop it with `task_cancel` before you launch its replacement.
 
 | Reviewer | target |
 |---|---|
@@ -14,7 +18,7 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 | DeepSeek V4.1 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/deepseek-v4.1-flash-free", options: [{id: "variant", value: "high"}]}` |
 | GLM-5.3 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/glm-5.3-flash-free", options: [{id: "variant", value: "high"}]}` |
 
-A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed". `task_status` shows one still working without progress; stop it with `task_cancel`.
+A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed".
 
 ## In Claude Code without T3
 
