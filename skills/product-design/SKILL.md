@@ -56,7 +56,7 @@ SKILL_DIR=/absolute/path/to/this/skill
 RUN=$(python3 "$SKILL_DIR/scripts/manage_context.py" run-dir <short-product-or-flow-name>)
 ```
 
-That makes `${XDG_STATE_HOME:-~/.local/state}/agent-skills/product-design/runs/<date>-<name>/` (a new folder every time; an existing one is never reused). Save screenshots there by absolute path and name them in order (`01-start.png`). The browser CLI also writes its own `.playwright-cli/` snapshot files into the current directory, so run browser commands from inside the run folder (`cd "$RUN"`). Never overwrite an existing file without asking the user.
+That makes `${XDG_STATE_HOME:-~/.local/state}/agent-skills/product-design/runs/<date>-<name>/` (a new folder every time; an existing one is never reused). Save screenshots there by absolute path and name them in order (`01-start.png`). The browser CLI also writes its own `.playwright-cli/` snapshot files into the current directory, so run browser commands from inside the run folder (below). Never overwrite an existing file without asking the user.
 
 ### Browser
 
