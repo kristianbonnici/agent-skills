@@ -1,6 +1,8 @@
 ---
 name: long-horizon-task-planner
 description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight agent tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks; long-horizon-orchestrator does that.
+metadata:
+  version: 1.0.0
 ---
 
 # Long-Horizon Task Planner

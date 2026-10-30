@@ -47,12 +47,15 @@ agent-skills/
 ├── skills/                 Canonical host-neutral skills
 ├── adapters/               Host-specific commands or metadata
 ├── install/links.tsv       Declarative source-to-host mapping
+├── docs/                   Versioning rules; each skill's changelog, flow and evidence
 ├── runtime/                Pinned shared tool dependencies
 ├── scripts/                Bootstrap, doctor, uninstall, upstream checks
 └── tests/                  Disposable-home integration tests
 ```
 
 ## Available skills
+
+Each skill's version is in its `SKILL.md`; its changelog, and for some a flow diagram and the evidence behind it, are in `docs/skills/<skill>/`.
 
 | Skill | Installed into | Purpose |
 |---|---|---|
@@ -71,8 +74,11 @@ Run the local checks before committing:
 
 ```bash
 ./tests/bootstrap-test
+./tests/skill-versions-test
 ./scripts/doctor --all
 ```
+
+Each change to a skill raises its version and adds a changelog entry ([docs/VERSIONING.md](docs/VERSIONING.md)).
 
 Remove managed links without touching unrelated files:
 

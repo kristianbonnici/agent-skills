@@ -1,6 +1,8 @@
 ---
 name: product-design
 description: Explore, research, audit, prototype, clone, visually QA, and share product experiences. Use when the user explicitly invokes Product Design or asks for UX research, screenshot-grounded product critique, three visual design directions, faithful URL or screenshot implementation, prototype QA, or prototype sharing. Do not use for ordinary UI coding without a Product Design request.
+metadata:
+  version: 1.0.0
 ---
 
 # Product Design

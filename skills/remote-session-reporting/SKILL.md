@@ -1,6 +1,8 @@
 ---
 name: remote-session-reporting
 description: Report work through the chat itself while the user is away from their computer and following the session remotely, for example from a phone through Remote Control or a cloud session. Send screenshots of UI changes, paste changed prose, summarize code and check results, and ask decisions inline, because the user cannot open local files, diffs, terminals, browser panes, or localhost pages. Use whenever the user says they are remote, on their phone, away from the computer, using remote control, or asks to see pictures or have results pasted into chat, and keep using it until they say they are back at the computer.
+metadata:
+  version: 1.0.0
 ---
 
 # Remote Session Reporting

@@ -1,6 +1,8 @@
 ---
 name: agent-ready-repo
 description: Assess and improve repository readiness for AI coding agents when initializing a project, onboarding agents to an existing codebase, or maintaining its working environment. Audit setup, instructions, verification, architecture, and session continuity; propose evidence-backed changes and implement them only when explicitly requested. Use for repository-wide agent readiness or recurring workflow failures, not ordinary feature implementation or isolated prompt tuning.
+metadata:
+  version: 1.0.0
 ---
 
 # Agent-Ready Repo

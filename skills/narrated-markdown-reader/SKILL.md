@@ -1,6 +1,8 @@
 ---
 name: narrated-markdown-reader
 description: Create, rebuild, archive, or open a Markdown read-through with neural audio, synchronized row and word highlighting, rendered fenced math, playback controls, themes, and adjustable reading layout. Use when the user asks to read a Markdown file aloud, generate a synchronized audio reader, preserve one in a repository, or reopen an existing read-through. Do not use for ordinary Markdown editing without narration.
+metadata:
+  version: 1.0.0
 ---
 
 # Narrated Markdown Reader

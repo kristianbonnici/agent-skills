@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Every skill has a version in its SKILL.md front matter (metadata.version, MAJOR.MINOR.PATCH), and
+# its changelog in docs/skills/<skill>/CHANGELOG.md starts with an entry for that version
+# (docs/VERSIONING.md).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+python3 -I - "$repo_root" <<'EOF'
+import re, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+problems = []
+skills = sorted(root.glob("skills/*/SKILL.md"))
+if not skills:
+    problems.append("no skills found")
+for path in skills:
+    name = path.parent.name
+    text = path.read_text()
+    head = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    if not head:
+        problems.append(f"{name}: no front matter")
+        continue
+    found = re.search(r"^metadata:\n(?:[ \t]+.*\n)*?[ \t]+version:[ \t]*['\"]?([^'\"\s]+)", head.group(1) + "\n", re.M)
+    if not found:
+        problems.append(f"{name}: no metadata.version in its front matter")
+        continue
+    version = found.group(1)
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        problems.append(f"{name}: version {version!r} isn't MAJOR.MINOR.PATCH")
+    log = root / "docs" / "skills" / name / "CHANGELOG.md"
+    if not log.is_file():
+        problems.append(f"{name}: no {log.relative_to(root)}")
+        continue
+    newest = re.search(r"^## (\S+)", log.read_text(), re.M)
+    if not newest or newest.group(1) != version:
+        problems.append(f"{name}: the changelog's newest entry is {newest.group(1) if newest else 'missing'}, the skill says {version}")
+if problems:
+    print("\n".join(problems), file=sys.stderr)
+    sys.exit(1)
+print(f"skill versions: ok ({len(skills)} skills)")
+EOF

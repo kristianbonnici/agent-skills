@@ -13,6 +13,7 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 - `skills/<skill-name>/references/` contains supporting reference files loaded only when needed.
 - `adapters/` contains host-only command or metadata files.
 - `install/links.tsv` is the source of truth for host exposure and install destinations.
+- `docs/skills/<skill-name>/` holds each skill's changelog, flow diagram and evidence; agents never load it ([docs/VERSIONING.md](docs/VERSIONING.md)).
 - `runtime/` contains pinned dependencies shared by portable skills.
 - `scripts/` contains idempotent installation and verification commands.
 
@@ -27,6 +28,8 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 - Use lowercase hyphenated skill folder names.
 - Keep mutable state, private screenshots, user context, caches, and credentials outside this repository.
 - Record dependency versions and upstream behavioral references explicitly.
+- Every change to a skill raises its `metadata.version` and adds a changelog entry in the same commit, and the release is tagged `<skill>/v<version>` ([docs/VERSIONING.md](docs/VERSIONING.md)).
+- Keep research, studies and sources out of `SKILL.md` and its references: they go in `docs/skills/<skill-name>/`. The skill states the rule; the docs say where it came from. This repository is public: cite public sources and aggregate numbers only, never an owner's project details.
 
 ## Installation Rules
 
@@ -45,6 +48,7 @@ Before saying a skill is installed, run:
 ./scripts/doctor --all
 ./tests/bootstrap-test
 ./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's lease and run-charts scripts, and the run map
+./tests/skill-versions-test         # every skill's version and its changelog agree
 ```
 
 The doctor must confirm Product Design is absent from Codex discovery paths.
