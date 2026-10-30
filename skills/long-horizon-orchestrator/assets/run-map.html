@@ -923,7 +923,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 
 // the usage panel, under the timeline and on its time axis: each subscription's weekly (or monthly)
 // window as the percent left, falling from 100% as it is used, and a separate limit dashed; the Claude API credits,
-// when the run spent some or a grant expired, as the estimated dollars left (dashed, in Claude's colour, each grant's expiry dotted);
+// when the run spent some, a grant expired or an estimate was incomplete, as the estimated dollars left (dashed, in Claude's colour, each grant's expiry dotted);
 // then the Mac's processor, memory and free disk, each minute's average with its peak behind it
 (() => {
   const U = F.usage; if (!U) return;
@@ -1237,6 +1237,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       const near = A.expiries.find(r => Math.abs(r - m) <= Math.max(1.5, 5 * (t1 - t0) / Math.max(1, w))); if (near != null) bits.push(`a credit expires ${clock(near)}`);
       row(tip, A.name, bits.length ? bits.join(" · ") : "<em>no reading</em>", h.colour);
       row(tip, "Over the run", apiText.replace(/&/g, "&amp;").replace(/</g, "&lt;"));
+      if ((A.corrections || []).length) row(tip, "Balance corrected", A.corrections.map(([e, v]) => `+${usd(v)} at ${clock(Math.floor(e))}`).join(", "));
     }
     if (mac) {
       tip.append(el("div", "sec", "This Mac"));

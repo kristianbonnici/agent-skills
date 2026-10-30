@@ -9,9 +9,10 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
                    reading (provider-usage, no quota used; Antigravity and Copilot only read live);
                    with it, the Claude API credits' estimated dollars left when the owner has a
                    credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd"}],
-                   "estimate": true, "incomplete": true when provider-usage's log scan was cut
-                   short or met a log it couldn't read}, no windows: provider-usage reads local
-                   files only; a reading that is an error, such as a missing log folder, records nothing)
+                   "spent_since_usd", "balance_at" (when the Console was read), "estimate": true,
+                   "incomplete": true when provider-usage's log scan was cut short or met a log it
+                   couldn't read}, no windows: provider-usage reads local files only; a reading
+                   that is an error, such as a missing log folder, records nothing)
   sampler.log      one line when it starts and one when it stops, with the CPU time it used
 
 Each line is one JSON object with "t", the local time in ISO 8601 with its offset. A provider's
@@ -111,8 +112,10 @@ def credits_of(p):
         return None
     grants = [{"expires": c.get("expires"), "left_usd": number(c.get("left_usd")), "granted_usd": number(c.get("granted_usd"))}
               for c in p.get("credits") or [] if isinstance(c, dict)]
+    reads = [c.get("balance_at") for c in p.get("credits") or [] if isinstance(c, dict) and isinstance(c.get("balance_at"), str)]
     found = {"left_usd": left, "credits": grants, "observed_at": p.get("observed_at"), "plan": p.get("plan"),
-             "spent_since_usd": number(p.get("spent_since_usd")), "estimate": True}
+             "spent_since_usd": number(p.get("spent_since_usd")),   # spend since the Console reading below, so run-charts can tell spend from a correction
+             "balance_at": reads[0] if reads else None, "estimate": True}
     if p.get("incomplete"):  # the scan was cut short: the balance may be too high, and the charts say so
         found["incomplete"] = True
     return found

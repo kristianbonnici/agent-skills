@@ -24,15 +24,16 @@ script failing.
 Claude API credits ("claude_api", in live and --cached mode alike, since it reads only local
 files): no API reports an individual account's credit balance, so it is estimated. The owner's
 grants are in ${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orchestrator/api-credits.json:
-{"instance": "claudeAgent_claude_api", "grants": [{"granted": "2026-10-08", "amount_usd": 200.0,
-"expires": "2026-11-01T00:00:00Z", "balance_usd": 158.34, "balance_at": "2026-10-30T21:04:00Z"}]},
-the balance the Console showed at balance_at. What T3 Code logged since for that provider instance
+{"instance": "claudeAgent_claude_api", "balance_at": "2026-10-30T21:04:00Z", "grants": [{"granted":
+"2026-10-08", "amount_usd": 200.0, "expires": "2026-11-01T00:00:00Z", "balance_usd": 158.34}]}: the
+balances the Console showed at balance_at, one time for every grant, read from one Console page (a grant
+may carry that same balance_at itself, as older files do; grants read at different times are an error,
+"update every grant from one Console reading"). What T3 Code logged since for that provider instance
 (the Claude result lines of the API instance in the provider logs, their per-model costUSD, which
 is T3's list price, so use priced or discounted differently drifts the estimate; the subscription's
-instance never counts) is taken off the balance. Each charge goes to the soonest-expiring grant that
-hasn't expired by then, overflowing to the next once that is used up, never below zero; a charge
-logged before that grant's balance_at is already in its balance and is skipped; an expired grant has
-nothing left. "left_usd" totals the unexpired grants, "spent_since_usd" is what was taken off the
+instance never counts) after balance_at is taken off the balances. Each charge goes to the
+soonest-expiring grant that hasn't expired by then, overflowing to the next once that is used up, never
+below zero; an expired grant has nothing left. "left_usd" totals the unexpired grants, "spent_since_usd" is what was taken off the
 grants, and "estimate" is always true: spend by other tools, or before T3 logged it, is not seen, so
 update the file's balance when the Console is looked at again. Times keep their fractions of a
 second; a date alone is UTC midnight. Without that file the provider is left out. A file that can't
@@ -527,26 +528,34 @@ def money(value) -> float | None:
 
 
 def credit_grants(config) -> tuple[str, list[dict]]:
-    """The instance's name and the grants that have an expiry, a balance and the time it was read;
-    a grant missing any of them is skipped. Raises ValueError when the file isn't what it should be."""
+    """The instance's name and the grants that have an expiry and a balance, all read from the Console at
+    one time: the file's top-level "balance_at", or each grant's own when they are all equal. A grant with no
+    usable expiry or balance is skipped. Raises ValueError when the file isn't what it should be, and when
+    the grants were read at different times (the allocation of spend needs one reading time)."""
     if not isinstance(config, dict) or not isinstance(config.get("grants"), list):
         raise ValueError('expected an object with a "grants" list')
     instance = config.get("instance") or "claudeAgent_claude_api"
     if not isinstance(instance, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", instance):
         raise ValueError('"instance" must be the provider instance\'s name')
+    top = utc_seconds(config.get("balance_at"))
     grants = []
     for grant in config["grants"]:
         if not isinstance(grant, dict):
             continue
-        expires, balance_at, balance = utc_seconds(grant.get("expires")), utc_seconds(grant.get("balance_at")), money(grant.get("balance_usd"))
+        own = utc_seconds(grant.get("balance_at"))
+        text = grant.get("balance_at") if own is not None else config.get("balance_at")
+        expires, balance_at, balance = utc_seconds(grant.get("expires")), own if own is not None else top, money(grant.get("balance_usd"))
         if expires is None or balance_at is None or balance is None:
             continue
         granted = money(grant.get("amount_usd"))
         grants.append({"expires": expires, "balance_at": balance_at, "balance": balance,
                        "granted_usd": granted if granted is not None else balance,
-                       "expires_text": grant.get("expires"), "balance_at_text": grant.get("balance_at")})
+                       "expires_text": grant.get("expires"), "balance_at_text": text})
     if not grants:
-        raise ValueError("no grant has an expiry, a balance_usd and a balance_at")
+        raise ValueError('no grant has an expiry and a balance_usd, with a balance_at (on the grant, or one for the whole file)')
+    if len({g["balance_at"] for g in grants}) > 1:
+        raise ValueError("the grants were read at different times: update every grant from one Console reading "
+                         '(and put its time once, as the file\'s "balance_at")')
     return instance, grants
 
 
@@ -627,23 +636,18 @@ def api_spend(instance: str, since: float, now: float) -> tuple[list[tuple[float
 
 
 def spend_from_credits(grants: list[dict], spend: list[tuple[float, float]]) -> tuple[list[float], float]:
-    """What each grant has left (in the grants' order) after the spend, and the dollars taken off, charges
-    in time order. A charge goes to the soonest-expiring grant that hasn't expired at that time, and
-    overflows to the next one once that is used up, never below zero. A grant whose balance_at is later
-    than the charge already has it in its reading, so the charge (and any overflow past it) is skipped."""
+    """What each grant has left (in the grants' order) after the spend, and the dollars taken off. The
+    grants were all read at one time and the spend is from after it: each charge, in time order, goes to the
+    soonest-expiring grant that hasn't expired at that time, and what it doesn't cover overflows to the next,
+    never below zero."""
     left = [g["balance"] for g in grants]
     order = sorted(range(len(grants)), key=lambda i: grants[i]["expires"])
     drawn = 0.0
     for at, cost in spend:
         for i in order:
-            g = grants[i]
             if cost <= 0:
                 break
-            if g["expires"] <= at:
-                continue
-            if g["balance_at"] > at:
-                break  # this charge is in the grant's reading already, and so is any overflow past it
-            if left[i] <= 0:
+            if grants[i]["expires"] <= at or left[i] <= 0:
                 continue
             take = min(left[i], cost)
             left[i] -= take
@@ -665,7 +669,7 @@ def claude_api(now: float) -> dict | None:
         instance, grants = credit_grants(json.loads(raw))
     except ValueError as exc:
         return {"plan": "api credits", "error": f"{path} isn't usable: {exc}", "estimate": True}
-    since = min(g["balance_at"] for g in grants)
+    since = grants[0]["balance_at"]  # the one time the Console was read
     try:
         spend, incomplete = api_spend(instance, since, now)
     except RuntimeError as exc:  # no logs, no estimate: an error, never a balance that looks right
@@ -689,7 +693,7 @@ def claude_api(now: float) -> dict | None:
         "source": f"{path} and T3's API spend for {instance}",
     }
     if incomplete:
-        out["incomplete"] = incomplete + ", so what is left may be too high"
+        out["incomplete"] = incomplete + "; what is left may be too high"
     return out
 
 
