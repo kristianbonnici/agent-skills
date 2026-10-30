@@ -145,9 +145,9 @@ Then:
 A free model's limit isn't a window the run was sized on, and its reset can't be read or scheduled: on 2026-10-29, OpenCode's free limit stopped DeepSeek and GLM together, for the whole Mac, six minutes into the run, and again 33 minutes after a reset 2h 15m later. Task C waited out both and was parked unfinished. So a task given to a free model doesn't pause; it moves:
 
 1. **Between OpenCode's and Antigravity's Gemini models, always** (owner, 2026-10-30). They are the run's free and low-cost pool, so a task moves from one to the other whenever a limit stops it, in either direction, without a line in the contract and without asking: from OpenCode to Gemini Flash at high while the Gemini windows have room (or Gemini 4 Argon within the run's Argon budget, for work Flash can't do well), and from Gemini to OpenCode's free models while they answer. OpenCode's free limit covers all its free models at once, so moving to the other OpenCode model doesn't get past it.
-2. **To a paid model, only as the contract says.** For each task given to a free model, the contract lists the paid fallback that comes after the pool, Codex's GPT-6.1 Terra or Claude Sonnet at high, which the user approves with the rest. Don't write a plan that leaves this choice to the user during the run: they are away, and the task would wait for nothing.
+2. **Then to a paid model, also without asking** (owner, 2026-10-30: the run is mostly on paid subscriptions anyway). When the whole pool is limited, move the task to Codex's GPT-6.1 Terra or Claude Sonnet at high, whichever has more room in its windows. You choose at the time; nothing about it goes to the user before or during the run.
 3. **When the limit stops it** (its thread fails or stops on "Free usage limit reached", a quota error, or a rate-limit error that a retry a few minutes later still gets), save its uncommitted changes as a patch in the run directory, note in the ledger what it finished, and launch the next model at once on its own thread with the same brief, the same branch and worktree where the host allows (else a new one with the patch applied), and a handoff note: what is done, what is left, where the patch is.
-4. **Don't wait for the limited model,** and don't move the task back when it recovers. If the next one is limited too, take the one after; only when the pool and the contract's paid fallback are all limited does the task pause, or park at the end of the run.
+4. **Don't wait for the limited model,** and don't move the task back when it recovers. If the next one is limited too, take the one after; only when the pool and both paid models are all limited does the task pause, or park at the end of the run.
 5. **In the report,** say which model finished the task, and when and why it moved.
 
 ### Your own quota
@@ -373,7 +373,6 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
   - Name any other active run that shares the subscriptions.
   - Give the reason for each task routed away from the home harness.
   - Say which tasks may use the fast helpers, and for what.
-  - For each task given to a free model, its paid fallback after the OpenCode and Gemini pool ([A task on a free model](#a-task-on-a-free-model)).
   - Give the run's Argon budget, in points of its weekly window, and which tasks may use it.
 - **In the report:**
   - Add one line on usage, before and after.
