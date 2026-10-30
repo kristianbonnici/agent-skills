@@ -22,7 +22,7 @@ flowchart TD
   second --> sort
   sort -->|a must-fix changed logic| rereview["Re-review the fix's diff only,<br/>paid reviewers, no repeated findings"]
   rebase["Rebase: a conflict resolution<br/>that changed logic"] --> rereview
-  rereview -->|round 3 still finds a must-fix| stop([Stop: report not converging,<br/>don't merge])
+  rereview -->|"no fewer must-fixes than the last round,<br/>a fixed finding back, or round 5"| stop([Stop: report not converging,<br/>don't merge])
   rereview --> sort
   sort -->|nothing left to fix| record([Record the Review section,<br/>go to the merge gate])
 ```

@@ -13,7 +13,7 @@ flowchart TD
   prep --> launch["Launch a wave: one agent per task,<br/>own worktree, own brief"]
   launch --> work["Task works; may hand research<br/>and simple steps to fast helpers"]
   work --> gate["review-gate: level by what the diff touches,<br/>reviewers of another family"]
-  gate -->|must-fix still open after 3 rounds| ready([Report ready: orchestrator decides])
+  gate -->|review stopped converging| ready([Report ready: orchestrator decides])
   gate --> checks["Rebase, full checks"]
   checks -->|pass| merge["Fast-forward the integration branch"]
   checks -->|narrow miss| ready

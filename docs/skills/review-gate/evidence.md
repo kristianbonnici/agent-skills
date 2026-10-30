@@ -32,8 +32,11 @@ as rough. The per-task details stay in the owner's private records.
   missed, and sometimes duplicated it. → *two reviewers only at Deep, with different focus.*
 - **A second round after fixes:** found something new in 18% of tasks, including defects the fixes
   themselves introduced. → *re-review after a fix that changed logic.*
-- **Long loops:** a few tasks ran 3 to 5 rounds for one real finding. → *a three-round cap, and
-  re-reviews that look only at the fix.*
+- **Long loops:** a few tasks ran 3 to 5 rounds for one real finding. → *re-reviews that look only at
+  the fix, and a stop when rounds stop converging.*
+- **The gate's review of its own first version** (Codex's Terra, 2026-10-30): rounds found 7, 4 and 2
+  must-fixes, all real. A flat cap of three rounds stopped a review that was settling, so rounds 4 and 5
+  are allowed while each round finds fewer must-fixes than the one before. → *converging, not counting.*
 - **Codex's GPT-6.1 Sol as a reviewer:** in a few tasks, it found issues that three Claude reviewers had
   missed. → *a reviewer of another family by default.*
 - **Gemini as a reviewer:** the weakest. One review declared "no defects" on evidence that didn't hold
@@ -58,7 +61,7 @@ as rough. The per-task details stay in the owner's private records.
     never repeating a finding raised passing after one round from 65% to 78%, and cut changes needing
     five or more rounds from 8.9% to 1.5%.
 
-  → *the pre-existing tag, the round cap, diff-only re-reviews without repeats, levels set by what
+  → *the pre-existing tag, stopping a loop, diff-only re-reviews without repeats, levels set by what
   the change touches, and a second opinion on an unconfirmed must-fix at Deep.*
 - **Zhang et al., [Rethinking Verification in Agent Harnesses](https://arxiv.org/abs/2610.34577)**
   (arXiv 2610.34577, 25 October 2026):

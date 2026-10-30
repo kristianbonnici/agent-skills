@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, within three rounds. Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
+description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
   version: 1.0.0
 ---
@@ -61,13 +61,19 @@ Sort every finding into one of these:
 
 Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a must-fix that only one reviewer raised and that you can't show with a test goes to the other paid reviewer for a yes or no with its reason, before you change code.
 
-## 5. Re-review, three rounds at most
+## 5. Re-review while it converges
 
 Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches, without repeating earlier findings. Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
 
-A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the three rounds; if that look finds a must-fix, stop as for a review that didn't converge, below.
+A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the count of rounds; if that look finds a must-fix, stop as for a review that didn't converge, below.
 
-Round 3 is the last. If it still finds a must-fix, stop and don't merge. Report that the review didn't converge, list the open findings, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
+Up to three rounds, re-review as above. Rounds 4 and 5 only while the review is settling: each must come after a round that found fewer must-fixes than the round before it. Stop, and don't merge, when:
+
+- a round from round 2 on finds as many must-fixes as the round before it, or more;
+- a round finds again something an earlier fix was meant to settle;
+- round 5 still finds a must-fix.
+
+Then report that the review didn't converge, list the open findings, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
 
 ## 6. Record the result
 
