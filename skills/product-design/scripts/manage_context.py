@@ -43,7 +43,9 @@ def state_root() -> Path:
     # An exported but empty XDG_STATE_HOME counts as unset, as in the shell's ${XDG_STATE_HOME:-...}.
     # A relative one counts as unset too (the XDG spec says so), so state never lands in the current folder.
     configured = os.environ.get("XDG_STATE_HOME")
-    base = Path(configured) if configured and os.path.isabs(configured) else Path.home() / ".local" / "state"
+    # So does one with a ".." part, whose meaning depends on folders that may not exist yet.
+    usable = configured and os.path.isabs(configured) and ".." not in Path(configured).parts
+    base = Path(configured) if usable else Path.home() / ".local" / "state"
     return base / "agent-skills" / "product-design"
 
 
@@ -84,7 +86,11 @@ def new_run_dir(name: str) -> Path:
             candidate.mkdir()
         except FileExistsError:
             continue
-        return candidate
+        # the backstop: wherever the path led, the folder actually made must be outside any repository
+        if inside_repository(candidate.resolve()):
+            candidate.rmdir()
+            raise SystemExit(f"{candidate.resolve()} is inside a repository; set XDG_STATE_HOME to a folder outside any repository")
+        return candidate.resolve()
     raise SystemExit(f"Could not create a unique run folder under {runs}")
 
 
