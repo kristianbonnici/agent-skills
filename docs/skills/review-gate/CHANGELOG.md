@@ -7,6 +7,8 @@ Major because the gate now spends a plan that it didn't touch before: the owner'
 - Only the two flash models review on Go. Full GLM-5.3 (not GLM-5.3 Flash) stays out, and so do Go's other larger models: their reviews look stronger, but about 25 turns of GLM-5.3 took 7% of the plan's week, and the console shows one set of meters for all models, so it may be one shared limit ([evidence.md](evidence.md)).
 - The record writes OpenCode's whole model name, so a later study can tell the free tier from Go, with a `skipped` line for each model a reviewer left.
 - `launching.md` lists the Go targets and warns that `opencode/deepseek-v4.1-flash`, without `-free`, bills per request.
+- **Review (deep), round 1:** Codex GPT-6.1 Terra found 3 must-fixes, all fixed: a limit read only after the paid wait left Go no time; a task's brief had four target slots for six targets and lacked the limit rules; two free-tier timeouts used up the time for Go. Claude Sonnet 5.5, OpenCode DeepSeek V4.1 Flash and the Claude Haiku 5.5 trial added nits, most fixed.
+- **Round 2** (Terra, the fixes only): 1 must-fix, a contract line that offered a choice nothing else honoured, and "not fixed" on one sentence that still called Go one shared limit. Both were fixed without another round, because a "not fixed" stops the review as the gate says; the third finding, that a free reviewer can run past its time while the paid wait lasts, is how the gate already worked.
 
 ## 1.1.0 (2026-10-30)
 
