@@ -132,6 +132,8 @@ git(clone["a"], "config", "commit.gpgsign", "true"); git(clone["a"], "config", "
 done = lessons("a", "add", entry("a", "x: commit fails"))
 assert done.returncode == 3 and "not committed" in done.stdout, done.stdout
 unsent = ids(done.stdout)[0]
+done = lessons("a", "show")                                     # still failing: said, not "sent"
+assert done.returncode == 3 and f"not committed: {unsent} still not committed" in done.stdout, done.stdout
 git(clone["a"], "config", "--unset", "commit.gpgsign")
 done = lessons("a", "show")
 assert done.returncode == 0 and f"committed earlier entries: {unsent}" in done.stdout and on_remote(unsent), done.stdout
@@ -171,11 +173,15 @@ assert lessons("b", "add", entry("b", "x: after the conflict")).returncode == 0
 open(os.path.join(clone["a"], "notes.txt"), "w").write("mine\n")
 git(clone["a"], "add", "notes.txt"); git(clone["a"], "commit", "-q", "-m", "owner's own")
 done = lessons("a", "add", entry("a", "x: waits for the owner's push"))
-assert done.returncode == 3 and "other unpushed commits (notes.txt)" in done.stdout, done.stdout
+assert done.returncode == 3 and "other unpushed commits (owner's own)" in done.stdout, done.stdout
 waiting = ids(done.stdout)[0]
 assert on_remote(waiting) is None and "notes.txt" not in remote_files()
 git(clone["a"], "push", "-q")
 assert on_remote(waiting)
+git(clone["a"], "commit", "-q", "--allow-empty", "-m", "owner's empty commit")   # no files, still the owner's
+done = lessons("a", "add", entry("a", "x: waits for the empty commit"))
+assert done.returncode == 3 and "owner's empty commit" in done.stdout, done.stdout
+git(clone["a"], "push", "-q")
 open(os.path.join(clone["a"], "README.md"), "a").write("owner's unsaved edit\n")
 assert lessons("b", "add", entry("b", "x: from b meanwhile")).returncode == 0
 done = lessons("a", "add", entry("a", "x: with the owner's edit open"))

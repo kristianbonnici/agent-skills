@@ -195,6 +195,7 @@ def settle_rebase(repo):
                     out.write(mine.replace(f"## {entry_id}. ", f"## {moved}. ", 1))
                 git(repo, "add", "--", os.path.join(REL, moved + ".md"))
                 print(f"moved: this computer's unsent entry {entry_id} is now {moved} (another computer took {entry_id})")
+                MOVED.append((entry_id, moved))
             else:
                 lost = [line for line in mine.splitlines() if line not in theirs.splitlines()]
                 dropped.append((entry_id, lost))
@@ -210,6 +211,9 @@ def others_dirty(repo):
     return [line[3:] for line in lines if not line[3:].strip('"').startswith(REL + "/")]
 
 
+MOVED = []
+
+
 def sync(repo):
     """Pulls with rebase, settling this computer's conflicting entry edits in the other computer's
     favour (printed as "dropped:"); any other failure is aborted. Never stashes the owner's
@@ -223,6 +227,11 @@ def sync(repo):
         return None
     if busy(repo):
         dropped = settle_rebase(repo)
+        for old, new in MOVED:
+            if any(old == entry_id for entry_id, _ in (dropped or [])) or \
+                    git(repo, "log", "--format=%s", "@{u}..HEAD", "--", os.path.join(REL, old + ".md")).stdout.strip():
+                print(f"check {old} and {new}: a later change this computer made to {old} may have gone to "
+                      f"the other computer's entry; record it again under {new}")
         if dropped is not None:
             for entry_id, lost in dropped:
                 print(f"dropped: this computer's unsent change to {entry_id} (another computer changed it first): "
@@ -238,10 +247,16 @@ def push(repo):
         return "no upstream branch"
     if git(repo, "rev-list", "--count", "@{u}..HEAD").stdout.strip() == "0":
         return None
-    others = [f for f in git(repo, "log", "--name-only", "--format=", "@{u}..HEAD").stdout.split()
-              if not f.startswith(REL + "/")]
+    others = []
+    for line in git(repo, "log", "--format=%H %P%x00%s", "@{u}..HEAD").stdout.splitlines():
+        shas, _, subject = line.partition("\0")
+        sha, *parents = shas.split()
+        files = git(repo, "show", "--name-only", "--format=", sha).stdout.split()
+        if (len(parents) != 1 or not subject.startswith("skill evolution:") or not files
+                or not all(f.startswith(REL + "/") for f in files)):
+            others.append(subject or sha[:8])
     if others:
-        return ("the state repository has other unpushed commits (" + ", ".join(sorted(set(others))[:3])
+        return ("the state repository has other unpushed commits (" + ", ".join(others[:3])
                 + "); push them yourself, and the lessons go with them")
     for _ in range(3):
         if git(repo, "push", "-q").returncode == 0:
@@ -284,12 +299,15 @@ def commit_leftovers(repo):
         f = line[3:].strip().strip('"')
         if f.startswith(REL + "/") and f.endswith(".md") and ID.match(os.path.basename(f)[:-3]):
             leftovers.append(f)
-    if leftovers:
-        git(repo, "add", "--", *leftovers)
-        if git(repo, "commit", "-q", "-m", "skill evolution: entries an earlier command couldn't commit", "--",
-               *leftovers).returncode == 0:
-            print("committed earlier entries: " + ", ".join(os.path.basename(f)[:-3] for f in leftovers))
-    return leftovers
+    if not leftovers:
+        return None
+    names = ", ".join(os.path.basename(f)[:-3] for f in leftovers)
+    git(repo, "add", "--", *leftovers)
+    done = git(repo, "commit", "-q", "-m", "skill evolution: entries an earlier command couldn't commit", "--", *leftovers)
+    if done.returncode != 0:
+        return f"{names} still not committed: {(done.stderr or done.stdout).strip()}"
+    print(f"committed earlier entries: {names}")
+    return None
 
 
 def write(repo, files, message):
@@ -308,7 +326,13 @@ def write(repo, files, message):
         print(f"not pushed: {problem}; kept here, the next lessons command sends it")
         return 3
     print("pushed")
-    return 0
+    return 0 if not commit_leftovers_failed(repo) else 3
+
+
+def commit_leftovers_failed(repo):
+    return any(ID.match(os.path.basename(line[3:].strip().strip('"'))[:-3] or "")
+               for line in git(repo, "status", "--porcelain", "--untracked-files=all", "--", REL).stdout.splitlines()
+               if line[3:].strip().endswith(".md"))
 
 
 def find(path, entry_id):
@@ -342,8 +366,9 @@ def main(argv):
         repo = state_repo()
         if repo and busy(repo):
             fail(4, f"{repo} is mid-rebase or mid-merge; finish that first. Nothing written")
-        if repo:
-            commit_leftovers(repo)
+        uncommitted = commit_leftovers(repo) if repo else None
+        if uncommitted:
+            print(f"not committed: {uncommitted}")
         problem = sync(repo) if repo else None
         if problem:
             print(f"not pulled: {problem} (this computer's copy)")
@@ -368,7 +393,7 @@ def main(argv):
             sent = push(repo) if repo else None       # sends an earlier save that couldn't go
             if sent:
                 print(f"not pushed: {sent}; kept here, the next lessons command sends it")
-            return 3 if sent else 0
+            return 3 if (sent or uncommitted) else 0
         today = time.strftime("%Y-%m-%d")
         if command == "add":
             written = []

@@ -33,3 +33,7 @@
   command never pushes the owner's other unpushed commits (it leaves the push to them), never stashes
   their uncommitted edits (it doesn't pull then), and skips a rebase step only when it is lessons-only
   and came to nothing; an old `lessons.md` gets a warning.
+- Round 2 of the per-entry design (Terra, 3, fewer than round 1): an entry whose commit fails again is
+  reported as not committed, never as sent; only the script's own commits (by message and files, one
+  parent) count as lessons-only, so the owner's empty or merge commits are never pushed; after an ID
+  collision, a later change to the old ID is named for checking.
