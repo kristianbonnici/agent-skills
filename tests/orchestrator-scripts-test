@@ -2119,7 +2119,8 @@ put("old.md", b"# Run old\nStatus: finished\n", age_days=10)
 for name, ledger in (("paused", b"# r\nStatus: paused until 06:00\n"), ("running", b"# r\nStatus: running\n"), ("recent", b"# r\nStatus: finished\n"), ("kept", b"# r\nStatus: finished\n")):
     put(f"{name}/A/build.bin", big)
     put(f"{name}.md", ledger, age_days=10 if name != "recent" else 1)
-put("kept/KEEP", b"")
+os.makedirs(os.path.join(root, "kept"), exist_ok=True)
+os.symlink(os.path.join(outside, "gone"), os.path.join(root, "kept/KEEP"))   # even a dangling link
 put("loose/A/build.bin", big)
 
 done = run()

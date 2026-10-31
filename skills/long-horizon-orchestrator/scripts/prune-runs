@@ -329,7 +329,7 @@ def prune_old(root, days, apply):
         if age < days:
             print(f"{name}: skipped, finished {age:.1f} days ago")
             continue
-        if os.path.exists(os.path.join(run, "KEEP")):
+        if os.path.lexists(os.path.join(run, "KEEP")):
             print(f"{name}: skipped, it holds KEEP")
             continue
         size = tree_size(run)
