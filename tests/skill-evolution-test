@@ -166,6 +166,26 @@ for leftover in ("rebase-merge", "rebase-apply", "MERGE_HEAD"):
 assert git(clone["b"], "rev-list", "--count", "@{u}..HEAD").strip() == "0"
 assert lessons("b", "add", entry("b", "x: after the conflict")).returncode == 0
 
+# The owner's other unpushed commit is never pushed by a lessons command: the entry waits (3) until
+# the owner pushes, and goes with it. Their uncommitted edits stop the pull, never get stashed.
+open(os.path.join(clone["a"], "notes.txt"), "w").write("mine\n")
+git(clone["a"], "add", "notes.txt"); git(clone["a"], "commit", "-q", "-m", "owner's own")
+done = lessons("a", "add", entry("a", "x: waits for the owner's push"))
+assert done.returncode == 3 and "other unpushed commits (notes.txt)" in done.stdout, done.stdout
+waiting = ids(done.stdout)[0]
+assert on_remote(waiting) is None and "notes.txt" not in remote_files()
+git(clone["a"], "push", "-q")
+assert on_remote(waiting)
+open(os.path.join(clone["a"], "README.md"), "a").write("owner's unsaved edit\n")
+assert lessons("b", "add", entry("b", "x: from b meanwhile")).returncode == 0
+done = lessons("a", "add", entry("a", "x: with the owner's edit open"))
+assert done.returncode == 3 and "uncommitted changes of its own (README.md)" in done.stdout, done.stdout
+assert "owner's unsaved edit" in open(os.path.join(clone["a"], "README.md")).read()
+assert git(clone["a"], "stash", "list") == ""
+git(clone["a"], "checkout", "-q", "--", "README.md")
+assert lessons("a", "show").returncode == 0                 # pulls b's, sends a's
+assert git(clone["a"], "rev-list", "--count", "@{u}..HEAD").strip() == "0"
+
 # A repository already mid-rebase is left alone (4), nothing written.
 os.mkdir(os.path.join(clone["a"], ".git", "rebase-merge"))
 done = lessons("a", "add", entry("a", "x: while rebasing"))

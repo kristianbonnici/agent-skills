@@ -24,7 +24,9 @@ sent second moves to a new ID and says so: "moved: ... L-K7QM is now L-P2WD".)
 
 Every command takes a short lock (another run on this computer waits up to a minute), pulls with
 rebase, writes, commits only the files it wrote, and pushes, sending any earlier commit that
-couldn't be pushed. When this computer's unsent change to an entry meets another computer's change
+couldn't be pushed. It pushes only when every unpushed commit is the lessons' own: other unpushed
+commits, or uncommitted changes to other files (it then doesn't pull, and never stashes them),
+are the owner's to send. When this computer's unsent change to an entry meets another computer's change
 to the same entry, the other's wins and this one is dropped, printed with what it said
 ("dropped: ... L-K7QM ...: <its lines>"; record it again if it still holds). An entry an earlier
 command couldn't commit (a failed commit) is committed and sent by the next. It never commits other files, never force-pushes, and never leaves a rebase
@@ -169,8 +171,15 @@ def settle_rebase(repo):
         if not conflicted:
             done = subprocess.run(["git", "-C", repo, "rebase", "--continue"], capture_output=True, text=True,
                                   env=dict(os.environ, GIT_EDITOR="true"), timeout=120)
-            if done.returncode != 0 and busy(repo) and not git(repo, "diff", "--name-only", "--diff-filter=U").stdout.split():
-                git(repo, "rebase", "--skip")      # this computer's edit came to nothing
+            if done.returncode != 0 and busy(repo):
+                if git(repo, "diff", "--name-only", "--diff-filter=U").stdout.split():
+                    continue                       # the next commit has conflicts of its own: settle them
+                # only a lessons-only step whose change came to nothing is skipped; anything else is aborted
+                replayed = git(repo, "show", "--name-only", "--format=", "REBASE_HEAD").stdout.split()
+                empty = git(repo, "diff", "--cached", "--quiet").returncode == 0
+                if not (empty and replayed and all(f.startswith(REL + "/") for f in replayed)):
+                    break
+                git(repo, "rebase", "--skip")
             continue
         if not all(f.startswith(REL + "/") for f in conflicted):
             break
@@ -195,12 +204,21 @@ def settle_rebase(repo):
     return None
 
 
+def others_dirty(repo):
+    """Tracked files other than the lessons' with uncommitted changes (the owner's work)."""
+    lines = git(repo, "status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+    return [line[3:] for line in lines if not line[3:].strip('"').startswith(REL + "/")]
+
+
 def sync(repo):
     """Pulls with rebase, settling this computer's conflicting entry edits in the other computer's
-    favour (printed as "dropped:"); any other failure is aborted. Returns a problem or None."""
+    favour (printed as "dropped:"); any other failure is aborted. Never stashes the owner's
+    uncommitted work: with any, it doesn't pull. Returns a problem or None."""
     if not has_upstream(repo):
         return "no upstream branch"
-    done = git(repo, "pull", "--rebase", "--autostash", "-q")
+    if others_dirty(repo):
+        return "the state repository has uncommitted changes of its own (" + ", ".join(others_dirty(repo)[:3]) + ")"
+    done = git(repo, "pull", "--rebase", "-q")
     if done.returncode == 0:
         return None
     if busy(repo):
@@ -220,6 +238,11 @@ def push(repo):
         return "no upstream branch"
     if git(repo, "rev-list", "--count", "@{u}..HEAD").stdout.strip() == "0":
         return None
+    others = [f for f in git(repo, "log", "--name-only", "--format=", "@{u}..HEAD").stdout.split()
+              if not f.startswith(REL + "/")]
+    if others:
+        return ("the state repository has other unpushed commits (" + ", ".join(sorted(set(others))[:3])
+                + "); push them yourself, and the lessons go with them")
     for _ in range(3):
         if git(repo, "push", "-q").returncode == 0:
             return None
@@ -319,12 +342,15 @@ def main(argv):
         repo = state_repo()
         if repo and busy(repo):
             fail(4, f"{repo} is mid-rebase or mid-merge; finish that first. Nothing written")
+        if repo:
+            commit_leftovers(repo)
         problem = sync(repo) if repo else None
         if problem:
             print(f"not pulled: {problem} (this computer's copy)")
-        if repo:
-            commit_leftovers(repo)
         path = folder(repo)
+        if repo and os.path.exists(os.path.join(repo, "skill-evolution", "lessons.md")):
+            print("lessons: skill-evolution/lessons.md is from an earlier version: move its entries with "
+                  "`lessons add`, then delete it", file=sys.stderr)
         if command == "show":
             shown = entries(path)
             if not shown:

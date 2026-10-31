@@ -13,7 +13,7 @@ Skills evolve from what actually happened to them, never on their own. You colle
 
 - **The skills repository:** where the skill you are judging comes from. Installed skills are links: `git -C "$(realpath <skill folder>)" rev-parse --show-toplevel`. It holds `docs/VERSIONING.md` and `docs/skills/<skill>/`. A skill that isn't from a repository with those can still get proposals; say where it lives.
 - **The lessons:** every incident and proposal is an entry of its own in the owner's private state repository, kept by this skill's `scripts/lessons`: run the installed copy (the skill folder you read this from), not one in a worktree of the skills repository. `lessons show` lists one line per entry (ID, status, title); `lessons show <ID>...` prints those in full. Write only through `lessons add`, `set` and `note` (section 4), never by editing or committing the files yourself: the script pulls, commits only its own files and pushes. Each entry gets an ID like `L-K7QM` that never changes. What it prints:
-  - `not pushed` (exit 3): saved here; say so, the next `lessons` command sends it.
+  - `not pushed` (exit 3): saved here; say so, the next `lessons` command sends it. When the reason is the owner's own unpushed commits or uncommitted changes in the state repository, say that it waits for them: never push, commit or stash their work.
   - `dropped: ... L-K7QM ...: <lines>`: another computer changed that entry first, and this computer's unsent change, the lines shown, was dropped; record it again if it still holds.
   - `moved: ... L-K7QM is now L-P2WD`: two computers picked one ID; use the new one, and tell the owner if they saw the old.
   - `no private state repository` on its error output: it is using this computer's files only; say so.

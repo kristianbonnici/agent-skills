@@ -23,10 +23,13 @@
   commits only its own files and pushes, and an unsent edit that meets another computer's edit of
   the same entry is dropped and named, never leaving a rebase behind; `tests/skill-evolution-test`
   plays two computers against one remote.
-- From the per-entry design's review (Claude Sonnet 5.5; Codex GPT-6.1 Terra still running at the
-  time): a dropped edit is printed with what it said; an entry whose commit failed is committed by the
+- From the per-entry design's review (Claude Sonnet 5.5, and Codex GPT-6.1 Terra 6 must-fix, 2 of them
+  the same): a dropped edit is printed with what it said; an entry whose commit failed is committed by the
   next command; the script finds the state repository from a worktree of the skills repository and
   warns when it falls back to local files; IDs have four characters, and an offline ID collision moves
   the second entry to a new ID and says so; `show` lists one line per entry, full text by ID; the skill
   says what to do on each exit, writes entry files outside any repository, and checks an entry is
-  still proposed before applying it.
+  still proposed before applying it. Terra's others: a lessons
+  command never pushes the owner's other unpushed commits (it leaves the push to them), never stashes
+  their uncommitted edits (it doesn't pull then), and skips a rebase step only when it is lessons-only
+  and came to nothing; an old `lessons.md` gets a warning.
