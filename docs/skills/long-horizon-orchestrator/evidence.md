@@ -29,6 +29,9 @@ private records.
 - **The owner's settings:** in four runs (2026-10-13 to -15), test builds that shared the owner's settings
   cleared a chosen model and wrote first-run state. → *a snapshot at the start, compared and restored key by
   key on every wake.*
+- **OpenCode's free limit** (2026-10-29): it stopped both free models for the whole computer six minutes in,
+  and again 33 minutes after it came back; one task waited out both and was parked unfinished. → *the same
+  models on the OpenCode Go plan as their backup, and whole tasks starting there.*
 
 ## Outside sources
 

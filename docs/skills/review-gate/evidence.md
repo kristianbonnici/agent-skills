@@ -85,6 +85,31 @@ as rough. The per-task details stay in the owner's private records.
   → *the reviewer's brief.* His skills run only when he invokes them and approves the fixes; ours run
   unattended, so one skill decides the level and the reviewers itself.
 
+## Which cheap models review (2026-10-31)
+
+Why Go's two flash models take the free reviewers' place when the free tier stops, and nothing bigger does:
+
+- **The free limit:** on 2026-10-29 it stopped both free models for the whole computer after six minutes,
+  and again after 33 minutes. → *a paid backup for the same two models.*
+- **[Kodus Code Review Bench](https://www.codereviewbench.com/leaderboard)** (30 pull requests, 95 known
+  bugs; Kodus sells a review product): DeepSeek V4.1 Flash F1 41.5 (95% range 24.7–49.0), GLM-5.3 Flash
+  40.0 (29.1–49.4), Kimi K2.7 Code 43.1 (28.1–48.7), Kimi K3 39.9 (32.3–50.5). The top 11 models overlap,
+  so the costlier ones aren't shown to be better. → *the flash models stay; no Kimi.*
+- **[Qodo's comparison](https://www.qodo.ai/blog/which-llm-should-review-your-code/)** (2026-10-12; Qodo
+  sells a review product): GLM-5.3 F1 52.1%, behind only Claude's Opus, Sonnet and Fable. It is the one
+  cheap model with evidence of beating the flash pair, and the case for adding it later.
+- **[OpenCode Go](https://opencode.ai/docs/go/):** the docs give each model a monthly limit, with 20% per
+  5 hours and 50% per week, and say a model's limit "determines how its usage counts toward those
+  allowances". They don't say whether models share one allowance. On 2026-10-31, $0.54 of GLM-5.3 (limit
+  $15) showed as 7% of the week and 4% of the month on a single set of console meters, which fits a shared
+  limit but doesn't prove it. A 40-turn review of GLM-5.3 would be about 15% of a week. → *GLM-5.3 stays out
+  until the limit is shown to be separate.*
+
 ## Left out
 
-Weighed and not cited, so later checks don't weigh them again unless they change: none recorded yet.
+Weighed and not cited, so later checks don't weigh them again unless they change:
+
+- **Muse Wonder Full as a reviewer:** some practitioners use it as a premium reviewer. It is available only
+  in Muse Code's $50 and $200 plans, with no API, and those plans train on the owner's code by default.
+- **MiniMax's M Plan:** MiniMax M3 scored F1 29.6 on Kodus, below the other cheap models, and the plan
+  publishes no quota.

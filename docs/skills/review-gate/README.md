@@ -15,7 +15,7 @@ flowchart TD
   level -->|"only docs, wording, styling"| light["Light<br/>one free reviewer<br/>(DeepSeek, else GLM)"]
   level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Terra for a Claude change,<br/>Sonnet for any other"]
   level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus,<br/>+ a free reviewer if one answers"]
-  light -->|both free models limited| standard
+  light -->|no free model answers| standard
   standard -.->|Codex short| sub["Claude substitute<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>must-fix · nit · pre-existing · rejected"]
   sort -->|"deep: a must-fix only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
@@ -39,10 +39,12 @@ flowchart TD
   the Codex plan), Claude Sonnet 5.5 and Opus 5.5.
 - **Codex is preferred but never required:** when it is short, a Claude model other than the change's
   author takes its place, and a free reviewer brings back a second family.
-- **Free reviewers** (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash) cost nothing but share one limit
-  for the whole computer, which the tasks' research helpers also need. So they review first rounds only,
-  and only where they help most for least: alone on light changes, as an extra voice on deep ones, and
-  in place of the lost family when Codex is short. They are dropped, never waited for, when limited.
+- **Free reviewers** (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash) run on OpenCode's free tier,
+  which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
+  flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
+  alone on light changes, as an extra voice on deep ones, and in place of the lost family when Codex is
+  short. A limited one moves from the free tier to Go, for 30 minutes at most, and is then dropped, never
+  waited for.
 - **Gemini doesn't review:** its reviews were the weakest in past runs.
 - **Trial reviewers:** GPT-6 Luna and Claude Haiku 5.5 add one cheap extra review in round 1 at
   Standard and Deep, split half and half across a run's tasks. Their findings are checked and fixed

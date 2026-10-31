@@ -1,6 +1,6 @@
 # Launching reviewers
 
-Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
+Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries, 30 in all; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
 
 ## In T3
 
@@ -17,10 +17,14 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 | Claude Opus 5.5 | `{providerInstanceId: "claudeAgent", model: "claude-opus-5-5", options: [{id: "effort", value: "high"}]}` |
 | DeepSeek V4.1 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/deepseek-v4.1-flash-free", options: [{id: "variant", value: "high"}]}` |
 | GLM-5.3 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/glm-5.3-flash-free", options: [{id: "variant", value: "high"}]}` |
+| DeepSeek V4.1 Flash (Go) | `{providerInstanceId: "opencode", model: "opencode-go/deepseek-v4.1-flash", options: [{id: "variant", value: "high"}]}` |
+| GLM-5.3 Flash (Go) | `{providerInstanceId: "opencode", model: "opencode-go/glm-5.3-flash", options: [{id: "variant", value: "high"}]}` |
 | GPT-6 Luna (trial) | `{providerInstanceId: "codex", model: "gpt-6-luna", options: [{id: "reasoningEffort", value: "high"}]}` |
 | Claude Haiku 5.5 (trial) | `{providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{id: "effort", value: "high"}]}` |
 
 A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed".
+
+The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, without `-free`, is a different model that bills per request.
 
 ## In Claude Code without T3
 
@@ -40,7 +44,7 @@ A subagent can't launch agents of its own: there, use the command-line forms for
   cd <worktree> && opencode run --agent plan -m 'opencode/deepseek-v4.1-flash-free#high' "<brief>"
   ```
 
-  (GLM: `opencode/glm-5.3-flash-free#high`.)
+  (GLM: `opencode/glm-5.3-flash-free#high`. On Go: `opencode-go/deepseek-v4.1-flash#high`, `opencode-go/glm-5.3-flash#high`.)
 
 ## In Codex without T3
 

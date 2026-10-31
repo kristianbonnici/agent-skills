@@ -1,5 +1,13 @@
 # long-horizon-orchestrator changelog
 
+## 3.0.0 (2026-11-01)
+
+Major because a run now spends a plan that it didn't touch before: the owner's flat-rate OpenCode Go plan, with its Extra Usage off, so it can't bill past the plan's price.
+- **Go backs up OpenCode's free models** (owner, 2026-11-01, after the free limit stopped both for the whole computer on 2026-10-29): a helper stopped by the free tier moves to the same model on Go before it moves to another provider.
+- **A whole task on this pool starts on Go, not the free tier,** because a stop in the middle of a task costs a handoff. It then moves between the free tier, Go and Gemini as before.
+- **Only Go's two flash models are used:** its larger models count far more heavily, and the console's one set of meters means they may share one limit with the flash models ([review-gate's evidence](../review-gate/evidence.md)).
+- **A Go model that "requires Global regions" counts as unavailable, not limited,** so the other one is tried. DeepSeek on Go needs that workspace setting.
+
 ## 2.1.0 (2026-10-31)
 
 - **Skill evolution at the finish** (owner, 2026-10-31): the ledger records incidents as they happen (what cost the owner time, work or an interruption, and the rule involved or missing), and the finish runs the new `skill-evolution` skill on them. The report gets "Skill changes proposed", at most three, only when there are any; "apply L-K7QM" becomes a follow-up task in the skills repository, and only an answer naming a proposal counts. The lessons are pushed to the private state repository, like the provider profile. Until now every improvement waited for the owner to notice a problem, as with the run folders that grew to 14.6 GB.
