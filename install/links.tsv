@@ -24,3 +24,6 @@ claude	link	skills/skill-evolution	~/.claude/skills/skill-evolution
 codex	link	skills/skill-evidence	~/.agents/skills/skill-evidence
 codex	link	skills/skill-evidence	~/.codex/skills/skill-evidence
 claude	link	skills/skill-evidence	~/.claude/skills/skill-evidence
+codex	link	skills/disk-cleanup	~/.agents/skills/disk-cleanup
+codex	link	skills/disk-cleanup	~/.codex/skills/disk-cleanup
+claude	link	skills/disk-cleanup	~/.claude/skills/disk-cleanup

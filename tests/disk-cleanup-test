@@ -1,0 +1,126 @@
+#!/bin/sh
+# Checks disk-cleanup's scan script in a made-up home folder: it deletes nothing, finds big folders,
+# build folders, big files and LaunchAgents with a missing program, marks what's new or grew since
+# the last scan, says what it was refused, keeps 12 scans, and answers the due check.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/disk-cleanup-test.XXXXXX")
+trap 'chmod -R u+rwx "$work"; rm -rf "$work"' EXIT HUP INT TERM
+
+python3 -I - "$repo_root/skills/disk-cleanup/scripts/scan" "$work" <<'EOF'
+import hashlib, os, plistlib, subprocess, sys
+from datetime import date, timedelta
+
+script, work = sys.argv[1], sys.argv[2]
+home = os.path.realpath(os.path.join(work, "home"))
+state = os.path.join(work, "state")
+scans = os.path.join(state, "agent-skills", "disk-cleanup", "scans")
+env = {**os.environ, "HOME": home, "XDG_STATE_HOME": state}
+
+
+def fill(path, mb):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        for _ in range(mb):
+            handle.write(os.urandom(1024 * 1024))
+
+
+def run(*args):
+    done = subprocess.run([script, *args], capture_output=True, text=True, env=env)
+    assert done.returncode == 0, (args, done.stdout, done.stderr)
+    return done.stdout
+
+
+def section(text, title):
+    return text.split(title, 1)[1].split("\n\n", 1)[0]
+
+
+def tree():
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(home):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            digest.update(path.encode())
+            with open(path, "rb") as handle:
+                digest.update(handle.read())
+    return digest.hexdigest()
+
+
+fill(f"{home}/Forgotten/copy/data/blob", 3)
+fill(f"{home}/Code/app/node_modules/pkg/blob", 2)
+fill(f"{home}/Code/crate/target/release/blob", 2)
+fill(f"{home}/Code/crate/Cargo.toml", 0)
+fill(f"{home}/Code/notrust/target/blob", 2)
+fill(f"{home}/Big/single.bin", 4)
+os.makedirs(f"{home}/Library/LaunchAgents")
+for name, program in (("gone", "/nonexistent/app/helper"), ("here", "/bin/sh")):
+    with open(f"{home}/Library/LaunchAgents/{name}.plist", "wb") as handle:
+        plistlib.dump({"Label": name, "ProgramArguments": [program, "-x"]}, handle)
+refused = f"{home}/Locked/private"
+fill(f"{refused}/blob", 1)
+os.chmod(refused, 0)
+
+# the due check before any scan
+assert run("--due").startswith("due: no scan yet"), "no scan is due"
+assert not os.path.exists(scans), "the due check wrote nothing"
+
+os.chmod(refused, 0o700)
+before = tree()
+os.chmod(refused, 0)
+
+first = run("--min-mb", "1", "--min-file-mb", "3")
+os.chmod(refused, 0o700)
+assert tree() == before, "the scan changed nothing"
+os.chmod(refused, 0)
+
+assert "Compared with: nothing, first scan" in first, first
+biggest = section(first, "Biggest folders")
+assert "~/Forgotten/copy/data" in biggest and "NEW" not in biggest, biggest
+assert "~/Forgotten\n" not in biggest, "a parent of a listed folder isn't listed"
+builds = section(first, "Build folders")
+assert "~/Code/app/node_modules" in builds, builds
+assert "~/Code/crate/target" in builds, builds
+assert "~/Code/notrust/target" not in builds, "target without Cargo.toml isn't a build folder"
+assert "~/Big/single.bin" in section(first, "Single files"), first
+broken = section(first, "LaunchAgents")
+assert "gone.plist: /nonexistent/app/helper" in broken and "here.plist" not in broken, broken
+assert "~/Locked/private" in section(first, "Refused"), first
+assert os.path.exists(os.path.join(scans, f"{date.today()}.tsv")), "the scan was saved"
+
+# compared with an earlier scan: new folders and growth are marked
+os.rename(os.path.join(scans, f"{date.today()}.tsv"), os.path.join(scans, f"{date.today() - timedelta(days=30)}.tsv"))
+assert run("--due").startswith("due: last scan 30 days ago"), "28 days or more is due"
+with open(os.path.join(scans, f"{date.today() - timedelta(days=30)}.tsv"), "a") as handle:
+    handle.write("-1048576\t~/Grown/data/more\n")  # as if it had grown by 1 GB, without writing 1 GB
+fill(f"{home}/Fresh/new/data/blob", 2)
+fill(f"{home}/Grown/data/more/blob", 2)
+second = run("--min-mb", "1", "--min-file-mb", "5000")
+biggest = section(second, "Biggest folders")
+line = next(l for l in biggest.splitlines() if "~/Fresh/new/data" in l)
+assert line.endswith("NEW"), line
+line = next(l for l in biggest.splitlines() if "~/Grown/data/more" in l)
+assert "GB" in line.rsplit("  ", 1)[1] and line.rsplit("  ", 1)[1].startswith("+"), line
+assert "NEW" not in next(l for l in biggest.splitlines() if "~/Forgotten" in l), biggest
+assert "  none" in section(second, "Single files"), second
+
+assert run("--due").startswith("not due: last scan 0 days ago"), "a scan today isn't due"
+assert run("--due", "--days", "0").startswith("due:"), "--days is honoured"
+assert run("--due", "--floor-percent", "101").startswith("due:"), "under the floor is due"
+
+# only the last 12 scans stay
+for days in range(40, 60):
+    with open(os.path.join(scans, f"{date.today() - timedelta(days=days)}.tsv"), "w") as handle:
+        handle.write("# free_kb 1 total_kb 2\n")
+run("--min-mb", "1", "--min-file-mb", "5000")
+names = sorted(os.listdir(scans))
+assert len(names) == 12 and names[-1] == f"{date.today()}.tsv", names
+
+# nothing to measure
+gone = {**env, "HOME": os.path.join(work, "no-such-home")}
+done = subprocess.run([script], capture_output=True, text=True, env=gone)
+assert done.returncode == 1 and "nothing could be measured" in done.stderr, done
+print("disk-cleanup scan: ok")
+EOF

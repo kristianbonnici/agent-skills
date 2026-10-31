@@ -1,0 +1,7 @@
+interface:
+  display_name: "Disk Cleanup"
+  short_description: "Find wasted disk space and clear only what the owner picks"
+  default_prompt: "Use $disk-cleanup: find what's wasting disk space on this Mac and show me what could go."
+
+policy:
+  allow_implicit_invocation: true

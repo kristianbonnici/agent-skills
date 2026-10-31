@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""Measure a Mac's home folder for disk-cleanup. Read-only: it deletes nothing, and writes only its
+own scan files.
+
+SKILL.md says how to use what it prints.
+
+Usage:
+  scan [--min-mb <MB>] [--min-file-mb <MB>]
+  scan --due [--days <days>] [--floor-percent <percent>]
+
+The first form measures and prints: free space; the biggest folders (up to three levels down),
+each with the date its newest file changed, marked NEW or with its growth since the last scan;
+build folders with their project's last commit; big single files; app data whose app seems gone;
+LaunchAgents whose program is missing; and what it was refused, so a refused folder is never taken
+for an empty one. It saves the measurements to scans/<date>.tsv and keeps the last 12 scans. The
+folder is ${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup.
+
+The second form reads the last scan and says "due: <why>" or "not due: <why>": due when no scan
+exists, the last is --days old (28 unless given), or free space is under --floor-percent (10
+unless given) of the disk. It measures nothing else, so a weekly trigger costs almost nothing.
+
+Sizes come from du, which counts a file with several hard links once per run and an iCloud file
+that isn't downloaded as nothing, so a size is an estimate of what deleting would free.
+
+Exit 0: done; 1: nothing could be measured.
+"""
+import argparse
+import os
+import plistlib
+import re
+import shutil
+import subprocess
+import sys
+from datetime import date, datetime
+
+SCANS_KEPT = 12
+SAVE_MIN_KB = 50 * 1024  # kept for comparing, so a folder that grew past the report's floor isn't NEW
+DEPTH = 3
+BIG_LEAVES = 40
+BIG_FILES = 15
+LAST_CHANGE_FILES = 200000  # files looked at per folder, so one huge tree can't stall the scan
+GROWTH_KB = 1024 * 1024  # growth worth marking
+BUILD_NAMES = {"node_modules", ".venv", "venv", ".build", ".next", ".turbo", ".gradle", "DerivedData"}
+APP_DATA_PARENTS = ("Library/Application Support", "Library/Caches", "Library/Containers")
+BUNDLE_ID = re.compile(r"^[a-z][a-z0-9-]*\.[A-Za-z0-9-]+\.[A-Za-z0-9.-]+$")
+SEEN_DIRS_SKIPPED = {".git"}
+
+
+def state_dir():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "agent-skills", "disk-cleanup", "scans")
+
+
+def gb(kb):
+    return f"{kb / 1048576:.1f} GB"
+
+
+def short(path, home):
+    return "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
+
+
+def disk_kb(home):
+    usage = shutil.disk_usage(home)
+    return usage.free // 1024, usage.total // 1024
+
+
+def saved_scans():
+    folder = state_dir()
+    if not os.path.isdir(folder):
+        return []
+    names = [n for n in os.listdir(folder) if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.tsv", n)]
+    return [os.path.join(folder, n) for n in sorted(names)]
+
+
+def read_scan(path):
+    sizes = {}
+    with open(path, errors="replace") as handle:
+        for line in handle:
+            if line.startswith("#"):
+                continue
+            kb, _, name = line.rstrip("\n").partition("\t")
+            sizes[name] = int(kb)
+    return sizes
+
+
+def due(days, floor_percent, home):
+    free, total = disk_kb(home)
+    percent = 100 * free / total
+    scans = saved_scans()
+    if percent < floor_percent:
+        print(f"due: {gb(free)} free, {percent:.0f}% of the disk, under {floor_percent:g}%")
+    elif not scans:
+        print("due: no scan yet")
+    else:
+        age = (date.today() - date.fromisoformat(os.path.basename(scans[-1])[:10])).days
+        state = "due" if age >= days else "not due"
+        print(f"{state}: last scan {age} days ago, {gb(free)} free")
+    return 0
+
+
+def measure(home):
+    done = subprocess.run(
+        ["du", "-xk", "-d", str(DEPTH), home],
+        capture_output=True, text=True, errors="replace", env={**os.environ, "LC_ALL": "C"},
+    )
+    sizes = {}
+    for line in done.stdout.splitlines():
+        kb, _, path = line.partition("\t")
+        if kb.isdigit() and path:
+            sizes[path] = int(kb)
+    refused = []
+    for line in done.stderr.splitlines():
+        found = re.match(r"du: (?:fts_\w+: )?(.*): (Operation not permitted|Permission denied)$", line)
+        if found:
+            refused.append(found.group(1))
+    return sizes, refused
+
+
+def leaves(sizes, home, floor_kb):
+    big = {path for path, kb in sizes.items() if kb >= floor_kb and path != home}
+    parents = set()
+    for path in big:
+        parent = os.path.dirname(path)
+        while parent.startswith(home) and parent != home:
+            parents.add(parent)
+            parent = os.path.dirname(parent)
+    return sorted(big - parents, key=lambda p: -sizes[p])
+
+
+def last_change(path):
+    newest, seen = 0, 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                newest = max(newest, os.lstat(os.path.join(root, name)).st_mtime)
+            except OSError:
+                continue
+            seen += 1
+            if seen >= LAST_CHANGE_FILES:
+                return "at least " + datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
+    if not newest:
+        try:
+            newest = os.lstat(path).st_mtime
+        except OSError:
+            return "unknown"
+    return datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
+
+
+def build_folders(home):
+    found = []
+    for root, dirs, files in os.walk(home):
+        if root == home:
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "Library"]
+        for name in list(dirs):
+            if name in SEEN_DIRS_SKIPPED:
+                dirs.remove(name)
+            elif name in BUILD_NAMES or (name == "target" and "Cargo.toml" in files):
+                found.append(os.path.join(root, name))
+                dirs.remove(name)
+    return found
+
+
+def sizes_of(paths):
+    if not paths:
+        return {}
+    done = subprocess.run(["du", "-sk", *paths], capture_output=True, text=True, errors="replace")
+    sizes = {}
+    for line in done.stdout.splitlines():
+        kb, _, path = line.partition("\t")
+        if kb.isdigit():
+            sizes[path] = int(kb)
+    return sizes
+
+
+def last_commit(folder):
+    done = subprocess.run(
+        ["git", "-C", folder, "log", "-1", "--format=%cs"], capture_output=True, text=True
+    )
+    return done.stdout.strip() or "no commits"
+
+
+def big_files(home, min_file_mb):
+    done = subprocess.run(
+        ["find", home, "-xdev", "(", "-path", os.path.join(home, "Library"), "-o",
+         "-path", os.path.join(home, ".Trash"), ")", "-prune", "-o",
+         "-type", "f", "-size", f"+{int(min_file_mb)}M", "-print0"],
+        capture_output=True,
+    )
+    found = []
+    for raw in done.stdout.split(b"\0"):
+        path = raw.decode(errors="replace")
+        if path:
+            try:
+                found.append((os.lstat(path).st_size // 1024, path))
+            except OSError:
+                continue
+    return sorted(found, reverse=True)
+
+
+def app_data_without_app(sizes, home, floor_kb):
+    if not shutil.which("mdfind"):
+        return []
+    orphans = []
+    for parent in APP_DATA_PARENTS:
+        prefix = os.path.join(home, parent) + "/"
+        for path, kb in sizes.items():
+            name = path[len(prefix):] if path.startswith(prefix) else ""
+            if kb < floor_kb or "/" in name or not BUNDLE_ID.match(name):
+                continue
+            done = subprocess.run(
+                ["mdfind", f"kMDItemCFBundleIdentifier == '{name}'"], capture_output=True, text=True
+            )
+            apps = [p for p in done.stdout.splitlines() if not p.startswith(home + "/Library/")]
+            if not apps:
+                orphans.append((kb, path))
+    return sorted(orphans, reverse=True)
+
+
+def broken_launch_agents(home):
+    broken = []
+    folder = os.path.join(home, "Library", "LaunchAgents")
+    if not os.path.isdir(folder):
+        return broken
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".plist"):
+            continue
+        try:
+            with open(os.path.join(folder, name), "rb") as handle:
+                job = plistlib.load(handle)
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            continue
+        program = job.get("Program") or (job.get("ProgramArguments") or [None])[0]
+        if isinstance(program, str) and program.startswith("/") and not os.path.exists(program):
+            broken.append((name, program))
+    return broken
+
+
+def save(sizes, home, free, total, floor_kb):
+    folder = state_dir()
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, date.today().isoformat() + ".tsv")
+    temporary = path + ".tmp"
+    with open(temporary, "w") as handle:
+        handle.write(f"# free_kb {free} total_kb {total}\n")
+        for name, kb in sorted(sizes.items()):
+            if kb >= min(SAVE_MIN_KB, floor_kb):
+                handle.write(f"{kb}\t{short(name, home)}\n")
+    os.replace(temporary, path)
+    for old in saved_scans()[:-SCANS_KEPT]:
+        os.remove(old)
+
+
+def scan(min_mb, min_file_mb, home):
+    floor_kb = int(min_mb * 1024)
+    earlier = saved_scans()
+    previous = read_scan(earlier[-1]) if earlier else None
+    sizes, refused = measure(home)
+    if not sizes:
+        print(f"scan: nothing could be measured under {home}", file=sys.stderr)
+        return 1
+    free, total = disk_kb(home)
+
+    print(f"Disk: {gb(free)} free of {gb(total)} ({100 * free / total:.0f}%)")
+    print(f"Measured: {gb(sizes.get(home, 0))} under {short(home, home)}")
+    print(f"Compared with: {os.path.basename(earlier[-1])[:10] if earlier else 'nothing, first scan'}")
+
+    print("\nTop level:")
+    top = [p for p in sizes if os.path.dirname(p) == home and sizes[p] >= floor_kb]
+    for path in sorted(top, key=lambda p: -sizes[p]):
+        print(f"  {gb(sizes[path]):>9}  {short(path, home)}")
+
+    print(f"\nBiggest folders (three levels down, {min_mb:g} MB or more):")
+    for path in leaves(sizes, home, floor_kb)[:BIG_LEAVES]:
+        name = short(path, home)
+        mark = ""
+        if previous is not None:
+            before = previous.get(name)
+            if before is None:
+                mark = "  NEW"
+            elif sizes[path] - before >= GROWTH_KB:
+                mark = f"  +{gb(sizes[path] - before)}"
+        print(f"  {gb(sizes[path]):>9}  changed {last_change(path)}  {name}{mark}")
+
+    print(f"\nBuild folders ({min_mb:g} MB or more):")
+    folders = sizes_of(build_folders(home))
+    kept = sorted((p for p in folders if folders[p] >= floor_kb), key=lambda p: -folders[p])
+    for path in kept:
+        project = os.path.dirname(path)
+        print(f"  {gb(folders[path]):>9}  last commit {last_commit(project)}  {short(path, home)}")
+    print(f"  {gb(sum(folders[p] for p in kept)):>9}  in all" if kept else "  none")
+
+    print(f"\nSingle files over {min_file_mb:g} MB (not in ~/Library):")
+    found = big_files(home, min_file_mb)
+    for kb, path in found[:BIG_FILES]:
+        print(f"  {gb(kb):>9}  {short(path, home)}")
+    if len(found) > BIG_FILES:
+        print(f"  and {len(found) - BIG_FILES} more")
+    if not found:
+        print("  none")
+
+    print("\nApp data whose app wasn't found (by bundle ID; check before trusting it):")
+    orphans = app_data_without_app(sizes, home, floor_kb)
+    for kb, path in orphans:
+        print(f"  {gb(kb):>9}  {short(path, home)}")
+    if not orphans:
+        print("  none")
+
+    print("\nLaunchAgents whose program is missing:")
+    broken = broken_launch_agents(home)
+    for name, program in broken:
+        print(f"  {name}: {program}")
+    if not broken:
+        print("  none")
+
+    print("\nRefused, so not measured (not the same as empty):")
+    for path in refused[:15]:
+        print(f"  {short(path, home)}")
+    if len(refused) > 15:
+        print(f"  and {len(refused) - 15} more")
+    if not refused:
+        print("  nothing")
+
+    save(sizes, home, free, total, floor_kb)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Measure a home folder for disk-cleanup; deletes nothing.")
+    parser.add_argument("--due", action="store_true")
+    parser.add_argument("--days", type=int, default=28)
+    parser.add_argument("--floor-percent", type=float, default=10)
+    parser.add_argument("--min-mb", type=float, default=500)
+    parser.add_argument("--min-file-mb", type=float, default=1000)
+    options = parser.parse_args()
+    home = os.path.realpath(os.path.expanduser("~"))
+    if options.due:
+        return due(options.days, options.floor_percent, home)
+    return scan(options.min_mb, options.min_file_mb, home)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
