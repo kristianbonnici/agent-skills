@@ -14,9 +14,9 @@ On a schedule nobody is watching: don't ask questions. Decide by these rules and
 ## 1. Set up
 
 - **The files:** the skills repository is `git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`; the evidence files are its `docs/skills/*/evidence.md`. Check the ones the user named, or all.
-- **One pending branch.** Your edits go on a branch `evidence/<YYYY-MM-DD>` in a worktree of its own, `<the repository's parent folder>/<repository folder name>-worktrees/evidence-<YYYY-MM-DD>`, made from the default branch (`main`). Look at the `evidence/*` branches first:
-  - one merged into `main` (`git merge-base --is-ancestor <branch> main`): the owner took it. Remove its worktree (`git worktree remove <path>`, never `--force`) and delete it (`git branch -d`). If git refuses either, leave it and say so in the report.
-  - one not merged: the owner hasn't decided yet. Work on it instead of a new one, in its worktree, after rebasing it onto `main` if that rebases cleanly (abort a rebase that conflicts, and work on the branch as it is). If there are several, use the newest and name the others in the report.
+- **One pending branch.** Your edits go on a branch `evidence/<YYYY-MM-DD>` in a worktree of its own, `<the repository's parent folder>/<repository folder name>-worktrees/evidence-<YYYY-MM-DD>`, made from the default branch (`main`); if that name is taken, add `-2`. Look at the `evidence/*` branches first:
+  - **One merged into `main`** (`git merge-base --is-ancestor <branch> main`): the owner took it. Remove its worktree only when `git -C <worktree> status --porcelain --ignored` prints nothing, since `git worktree remove` deletes ignored files without asking; then `git worktree remove <path>` (never `--force`) and `git branch -d <branch>`. If anything is listed or git refuses, leave both and name them in the report.
+  - **One not merged:** the owner hasn't decided yet. If its worktree has uncommitted changes (`git -C <worktree> status --porcelain`), someone is working there: change nothing in it, and stop with a report that says so. Otherwise rebase it onto `main` and work on it, so one branch holds everything waiting. If the rebase conflicts, abort it, leave that branch as it is, and make a new branch from `main` that carries its changes over by hand where they still apply (`git diff main...<old branch>`); the report names the old branch for the owner to delete. With several unmerged branches, take the newest the same way and name the others.
 - **Due?** Each file starts with `Last checked: new work <date>; sources <date>.` Read it from the pending branch's copy when there is one. On a scheduled run, check only the files whose new-work date is 10 days old or more, and if none is, stop with one line ("Evidence checked under 10 days ago.") and nothing else. When the user asks, check what they named whatever the dates.
 - Never touch the owner's checkout of the repository: no checkout, stash, reset or edit there.
 
@@ -66,8 +66,8 @@ New work that contradicts a rule, or shows a better one, is a proposal as well a
 Short and plain, in the thread or your reply:
 
 - **Per file checked:** what changed (sources added, updated, marked dated or gone, left out), or "nothing new".
-- **The branch:** its name and worktree, and how to take it: `git merge --ff-only evidence/<date>` in the repository's checkout of `main`. To drop an item, the owner says which, and it moves to "Left out" with their reason, now or on the next run.
-- **Proposals:** in skill-evolution's form, with the IDs `lessons add` printed.
+- **The branch:** its name and worktree, and how to take it: `git merge --ff-only evidence/<date>` in the repository's checkout of `main`; if that refuses because `main` moved since, `git rebase main` in the branch's worktree first. To drop an item, the owner says which, and it moves to "Left out" with their reason, now or on the next run.
+- **Proposals:** in skill-evolution's form, with the IDs `lessons add` printed, and anything `lessons` printed as dropped, moved or not pushed, word for word.
 - **What you couldn't check,** and why.
 
 Call for the owner's attention (the host's notification, or speech) only when there is a proposal or an evidence change. A quiet run ends with its one line.
@@ -75,6 +75,6 @@ Call for the owner's attention (the host's notification, or speech) only when th
 ## Never
 
 - Change a skill, or apply a proposal, without the owner's yes for it.
-- Push, merge into `main`, or touch the owner's checkout.
+- Push the skills repository, merge into `main`, or touch the owner's checkout. (The `lessons` script's own pushes to the private state repository are how proposals reach the owner, as skill-evolution says.)
 - Cite a source you didn't open, or a figure you didn't find in it.
 - Delete an entry for its age alone, or weigh again what "Left out" holds unless it changed.
