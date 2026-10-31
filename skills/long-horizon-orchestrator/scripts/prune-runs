@@ -6,12 +6,13 @@ SKILL.md ("Prepare", "On every wake", "Finish") says when to use it, and machine
 what it keeps.
 
 Usage:
-  prune-runs [--root <folder>] [--older-than <days>] [--apply]
-  prune-runs --scratch <run folder>/<task ID> [--root <folder>]
+  prune-runs [--older-than <days>] [--apply]
+  prune-runs --scratch <run folder>/<task ID>
   prune-runs --size <run folder>
 
-The root is the folder of ledgers and run folders, by default
-${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orchestrator. A run is a folder there
+The root is the folder of ledgers and run folders, always
+${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orchestrator, where SKILL.md puts them
+(a check sets XDG_STATE_HOME to a folder of its own; there is no option to point it elsewhere). A run is a folder there
 with a ledger of the same name beside it (<name>.md).
 
 Older runs (the first form). Only a run whose ledger says "Status: finished" and hasn't changed
@@ -42,7 +43,7 @@ calls it only for a merged task whose processes have stopped. Use it only once t
 
 --size prints a run folder's size on disk, for the report's closing line.
 
---root must be a folder agent-skills/long-horizon-orchestrator, as the default is. Every removal goes folder by folder from
+Every removal goes folder by folder from
 the root without following a link, so a folder swapped for a link meanwhile is refused, not
 followed.
 
@@ -196,7 +197,7 @@ def holds_protected(path):
     """Whether the folder holds what pruning keeps: a git worktree, a clone one was made from, KEEP or
     an evidence/ folder. Such a folder is never removed whole; its contents are sorted one by one."""
     for top, dirs, files in os.walk(path, followlinks=False):
-        if "KEEP" in files or EVIDENCE in dirs:
+        if "KEEP" in files or "KEEP" in dirs or EVIDENCE in dirs:
             return True
         if ".git" in files and is_worktree(top):
             return True
@@ -303,14 +304,12 @@ def runs_in(root):
         yield name, path, os.path.join(root, name + ".md")
 
 
-def safe_root(root, given):
+def safe_root(root):
     real = os.path.realpath(root)
     if not os.path.isdir(real):
-        if not given:
-            return None                            # no run has been made on this computer yet
-        usage_error(f"no such folder: {root}")
-    if os.path.basename(real) != "long-horizon-orchestrator" or os.path.basename(os.path.dirname(real)) != "agent-skills":
-        usage_error(f"refusing {root}: give the orchestrator's state folder, .../agent-skills/long-horizon-orchestrator")
+        return None                                # no run has been made on this computer yet
+    if real in {os.path.realpath("/"), os.path.realpath(os.path.expanduser("~"))}:
+        usage_error(f"refusing {root}")
     return real
 
 
@@ -408,7 +407,6 @@ def prune_scratch(root, task):
 def main():
     parser = argparse.ArgumentParser(prog="prune-runs", add_help=True,
                                      description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", default=None)
     parser.add_argument("--older-than", type=float, default=7.0, metavar="DAYS")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--scratch", metavar="TASK_FOLDER")
@@ -424,7 +422,7 @@ def main():
         return 0
     if not math.isfinite(args.older_than) or args.older_than < 0:
         usage_error("--older-than takes days, 0 or more")
-    root = safe_root(args.root or default_root(), args.root is not None)
+    root = safe_root(default_root())
     if root is None:
         if args.scratch:
             usage_error(f"no state folder at {default_root()}")
