@@ -95,9 +95,9 @@ assert on_remote(offline) and on_remote(offline).startswith(f"## {offline}. orch
 
 # Decisions and repeats: set and note on a, seen on b.
 assert lessons("a", "set", first, "declined 2026-11-01: not worth the context").returncode == 0
-assert lessons("a", "note", first, "orbos run: the disk filled again").returncode == 0
+assert lessons("a", "note", first, "sample run: the disk filled again").returncode == 0
 text = lessons("b", "show", first).stdout
-assert "- Status: declined 2026-11-01: not worth the context" in text and "; " + time.strftime("%Y-%m-%d") + ": orbos run: the disk filled again" in text, text
+assert "- Status: declined 2026-11-01: not worth the context" in text and "; " + time.strftime("%Y-%m-%d") + ": sample run: the disk filled again" in text, text
 
 # A chain of unsent changes (a set, a note and an add) meeting another computer's change of the same
 # entry: the set and the note are dropped with what they said, the new entry survives with its ID.
