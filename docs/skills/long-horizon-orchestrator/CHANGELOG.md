@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 2.1.0 (2026-10-31)
+
+- **Skill evolution at the finish** (owner, 2026-10-31): the ledger records incidents as they happen (what cost the owner time, work or an interruption, and the rule involved or missing), and the finish runs the new `skill-evolution` skill on them. The report gets "Skill changes proposed", at most three, only when there are any; "apply L3" becomes a follow-up task in the skills repository, and only an answer naming a proposal counts. The lessons file is pushed to the private state repository with the provider profile. Until now every improvement waited for the owner to notice a problem, as with the run folders that grew to 14.6 GB.
+
 ## 2.0.0 (2026-10-31)
 
 Major because the skill now deletes files on its own: a merged task's scratch folder, and, with the contract's approval, older runs' material (owner, 2026-10-31, after 21 run folders held 14.6 GB that another agent deleted by hand, and the week's 7 runs 4.4 GB more).

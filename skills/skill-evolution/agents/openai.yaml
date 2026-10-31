@@ -1,0 +1,7 @@
+interface:
+  display_name: "Skill Evolution"
+  short_description: "Propose skill changes from what went wrong, for the owner to decide"
+  default_prompt: "Use $skill-evolution to turn what went wrong with a skill into at most three proposed changes, checked against the skill's current text and earlier proposals; change nothing until I say which to apply."
+
+policy:
+  allow_implicit_invocation: true

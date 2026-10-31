@@ -56,6 +56,9 @@ The reader is returning after hours away, and probably after several tasks' wort
    **Recommended:** <the option you would pick>, because <one sentence, from what the run found>. <Or: "No recommendation: <what would settle it>.">
 2. ...
 
+## Skill changes proposed
+<Only when the skill-evolution step proposed any, at most three, in its form: "**L<n>. <skill>: <short title>.** <what happened and what it cost> <the change> (<where>; <bump>)." with "**Recommended:**" on the next line. End with: "Say which to apply ("apply L3") or skip; nothing changes until you do.">
+
 ## Suggested next steps
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
 - <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
