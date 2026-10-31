@@ -1,5 +1,13 @@
 # long-horizon-orchestrator changelog
 
+## 2.0.0 (2026-10-31)
+
+Major because the skill now deletes files on its own: a merged task's scratch folder, and, with the contract's approval, older runs' material (owner, 2026-10-31, after 21 run folders held 14.6 GB that another agent deleted by hand, and the week's 7 runs 4.4 GB more).
+- **Tasks keep what can be made again in `scratch/`:** builds, downloads, other projects' source, intermediate renders, uncited traces and recordings; evidence stays beside it. "Delete what isn't evidence" was left to each task, and none did.
+- **A merged task's `scratch/` is deleted in its cleanup,** with the new `scripts/prune-runs --scratch`; an unmerged task keeps it.
+- **Older runs shrink to their write-ups:** `scripts/prune-runs` lists, and with `--apply` removes, everything but text files, `report/`, `stopped/`, `pictures/`, links and worktrees in runs finished over a week ago; a run holding `KEEP` stays whole. The contract names the total when it is over about 1 GB, and Prepare prunes once approved. On the owner's folders it would keep 0.3 GB of 4.4 GB.
+- **The report says how big the run directory ended up,** and what pruning freed at the start.
+
 ## 1.2.0 (2026-10-30)
 
 The skill's first full review: its instructions by Codex GPT-6.1 Terra (safety), Claude Sonnet 5.5 (a whole run) and OpenCode DeepSeek V4.1 Flash (an open look); its scripts by Terra and OpenCode GLM-5.3 Flash. Every finding was checked against the files; the script fixes are by Claude Sonnet 5.5.

@@ -78,8 +78,9 @@ Then clean up:
    - Only then delete with `git branch -D`.
    - Record the old commit in the ledger and the final report as the way to restore it: `git branch <name> <sha>`.
 4. **Tidy the host's task list:** settle the task's T3 thread, or close the subagent in Codex. See the host reference.
+5. **Remove its scratch folder:** `<skill folder>/scripts/prune-runs --scratch <run directory>/<task ID>`, which deletes `<run directory>/<task ID>/scratch/` (builds, downloads, other projects' source, intermediate renders) and nothing else, and says how much it freed. It refuses a folder outside a run, and leaves a git worktree inside alone. The task's notes, evidence and pictures stay.
 
-Cleanup is for merged work only. A blocked, failed, parked or ready-but-not-merged task keeps its worktree and branch, because they hold the unmerged work. Name them in the final report.
+Cleanup is for merged work only. A blocked, failed, parked, stopped or ready-but-not-merged task keeps its worktree, branch and scratch folder, because they hold the unmerged work or what it needs to go on. Name them in the final report.
 
 ## A task the user stopped
 

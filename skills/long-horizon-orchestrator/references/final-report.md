@@ -48,7 +48,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 - **<Where to look>:** what to try, and what it should do.
 
 ## Side effects on your computer
-<Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed and restored, services reinstalled, files left or removed (test builds' sandbox containers, which need your password to delete, are safe to remove), disk space used and freed, and anything the run couldn't restore.>
+<Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed and restored, services reinstalled, files left or removed (test builds' sandbox containers, which need your password to delete, are safe to remove), disk space used and freed (with what pruning older runs freed at the start, when the contract asked for it), and anything the run couldn't restore.>
 
 ## Open decisions
 
@@ -60,7 +60,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
 - <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
-<One closing line: checks passed on <OS>, <other OSes> untested; branches and worktrees cleaned up (or what was kept, and how to restore); ledger at <path>; run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. By how the offer went: offered with its tour, add "The report waits in the notch to listen to, with a tour of the run: press Tour."; offered without it, add "The report waits in the notch to listen to."; and either way without its tour, with OrbOS's walkthrough tool, add "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json)." Not offered: nothing. Add this clause after report-offer has offered the saved copy, so the card's Full Text lacks only it.>
+<One closing line: checks passed on <OS>, <other OSes> untested; branches, worktrees and merged tasks' scratch folders cleaned up (or what was kept, and how to restore); ledger at <path>, run directory <size> (`prune-runs --size`); run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. By how the offer went: offered with its tour, add "The report waits in the notch to listen to, with a tour of the run: press Tour."; offered without it, add "The report waits in the notch to listen to."; and either way without its tour, with OrbOS's walkthrough tool, add "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json)." Not offered: nothing. Add this clause after report-offer has offered the saved copy, so the card's Full Text lacks only it.>
 
 <One usage line, for example: "Usage: Claude Max 20x went from 9% to 31% of the week; Codex Plus from 16% to 22%; Antigravity Argon from 1% to 9% of its week; Claude API credits $314 → $200 left (an estimate; $114 of it expired), when the run spent some, they expired or an estimate was incomplete." Add any pause for a reset (which tasks, from when to when), and any other run that used the same subscriptions meanwhile.>
 ```

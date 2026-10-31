@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, and usage-sampler.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer and prune-runs.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -2057,6 +2057,91 @@ assert done.returncode == 3 and "in time" in offered["answer"] and not offered["
 # A pictures folder OrbOS wouldn't take (the home folder): none, and the project's pictures only.
 done, lines, offered, _ = offer("tour", "--pictures", os.path.expanduser("~"))
 assert done.returncode == 0 and "can't be the pictures folder" in done.stdout and "--pictures" not in lines[0]["argv"]
+EOF
+
+# prune-runs: a merged task's scratch removed, finished older runs shrunk to their write-ups (a dry
+# run first), running, recent, KEEP and ledger-less runs untouched, worktrees and links left alone.
+python3 -I - "$scripts/prune-runs" "$work/prune" <<'EOF'
+import os, subprocess, sys, time
+script, root = sys.argv[1], sys.argv[2]
+def put(path, data=b"x", age_days=None):
+    full = os.path.join(root, path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "wb") as f:
+        f.write(data)
+    if age_days is not None:
+        t = time.time() - age_days * 86400
+        os.utime(full, (t, t))
+def run(*args):
+    return subprocess.run([sys.executable, "-I", script, "--root", root, *args], capture_output=True, text=True, timeout=60)
+def exists(path):
+    return os.path.lexists(os.path.join(root, path))
+big = b"\0" * 300_000
+outside = os.path.join(os.path.dirname(root), "outside-target")
+os.makedirs(outside)
+open(os.path.join(outside, "keep-me.bin"), "wb").write(big)
+# old: finished 10 days ago, everything to sort
+for path in ("A/handoff.md", "A/measure.tsv", "A/check.log", "A/probe.swift", "A/pictures/after.png",
+             "report/final-report.md", "report/run-map.html", "report/chart.png", "stopped/C.patch", "stopped/C/build.bin"):
+    put("old/" + path, b"text")
+for path in ("A/scratch/build.o", "A/render.png", "A/videos/demo.mp4", "A/bin/Host.app/Contents/MacOS/Host",
+             "A/bin/Host.app/Contents/Info.plist", "B/clone/.git/HEAD", "B/clone/README.md", "B/.build/x.json",
+             "B/pictures/huge.png"):
+    put("old/" + path, big)
+put("old/A/huge.log", b"l" * (11 * 1024 * 1024))
+put("old/W/.git", b"gitdir: /elsewhere/.git/worktrees/W")
+put("old/W/build.bin", big)
+os.symlink(outside, os.path.join(root, "old/A/link"))
+put("old.md", b"# Run old\nStatus: finished\n", age_days=10)
+# running, recent, kept and ledger-less runs
+for name, ledger in (("running", b"# r\nStatus: running\n"), ("recent", b"# r\nStatus: finished\n"), ("kept", b"# r\nStatus: finished\n")):
+    put(f"{name}/A/build.bin", big)
+    put(f"{name}.md", ledger, age_days=10 if name != "recent" else 1)
+put("kept/KEEP", b"")
+put("loose/A/build.bin", big)
+
+done = run()
+assert done.returncode == 0, done.stderr
+assert "old: " in done.stdout and "would remove" in done.stdout and "W whole (a git worktree)" in done.stdout, done.stdout
+for name, why in (("running", "not finished"), ("recent", "finished 1.0 days ago"), ("kept", "it holds KEEP"), ("loose", "no ledger")):
+    assert f"{name}: skipped, {why}" in done.stdout, (name, done.stdout)
+assert exists("old/A/scratch/build.o")                       # a dry run removes nothing
+
+done = run("--apply")
+assert done.returncode == 0, done.stderr
+for kept in ("A/handoff.md", "A/measure.tsv", "A/check.log", "A/probe.swift", "A/pictures/after.png", "A/link",
+             "report/final-report.md", "report/run-map.html", "report/chart.png", "stopped/C.patch", "stopped/C/build.bin",
+             "W/.git", "W/build.bin", "B/pictures/huge.png", "pruned.txt"):
+    assert exists("old/" + kept), kept
+for gone in ("A/scratch", "A/render.png", "A/videos", "A/bin", "A/huge.log", "B/clone", "B/.build"):
+    assert not exists("old/" + gone), gone
+assert os.path.exists(os.path.join(outside, "keep-me.bin"))   # a link is never followed
+assert "prune-runs removed" in open(os.path.join(root, "old/pruned.txt")).read()
+for name in ("running", "recent", "kept", "loose"):
+    assert exists(f"{name}/A/build.bin"), name
+done = run("--apply")
+assert "old: " in done.stdout and "nothing to remove" in done.stdout, done.stdout
+
+# --scratch: only a task's folder in a run under the root; a worktree inside is left alone
+put("recent/B/scratch/x/build.bin", big)
+put("recent/B/notes.md", b"n")
+done = run("--scratch", os.path.join(root, "recent/B"))
+assert done.returncode == 0 and "removed scratch" in done.stdout, done.stdout
+assert not exists("recent/B/scratch") and exists("recent/B/notes.md")
+done = run("--scratch", os.path.join(root, "recent/B"))
+assert done.returncode == 0 and "nothing to remove" in done.stdout
+put("recent/D/scratch/wt/.git", b"gitdir: /elsewhere")
+done = run("--scratch", os.path.join(root, "recent/D"))
+assert done.returncode == 1 and exists("recent/D/scratch/wt/.git"), done.stderr
+for bad in (os.path.join(root, "loose/A"), outside, os.path.join(root, "recent")):
+    done = run("--scratch", bad)
+    assert done.returncode == 64, (bad, done.stdout, done.stderr)
+assert run("--scratch", os.path.join(root, "recent/B"), "--apply").returncode == 64
+# --size, and refusals
+done = subprocess.run([sys.executable, "-I", script, "--size", os.path.join(root, "recent")], capture_output=True, text=True)
+assert done.returncode == 0 and done.stdout.strip().endswith(("KB", "MB")), done.stdout
+assert subprocess.run([sys.executable, "-I", script, "--root", os.path.expanduser("~")], capture_output=True).returncode == 64
+assert subprocess.run([sys.executable, "-I", script, "--root", os.path.join(root, "nowhere")], capture_output=True).returncode == 64
 EOF
 
 echo "orchestrator scripts: ok"

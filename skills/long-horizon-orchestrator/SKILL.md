@@ -2,7 +2,7 @@
 name: long-horizon-orchestrator
 description: Run a set of long-running agent tasks to completion while the user is away. Launch each task as its own agent (T3 threads on any provider, Claude Code background subagents, or Codex subagents). Get woken automatically when a task finishes or blocks, launch dependent tasks once their prerequisites are merged, and have finished work reviewed, checked and merged into the branch the run started from. End with a plain-language report of what was built, open decisions and next steps. Use whenever the user wants several tasks run in parallel or overnight, asks you to launch, coordinate, chain or babysit agents or follow-up tasks, says "launch everything and merge it", or wants work to continue while they sleep or step away, even if they never say "orchestrate". If no task list exists yet, plan one first and get a single approval.
 metadata:
-  version: 1.2.0
+  version: 2.0.0
 ---
 
 # Long-Horizon Orchestrator
@@ -75,6 +75,7 @@ Put everything the user might want to decide into one message, so nothing needs 
   - whether the user may still be at the computer (an evening run): then the screen's lease waits until they have been away five minutes, nothing records the screen or plays out loud before that, and their screen lock must not start sooner ([references/machine.md](references/machine.md#6-shared-resources-and-disk)).
 
   Say that you will keep the computer awake for the whole run (`caffeinate` on macOS), and that the warm-up needs the user at the computer for about five minutes right after they approve. Approving the contract approves all of it.
+- **Older runs:** run `scripts/prune-runs` (it only lists) and, when finished runs older than a week hold more than about 1 GB beyond their write-ups, say how much and that you will shrink them to their notes, reports and pictures at the start ([references/machine.md](references/machine.md#6-shared-resources-and-disk)). A run folder holding a file named `KEEP` is left whole.
 - **Estimate:** a rough duration, labelled as an estimate. Agent runs often finish much faster than planned.
 - **Ledger:** where the ledger file will be.
 
@@ -92,6 +93,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
 
 - Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
 - Create the ledger and the run directory (see below), and record the contract in the ledger.
+- If the contract named older runs to shrink, run `scripts/prune-runs --apply` once, and record what it freed in the ledger.
 - Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configure` without a `modelSelection`, which only reads). The report's charts need it.
 - Record the version of this skill and of `review-gate` (`metadata.version` in each `SKILL.md`), so later studies can compare runs by version, and the absolute path of this skill's folder, so a wake after a context summary can read the skill and its `scripts/` again.
 - If your thread's title doesn't say plainly which run this is, rename it so the user can tell runs apart (in T3, [references/host-t3.md](references/host-t3.md#name-your-own-thread)).
@@ -131,7 +133,7 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
    - Check the task's thread or agent status and read its last message, and whether it waits on an approval prompt (in T3, `pendingRequestCount` from `t3_thread_read`): a running task with a pending request and no child process running is stuck on one, so interrupt the turn and tell it how to finish without that command.
    - A report says what the task believes; git says what happened.
 3. **Act.** Follow [references/integration.md](references/integration.md):
-   - **Merged:** verify the head of its latest report, mark it done and launch any task this unblocked. Then clean up, only once the task and everything it started have stopped, in the order [references/integration.md](references/integration.md#cleanup-after-a-merge) gives: stop a turn that outlived the report, check for background jobs, then for leases it holds, then remove its worktree and branch and tidy its entry in the host's task list (in T3, settle its thread). Settling a thread or closing an agent doesn't stop the jobs it started, so if anything still runs, clean up on a later wake.
+   - **Merged:** verify the head of its latest report, mark it done and launch any task this unblocked. Then clean up, only once the task and everything it started have stopped, in the order [references/integration.md](references/integration.md#cleanup-after-a-merge) gives: stop a turn that outlived the report, check for background jobs, then for leases it holds, then remove its worktree and branch, tidy its entry in the host's task list (in T3, settle its thread) and delete its `scratch/` folder with `scripts/prune-runs --scratch`. Settling a thread or closing an agent doesn't stop the jobs it started, so if anything still runs, clean up on a later wake.
    - **Ready but not merged** (the integration branch moved, the checkout is dirty, the policy is to leave it on its branch, one check missed narrowly, or its review didn't converge): follow the integration reference.
    - **Blocked:** if the cause is mechanical and within the contract, such as a rebase conflict, a port clash or a flaky check, send the task a follow-up. Otherwise mark it blocked, park its dependents, and record the decision it needs.
    - **Paused by quota** (its provider's window ran out, so it stopped without reporting): leave it as it is, on its thread and worktree (unless the contract lets Claude work move to the owner's API credits as a backup: [references/routing.md](references/routing.md#claude-api-credits-use-what-would-expire)). Make sure a resume wake is scheduled, and after the reset continue it on the same thread, as [references/routing.md](references/routing.md#3-when-a-window-runs-short-or-runs-out) describes. This is not a failure, and the nudge that resumes it doesn't count as its one nudge.
@@ -159,8 +161,9 @@ When no task is running, paused or able to start (every task is merged, `ready`,
    - the integration branch log;
    - nothing was pushed;
    - the integration checkout is clean;
-   - every merged task's worktree and branch is removed, and its entry and its helper threads tidied;
-   - unfinished tasks keep theirs and stay visible.
+   - every merged task's worktree, branch and `scratch/` folder is removed, and its entry and its helper threads tidied;
+   - unfinished tasks keep theirs and stay visible;
+   - the run directory's size (`scripts/prune-runs --size <run directory>`), for the report's closing line.
 3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)). If another run is still active, leave the steps you share with it to whichever finishes last, as agreed, and tell it you have finished; if it hasn't answered all run, do them yourself, as [references/routing.md](references/routing.md#running-beside-another-orchestrator) says.
 4. If the project has a quick main check, run it once on the integration branch. Run it in a detached worktree (`git worktree add --detach <run directory>/final-check <integration branch>`, then `git worktree remove --force` it, since it holds no work) when another run still works in the checkout, or when the check writes files the user's own copy uses, such as the app they have running.
 5. Remove throwaway threads or worktrees you made along the way.
@@ -192,7 +195,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/<re
 ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/<repo-name>-<YYYYMMDD-HHMM>/
 ```
 
-If a ledger of that name already exists (two runs on one repository started within a minute), add `-2`. The run directory holds everything else the run writes and needs later: briefs, task handoffs, logs you keep as evidence, and the saved copy of the final report. Never keep these in `/tmp`, which macOS clears on restart, and never link to `/tmp` from the report.
+If a ledger of that name already exists (two runs on one repository started within a minute), add `-2`. The run directory holds everything else the run writes and needs later: briefs, task handoffs, logs you keep as evidence, and the saved copy of the final report. Never keep these in `/tmp`, which macOS clears on restart, and never link to `/tmp` from the report. Each task's folder in it has a `scratch/` folder for what can be made again (builds, downloads, other projects' source), deleted once the task merges; a week after a run finishes, `scripts/prune-runs` can shrink it to its write-ups ([references/machine.md](references/machine.md#6-shared-resources-and-disk)).
 
 The ledger is your memory across context summaries, heartbeats and wakes. Its first line after the title is `Status: running`, `Status: paused until <time>` or `Status: finished`, so other runs can tell whether this one is still active. It holds:
 
