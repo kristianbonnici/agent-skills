@@ -33,15 +33,15 @@ Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.
 
 | Level | Round 1 |
 |---|---|
-| Light | One free reviewer: DeepSeek, else GLM. If none answers, the cross reviewer. |
+| Light | One free reviewer. If none answers, the cross reviewer. |
 | Standard | The cross reviewer. When Codex is short: its Claude substitute, plus one free reviewer if one answers. |
 | Deep | Two paid reviewers with different focus, plus one free reviewer if one answers (focus: an open look). For a Claude change: Terra (logic, security, failure paths) and the Claude model you aren't (tests, docs, what the user sees, the project's rules); when Codex is short, Opus and Sonnet split those. For any other change: Opus (logic, security, failure paths) and Sonnet (tests, docs, what the user sees). |
 
 Limits:
 
-- **A free reviewer gets its time and no more** (15 minutes for each model, 30 for the place in all). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, or no answer in its time) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM. When the order or the 30 minutes run out, it is dropped, except at Light, where the cross reviewer takes its place.
+- **A free reviewer gets its time and no more** (15 minutes for each model). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, or no answer in its time) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM. When the order runs out, it is dropped, except at Light, where the cross reviewer takes its place.
   - OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, go straight to Go.
-  - Go's limit may cover both its models: after a quota error from one, don't try the other.
+  - After no answer in its time, skip the other model on that tier.
   - A Go model that "requires Global regions" isn't limited, just unavailable: try the other.
 - **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Terra by the Claude model you aren't, or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.
 
@@ -87,6 +87,8 @@ review: level=<light|standard|deep> (<why, in a few words>) rounds=<n>
 reviewer=<harness/model/level> rounds=<1,2> must-fix=<n> nit=<n> pre-existing=<n> rejected=<n> only-one=<must-fixes no other reviewer raised> <trial=yes, for a trial reviewer>
 reviewer=<harness/model/level> skipped=<why: the limit error, or "Codex short">
 ```
+
+For OpenCode, write the whole model name, so the free tier and Go stay apart (`opencode-go/glm-5.3-flash`). A reviewer that moved on gets a `skipped` line for each model it left.
 
 Then list each must-fix with its commit, the open nits and pre-existing findings, and the rejected findings with their reasons.
 

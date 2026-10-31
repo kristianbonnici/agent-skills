@@ -7,6 +7,7 @@ Major because a run now spends a plan that it didn't touch before: the owner's f
 - **A whole task on this pool starts on Go, not the free tier,** because a stop in the middle of a task costs a handoff. It then moves between the free tier, Go and Gemini as before.
 - **Only Go's two flash models are used:** its larger models count far more heavily, and the console's one set of meters means they may share one limit with the flash models ([review-gate's evidence](../review-gate/evidence.md)).
 - **A Go model that "requires Global regions" counts as unavailable, not limited,** so the other one is tried. DeepSeek on Go needs that workspace setting.
+- **The contract says whether a run may use Go and which whole tasks start on it, and the report says what used it,** since its usage can't be read. The helper section of a task's brief lists every target and copies these rules, because a task only sees its brief.
 
 ## 2.1.0 (2026-10-31)
 

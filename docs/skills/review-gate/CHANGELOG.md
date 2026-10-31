@@ -3,8 +3,9 @@
 ## 2.0.0 (2026-11-01)
 
 Major because the gate now spends a plan that it didn't touch before: the owner's flat-rate OpenCode Go plan, with its Extra Usage off, so it can't bill past the plan's price.
-- A free reviewer that is limited moves on instead of being dropped (owner, 2026-11-01, after the free limit stopped both models for the whole computer on 2026-10-29): free DeepSeek, free GLM, Go DeepSeek, Go GLM, 15 minutes each and 30 in all. At Light, the cross reviewer takes over only when that order runs out.
-- Only the two flash models review on Go. GLM-5.3 stays out, and so do Go's other larger models: their reviews look stronger, but about 25 turns of GLM-5.3 took 7% of the plan's week, and the console shows one set of meters for all models, so it may be one shared limit ([evidence.md](evidence.md)).
+- A free reviewer that is limited moves on instead of being dropped (owner, 2026-11-01, after the free limit stopped both models for the whole computer on 2026-10-29): free DeepSeek, free GLM, Go DeepSeek, Go GLM, 15 minutes each; a model that doesn't answer in its time skips the other model on its tier. At Light, the cross reviewer takes over only when that order runs out.
+- Only the two flash models review on Go. Full GLM-5.3 (not GLM-5.3 Flash) stays out, and so do Go's other larger models: their reviews look stronger, but about 25 turns of GLM-5.3 took 7% of the plan's week, and the console shows one set of meters for all models, so it may be one shared limit ([evidence.md](evidence.md)).
+- The record writes OpenCode's whole model name, so a later study can tell the free tier from Go, with a `skipped` line for each model a reviewer left.
 - `launching.md` lists the Go targets and warns that `opencode/deepseek-v4.1-flash`, without `-free`, bills per request.
 
 ## 1.1.0 (2026-10-30)

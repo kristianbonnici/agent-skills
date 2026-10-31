@@ -31,7 +31,7 @@ flowchart TD
 
 | Level | Round 1 | Later rounds |
 |---|---|---|
-| Light | one free reviewer; if both are limited, the cross reviewer | the cross reviewer, only after a logic fix |
+| Light | one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
 | Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the must-fix, or the cross reviewer for a fix only a free reviewer asked for |
 | Deep | two paid reviewers, different focus, + a free reviewer if one answers | the paid reviewers who found must-fixes |
 
@@ -43,8 +43,8 @@ flowchart TD
   which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
   alone on light changes, as an extra voice on deep ones, and in place of the lost family when Codex is
-  short. A limited one moves from the free tier to Go, for 30 minutes at most, and is then dropped, never
-  waited for.
+  short. A limited one moves from the free tier to Go, and when neither answers it is dropped, or at light
+  the cross reviewer takes its place. It is never waited for past its time.
 - **Gemini doesn't review:** its reviews were the weakest in past runs.
 - **Trial reviewers:** GPT-6 Luna and Claude Haiku 5.5 add one cheap extra review in round 1 at
   Standard and Deep, split half and half across a run's tasks. Their findings are checked and fixed
@@ -60,5 +60,5 @@ Every gate ends with lines like these, which later studies count:
 review: level=deep (reads socket input) rounds=2
 reviewer=t3/codex gpt-6.1-terra/high rounds=1,2 must-fix=2 nit=3 pre-existing=1 rejected=1 only-one=1
 reviewer=t3/claude sonnet-5-5/high rounds=1 must-fix=1 nit=4 pre-existing=0 rejected=2 only-one=0
-reviewer=t3/opencode deepseek-v4.1-flash/high skipped=Free usage limit reached
+reviewer=t3/opencode opencode/deepseek-v4.1-flash-free/high skipped=Free usage limit reached
 ```
