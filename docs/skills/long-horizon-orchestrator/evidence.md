@@ -2,6 +2,8 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
+Last checked: new work 2026-10-31; sources 2026-10-31.
+
 ## Our own runs (2026-10-04 to 2026-10-31)
 
 The skill grew from its overnight runs; the review gate's [study](../review-gate/evidence.md) covers 263
@@ -84,6 +86,21 @@ private records.
   each building half of a game made parts that didn't fit. → *one task per coherent objective, never split
   across agents; a dependent's brief says what its predecessors added; helpers only for research and fully
   specified steps, checked by the agent that asked.*
+- **Anthropic, [Building agents: When to fold subagents into your main agent loop](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)**
+  (Diane Sarkis, 22 October 2026):
+  - In several enterprise deployments, one agent with skills often beat both a single prompt and a design
+    with subagents; one customer's single loop ran "roughly 2x faster" than its multi-agent harness.
+    Handoffs lose context, and specialists multiply into overlapping prompts with conflicting rules.
+  - Subagents still fit when one loop measurably degrades from context bloat, when tasks run in parallel
+    "with fresh context windows that can be discarded once the task is done", or when one agent can't choose
+    its tools or its instructions conflict. A subagent that stays is best called as a tool by the main agent.
+  - On a sample support agent, folding one subagent into another "broke a process that had been passing",
+    and the break showed "in one run out of two": measure, change one thing at a time, keep what holds up.
+
+  → *a task is an agent of its own only as an independent piece with a fresh context, discarded after its
+  merge; reviewers and helpers are called by the task, which keeps the work and judges what they return;
+  procedures in skills, loaded when needed; skill changes proposed a few at a time, each a version, so one
+  that hurts can be found.*
 - **Kim, Liu and others (Google Research, Google DeepMind, MIT), [Towards a science of scaling agent systems](https://research.google/blog/towards-a-science-of-scaling-agent-systems-when-and-why-agent-systems-work/)**
   ([arXiv 2512.08296](https://arxiv.org/abs/2512.08296), blog 28 January 2026): 180 configurations, five
   architectures, three model families.
@@ -157,9 +174,26 @@ private records.
 - **Multi-agent work costs more and can hurt.** Google's study lost 39–70% on sequential tasks, Cognition
   advises against splitting work, and Anthropic used 15× the tokens of chat. The skill runs agents in
   parallel only between independent tasks, keeps each task's work on one agent, and chains dependents.
+- **Anthropic now advises folding subagents into one loop.** Its October 2026 article finds one agent with
+  skills often better, and wants a longer-running agent's tasks to "sit in the main context window". It
+  studies enterprise agents that talk to users, not runs of many coding tasks over hours, which don't fit one
+  window. The skill keeps work that shares context in one task, and gives the orchestrator only what it
+  needs to verify, merge and chain the tasks: their reports, the ledger and git.
 - **A run without an orchestrator worked.** The C compiler's 16 agents coordinated through git and lock
   files alone. That project had one near-perfect test oracle; our tasks span apps, sites and skills with
   different checks, so one orchestrator verifies each merge.
 - **Harness parts expire.** Anthropic removed resets and sprints as models improved. Each skill carries a
   version, and these notes say which rule came from which evidence, so a rule can be dropped when it stops
   paying.
+
+## Left out
+
+Weighed and not cited, so later checks don't weigh them again unless they change:
+
+- [AI Agent Pull Requests on GitHub: Frequency, Structure, and Merge Conflict Rates](https://arxiv.org/abs/2607.04697)
+  (arXiv 2607.04697, 2026): a seven-page preprint with no venue and no named affiliations.
+- [Passes Alone, Fails Together: Benchmarking Semantic Coordination in Parallel LLM-Agent Development](https://arxiv.org/abs/2609.25396)
+  (arXiv 2609.25396, 2026): a workshop paper. Its finding, parallel changes that pass alone and fail
+  together, fits the rule that a dependent's brief says what its predecessors added.
+- [Confident and Wrong](https://arxiv.org/abs/2603.25764) (arXiv 2603.25764, 2026): false "done" claims in
+  1,750 trajectories; a single author and an observational sample.
