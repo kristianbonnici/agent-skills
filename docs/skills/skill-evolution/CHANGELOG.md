@@ -13,3 +13,10 @@
   lock, pulls, numbers after the highest entry, commits and pushes, and renumbers its own entries if
   another computer took the numbers, before the owner sees them; the owner's decisions are pushed too;
   proposals still waiting compete for the three places each time, and the count of the rest is named.
+- Round 2 (Terra, 4 must-fix, no fewer than round 1, so the review stopped as not converging) showed the
+  prose git steps (a new file never added, a second computer never linked, numbers pushed before they
+  were checked, a diverged clone after an offline save) were the wrong approach: `scripts/lessons begin`
+  and `end` now do all of the file's git work (a lock, a pull with rebase, the file made and linked,
+  git's union merge so two computers' entries both stay, this computer's colliding unshown entries
+  renumbered before a push, an offline save sent by the next begin), with `tests/skill-evolution-test`
+  playing two computers against one remote.

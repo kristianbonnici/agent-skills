@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""Open and save skill-evolution's lessons file, doing its git work, so every write is locked,
+numbered after the newest entries on every computer, committed and pushed.
+
+SKILL.md ("Find the files", "Record and propose") says when to use it.
+
+Usage:
+  lessons begin [--wait-minutes <m>]     before reading or writing the file
+  lessons end -m <message>               after writing it (also after reading only: it releases the lock)
+
+The file is ${XDG_STATE_HOME:-~/.local/state}/agent-skills/skill-evolution/lessons.md. When the
+owner's private state repository exists (AGENT_SKILLS_STATE, by default agent-skills-state beside
+the skills repository, with a .git), the file lives there as skill-evolution/lessons.md and the
+path above is a link to it, as scripts/bootstrap makes it; otherwise it is a plain local file.
+
+begin:
+  - takes the lock, a folder beside the local path: another run on this computer waits up to
+    --wait-minutes (15), and a lock older than an hour is taken over;
+  - pulls the state repository with rebase, so a commit an earlier run couldn't push goes on top;
+  - creates the file in the repository (staged) if it has none, and links the local path to it;
+    marks it merge=union in the repository's .gitattributes, so two computers' new entries both
+    stay when their edits meet (a pull that still fails is aborted, leaving the repository as it was);
+  - renumbers this computer's entries not yet pushed whose number another computer took
+    ("renumbered: L7 -> L9"): show the owner only numbers printed after this;
+  - prints "file: <path to edit>" and "next: L<n>", the number for a new entry.
+
+end:
+  - refuses a file in which a number repeats (exit 2: fix it and run end again);
+  - commits only the lessons file and pushes it; a rejected push is pulled with rebase, this
+    computer's colliding entries renumbered and committed, and pushed again;
+  - releases the lock, whatever happened.
+
+Exit 0: done; 2: a number repeats; 3: saved but not pushed (no network, a conflict): the commit
+stays local and the next begin sends it; 64: a mistake in the command; 75: no lock within the wait.
+"""
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import time
+
+HEADER = """# Skill lessons
+
+Kept by the skill-evolution skill. Newest first. Status: proposed, applied, declined or seen.
+"""
+ENTRY = re.compile(r"^## L(\d+)\.", re.M)
+STALE_SECONDS = 3600
+
+
+def local_path():
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "agent-skills", "skill-evolution", "lessons.md")
+
+
+def state_repo():
+    given = os.environ.get("AGENT_SKILLS_STATE")
+    if given:
+        repo = given
+    else:
+        skills = run_git(os.path.dirname(os.path.realpath(__file__)), "rev-parse", "--show-toplevel")
+        if skills.returncode != 0:
+            return None
+        repo = os.path.join(os.path.dirname(skills.stdout.strip()), "agent-skills-state")
+    return repo if os.path.isdir(os.path.join(repo, ".git")) else None
+
+
+def run_git(repo, *args):
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=120)
+
+
+def say(text):
+    print(text, flush=True)
+
+
+def fail(code, text):
+    print(f"lessons: {text}", file=sys.stderr)
+    sys.exit(code)
+
+
+def lock_path():
+    return local_path() + ".lock"
+
+
+def take_lock(wait_minutes):
+    lock = lock_path()
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    deadline = time.monotonic() + wait_minutes * 60
+    while True:
+        try:
+            os.mkdir(lock)
+            return
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(lock).st_mtime > STALE_SECONDS:
+                    os.rmdir(lock)                 # left by a turn that died
+                    say("took over a lock older than an hour")
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() >= deadline:
+                fail(75, f"another run holds {lock}; try again later")
+            time.sleep(min(10, max(0.1, deadline - time.monotonic())))
+
+
+def release_lock():
+    try:
+        os.rmdir(lock_path())
+    except OSError:
+        pass
+
+
+def numbers(text):
+    return [int(n) for n in ENTRY.findall(text)]
+
+
+def repeats(text):
+    seen, twice = set(), set()
+    for n in numbers(text):
+        (twice if n in seen else seen).add(n)
+    return sorted(twice)
+
+
+ENTRY_LINE = re.compile(r"^## L(\d+)\.")
+ATTRIBUTE = "skill-evolution/lessons.md merge=union"
+
+
+def headers(text):
+    return [line for line in text.splitlines() if ENTRY_LINE.match(line)]
+
+
+def renumber_ours(repo, rel, path):
+    """Gives this computer's unpushed entries whose number another computer took the next free numbers.
+
+    An entry is this computer's when its header line was added by commits the upstream doesn't have
+    and isn't in the upstream's file; the upstream's entries keep their numbers."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    twice = set(repeats(text))
+    if not twice or run_git(repo, "rev-parse", "--abbrev-ref", "@{u}").returncode != 0:
+        return []
+    diff = run_git(repo, "diff", "--unified=0", "@{u}..HEAD", "--", rel).stdout
+    added = {line[1:] for line in diff.splitlines() if line.startswith("+## L")}
+    upstream = set(headers(run_git(repo, "show", f"@{{u}}:{rel}").stdout))
+    free = max(numbers(text)) + 1
+    moves, out = [], []
+    for line in text.splitlines(keepends=True):
+        bare = line.rstrip("\n")
+        m = ENTRY_LINE.match(bare)
+        if m and int(m.group(1)) in twice and bare in added and bare not in upstream:
+            old = int(m.group(1))
+            line = line.replace(f"## L{old}.", f"## L{free}.", 1)
+            moves.append((old, free))
+            free += 1
+        out.append(line)
+    if moves:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("".join(out))
+    return moves
+
+
+def ensure_union_merge(repo):
+    """Two computers' new entries both stay when their edits meet: git's union merge for this file."""
+    path = os.path.join(repo, ".gitattributes")
+    try:
+        with open(path, encoding="utf-8") as f:
+            if ATTRIBUTE in f.read().splitlines():
+                return False
+    except FileNotFoundError:
+        pass
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(ATTRIBUTE + "\n")
+    run_git(repo, "add", "--", ".gitattributes")
+    return True
+
+
+def pull(repo):
+    done = run_git(repo, "pull", "--rebase", "--autostash")
+    git_dir = os.path.join(repo, ".git")
+    if done.returncode != 0 and (os.path.isdir(os.path.join(git_dir, "rebase-merge"))
+                                 or os.path.isdir(os.path.join(git_dir, "rebase-apply"))):
+        run_git(repo, "rebase", "--abort")         # leave the repository as it was
+    return done.returncode == 0, (done.stderr or done.stdout).strip().splitlines()[-1:] or [""]
+
+
+def begin(args):
+    take_lock(args.wait_minutes)
+    try:
+        path = local_path()
+        repo = state_repo()
+        if repo is None:
+            if not os.path.lexists(path):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(HEADER)
+            say("mode: local (no private state repository)")
+            target = os.path.realpath(path)
+        else:
+            ok, why = pull(repo)
+            if not ok:
+                say(f"not pulled: {why[0]} (working on this computer's copy)")
+            rel = os.path.join("skill-evolution", "lessons.md")
+            target = os.path.join(repo, rel)
+            if not os.path.exists(target):
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                if os.path.isfile(path) and not os.path.islink(path):
+                    os.replace(path, target)       # a local file from before the repository: move it in
+                else:
+                    with open(target, "w", encoding="utf-8") as f:
+                        f.write(HEADER)
+                run_git(repo, "add", "--", rel)
+            if ensure_union_merge(repo):
+                run_git(repo, "commit", "-q", "-m", "skill evolution: union merge for the lessons file", "--", ".gitattributes")
+                say("marked the lessons file merge=union in the repository's .gitattributes")
+            if os.path.islink(path) and os.path.realpath(path) != os.path.realpath(target):
+                fail(64, f"{path} links elsewhere; fix it by hand")
+            if not os.path.lexists(path):
+                os.symlink(target, path)
+            elif not os.path.islink(path):
+                fail(64, f"{path} is a local file and the repository has its own; merge them by hand")
+            say(f"mode: shared ({repo})")
+            moves = renumber_ours(repo, rel, target)
+            for old, new in moves:
+                say(f"renumbered: L{old} -> L{new}")
+            if moves:
+                run_git(repo, "add", "--", rel)
+                run_git(repo, "commit", "-q", "-m", "skill evolution: renumbered after another computer's entries", "--", rel)
+        with open(target, encoding="utf-8") as f:
+            text = f.read()
+        say(f"file: {target}")
+        say(f"next: L{max(numbers(text), default=0) + 1}")
+    except BaseException:
+        release_lock()
+        raise
+    return 0
+
+
+def end(args):
+    if not os.path.isdir(lock_path()):
+        fail(64, "no lock: run begin first")
+    try:
+        path = local_path()
+        target = os.path.realpath(path)
+        with open(target, encoding="utf-8") as f:
+            text = f.read()
+        twice = repeats(text)
+        if twice:
+            print(f"lessons: numbers repeat: {', '.join(f'L{n}' for n in twice)}; renumber the new ones and run end again",
+                  file=sys.stderr)
+            return 2                               # keeps the lock: the fix comes next
+        repo = state_repo()
+        if repo is None:
+            say("saved (local)")
+            release_lock()
+            return 0
+        rel = os.path.join("skill-evolution", "lessons.md")
+        run_git(repo, "add", "--", rel)
+        if run_git(repo, "diff", "--cached", "--quiet", "--", rel).returncode != 0:
+            done = run_git(repo, "commit", "-q", "-m", args.m, "--", rel)
+            if done.returncode != 0:
+                say(f"not committed: {(done.stderr or done.stdout).strip()}")
+                release_lock()
+                return 3
+        for attempt in range(3):
+            pushed = run_git(repo, "push", "-q")
+            if pushed.returncode == 0:
+                say("saved and pushed")
+                release_lock()
+                return 0
+            ok, why = pull(repo)
+            if not ok:
+                say(f"not pushed: {why[0]}; committed here, the next begin sends it")
+                release_lock()
+                return 3
+            moves = renumber_ours(repo, rel, target)
+            for old, new in moves:
+                say(f"renumbered: L{old} -> L{new}")
+            if moves:
+                run_git(repo, "commit", "-q", "-m", "skill evolution: renumbered after another computer's entries", "--", rel)
+        say("not pushed after three tries; committed here, the next begin sends it")
+        release_lock()
+        return 3
+    except BaseException:
+        release_lock()
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="lessons", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command")
+    b = sub.add_parser("begin")
+    b.add_argument("--wait-minutes", type=float, default=15.0)
+    e = sub.add_parser("end")
+    e.add_argument("-m", required=True)
+    try:
+        args = parser.parse_args()
+    except SystemExit as exit_:
+        sys.exit(0 if exit_.code == 0 else 64)
+    if args.command == "begin":
+        if not (0 <= args.wait_minutes <= 120):
+            fail(64, "--wait-minutes takes 0 to 120")
+        return begin(args)
+    if args.command == "end":
+        return end(args)
+    parser.print_help()
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main())

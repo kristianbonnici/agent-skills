@@ -12,8 +12,7 @@ Skills evolve from what actually happened to them, never on their own. You colle
 ## 1. Find the files
 
 - **The skills repository:** where the skill you are judging comes from. Installed skills are links: `git -C "$(realpath <skill folder>)" rev-parse --show-toplevel`. It holds `docs/VERSIONING.md` and `docs/skills/<skill>/`. A skill that isn't from a repository with those can still get proposals; say where it lives.
-- **The lessons file:** `${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/skill-evolution/lessons.md`. It may be a link into the owner's private state repository (`${AGENT_SKILLS_STATE:-<the skills repository's parent folder>/agent-skills-state}`, a git repository): then edit the file it points to (`realpath`), never the link, and run `git -C <its repository> pull --ff-only` before reading it.
-- **If it is missing:** when that state repository exists, pull it first; if it still has no `skill-evolution/lessons.md`, create that from [references/lessons-file.md](references/lessons-file.md) there and link it (`ln -s <that file> <the path above>`), as the skills repository's `scripts/bootstrap` would, so it is committed with everything else. Only without a state repository create a plain local file.
+- **The lessons file:** open it with `<this skill's folder>/scripts/lessons begin` before reading or writing, and close it with `lessons end -m "skill evolution: <source>"` after, in the same turn, even if you only read. The script does the file's git work, so never commit, pull or push it yourself: it takes a lock (another run waits), pulls the owner's private state repository, creates and links the file there if it is missing (a plain local file only without that repository), and prints the file to edit (`file:`) and the number for a new entry (`next:`). `end` commits and pushes only that file. Both print `renumbered: L<a> -> L<b>` when another computer had taken one of this computer's unshown numbers: use the new number. Exit 3 means saved here but not pushed: say so, and that the numbers shown may still change; the next `begin` sends it, and any renumbering it prints goes to the owner too. Exit 2 means a number written twice (fix it and run `end` again). The entries' format is in [references/lessons-file.md](references/lessons-file.md).
 
 ## 2. Collect incidents
 
@@ -38,15 +37,7 @@ For each incident:
 
 ## 4. Record and propose
 
-Every change to the lessons file (new entries, and the owner's decisions in section 5) happens under its lock, and is committed in the same turn:
-
-1. **Take the lock:** `mkdir <the file's real path>.lock`. If it already exists, another run on this computer is writing: wait a minute and try again, for up to 15 minutes. A lock older than an hour was left by a turn that died: remove it (`rmdir`) and take it.
-2. **Read the newest file:** pull the state repository (`pull --ff-only`), then read the file.
-3. **Write:** new entries get the next numbers after the highest `L<n>` in the file.
-4. **Commit and push it** when it is in the private state repository: commit only that file (`git -C <its repository> commit -m "skill evolution: <source>" -- <file>`), then `push`. If the push is rejected because another computer pushed first, `pull --rebase` and push again; if your new numbers now repeat one already in the file, renumber yours, commit and push again. Never force-push, and never commit anything else there. If it fails (no network, a conflict you can't settle), keep the local file and say so.
-5. **Release the lock:** `rmdir <the file's real path>.lock`.
-
-Show the proposals only after this, so the numbers the owner sees are the ones in the file.
+Between `lessons begin` and `lessons end` (section 1): new entries get the number `begin` printed, and the ones after it. Show the proposals only after `end`, with the numbers it left, so the owner sees what the file holds.
 
 - **Record every incident** in the lessons file: a proposal as `proposed`, the rest as `seen` (so a repeat later becomes evidence). The lessons file is private: run names, projects and details are fine there.
 - **Propose at most three,** the ones with the highest cost prevented, chosen from this time's and the earlier ones still `proposed` in the file (check each earlier one against the skill's current text first: one the skill now covers becomes `seen`, with why). Each in this form:
@@ -60,7 +51,7 @@ Show the proposals only after this, so the numbers the owner sees are the ones i
 
 ## 5. When the owner decides
 
-Only the owner's explicit answer about a proposal counts ("apply L3", "skip L4"). A general "sounds good" to a report applies nothing. Record each decision as section 4 says (lock, pull, write, commit and push, release), so another computer sees it.
+Only the owner's explicit answer about a proposal counts ("apply L3", "skip L4"). A general "sounds good" to a report applies nothing. Record each decision between `lessons begin` and `lessons end`, so another computer sees it.
 
 - **Declined:** set it to `declined <date>`, with their reason if they gave one.
 - **Accepted:** apply it in the skills repository, as a change of its own:
@@ -68,7 +59,7 @@ Only the owner's explicit answer about a proposal counts ("apply L3", "skip L4")
   2. Run the repository's checks (its AGENTS.md lists them).
   3. Pass the `review-gate` skill at the level the diff calls for.
   4. Commit, and tag the version. Never push unless the owner asks.
-  5. Set the proposal to `applied <skill> <version> <date>`, recorded as section 4 says.
+  5. Set the proposal to `applied <skill> <version> <date>`, between `lessons begin` and `lessons end`.
 
   In an orchestrator run, the orchestrator gives this to a small follow-up task in the skills repository instead of doing it itself.
 

@@ -1,0 +1,134 @@
+#!/bin/sh
+# Checks skill-evolution's lessons script: two computers sharing one private state repository (a
+# bare remote and two clones), the file made and linked, entries numbered after each other's,
+# a collision renumbered on this computer's side only, an offline save sent later, the lock, a
+# repeated number refused, and a computer without a state repository.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/skill-evolution-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+python3 -I - "$repo_root/skills/skill-evolution/scripts/lessons" "$work" <<'EOF'
+import os, re, subprocess, sys
+script, work = sys.argv[1], sys.argv[2]
+
+def git(repo, *args):
+    done = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    assert done.returncode == 0, (args, done.stderr)
+    return done.stdout
+
+remote = os.path.join(work, "remote.git")
+subprocess.run(["git", "init", "-q", "--bare", "-b", "main", remote], check=True)
+seed = os.path.join(work, "seed")
+subprocess.run(["git", "clone", "-q", remote, seed], check=True, capture_output=True)
+for repo in (seed,):
+    git(repo, "config", "user.email", "t@example.com"); git(repo, "config", "user.name", "T")
+open(os.path.join(seed, "README.md"), "w").write("state\n")
+git(seed, "add", "README.md"); git(seed, "commit", "-q", "-m", "seed"); git(seed, "push", "-q", "origin", "main")
+
+computers = {}
+for name in ("a", "b"):
+    clone = os.path.join(work, name, "agent-skills-state")
+    subprocess.run(["git", "clone", "-q", remote, clone], check=True, capture_output=True)
+    git(clone, "config", "user.email", f"{name}@example.com"); git(clone, "config", "user.name", name)
+    computers[name] = dict(os.environ, AGENT_SKILLS_STATE=clone, XDG_STATE_HOME=os.path.join(work, name, "state"),
+                           GIT_TERMINAL_PROMPT="0")
+
+def lessons(name, *args):
+    return subprocess.run([sys.executable, "-I", script, *args], capture_output=True, text=True, env=computers[name], timeout=120)
+
+def path(name):
+    return os.path.join(work, name, "state", "agent-skills", "skill-evolution", "lessons.md")
+
+def add(name, n, title):
+    p = os.path.realpath(path(name))
+    text = open(p).read()
+    entry = f"## L{n}. {title}\n- Status: proposed 2026-10-31\n"
+    i = text.find("\n## L")
+    text = (text.rstrip("\n") + "\n\n" + entry) if i < 0 else (text[:i + 1] + entry + "\n" + text[i + 1:])
+    open(p, "w").write(text)
+
+def remote_file():
+    return subprocess.run(["git", "--git-dir", remote, "show", "main:skill-evolution/lessons.md"], capture_output=True, text=True).stdout
+
+# Computer a: no file anywhere yet: made in the repository, linked, union merge marked, numbered from L1.
+done = lessons("a", "begin")
+assert done.returncode == 0 and "next: L1" in done.stdout and "mode: shared" in done.stdout, (done.stdout, done.stderr)
+assert os.path.islink(path("a")) and os.path.realpath(path("a")).startswith(os.path.realpath(os.path.join(work, "a", "agent-skills-state")))
+add("a", 1, "orchestrator: first")
+done = lessons("a", "end", "-m", "skill evolution: first")
+assert done.returncode == 0 and "saved and pushed" in done.stdout, (done.stdout, done.stderr)
+assert "## L1. orchestrator: first" in remote_file()
+assert "merge=union" in subprocess.run(["git", "--git-dir", remote, "show", "main:.gitattributes"], capture_output=True, text=True).stdout
+
+# Computer b: pulls the file, links it, numbers after it.
+done = lessons("b", "begin")
+assert done.returncode == 0 and "next: L2" in done.stdout and os.path.islink(path("b")), done.stdout
+done = lessons("b", "end", "-m", "read only")
+assert done.returncode == 0
+
+# Both add L2 at once: a pushes first; b's push is rejected, rebased (union merge keeps both), and
+# b's own entry renumbered to L3 before it is pushed. a's L2 keeps its number.
+assert lessons("a", "begin").returncode == 0
+assert lessons("b", "begin").returncode == 0
+add("a", 2, "review-gate: a's second")
+add("b", 2, "planner: b's second")
+assert lessons("a", "end", "-m", "a second").returncode == 0
+done = lessons("b", "end", "-m", "b second")
+assert done.returncode == 0 and "renumbered: L2 -> L3" in done.stdout and "saved and pushed" in done.stdout, (done.stdout, done.stderr)
+text = remote_file()
+assert "## L2. review-gate: a's second" in text and "## L3. planner: b's second" in text, text
+assert len(re.findall(r"^## L(\d+)\.", text, re.M)) == len(set(re.findall(r"^## L(\d+)\.", text, re.M))) == 3, text
+
+# b offline: its save is committed but not pushed (3); a pushes L4 meanwhile; b's next begin sends
+# its commit and renumbers b's L4 (never a's) before anyone sees it.
+b_clone = computers["b"]["AGENT_SKILLS_STATE"]
+git(b_clone, "remote", "set-url", "origin", os.path.join(work, "nowhere.git"))
+done = lessons("b", "begin")
+assert done.returncode == 0 and "not pulled" in done.stdout and "next: L4" in done.stdout, done.stdout
+add("b", 4, "orchestrator: b offline")
+done = lessons("b", "end", "-m", "b offline")
+assert done.returncode == 3 and "not pushed" in done.stdout, (done.stdout, done.stderr)
+assert lessons("a", "begin").returncode == 0
+add("a", 4, "orchestrator: a's fourth")
+assert lessons("a", "end", "-m", "a fourth").returncode == 0
+git(b_clone, "remote", "set-url", "origin", remote)
+done = lessons("b", "begin")
+assert done.returncode == 0 and "renumbered: L4 -> L5" in done.stdout and "next: L6" in done.stdout, (done.stdout, done.stderr)
+assert lessons("b", "end", "-m", "b sends").returncode == 0
+text = remote_file()
+assert "## L4. orchestrator: a's fourth" in text and "## L5. orchestrator: b offline" in text, text
+assert not os.path.isdir(os.path.join(b_clone, ".git", "rebase-merge"))
+
+# The lock: a second begin waits, and gives up after its wait (75); a lock older than an hour is taken over.
+assert lessons("a", "begin").returncode == 0
+done = lessons("a", "begin", "--wait-minutes", "0")
+assert done.returncode == 75, done.stderr
+assert lessons("a", "end", "-m", "nothing").returncode == 0
+lock = path("a") + ".lock"
+os.mkdir(lock)
+os.utime(lock, (0, 0))
+done = lessons("a", "begin", "--wait-minutes", "0")
+assert done.returncode == 0 and "took over" in done.stdout, done.stdout
+
+# A repeated number is refused (2), the lock kept for the fix.
+add("a", 9, "x: one")
+add("a", 9, "x: two")
+done = lessons("a", "end", "-m", "dup")
+assert done.returncode == 2 and os.path.isdir(lock), done.stderr
+p = os.path.realpath(path("a"))
+open(p, "w").write(open(p).read().replace("## L9. x: two", "## L10. x: two"))
+assert lessons("a", "end", "-m", "fixed").returncode == 0 and not os.path.isdir(lock)
+assert lessons("a", "end", "-m", "again").returncode == 64          # end without begin
+
+# No state repository: a plain local file.
+computers["c"] = dict(os.environ, AGENT_SKILLS_STATE=os.path.join(work, "c", "not-a-repo"),
+                      XDG_STATE_HOME=os.path.join(work, "c", "state"))
+done = lessons("c", "begin")
+assert done.returncode == 0 and "mode: local" in done.stdout and "next: L1" in done.stdout, done.stdout
+assert os.path.isfile(path("c")) and not os.path.islink(path("c"))
+assert lessons("c", "end", "-m", "local").returncode == 0
+EOF
+echo "skill-evolution: ok"
