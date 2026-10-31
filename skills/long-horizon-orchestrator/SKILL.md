@@ -162,7 +162,7 @@ When no task is running, paused or able to start (every task is merged, `ready`,
    - nothing was pushed;
    - the integration checkout is clean;
    - every merged task's worktree, branch and `scratch/` folder is removed, and its entry and its helper threads tidied;
-   - unfinished tasks keep theirs and stay visible;
+   - unfinished tasks keep theirs and stay visible, and each unmerged task's folder in the run directory holds an empty file named `KEEP`, so pruning later leaves its scratch and evidence whole;
    - the run directory's size (`scripts/prune-runs --size <run directory>`), for the report's closing line.
 3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)). If another run is still active, leave the steps you share with it to whichever finishes last, as agreed, and tell it you have finished; if it hasn't answered all run, do them yourself, as [references/routing.md](references/routing.md#running-beside-another-orchestrator) says.
 4. If the project has a quick main check, run it once on the integration branch. Run it in a detached worktree (`git worktree add --detach <run directory>/final-check <integration branch>`, then `git worktree remove --force` it, since it holds no work) when another run still works in the checkout, or when the check writes files the user's own copy uses, such as the app they have running.

@@ -7,6 +7,7 @@ Major because the skill now deletes files on its own: a merged task's scratch fo
 - **A merged task's `scratch/` is deleted in its cleanup,** with the new `scripts/prune-runs --scratch`; an unmerged task keeps it.
 - **Older runs shrink to their write-ups:** `scripts/prune-runs` lists, and with `--apply` removes, everything but text files, `report/`, `stopped/`, `pictures/`, links and worktrees in runs finished over a week ago; a run holding `KEEP` stays whole. The contract names the total when it is over about 1 GB, and Prepare prunes once approved. On the owner's folders it would keep 0.3 GB of 4.4 GB.
 - **The report says how big the run directory ended up,** and what pruning freed at the start.
+- **Review (deep), round 1:** Codex GPT-6.1 Terra found 5 must-fixes, all fixed with tests: an unmerged task's scratch in an old run was pruned (the finish now puts `KEEP` in each unmerged task's folder, and any folder holding `KEEP` is left whole); the `pruned.txt` note could be written through a link; a folder swapped for a link between the plan and the removal could redirect a deletion (removals now go folder by folder from the root without following links); `--root` took any folder (it must be named `long-horizon-orchestrator`); partial failures were counted as freed.
 
 ## 1.2.0 (2026-10-30)
 

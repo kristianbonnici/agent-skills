@@ -2061,7 +2061,8 @@ EOF
 
 # prune-runs: a merged task's scratch removed, finished older runs shrunk to their write-ups (a dry
 # run first), running, recent, KEEP and ledger-less runs untouched, worktrees and links left alone.
-python3 -I - "$scripts/prune-runs" "$work/prune" <<'EOF'
+mkdir -p "$work/prune/long-horizon-orchestrator"
+python3 -I - "$scripts/prune-runs" "$work/prune/long-horizon-orchestrator" <<'EOF'
 import os, subprocess, sys, time
 script, root = sys.argv[1], sys.argv[2]
 def put(path, data=b"x", age_days=None):
@@ -2091,7 +2092,11 @@ for path in ("A/scratch/build.o", "A/render.png", "A/videos/demo.mp4", "A/bin/Ho
 put("old/A/huge.log", b"l" * (11 * 1024 * 1024))
 put("old/W/.git", b"gitdir: /elsewhere/.git/worktrees/W")
 put("old/W/build.bin", big)
+put("old/F/KEEP", b"")                                       # an unmerged task the finish marked
+put("old/F/scratch/build.bin", big)
+put("old/F/video.mp4", big)
 os.symlink(outside, os.path.join(root, "old/A/link"))
+os.symlink(os.path.join(outside, "keep-me.bin"), os.path.join(root, "old/A/scratch/link-out"))
 put("old.md", b"# Run old\nStatus: finished\n", age_days=10)
 # running, recent, kept and ledger-less runs
 for name, ledger in (("running", b"# r\nStatus: running\n"), ("recent", b"# r\nStatus: finished\n"), ("kept", b"# r\nStatus: finished\n")):
@@ -2111,12 +2116,13 @@ done = run("--apply")
 assert done.returncode == 0, done.stderr
 for kept in ("A/handoff.md", "A/measure.tsv", "A/check.log", "A/probe.swift", "A/pictures/after.png", "A/link",
              "report/final-report.md", "report/run-map.html", "report/chart.png", "stopped/C.patch", "stopped/C/build.bin",
-             "W/.git", "W/build.bin", "B/pictures/huge.png", "pruned.txt"):
+             "W/.git", "W/build.bin", "B/pictures/huge.png", "F/KEEP", "F/scratch/build.bin", "F/video.mp4", "pruned.txt"):
     assert exists("old/" + kept), kept
 for gone in ("A/scratch", "A/render.png", "A/videos", "A/bin", "A/huge.log", "B/clone", "B/.build"):
     assert not exists("old/" + gone), gone
 assert os.path.exists(os.path.join(outside, "keep-me.bin"))   # a link is never followed
 assert "prune-runs removed" in open(os.path.join(root, "old/pruned.txt")).read()
+assert "Total: " in done.stdout and " removed of " in done.stdout, done.stdout
 for name in ("running", "recent", "kept", "loose"):
     assert exists(f"{name}/A/build.bin"), name
 done = run("--apply")
@@ -2137,10 +2143,36 @@ for bad in (os.path.join(root, "loose/A"), outside, os.path.join(root, "recent")
     done = run("--scratch", bad)
     assert done.returncode == 64, (bad, done.stdout, done.stderr)
 assert run("--scratch", os.path.join(root, "recent/B"), "--apply").returncode == 64
+put("recent/E/KEEP", b"")
+put("recent/E/scratch/build.bin", big)
+done = run("--scratch", os.path.join(root, "recent/E"))
+assert done.returncode == 0 and "holds KEEP" in done.stdout and exists("recent/E/scratch/build.bin"), done.stdout
+# pruned.txt as a link out of the run: the note isn't written through it, nothing outside changes
+put("linked/A/build.bin", big)
+put("linked.md", b"# r\nStatus: finished\n", age_days=10)
+target = os.path.join(outside, "note.txt")
+open(target, "w").write("mine\n")
+os.symlink(target, os.path.join(root, "linked/pruned.txt"))
+done = run("--apply")
+assert done.returncode == 1 and open(target).read() == "mine\n" and not exists("linked/A/build.bin"), (done.stdout, done.stderr)
+os.unlink(os.path.join(root, "linked/pruned.txt"))
+# a folder swapped for a link between the plan and the removal is refused, not followed
+ns = __import__("runpy").run_path(script, run_name="prune")
+put("swap/A/out.bin", big)
+put("swap.md", b"# r\nStatus: finished\n", age_days=10)
+victim = os.path.join(outside, "A")
+os.makedirs(victim)
+open(os.path.join(victim, "out.bin"), "wb").write(big)
+plan, _ = ns["plan_run"](os.path.join(root, "swap"))
+os.rename(os.path.join(root, "swap/A"), os.path.join(root, "swap/A-old"))
+os.symlink(victim, os.path.join(root, "swap/A"))
+errors = [ns["delete"](root, p) for p, _, _ in plan]
+assert all(errors) and os.path.exists(os.path.join(victim, "out.bin")), errors
 # --size, and refusals
 done = subprocess.run([sys.executable, "-I", script, "--size", os.path.join(root, "recent")], capture_output=True, text=True)
 assert done.returncode == 0 and done.stdout.strip().endswith(("KB", "MB")), done.stdout
 assert subprocess.run([sys.executable, "-I", script, "--root", os.path.expanduser("~")], capture_output=True).returncode == 64
+assert subprocess.run([sys.executable, "-I", script, "--root", outside], capture_output=True).returncode == 64
 assert subprocess.run([sys.executable, "-I", script, "--root", os.path.join(root, "nowhere")], capture_output=True).returncode == 64
 EOF
 
