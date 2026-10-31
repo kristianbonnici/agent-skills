@@ -2,6 +2,8 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
+Last checked: new work 2026-10-30; sources 2026-10-30.
+
 ## Our own runs (study of 2026-10-30)
 
 263 task handoffs from 21 overnight runs of the long-horizon orchestrator, 2026-10-04 to 2026-10-29,
@@ -82,3 +84,7 @@ as rough. The per-task details stay in the owner's private records.
 
   → *the reviewer's brief.* His skills run only when he invokes them and approves the fixes; ours run
   unattended, so one skill decides the level and the reviewers itself.
+
+## Left out
+
+Weighed and not cited, so later checks don't weigh them again unless they change: none recorded yet.

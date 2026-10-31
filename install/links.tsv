@@ -21,3 +21,6 @@ claude	link	skills/review-gate	~/.claude/skills/review-gate
 codex	link	skills/skill-evolution	~/.agents/skills/skill-evolution
 codex	link	skills/skill-evolution	~/.codex/skills/skill-evolution
 claude	link	skills/skill-evolution	~/.claude/skills/skill-evolution
+codex	link	skills/skill-evidence	~/.agents/skills/skill-evidence
+codex	link	skills/skill-evidence	~/.codex/skills/skill-evidence
+claude	link	skills/skill-evidence	~/.claude/skills/skill-evidence

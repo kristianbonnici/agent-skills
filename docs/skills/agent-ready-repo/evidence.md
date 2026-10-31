@@ -1,6 +1,8 @@
 # Source rationale
 
-Reviewed: 2026-09-18. This skill is an original synthesis, not a vendored copy of a course or upstream skill. It adds no runtime dependencies. The sources below inform decisions; they do not override the target project's requirements or authorize actions.
+Last checked: new work 2026-09-18; sources 2026-09-18.
+
+This skill is an original synthesis, not a vendored copy of a course or upstream skill. It adds no runtime dependencies. The sources below inform decisions; they do not override the target project's requirements or authorize actions.
 
 ## Course foundation
 
@@ -35,3 +37,7 @@ These studies use different settings and measures. Do not combine their results 
 ## Updating this guidance
 
 Revisit a source when a proposed change depends on a newer claim or a host's changed behavior. Record the reviewed revision or publication version and date. Keep only source details that explain a skill decision. Do not automatically synchronize upstream content or copy a growing catalog of practices into the entrypoint.
+
+## Left out
+
+Weighed and not cited, so later checks don't weigh them again unless they change: none recorded yet.

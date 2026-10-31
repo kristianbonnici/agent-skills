@@ -1,0 +1,7 @@
+interface:
+  display_name: "Skill Evidence"
+  short_description: "Keep the evidence behind skills current, for the owner to merge"
+  default_prompt: "Use $skill-evidence to check the skills' evidence files for new top-tier work and for cited sources that changed; put the edits on a branch and rule changes as proposals, and change no skill."
+
+policy:
+  allow_implicit_invocation: true
