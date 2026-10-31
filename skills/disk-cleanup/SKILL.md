@@ -77,7 +77,7 @@ Name each path exactly, and quote it. Never build a deletion from a variable tha
 - **Report what happened:** free space before and after, measured, and what each item freed. Where the real figure differs from your estimate, say so and why. Say what you didn't do.
 - **What needs doing later:** a cleared build folder needs a rebuild, a removed browser profile means signing in again.
 - **Update `decisions.md`,** on every round the owner decided anything, in the form below, newest first in each section. Paths start with `~`.
-- **If it's missing, create it where it can follow the owner.** The private state repository is `$AGENT_SKILLS_STATE`, or else `agent-skills-state` beside the skills repository (`git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`). If that exists, write `<repository>/disk-cleanup/decisions.md` and link it: `ln -s <that file> <state folder>/decisions.md`. A plain `decisions.md` already in the state folder moves there first, because bootstrap won't replace a real file with its link. With no such repository, a plain file in the state folder is right.
+- **Keep it where it can follow the owner.** The private state repository is `$AGENT_SKILLS_STATE`, or else `agent-skills-state` beside the skills repository (`git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`). If that exists and `decisions.md` isn't already a link into it, put the file at `<repository>/disk-cleanup/decisions.md`, moving a plain one from the state folder, and link it: `ln -s <that file> <state folder>/decisions.md`. Bootstrap won't replace a real file with its link. With no such repository, a plain file in the state folder is right.
 
   ```markdown
   # disk-cleanup decisions
