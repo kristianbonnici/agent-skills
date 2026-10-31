@@ -37,3 +37,6 @@
   reported as not committed, never as sent; only the script's own commits (by message and files, one
   parent) count as lessons-only, so the owner's empty or merge commits are never pushed; after an ID
   collision, a later change to the old ID is named for checking.
+- Round 3 (Terra, 2, fewer again): a `set` or `note` on an ID its own pull just moved is refused with the
+  new ID; pushes go to exactly this branch's upstream, whatever `push.default` says, so the owner's
+  other branches never go along.

@@ -258,8 +258,14 @@ def push(repo):
     if others:
         return ("the state repository has other unpushed commits (" + ", ".join(others[:3])
                 + "); push them yourself, and the lessons go with them")
+    branch = git(repo, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
+    remote = git(repo, "config", f"branch.{branch}.remote").stdout.strip()
+    merge = git(repo, "config", f"branch.{branch}.merge").stdout.strip()
+    if not (branch and remote and merge):
+        return "no upstream branch"
     for _ in range(3):
-        if git(repo, "push", "-q").returncode == 0:
+        # exactly this branch to its upstream, whatever push.default says
+        if git(repo, "push", "-q", remote, f"HEAD:{merge}").returncode == 0:
             return None
         problem = sync(repo)
         if problem:
@@ -408,6 +414,10 @@ def main(argv):
                 print(f"added: {entry_id} {first[len('## ' + entry_id + '. '):]}")
             files = [os.path.join(REL, i + ".md") for i in written]
             return write(repo, files, f"skill evolution: {', '.join(written)}")
+        for old, new in MOVED:
+            if args[0] == old:
+                fail(64, f"this computer's entry {old} just moved to {new} (another computer took {old}); "
+                         f"run it again with the ID you mean")
         file = find(path, args[0])
         text = open(file, encoding="utf-8").read()
         if command == "set":

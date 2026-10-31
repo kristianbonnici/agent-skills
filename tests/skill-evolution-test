@@ -122,10 +122,24 @@ assert lessons("a", "show").returncode == 0
 open(os.path.join(clone["a"], "skill-evolution", "lessons", shared + ".md"), "w").write(f"## {shared}. x: a's entry\n- Status: seen\n")
 git(clone["a"], "add", "--", f"skill-evolution/lessons/{shared}.md"); git(clone["a"], "commit", "-q", "-m", "a's"); git(clone["a"], "push", "-q")
 git(clone["b"], "remote", "set-url", "origin", remote)
+done = lessons("b", "set", shared, "declined 2026-11-05")       # its sync moves b's entry first: refused
+assert done.returncode == 64 and "just moved to" in done.stderr, (done.stdout, done.stderr)
+assert re.search(rf"moved: this computer's unsent entry {shared} is now L-[A-Z2-9]{{4}}", done.stdout), done.stdout
+assert "x: a's entry" in on_remote(shared) and "declined" not in on_remote(shared)
 done = lessons("b", "show")
-moved = re.search(rf"moved: this computer's unsent entry {shared} is now (L-[A-Z2-9]{{4}})", done.stdout)
-assert done.returncode == 0 and moved, (done.stdout, done.stderr)
-assert "x: a's entry" in on_remote(shared) and "x: b's entry under a shared ID" in on_remote(moved.group(1))
+moved_id = [l for l in lessons("b", "show").stdout.splitlines() if "b's entry under a shared ID" in l][0].split()[0]
+assert moved_id != shared
+assert "x: a's entry" in on_remote(shared) and "x: b's entry under a shared ID" in on_remote(moved_id)
+
+# push.default=matching: another branch with the owner's work is never pushed along.
+git(clone["a"], "config", "push.default", "matching")
+git(clone["a"], "push", "-q", "origin", "main:side")
+git(clone["a"], "branch", "-q", "side", "origin/side")
+git(clone["a"], "checkout", "-q", "side"); open(os.path.join(clone["a"], "side.txt"), "w").write("x\n")
+git(clone["a"], "add", "side.txt"); git(clone["a"], "commit", "-q", "-m", "owner's side work"); git(clone["a"], "checkout", "-q", "main")
+assert lessons("a", "add", entry("a", "x: with a matching push")).returncode == 0
+assert "side.txt" not in subprocess.run(["git", "--git-dir", remote, "log", "--name-only", "--format=", "side"], capture_output=True, text=True).stdout
+git(clone["a"], "config", "--unset", "push.default")
 
 # A failed commit (a signing error): the ID was shown, so the next command commits and sends it.
 git(clone["a"], "config", "commit.gpgsign", "true"); git(clone["a"], "config", "gpg.program", "false")
