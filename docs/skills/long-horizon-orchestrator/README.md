@@ -2,7 +2,7 @@
 
 Runs a set of long agent tasks while the user is away: one approval at the start, each task as its own
 agent, reviewed and merged by itself, and a plain-language report at the end. Version and history:
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md). Why it works this way: [evidence.md](evidence.md).
 
 ## A run
 
