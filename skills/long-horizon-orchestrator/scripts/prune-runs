@@ -42,7 +42,7 @@ calls it only for a merged task whose processes have stopped. Use it only once t
 
 --size prints a run folder's size on disk, for the report's closing line.
 
---root must be a folder named long-horizon-orchestrator. Every removal goes folder by folder from
+--root must be a folder agent-skills/long-horizon-orchestrator, as the default is. Every removal goes folder by folder from
 the root without following a link, so a folder swapped for a link meanwhile is refused, not
 followed.
 
@@ -181,11 +181,8 @@ def plan_run(run):
                 if entry.name == ".git":               # a task folder that is itself a clone: its history goes
                     remove.append((path, tree_size(path), True))
                     continue
-                if removed_whole(entry.name, path, depth):
-                    if not contains_worktree(path):
-                        remove.append((path, tree_size(path), True))
-                    else:
-                        worktrees.append(path)
+                if removed_whole(entry.name, path, depth) and not holds_protected(path):
+                    remove.append((path, tree_size(path), True))
                     continue
                 walk(path, in_pictures or entry.name == "pictures", depth + 1)
             elif not kept_file(path, entry.name, in_pictures):
@@ -195,10 +192,15 @@ def plan_run(run):
     return remove, worktrees
 
 
-def contains_worktree(path):
-    """Whether the folder is, or holds, a linked git worktree (whose .git is a file)."""
+def holds_protected(path):
+    """Whether the folder holds what pruning keeps: a git worktree, a clone one was made from, KEEP or
+    an evidence/ folder. Such a folder is never removed whole; its contents are sorted one by one."""
     for top, dirs, files in os.walk(path, followlinks=False):
+        if "KEEP" in files or EVIDENCE in dirs:
+            return True
         if ".git" in files and is_worktree(top):
+            return True
+        if ".git" in dirs and has_linked_worktrees(top):
             return True
     return False
 
@@ -307,8 +309,8 @@ def safe_root(root, given):
         if not given:
             return None                            # no run has been made on this computer yet
         usage_error(f"no such folder: {root}")
-    if os.path.basename(real) != "long-horizon-orchestrator":
-        usage_error(f"refusing {root}: give the orchestrator's state folder, named long-horizon-orchestrator")
+    if os.path.basename(real) != "long-horizon-orchestrator" or os.path.basename(os.path.dirname(real)) != "agent-skills":
+        usage_error(f"refusing {root}: give the orchestrator's state folder, .../agent-skills/long-horizon-orchestrator")
     return real
 
 
@@ -390,8 +392,9 @@ def prune_scratch(root, task):
     if os.path.islink(scratch) or not os.path.isdir(scratch):
         print(f"{os.path.basename(real)}: no scratch folder, nothing to remove")
         return 0
-    if is_worktree(scratch) or contains_worktree(scratch):
-        print(f"{os.path.basename(real)}: scratch holds a git worktree; left alone", file=sys.stderr)
+    if is_worktree(scratch) or holds_protected(scratch):
+        print(f"{os.path.basename(real)}: scratch holds a git worktree, a clone one was made from, KEEP or "
+              f"evidence/; left alone", file=sys.stderr)
         return 1
     size = tree_size(scratch)
     error = delete(root, scratch)
