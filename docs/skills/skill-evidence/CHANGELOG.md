@@ -49,3 +49,9 @@
 - **Round 3** (Terra, 1 must-fix, fewer again): the Light review's brief also gives each entry's link
   with the title, authors and date as the source shows them, so a reviewer without web access can
   check dates and titles, not only figures.
+- **Round 4** (Terra, 1 must-fix, no fewer than round 3, so the review stopped there, as the gate
+  says): a reviewer without web access still can't check a link or a date against its source,
+  whatever the brief quotes. That is a limit of offline review, not a fault of the steps. The skill now
+  says so: such a review checks only against the quotes, and the record and the report say the
+  sources weren't checked independently, so the owner knows before merging (a wording fix,
+  unreviewed).
