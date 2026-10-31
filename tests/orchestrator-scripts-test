@@ -2092,6 +2092,15 @@ for path in ("A/scratch/build.o", "A/render.png", "A/videos/demo.mp4", "A/bin/Ho
 put("old/A/huge.log", b"l" * (11 * 1024 * 1024))
 put("old/W/.git", b"gitdir: /elsewhere/.git/worktrees/W")
 put("old/W/build.bin", big)
+os.makedirs(os.path.join(root, "old/W/emptydir")); os.makedirs(os.path.join(root, "old/report/empty"))
+put("old/A/pictures/too-big.png", b"p" * (11 * 1024 * 1024))
+put("old/G/handoff.md", b"h")                                # a task folder that is itself a clone
+put("old/G/.git/objects/pack/p.pack", big)
+put("old/G/app.bin", big)
+put("old/H/main/.git/worktrees/wt/gitdir", b"/x")             # a clone a worktree was made from
+put("old/H/main/.git/objects/o", big)
+put("old/H/main/data.bin", big)
+put("old/A/evidence/trace.bin", big)
 put("old/F/KEEP", b"")                                       # an unmerged task the finish marked
 put("old/F/scratch/build.bin", big)
 put("old/F/video.mp4", big)
@@ -2099,7 +2108,7 @@ os.symlink(outside, os.path.join(root, "old/A/link"))
 os.symlink(os.path.join(outside, "keep-me.bin"), os.path.join(root, "old/A/scratch/link-out"))
 put("old.md", b"# Run old\nStatus: finished\n", age_days=10)
 # running, recent, kept and ledger-less runs
-for name, ledger in (("running", b"# r\nStatus: running\n"), ("recent", b"# r\nStatus: finished\n"), ("kept", b"# r\nStatus: finished\n")):
+for name, ledger in (("paused", b"# r\nStatus: paused until 06:00\n"), ("running", b"# r\nStatus: running\n"), ("recent", b"# r\nStatus: finished\n"), ("kept", b"# r\nStatus: finished\n")):
     put(f"{name}/A/build.bin", big)
     put(f"{name}.md", ledger, age_days=10 if name != "recent" else 1)
 put("kept/KEEP", b"")
@@ -2107,8 +2116,8 @@ put("loose/A/build.bin", big)
 
 done = run()
 assert done.returncode == 0, done.stderr
-assert "old: " in done.stdout and "would remove" in done.stdout and "W whole (a git worktree)" in done.stdout, done.stdout
-for name, why in (("running", "not finished"), ("recent", "finished 1.0 days ago"), ("kept", "it holds KEEP"), ("loose", "no ledger")):
+assert "old: " in done.stdout and "would remove" in done.stdout and "W whole (a git worktree" in done.stdout, done.stdout
+for name, why in (("paused", "not finished"), ("running", "not finished"), ("recent", "finished 1.0 days ago"), ("kept", "it holds KEEP"), ("loose", "no ledger")):
     assert f"{name}: skipped, {why}" in done.stdout, (name, done.stdout)
 assert exists("old/A/scratch/build.o")                       # a dry run removes nothing
 
@@ -2116,17 +2125,22 @@ done = run("--apply")
 assert done.returncode == 0, done.stderr
 for kept in ("A/handoff.md", "A/measure.tsv", "A/check.log", "A/probe.swift", "A/pictures/after.png", "A/link",
              "report/final-report.md", "report/run-map.html", "report/chart.png", "stopped/C.patch", "stopped/C/build.bin",
-             "W/.git", "W/build.bin", "B/pictures/huge.png", "F/KEEP", "F/scratch/build.bin", "F/video.mp4", "pruned.txt"):
+             "W/.git", "W/build.bin", "B/pictures/huge.png", "F/KEEP", "F/scratch/build.bin", "F/video.mp4", "G/handoff.md", "H/main/.git/objects/o",
+             "H/main/data.bin", "A/evidence/trace.bin", "pruned.txt"):
     assert exists("old/" + kept), kept
-for gone in ("A/scratch", "A/render.png", "A/videos", "A/bin", "A/huge.log", "B/clone", "B/.build"):
+assert exists("old/W/emptydir") and exists("old/report/empty")   # only folders the removals emptied go
+for gone in ("A/scratch", "A/render.png", "A/videos", "A/bin", "A/huge.log", "A/pictures/too-big.png", "B/clone", "B/.build", "G/.git", "G/app.bin"):
     assert not exists("old/" + gone), gone
 assert os.path.exists(os.path.join(outside, "keep-me.bin"))   # a link is never followed
 assert "prune-runs removed" in open(os.path.join(root, "old/pruned.txt")).read()
 assert "Total: " in done.stdout and " removed of " in done.stdout, done.stdout
-for name in ("running", "recent", "kept", "loose"):
+for name in ("paused", "running", "recent", "kept", "loose"):
     assert exists(f"{name}/A/build.bin"), name
 done = run("--apply")
-assert "old: " in done.stdout and "nothing to remove" in done.stdout, done.stdout
+
+assert any(l.startswith("old: ") and l.endswith("nothing to remove") for l in done.stdout.splitlines()), done.stdout
+done = run("--older-than", "0.5")
+assert any(l.startswith("recent: ") and "would remove" in l for l in done.stdout.splitlines()), done.stdout
 
 # --scratch: only a task's folder in a run under the root; a worktree inside is left alone
 put("recent/B/scratch/x/build.bin", big)
@@ -2143,6 +2157,11 @@ for bad in (os.path.join(root, "loose/A"), outside, os.path.join(root, "recent")
     done = run("--scratch", bad)
     assert done.returncode == 64, (bad, done.stdout, done.stderr)
 assert run("--scratch", os.path.join(root, "recent/B"), "--apply").returncode == 64
+os.symlink(os.path.join(root, "recent/B"), os.path.join(root, "recent/LB"))
+put("recent/report/scratch/x", b"x")
+for bad in ("recent/LB", "recent/report"):
+    assert run("--scratch", os.path.join(root, bad)).returncode == 64, bad
+assert run("--older-than", "nan").returncode == 64
 put("recent/E/KEEP", b"")
 put("recent/E/scratch/build.bin", big)
 done = run("--scratch", os.path.join(root, "recent/E"))
@@ -2173,6 +2192,9 @@ done = subprocess.run([sys.executable, "-I", script, "--size", os.path.join(root
 assert done.returncode == 0 and done.stdout.strip().endswith(("KB", "MB")), done.stdout
 assert subprocess.run([sys.executable, "-I", script, "--root", os.path.expanduser("~")], capture_output=True).returncode == 64
 assert subprocess.run([sys.executable, "-I", script, "--root", outside], capture_output=True).returncode == 64
+fresh = subprocess.run([sys.executable, "-I", script], capture_output=True, text=True,
+                       env=dict(os.environ, XDG_STATE_HOME=os.path.join(outside, "no-state")))
+assert fresh.returncode == 0 and "nothing to prune" in fresh.stdout, fresh.stdout
 assert subprocess.run([sys.executable, "-I", script, "--root", os.path.join(root, "nowhere")], capture_output=True).returncode == 64
 EOF
 

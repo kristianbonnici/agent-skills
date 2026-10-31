@@ -144,7 +144,7 @@ A task's turn usually ends with its final message, just after the report-back. I
 
 1. **See whether it still runs:** `t3_thread_wait` with a short `timeoutMs` returns at once for an idle thread.
 2. **If it runs, read its last messages.** Re-running checks, or retrying one it listed under "Couldn't check", is over: stop it now, as below, before any cleanup. Let a turn finish only when it does something still to come, such as a follow-up you sent; clean up on a later wake.
-3. **Then the cleanup gate** in [integration.md](integration.md#cleanup-after-a-merge): its background jobs and its leases, then the worktree and the branch.
+3. **Then the cleanup gate** in [integration.md](integration.md#cleanup-after-a-merge): its background jobs and its leases, then the worktree and the branch, then its `scratch/` folder.
 4. **Settle the thread and its helper threads** (below), including any fast-helper children it delegated.
 
 ## Stopping a task
@@ -192,7 +192,7 @@ When another run is active ([routing.md](routing.md#running-beside-another-orche
 ## When the run finishes
 
 1. Stop the keep-awake. Keep the heartbeat until step 7, so a turn that dies while you prepare the report is woken again.
-2. Confirm that every merged task's worktree is removed and its thread and helper threads settled. Unfinished tasks keep their worktree and stay active and unread.
+2. Confirm that every merged task's worktree and `scratch/` folder are removed and its thread and helper threads settled. Unfinished tasks keep their worktree, and their folder in the run directory holds `KEEP`; they stay active and unread.
 3. Gather the times for the report's timeline. For each task thread, and for your own thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A fast helper ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)) can collect these for all the threads, which keeps the long results out of your context; check a few of its times against the ledger. Your own turns from the approval on give your worked time and wake count, for the facts file's `run`; the approval's time is in the ledger, and the run ends with the report. Write them into the facts file, keeping each thread's turns as its `turns`, and `scripts/run-charts` draws the run map and both charts ([final-report.md](final-report.md#the-runs-facts)).
 4. Show the run map: pass `run-map-t3.html`, as `run-charts` wrote it, to `html_preview` once and then to `html_render` ([final-report.md](final-report.md#run-map)).
 5. If you have OrbOS's tools, offer the report once, with its tour, just before posting it: run `scripts/report-offer` on the facts file and the saved report with `--pictures <run directory>` (and `--harness codex` when you are Codex), and it offers them through OrbOS's own command; only if it says `not offered`, call `offer_reading` yourself ([final-report.md](final-report.md#offer-it-to-listen-to-with-its-tour)). Your thread runs at the project's root, so pass `--repo` with the integration checkout.

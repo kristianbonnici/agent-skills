@@ -75,7 +75,7 @@ Put everything the user might want to decide into one message, so nothing needs 
   - whether the user may still be at the computer (an evening run): then the screen's lease waits until they have been away five minutes, nothing records the screen or plays out loud before that, and their screen lock must not start sooner ([references/machine.md](references/machine.md#6-shared-resources-and-disk)).
 
   Say that you will keep the computer awake for the whole run (`caffeinate` on macOS), and that the warm-up needs the user at the computer for about five minutes right after they approve. Approving the contract approves all of it.
-- **Older runs:** run `scripts/prune-runs` (it only lists) and, when finished runs older than a week hold more than about 1 GB beyond their write-ups, say how much and that you will shrink them to their notes, reports and pictures at the start ([references/machine.md](references/machine.md#6-shared-resources-and-disk)). A run folder holding a file named `KEEP` is left whole.
+- **Older runs:** run `scripts/prune-runs` (it only lists) and, when finished runs older than a week, of every project on this computer, hold more than about 1 GB beyond their write-ups, say how much, of which projects, and that you will shrink them to their notes, reports and pictures at the start ([references/machine.md](references/machine.md#6-shared-resources-and-disk)). A run folder holding a file named `KEEP` at its top is left whole, and so is a task's folder holding one.
 - **Estimate:** a rough duration, labelled as an estimate. Agent runs often finish much faster than planned.
 - **Ledger:** where the ledger file will be.
 

@@ -47,7 +47,7 @@ Before saying a skill is installed, run:
 ```bash
 ./scripts/doctor --all
 ./tests/bootstrap-test
-./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's lease and run-charts scripts, and the run map
+./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's scripts (lease, run-charts and the run map, usage-sampler, report-offer, prune-runs)
 ./tests/skill-versions-test         # every skill's version and its changelog agree
 ```
 

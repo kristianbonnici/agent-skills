@@ -21,7 +21,8 @@ whole. Without
 --apply it only lists what it would remove; with --apply it removes it and adds a line to the
 run's pruned.txt saying what went. It keeps:
   - everything in report/ (the final report, run map, charts and their pictures) and in stopped/
-    (a stopped task's saved patches);
+    (a stopped task's saved patches), and every folder named evidence/ (where the briefs put
+    evidence that isn't a small text file: a large log, a recording a handoff cites);
   - text files up to 10 MB: notes, handoffs, briefs, measurements, logs, data, the tasks' own
     small scripts and probes (by their extension: .md, .json, .tsv, .csv, .log, .txt, .swift,
     .py, .sh and the like);
@@ -29,13 +30,15 @@ run's pruned.txt saying what went. It keeps:
   - symbolic links outside the folders it removes whole (a link is never followed: removing a
     folder removes the links in it, never what they point to), and any git worktree inside the
     run, left whole.
-It removes everything else: whole scratch/ folders, copies of other projects (any folder holding
-a .git folder), builds (.app, .build, DerivedData, node_modules and the like), downloads,
+It removes everything else: whole scratch/ folders, copies of other projects (any folder inside a
+task's folder holding a .git folder, unless a worktree was made from it), builds (.app, .build, DerivedData, node_modules and the like), downloads,
 recordings, renders and screenshots that aren't in pictures/, archives, binaries, traces.
 
 A merged task's scratch (the second form): removes <task folder>/scratch, where the briefs put
-what can be made again. The task folder must be in a run folder under the root. A task folder
-holding KEEP, and a git worktree inside scratch/, are left alone. Use it only once the task and everything it started have stopped.
+what can be made again. The task folder must be a folder (not a link) in a run folder under the
+root, and not report/, stopped/ or evidence/. A task folder holding KEEP, and a git worktree
+inside scratch/, are left alone. It doesn't know whether the task merged: the orchestrator
+calls it only for a merged task whose processes have stopped. Use it only once the task and everything it started have stopped.
 
 --size prints a run folder's size on disk, for the report's closing line.
 
@@ -48,6 +51,7 @@ command or a folder that isn't a run's.
 """
 
 import argparse
+import math
 import os
 import stat
 import sys
@@ -63,8 +67,9 @@ TEXT = {
 }
 PICTURES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 KEPT_WHOLE = {"report", "stopped"}           # top-level folders of a run kept as they are
+EVIDENCE = "evidence"                        # a folder of that name is kept as it is, at any depth
 BUILDS = {".build", "DerivedData", "node_modules", "__pycache__", ".venv", "venv", ".swiftpm",
-          "Pods", "target", ".gradle", ".next", "dist-newstyle", "checkouts"}
+          "Pods", ".gradle", ".next", "dist-newstyle", "checkouts"}
 BUNDLES = (".app", ".xcarchive", ".dSYM", ".framework", ".bundle", ".trace", ".xcresult", ".appex")
 
 
@@ -113,11 +118,25 @@ def is_worktree(path):
     return os.path.isfile(os.path.join(path, ".git")) and not os.path.islink(os.path.join(path, ".git"))
 
 
-def removed_whole(name, path):
+def removed_whole(name, path, depth):
     if name == "scratch" or name in BUILDS or name.endswith(BUNDLES):
         return True
+    if depth == 0:
+        return False                               # a task's own folder is sorted file by file
+    return is_clone(path)                          # a copy of another project
+
+
+def is_clone(path):
     git = os.path.join(path, ".git")
-    return os.path.isdir(git) and not os.path.islink(git)     # a copy of another project
+    return os.path.isdir(git) and not os.path.islink(git)
+
+
+def has_linked_worktrees(path):
+    """A clone a worktree was made from: the worktree's commits live in its .git."""
+    try:
+        return bool(os.listdir(os.path.join(path, ".git", "worktrees")))
+    except OSError:
+        return False
 
 
 def kept_file(path, name, in_pictures):
@@ -154,12 +173,15 @@ def plan_run(run):
             if entry.is_dir(follow_symlinks=False):
                 if depth == 0 and entry.name in KEPT_WHOLE:
                     continue
-                if os.path.lexists(os.path.join(path, "KEEP")):
+                if os.path.lexists(os.path.join(path, "KEEP")) or entry.name == EVIDENCE:
                     continue
-                if is_worktree(path):
+                if is_worktree(path) or (is_clone(path) and has_linked_worktrees(path)):
                     worktrees.append(path)
                     continue
-                if removed_whole(entry.name, path):
+                if entry.name == ".git":               # a task folder that is itself a clone: its history goes
+                    remove.append((path, tree_size(path), True))
+                    continue
+                if removed_whole(entry.name, path, depth):
                     if not contains_worktree(path):
                         remove.append((path, tree_size(path), True))
                     else:
@@ -244,18 +266,20 @@ def append_note(root, run, text):
         return f"{run}/pruned.txt: {error.strerror or error}"
 
 
-def remove_empty_folders(root, run):
-    for top, dirs, files in os.walk(run, topdown=False, followlinks=False):
-        if top == run or dirs or files:
-            continue
-        try:
-            fd, name = open_parent(root, top)
+def remove_emptied_folders(root, run, removed):
+    """Removes the folders the removals left empty, up to the run's own; no other empty folder."""
+    for path in sorted(removed, key=len, reverse=True):
+        folder = os.path.dirname(path)
+        while folder != run and folder.startswith(run + os.sep):
             try:
-                os.rmdir(name, dir_fd=fd)
-            finally:
-                os.close(fd)
-        except OSError:
-            pass
+                fd, name = open_parent(root, folder)
+                try:
+                    os.rmdir(name, dir_fd=fd)      # fails, and stops the climb, when not empty
+                finally:
+                    os.close(fd)
+            except OSError:
+                break
+            folder = os.path.dirname(folder)
 
 
 def ledger_status(ledger):
@@ -277,9 +301,11 @@ def runs_in(root):
         yield name, path, os.path.join(root, name + ".md")
 
 
-def safe_root(root):
+def safe_root(root, given):
     real = os.path.realpath(root)
     if not os.path.isdir(real):
+        if not given:
+            return None                            # no run has been made on this computer yet
         usage_error(f"no such folder: {root}")
     if os.path.basename(real) != "long-horizon-orchestrator":
         usage_error(f"refusing {root}: give the orchestrator's state folder, named long-horizon-orchestrator")
@@ -311,7 +337,7 @@ def prune_old(root, days, apply):
         total_now += size
         total_removable += removable
         for wt in worktrees:
-            print(f"{name}: leaves {os.path.relpath(wt, run)} whole (a git worktree)")
+            print(f"{name}: leaves {os.path.relpath(wt, run)} whole (a git worktree, or a clone one was made from)")
         if not remove:
             print(f"{name}: {human(size)}, nothing to remove")
             continue
@@ -319,18 +345,19 @@ def prune_old(root, days, apply):
         print(f"{name}: {human(size)}, {verb} {human(removable)} in {len(remove)} items, keeps {human(size - removable)}")
         if not apply:
             continue
-        failed, freed, tops = [], 0, {}
+        failed, freed, tops, removed = [], 0, {}, []
         for path, s, _ in remove:
             error = delete(root, path)
             if error:
                 failed.append(error)
                 continue
             freed += s
+            removed.append(path)
             top = os.path.relpath(path, run).split(os.sep)[0]
             tops[top] = tops.get(top, 0) + s
         problems += failed
         total_freed += freed
-        remove_empty_folders(root, run)
+        remove_emptied_folders(root, run, removed)
         touched += 1
         if failed:
             print(f"{name}: freed {human(freed)}; couldn't remove {len(failed)} items")
@@ -353,7 +380,8 @@ def prune_old(root, days, apply):
 def prune_scratch(root, task):
     real = os.path.realpath(task)
     run = os.path.dirname(real)
-    if os.path.dirname(run) != root or not os.path.isfile(run + ".md") or not os.path.isdir(real):
+    if (os.path.islink(task.rstrip(os.sep)) or os.path.dirname(run) != root or not os.path.isfile(run + ".md")
+            or not os.path.isdir(real) or os.path.basename(real) in KEPT_WHOLE | {EVIDENCE}):
         usage_error(f"{task} isn't a task's folder in a run folder under {root}")
     scratch = os.path.join(real, "scratch")
     if os.path.lexists(os.path.join(real, "KEEP")):
@@ -391,9 +419,14 @@ def main():
             usage_error(f"no such folder: {args.size}")
         print(human(tree_size(args.size)))
         return 0
-    if args.older_than < 0:
+    if not math.isfinite(args.older_than) or args.older_than < 0:
         usage_error("--older-than takes days, 0 or more")
-    root = safe_root(args.root or default_root())
+    root = safe_root(args.root or default_root(), args.root is not None)
+    if root is None:
+        if args.scratch:
+            usage_error(f"no state folder at {default_root()}")
+        print("No run folders yet: nothing to prune.")
+        return 0
     if args.scratch:
         if args.apply:
             usage_error("--scratch removes at once; leave out --apply")
