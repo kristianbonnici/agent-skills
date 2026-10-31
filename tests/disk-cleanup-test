@@ -1,7 +1,8 @@
 #!/bin/sh
-# Checks disk-cleanup's scan script in a made-up home folder: it deletes nothing, finds big folders,
-# build folders, big files and LaunchAgents with a missing program, marks what's new or grew since
-# the last scan, says what it was refused, keeps 12 scans, and answers the due check.
+# Checks disk-cleanup's scan script in a made-up home folder: it deletes nothing, finds big folders
+# and what's left in their parents, build folders with their own repository's last commit, big files,
+# app data with no app and LaunchAgents with a missing program, marks what's new or grew since an
+# earlier day's scan, says what it was refused, keeps 12 scans, and answers the due check.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -55,10 +56,27 @@ fill(f"{home}/Code/crate/target/release/blob", 2)
 fill(f"{home}/Code/crate/Cargo.toml", 0)
 fill(f"{home}/Code/notrust/target/blob", 2)
 fill(f"{home}/Big/single.bin", 4)
+fill(f"{home}/Library/Caches/one-big/blob", 6)
+for number in range(4):
+    fill(f"{home}/Library/Caches/small-{number}/blob", 0)
+    with open(f"{home}/Library/Caches/small-{number}/blob", "wb") as handle:
+        handle.write(os.urandom(600 * 1024))
+fill(f"{home}/Library/Application Support/com.example.gone/blob", 2)
+fill(f"{home}/Library/Application Support/com.apple.system/blob", 2)
+os.makedirs(f"{home}/Library/Application Support/not-a-bundle-id")
+fill(f"{home}/Parent/project/node_modules/blob", 2)
+subprocess.run(["git", "init", "-q", f"{home}/Parent"], check=True)
+fill(f"{home}/Own/node_modules/blob", 2)
+subprocess.run(["git", "init", "-q", f"{home}/Own"], check=True)
+open(f"{home}/Own/file", "w").close()
+subprocess.run(["git", "-C", f"{home}/Own", "add", "file"], check=True)
+subprocess.run(["git", "-C", f"{home}/Own", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "x"], check=True)
 os.makedirs(f"{home}/Library/LaunchAgents")
-for name, program in (("gone", "/nonexistent/app/helper"), ("here", "/bin/sh")):
+for name, program in (("gone", "/nonexistent/app/helper"), ("here", "/bin/sh"), ("unplugged", "/Volumes/no-such-drive/app")):
     with open(f"{home}/Library/LaunchAgents/{name}.plist", "wb") as handle:
         plistlib.dump({"Label": name, "ProgramArguments": [program, "-x"]}, handle)
+with open(f"{home}/Library/LaunchAgents/list.plist", "wb") as handle:
+    plistlib.dump(["not", "a", "job"], handle)
 refused = f"{home}/Locked/private"
 fill(f"{refused}/blob", 1)
 os.chmod(refused, 0)
@@ -80,13 +98,23 @@ assert "Compared with: nothing, first scan" in first, first
 biggest = section(first, "Biggest folders")
 assert "~/Forgotten/copy/data" in biggest and "NEW" not in biggest, biggest
 assert "~/Forgotten\n" not in biggest, "a parent of a listed folder isn't listed"
+assert "rest of ~/Library/Caches" in biggest, "bulk under the floor in a parent stays visible"
+assert "rest of ~/Forgotten" not in biggest, "a parent with nothing else in it isn't listed"
+orphans = section(first, "App data whose app")
+assert "com.example.gone" in orphans, orphans
+assert "com.apple.system" not in orphans, "macOS's own data isn't an orphan"
 builds = section(first, "Build folders")
 assert "~/Code/app/node_modules" in builds, builds
 assert "~/Code/crate/target" in builds, builds
 assert "~/Code/notrust/target" not in builds, "target without Cargo.toml isn't a build folder"
+line = next(l for l in builds.splitlines() if "~/Parent/project/node_modules" in l)
+assert "not a repository" in line, "a parent repository's commit isn't this project's: " + line
+line = next(l for l in builds.splitlines() if "~/Own/node_modules" in l)
+assert f"last commit {date.today()}" in line, line
 assert "~/Big/single.bin" in section(first, "Single files"), first
 broken = section(first, "LaunchAgents")
 assert "gone.plist: /nonexistent/app/helper" in broken and "here.plist" not in broken, broken
+assert "unplugged.plist" not in broken, "a drive that isn't plugged in isn't a missing program"
 assert "~/Locked/private" in section(first, "Refused"), first
 assert os.path.exists(os.path.join(scans, f"{date.today()}.tsv")), "the scan was saved"
 
@@ -105,6 +133,15 @@ line = next(l for l in biggest.splitlines() if "~/Grown/data/more" in l)
 assert "GB" in line.rsplit("  ", 1)[1] and line.rsplit("  ", 1)[1].startswith("+"), line
 assert "NEW" not in next(l for l in biggest.splitlines() if "~/Forgotten" in l), biggest
 assert "  none" in section(second, "Single files"), second
+
+# a second scan the same day still compares with the earlier day's, and a damaged line is skipped
+with open(os.path.join(scans, f"{date.today() - timedelta(days=30)}.tsv"), "a") as handle:
+    handle.write("<<<<<<< damaged\n\n")
+fill(f"{home}/Later/same-day/data/blob", 2)
+third = run("--min-mb", "1", "--min-file-mb", "5000")
+assert f"Compared with: {date.today() - timedelta(days=30)}" in third, third
+biggest = section(third, "Biggest folders")
+assert next(l for l in biggest.splitlines() if "~/Fresh/new/data" in l).endswith("NEW"), biggest
 
 assert run("--due").startswith("not due: last scan 0 days ago"), "a scan today isn't due"
 assert run("--due", "--days", "0").startswith("due:"), "--days is honoured"

@@ -18,16 +18,18 @@ The scan covers three levels of the home folder. For a closer look:
 
 ## Clearing with the tool's own command
 
-| Tool | Command | Notes |
+A command removes all it says below, not just what you listed, so describe that much in the report (SKILL.md, sections 5 and 6).
+
+| Tool | Command | What it removes, and notes |
 |---|---|---|
-| Homebrew | `brew cleanup --prune=all` | |
-| uv | `uv cache clean` | |
-| npm | `npm cache clean --force` | Leaves `~/.npm/_npx`, which is often the bigger part. Delete that only when no process runs from it (`ps -axo command \| grep '/.npm/_npx/'`): MCP servers often do. |
+| Homebrew | `brew cleanup --prune=all` | Every old version of every formula and all cached downloads. `brew cleanup <formula>` for one. |
+| uv | `uv cache clean` | The whole cache. `uv cache clean <package>` for one. |
+| npm | `npm cache clean --force` | The whole package cache. Leaves `~/.npm/_npx`, which is often the bigger part. Delete that only when no process runs from it (`ps -axo command \| grep '/.npm/_npx/'`): MCP servers often do. |
 | pnpm | `pnpm store prune` | Frees only packages no project uses. What stays is hard-linked into projects, so deleting the store frees little. |
 | Bun | `bun pm cache rm` | Refuses to work outside a project. Run it from one, or remove `~/.bun/install/cache`, which is purely a cache. |
 | Cargo | Remove `~/.cargo/registry/cache` and `~/.cargo/registry/src` | Keep the index. |
 | Ollama | `ollama rm <model>` | Never delete from `~/.ollama/models/blobs`: blobs are shared between models. |
-| Docker | `docker system prune` | Needs Docker running. Its virtual disk may not shrink by itself afterwards. Never delete `Docker.raw`: it holds every image and container. |
+| Docker | `docker image prune`, `docker builder prune` | Unused images, and the build cache. `docker system prune` also removes every stopped container and unused network, so a stopped container's data goes too: use it only when the owner chose that. All need Docker running. The virtual disk may not shrink by itself afterwards. Never delete `Docker.raw`: it holds every image and container. |
 | Hugging Face | Remove `~/.cache/huggingface/hub/models--<org>--<name>` | Each model is its own folder. An app may load from here: check first. |
 
 ## Editor extensions

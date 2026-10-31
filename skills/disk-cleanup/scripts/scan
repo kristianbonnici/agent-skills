@@ -9,11 +9,12 @@ Usage:
   scan --due [--days <days>] [--floor-percent <percent>]
 
 The first form measures and prints: free space; the biggest folders (up to three levels down),
-each with the date its newest file changed, marked NEW or with its growth since the last scan;
-build folders with their project's last commit; big single files; app data whose app seems gone;
-LaunchAgents whose program is missing; and what it was refused, so a refused folder is never taken
-for an empty one. It saves the measurements to scans/<date>.tsv and keeps the last 12 scans. The
-folder is ${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup.
+each with the date its newest file changed, marked NEW or with its growth since the last scan of an
+earlier day, and what's left in a parent beyond the folders listed; build folders with their
+project's last commit; big single files; app data whose app seems gone; LaunchAgents whose program
+is missing; and what it couldn't read, so a refused folder is never taken for an empty one. It saves
+the measurements to scans/<date>.tsv and keeps the last 12 scans. The folder is
+${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup.
 
 The second form reads the last scan and says "due: <why>" or "not due: <why>": due when no scan
 exists, the last is --days old (28 unless given), or free space is under --floor-percent (10
@@ -22,7 +23,7 @@ unless given) of the disk. It measures nothing else, so a weekly trigger costs a
 Sizes come from du, which counts a file with several hard links once per run and an iCloud file
 that isn't downloaded as nothing, so a size is an estimate of what deleting would free.
 
-Exit 0: done; 1: nothing could be measured.
+Exit 0: done; 1: nothing could be measured, or the scan could not be saved (the report still printed).
 """
 import argparse
 import os
@@ -38,6 +39,7 @@ SAVE_MIN_KB = 50 * 1024  # kept for comparing, so a folder that grew past the re
 DEPTH = 3
 BIG_LEAVES = 40
 BIG_FILES = 15
+DU_PATHS = 500  # paths per du, so thousands of build folders can't overflow the command line
 LAST_CHANGE_FILES = 200000  # files looked at per folder, so one huge tree can't stall the scan
 GROWTH_KB = 1024 * 1024  # growth worth marking
 BUILD_NAMES = {"node_modules", ".venv", "venv", ".build", ".next", ".turbo", ".gradle", "DerivedData"}
@@ -79,7 +81,8 @@ def read_scan(path):
             if line.startswith("#"):
                 continue
             kb, _, name = line.rstrip("\n").partition("\t")
-            sizes[name] = int(kb)
+            if name and re.fullmatch(r"-?\d+", kb):
+                sizes[name] = int(kb)
     return sizes
 
 
@@ -110,21 +113,26 @@ def measure(home):
             sizes[path] = int(kb)
     refused = []
     for line in done.stderr.splitlines():
-        found = re.match(r"du: (?:fts_\w+: )?(.*): (Operation not permitted|Permission denied)$", line)
+        found = re.match(r"du: (?:fts_\w+: )?(.*): [^:]+$", line)
         if found:
             refused.append(found.group(1))
     return sizes, refused
 
 
-def leaves(sizes, home, floor_kb):
-    big = {path for path, kb in sizes.items() if kb >= floor_kb and path != home}
-    parents = set()
+def listed(sizes, home, floor_kb):
+    """The folders to show, as (kb, path, is_rest): those with no big folder inside, and for a
+    parent, what's left beyond its big folders when that is big too, so it can't go unseen."""
+    big = sorted((p for p, kb in sizes.items() if kb >= floor_kb and p != home), key=lambda p: -p.count("/"))
+    shown, inside = [], {}
     for path in big:
+        rest = sizes[path] - inside.get(path, 0)
+        if path not in inside:
+            shown.append((sizes[path], path, False))
+        elif rest >= floor_kb:
+            shown.append((rest, path, True))
         parent = os.path.dirname(path)
-        while parent.startswith(home) and parent != home:
-            parents.add(parent)
-            parent = os.path.dirname(parent)
-    return sorted(big - parents, key=lambda p: -sizes[p])
+        inside[parent] = inside.get(parent, 0) + sizes[path]
+    return sorted(shown, key=lambda item: -item[0])
 
 
 def last_change(path):
@@ -161,21 +169,24 @@ def build_folders(home):
 
 
 def sizes_of(paths):
-    if not paths:
-        return {}
-    done = subprocess.run(["du", "-sk", *paths], capture_output=True, text=True, errors="replace")
     sizes = {}
-    for line in done.stdout.splitlines():
-        kb, _, path = line.partition("\t")
-        if kb.isdigit():
-            sizes[path] = int(kb)
+    for start in range(0, len(paths), DU_PATHS):
+        done = subprocess.run(
+            ["du", "-sk", *paths[start:start + DU_PATHS]], capture_output=True, text=True, errors="replace"
+        )
+        for line in done.stdout.splitlines():
+            kb, _, path = line.partition("\t")
+            if kb.isdigit():
+                sizes[path] = int(kb)
     return sizes
 
 
 def last_commit(folder):
-    done = subprocess.run(
-        ["git", "-C", folder, "log", "-1", "--format=%cs"], capture_output=True, text=True
-    )
+    # git looks upward, so a folder inside another repository would report that one's commit
+    top = subprocess.run(["git", "-C", folder, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if os.path.realpath(top.stdout.strip() or os.sep) != os.path.realpath(folder):
+        return "not a repository"
+    done = subprocess.run(["git", "-C", folder, "log", "-1", "--format=%cs"], capture_output=True, text=True)
     return done.stdout.strip() or "no commits"
 
 
@@ -205,7 +216,7 @@ def app_data_without_app(sizes, home, floor_kb):
         prefix = os.path.join(home, parent) + "/"
         for path, kb in sizes.items():
             name = path[len(prefix):] if path.startswith(prefix) else ""
-            if kb < floor_kb or "/" in name or not BUNDLE_ID.match(name):
+            if kb < floor_kb or "/" in name or not BUNDLE_ID.match(name) or name.startswith("com.apple."):
                 continue
             done = subprocess.run(
                 ["mdfind", f"kMDItemCFBundleIdentifier == '{name}'"], capture_output=True, text=True
@@ -227,11 +238,17 @@ def broken_launch_agents(home):
         try:
             with open(os.path.join(folder, name), "rb") as handle:
                 job = plistlib.load(handle)
-        except (OSError, ValueError, plistlib.InvalidFileException):
+        except Exception:  # a broken plist isn't what this looks for, and plistlib raises many kinds
+            continue
+        if not isinstance(job, dict):
             continue
         program = job.get("Program") or (job.get("ProgramArguments") or [None])[0]
-        if isinstance(program, str) and program.startswith("/") and not os.path.exists(program):
-            broken.append((name, program))
+        if not isinstance(program, str) or not program.startswith("/") or os.path.exists(program):
+            continue
+        parts = program.split("/")
+        if parts[1] == "Volumes" and not os.path.isdir("/Volumes/" + parts[2]):
+            continue  # on a drive that isn't plugged in, so not known to be missing
+        broken.append((name, program))
     return broken
 
 
@@ -252,7 +269,8 @@ def save(sizes, home, free, total, floor_kb):
 
 def scan(min_mb, min_file_mb, home):
     floor_kb = int(min_mb * 1024)
-    earlier = saved_scans()
+    # an earlier day's: a second scan today shouldn't compare with the first and lose what's new
+    earlier = [path for path in saved_scans() if os.path.basename(path)[:10] < date.today().isoformat()]
     previous = read_scan(earlier[-1]) if earlier else None
     sizes, refused = measure(home)
     if not sizes:
@@ -270,8 +288,11 @@ def scan(min_mb, min_file_mb, home):
         print(f"  {gb(sizes[path]):>9}  {short(path, home)}")
 
     print(f"\nBiggest folders (three levels down, {min_mb:g} MB or more):")
-    for path in leaves(sizes, home, floor_kb)[:BIG_LEAVES]:
+    for kb, path, is_rest in listed(sizes, home, floor_kb)[:BIG_LEAVES]:
         name = short(path, home)
+        if is_rest:
+            print(f"  {gb(kb):>9}  rest of {name}")
+            continue
         mark = ""
         if previous is not None:
             before = previous.get(name)
@@ -282,7 +303,7 @@ def scan(min_mb, min_file_mb, home):
         print(f"  {gb(sizes[path]):>9}  changed {last_change(path)}  {name}{mark}")
 
     print(f"\nBuild folders ({min_mb:g} MB or more):")
-    folders = sizes_of(build_folders(home))
+    folders = sizes_of(sorted(build_folders(home)))
     kept = sorted((p for p in folders if folders[p] >= floor_kb), key=lambda p: -folders[p])
     for path in kept:
         project = os.path.dirname(path)
@@ -312,7 +333,7 @@ def scan(min_mb, min_file_mb, home):
     if not broken:
         print("  none")
 
-    print("\nRefused, so not measured (not the same as empty):")
+    print("\nRefused or unreadable, so not measured (not the same as empty):")
     for path in refused[:15]:
         print(f"  {short(path, home)}")
     if len(refused) > 15:
@@ -320,7 +341,11 @@ def scan(min_mb, min_file_mb, home):
     if not refused:
         print("  nothing")
 
-    save(sizes, home, free, total, floor_kb)
+    try:
+        save(sizes, home, free, total, floor_kb)
+    except OSError as problem:
+        print(f"\nNot saved, so the next scan can't compare with this one: {problem}", file=sys.stderr)
+        return 1
     return 0
 
 
