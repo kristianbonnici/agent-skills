@@ -13,10 +13,10 @@ Version and history: [CHANGELOG.md](CHANGELOG.md).
 
 ```mermaid
 flowchart TD
-  start(["Scheduled run, or the owner asks"]) --> branch["Clean up merged evidence branches;<br/>reuse the one still waiting, or make one"]
-  branch --> due{Any file's new work<br/>checked 10+ days ago?}
+  start(["Scheduled run, or the owner asks"]) --> due{Any file's new work<br/>checked 10+ days ago?}
   due -->|no| quiet(["One line: checked recently"])
-  due -->|yes| read["Read the file and its skill:<br/>which rules each source supports"]
+  due -->|yes| branch["Clean up merged evidence branches;<br/>reuse the one still waiting, or make one"]
+  branch --> read["Read the file and its skill:<br/>which rules each source supports"]
   read --> search["Search for new work by the rules;<br/>forward from each cited source"]
   read --> recheck["Sources 8+ weeks since checked:<br/>revised, published, withdrawn,<br/>superseded, dated, gone"]
   search --> bar{Top tier, recent,<br/>bears on a rule?}

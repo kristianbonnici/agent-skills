@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Every evidence file has the lines skill-evidence reads: its "Last checked" dates and a "Left out" section.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+status=0
+count=0
+
+for file in "$repo_root"/docs/skills/*/evidence.md; do
+  [ -e "$file" ] || continue
+  count=$((count + 1))
+  name="${file#"$repo_root"/}"
+  if ! grep -Eq '^Last checked: new work [0-9]{4}-[0-9]{2}-[0-9]{2}; sources [0-9]{4}-[0-9]{2}-[0-9]{2}\.$' "$file"; then
+    echo "$name: no line 'Last checked: new work YYYY-MM-DD; sources YYYY-MM-DD.'" >&2
+    status=1
+  fi
+  if ! grep -q '^## Left out$' "$file"; then
+    echo "$name: no '## Left out' section" >&2
+    status=1
+  fi
+done
+
+[ "$status" -eq 0 ] && echo "evidence files: ok ($count)"
+exit "$status"

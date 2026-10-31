@@ -3,6 +3,7 @@
 ## 1.1.0 (2026-10-31)
 
 - **Outside evidence is an incident too** (owner, 2026-10-31): a source the new `skill-evidence` skill verified that contradicts a rule or shows a better one becomes a proposal like an incident from a run, with an `evidence:` incident line, judged by whether the changed rule would stand on better evidence. Until now only what went wrong in a run could propose a change, so a rule the field had moved past stayed until someone noticed.
+- From skill-evidence's review (Claude Haiku 5.5, trial): the judging step says outside evidence needs no cost, only a changed rule that would stand on better evidence; a repeat's `lessons note` line leaves out the date, which the script adds.
 
 ## 1.0.0 (2026-10-31)
 

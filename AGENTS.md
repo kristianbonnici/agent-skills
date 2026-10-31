@@ -50,6 +50,7 @@ Before saying a skill is installed, run:
 ./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's scripts (lease, run-charts and the run map, usage-sampler, report-offer, prune-runs)
 ./tests/skill-versions-test         # every skill's version and its changelog agree
 ./tests/skill-evolution-test        # skill-evolution's lessons script: two computers sharing the private lessons, one file per entry
+./tests/evidence-test               # every evidence file has skill-evidence's "Last checked" line and "Left out" section
 ```
 
 The doctor must confirm Product Design is absent from Codex discovery paths.

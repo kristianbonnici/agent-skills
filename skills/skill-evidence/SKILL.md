@@ -14,10 +14,10 @@ On a schedule nobody is watching: don't ask questions. Decide by these rules and
 ## 1. Set up
 
 - **The files:** the skills repository is `git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`; the evidence files are its `docs/skills/*/evidence.md`. Check the ones the user named, or all.
+- **Due?** Each file starts with `Last checked: new work <date>; sources <date>.` Read it from the newest unmerged `evidence/*` branch when there is one (`git show <branch>:<file>`), else from `main`. On a scheduled run, check only the files whose new-work date is 10 days old or more, and if none is, stop with one line ("Evidence checked under 10 days ago.") and nothing else, before any branch or worktree is touched. When the user asks, check what they named whatever the dates.
 - **One pending branch.** Your edits go on a branch `evidence/<YYYY-MM-DD>` in a worktree of its own, `<the repository's parent folder>/<repository folder name>-worktrees/evidence-<YYYY-MM-DD>`, made from the default branch (`main`); if that name is taken, add `-2`. Look at the `evidence/*` branches first:
   - **One merged into `main`** (`git merge-base --is-ancestor <branch> main`): the owner took it. Remove its worktree only when `git -C <worktree> status --porcelain --ignored` prints nothing, since `git worktree remove` deletes ignored files without asking; then `git worktree remove <path>` (never `--force`) and `git branch -d <branch>`. If anything is listed or git refuses, leave both and name them in the report.
   - **One not merged:** the owner hasn't decided yet. If its worktree has uncommitted changes (`git -C <worktree> status --porcelain`), someone is working there: change nothing in it, and stop with a report that says so. Otherwise rebase it onto `main` and work on it, so one branch holds everything waiting. If the rebase conflicts, abort it, leave that branch as it is, and make a new branch from `main` that carries its changes over by hand where they still apply (`git diff main...<old branch>`); the report names the old branch for the owner to delete. With several unmerged branches, take the newest the same way and name the others.
-- **Due?** Each file starts with `Last checked: new work <date>; sources <date>.` Read it from the pending branch's copy when there is one. On a scheduled run, check only the files whose new-work date is 10 days old or more, and if none is, stop with one line ("Evidence checked under 10 days ago.") and nothing else. When the user asks, check what they named whatever the dates.
 - Never touch the owner's checkout of the repository: no checkout, stash, reset or edit there.
 
 ## 2. Read what each file claims
@@ -52,29 +52,29 @@ In the worktree, edit each file in its own form and voice:
 
 - **A new entry** goes where entries of its kind are: its title linked, its authors or organization, its date, "preprint" or its venue, what it found with its figures, and "→ *<the rules it bears on>*". Check every figure and quote against the source as you write it.
 - **Work that argues against a rule** also goes under "Where the evidence argues against us", where the file has that section, with how the skill answers it.
-- **Every candidate you weighed and didn't add** goes under "Left out", one line each: its linked title, date, and why (the part of the bar it missed). Later runs don't weigh it again unless it changes.
+- **A candidate that came close** goes under "Left out", one line each: its linked title, date, and why (the part of the bar it missed). Close means top tier but bearing on no rule, or bearing on a rule but missing the bar: the ones a later run would otherwise weigh again. Search results nowhere near the bar aren't recorded.
 - **`Last checked:`** gets today's date for new work, and for sources too when you rechecked them.
 
-The repository is public: cite public sources and aggregate numbers only, never the owner's projects. Then run the checks the repository's AGENTS.md lists, commit on the branch (`docs(evidence): <what changed, per file>`) and pass the `review-gate` skill at Light, its brief's objective being that every added or changed figure, quote, date and link matches its source. A run that found nothing still commits its `Last checked:` dates, so the next run knows. Never push the branch or merge it.
+The repository is public: cite public sources and aggregate numbers only, never the owner's projects. Then run the checks the repository's AGENTS.md lists, commit on the branch (`docs(evidence): <what changed, per file>`) and pass the `review-gate` skill at Light, its brief's objective being that every added or changed figure, quote, date and link matches its source. Reviewers may have no web access, so the brief gives, for each added or changed figure or quote, the source's own passage that supports it, quoted, with its link. A run that found nothing still commits its `Last checked:` dates, so the next run knows. Never push the branch or merge it.
 
 ## 6. Findings that undercut a rule
 
-New work that contradicts a rule, or shows a better one, is a proposal as well as an evidence entry. Hand it to the `skill-evolution` skill as an incident, its line `<date> evidence: <title, linked, date>: <what it found>`: that skill checks the lessons for an earlier decision, writes the change small and records it with `lessons add`, at most three proposals at once. The evidence entry it cites goes on your branch as usual.
+New work that contradicts a rule, or shows a better one, is a proposal as well as an evidence entry. Hand it to the `skill-evolution` skill as an incident, its line `<date> evidence: <title, linked, date>: <what it found>` (in `lessons note`, without the date, which the script adds): that skill checks the lessons for an earlier decision, writes the change small and records it with `lessons add`, at most three proposals at once. The evidence entry it cites goes on your branch as usual.
 
 ## 7. Report
 
 Short and plain, in the thread or your reply:
 
 - **Per file checked:** what changed (sources added, updated, marked dated or gone, left out), or "nothing new".
-- **The branch:** its name and worktree, and how to take it: `git merge --ff-only evidence/<date>` in the repository's checkout of `main`; if that refuses because `main` moved since, `git rebase main` in the branch's worktree first. To drop an item, the owner says which, and it moves to "Left out" with their reason, now or on the next run.
+- **The branch:** its name and worktree, and how to take it: `git merge --ff-only evidence/<date>` in the repository's checkout of `main`; if that refuses because `main` moved since, `git rebase main` in the branch's worktree first. To drop an item, the owner says which, and it moves to "Left out", now or on the next run, as "owner declined", with their reason only in public terms (a private reason stays out of this public repository).
 - **Proposals:** in skill-evolution's form, with the IDs `lessons add` printed, and anything `lessons` printed as dropped, moved or not pushed, word for word.
 - **What you couldn't check,** and why.
 
-Call for the owner's attention (the host's notification, or speech) only when there is a proposal or an evidence change. A quiet run ends with its one line.
+Call for the owner's attention (the host's notification, or one spoken sentence) only when there is a proposal or a new or changed entry, never for dates alone. A quiet run ends with its one line.
 
 ## Never
 
 - Change a skill, or apply a proposal, without the owner's yes for it.
 - Push the skills repository, merge into `main`, or touch the owner's checkout. (The `lessons` script's own pushes to the private state repository are how proposals reach the owner, as skill-evolution says.)
-- Cite a source you didn't open, or a figure you didn't find in it.
+- Cite a source you didn't open, or a figure you didn't find in it. (A page that refuses automated reading is read through excerpts or coverage, named in the entry, as section 4 says.)
 - Delete an entry for its age alone, or weigh again what "Left out" holds unless it changed.
