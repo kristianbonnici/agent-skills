@@ -116,7 +116,7 @@ def measure(home):
         found = re.match(r"du: (?:fts_\w+: )?(.*): [^:]+$", line)
         if found:
             refused.append(found.group(1))
-    return sizes, refused
+    return sizes, sorted(refused, key=lambda p: (p.count("/"), p))  # the shallowest matter most
 
 
 def listed(sizes, home, floor_kb):
