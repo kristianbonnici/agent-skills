@@ -46,3 +46,6 @@
 
   Its pre-existing finding is fixed too: a pending worktree holding ignored files isn't rebased, which
   could overwrite them; its changes are carried to a new branch instead.
+- **Round 3** (Terra, 1 must-fix, fewer again): the Light review's brief also gives each entry's link
+  with the title, authors and date as the source shows them, so a reviewer without web access can
+  check dates and titles, not only figures.
