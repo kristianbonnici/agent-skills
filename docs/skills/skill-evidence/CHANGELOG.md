@@ -38,3 +38,11 @@
   - `lessons note` takes the evidence line without its date;
   - the new `tests/evidence-test` checks every evidence file's "Last checked" line and "Left out"
     section.
+- **Round 2** (Terra, the fixes only, 2 must-fix, fewer than round 1):
+  - a branch carried over by hand lists what it didn't carry, so the owner never deletes an old
+    branch that still held undecided work;
+  - the Light review's brief quotes coverage, named as such, for a source read through coverage, and
+    the record says whether the reviewer opened the sources or checked against the quoted passages.
+
+  Its pre-existing finding is fixed too: a pending worktree holding ignored files isn't rebased, which
+  could overwrite them; its changes are carried to a new branch instead.
