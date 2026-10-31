@@ -32,6 +32,17 @@ A command removes all it says below, not just what you listed, so describe that 
 | Docker | `docker image prune`, `docker builder prune` | Unused images, and the build cache. `docker system prune` also removes every stopped container and unused network, so a stopped container's data goes too: use it only when the owner chose that. All need Docker running. The virtual disk may not shrink by itself afterwards. Never delete `Docker.raw`: it holds every image and container. |
 | Hugging Face | Remove `~/.cache/huggingface/hub/models--<org>--<name>` | Each model is its own folder. An app may load from here: check first. |
 
+## Shared stores
+
+These hold many things under one folder, and deleting the folder isn't a choice to offer:
+
+| Store | Why | Offer instead |
+|---|---|---|
+| `~/.ollama/models/blobs` | Every Ollama model lives here, sharing files | Each model from `ollama list` that's unused, one item each |
+| pnpm's store (`~/Library/pnpm/store`) | Hard-linked into projects, so deleting it frees little | `pnpm store prune` |
+| `~/.npm/_npx` | MCP servers may be running from it | All of it, only when no process runs from it |
+| Docker's `Docker.raw` | Holds every image and container | What `docker image ls` shows as unused |
+
 ## Editor extensions
 
 VS Code, Cursor and their forks keep old versions beside the new. Each extensions folder has an `extensions.json` listing what's in use: remove only folders it doesn't list, and only for an extension with a listed version. Don't work out "newest" from the version numbers.

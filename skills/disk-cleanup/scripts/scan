@@ -35,7 +35,7 @@ import sys
 from datetime import date, datetime
 
 SCANS_KEPT = 12
-SAVE_MIN_KB = 50 * 1024  # kept for comparing, so a folder that grew past the report's floor isn't NEW
+SAVE_MIN_KB = 50 * 1024  # kept for comparing; a folder that grew from under this reads as NEW
 DEPTH = 3
 BIG_LEAVES = 40
 BIG_FILES = 15
@@ -147,10 +147,7 @@ def last_change(path):
             if seen >= LAST_CHANGE_FILES:
                 return "at least " + datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
     if not newest:
-        try:
-            newest = os.lstat(path).st_mtime
-        except OSError:
-            return "unknown"
+        return "no files read"  # the folder's own date proves nothing, so don't print one
     return datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
 
 
@@ -242,7 +239,8 @@ def broken_launch_agents(home):
             continue
         if not isinstance(job, dict):
             continue
-        program = job.get("Program") or (job.get("ProgramArguments") or [None])[0]
+        arguments = job.get("ProgramArguments")
+        program = job.get("Program") or (arguments[0] if isinstance(arguments, list) and arguments else None)
         if not isinstance(program, str) or not program.startswith("/") or os.path.exists(program):
             continue
         parts = program.split("/")

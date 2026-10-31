@@ -77,6 +77,8 @@ for name, program in (("gone", "/nonexistent/app/helper"), ("here", "/bin/sh"), 
         plistlib.dump({"Label": name, "ProgramArguments": [program, "-x"]}, handle)
 with open(f"{home}/Library/LaunchAgents/list.plist", "wb") as handle:
     plistlib.dump(["not", "a", "job"], handle)
+with open(f"{home}/Library/LaunchAgents/dictargs.plist", "wb") as handle:
+    plistlib.dump({"Label": "x", "ProgramArguments": {"not": "a list"}}, handle)
 refused = f"{home}/Locked/private"
 fill(f"{refused}/blob", 1)
 os.chmod(refused, 0)

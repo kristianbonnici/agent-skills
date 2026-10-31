@@ -13,7 +13,7 @@ You find what is wasting space and the owner decides what goes. Measuring is the
 
 - **Delete only what the owner chose, in this conversation, naming that item.** "Clean it all up" with no list yet means report first. A choice covers the item as you described it, nothing wider: if a check finds more than you listed, or something different, ask again.
 - **Nobody watching means no deleting.** A scheduled run ends with its report, whatever it finds, and never asks a question it waits on.
-- **Never touch:** credentials and tokens, anything needing `sudo`, the Trash, Time Machine snapshots, system folders, macOS's own data (`com.apple.*`), git history, or a repository's tracked files. Report them if they matter; the owner handles them.
+- **Never touch:** credentials and tokens, anything needing `sudo`, the Trash, Time Machine snapshots, system folders, macOS's own data (`com.apple.*`), git history, a repository's tracked files, or a skill's own state (`~/.local/state/agent-skills`: run ledgers and decisions may exist nowhere else). Report them if they matter; the owner handles them, and a skill with a pruning tool of its own, such as the orchestrator's `prune-runs`, is named instead.
 - **Unsure means it's the owner's work.** Leave it out of the deletable list, and say so if it's big.
 
 ## 1. Set up
@@ -37,6 +37,8 @@ Anything the scan was refused is unknown, not empty. Say so in the report.
 | **Big, the owner's call** | Works today but maybe isn't needed: models, sample data, a large unused app | Offer it, plainly as a choice |
 | **The owner's work** | Projects, documents, task outputs, history, anything you can't place | Leave out; mention it if it's big |
 
+A shared store is never one item. Offer what's inside it, by the tool's own listing (`ollama list`, `docker image ls`), or leave it out: see "Shared stores" in [references/macos.md](references/macos.md), and read that before you offer anything from one.
+
 Skip anything `decisions.md` says to keep, unless it changed a lot since. Something cleared before that came back isn't news when it's a cache that refills: offer it only if it's worth the rebuild, and from 5 GB.
 
 ## 4. Prove it's unused
@@ -48,6 +50,7 @@ A name isn't proof, and neither is an old date alone. Before listing anything as
 - **Installed:** is its app still there (`mdfind "kMDItemCFBundleIdentifier == '<id>'"`, then `/Applications`)? A folder's name can look like one app and belong to another, so read what's inside.
 - **Referenced:** does a project, config or script still name it (`grep -rIl` across the owner's projects, skipping `node_modules` and `.git`)?
 - **Last changed:** the newest file inside, not the folder's own date, and in a repository the last commit. A copied file keeps its old date, so an old date alone proves little.
+- **A git checkout or worktree:** uncommitted or untracked files (`git -C <folder> status --short`), and commits on no remote (`git -C <folder> log --branches --not --remotes --oneline`) make it the owner's work, however old it looks. `git worktree list` from its repository says what still uses it.
 - **The only copy?** For a backup or working copy, is the same data somewhere else? If not, say that deleting it loses it.
 
 ## 5. Report
@@ -76,8 +79,8 @@ Name each path exactly, and quote it. Never build a deletion from a variable tha
 
 - **Report what happened:** free space before and after, measured, and what each item freed. Where the real figure differs from your estimate, say so and why. Say what you didn't do.
 - **What needs doing later:** a cleared build folder needs a rebuild, a removed browser profile means signing in again.
-- **Update `decisions.md`,** on every round the owner decided anything, in the form below, newest first in each section. Paths start with `~`.
 - **Keep it where it can follow the owner.** The private state repository is `$AGENT_SKILLS_STATE`, or else `agent-skills-state` beside the skills repository (`git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`). If that exists and `decisions.md` isn't already a link into it, put the file at `<repository>/disk-cleanup/decisions.md`, moving a plain one from the state folder, and link it: `ln -s <that file> <state folder>/decisions.md`. Bootstrap won't replace a real file with its link. With no such repository, a plain file in the state folder is right.
+- **Update `decisions.md`,** on every round the owner decided anything, in the form below, newest first in each section. Paths start with `~`.
 
   ```markdown
   # disk-cleanup decisions
@@ -92,6 +95,6 @@ Name each path exactly, and quote it. Never build a deletion from a variable tha
   - `<path>` (<date>): <what it was, about how much it freed>
   ```
 
-  Whatever the owner saw and declined goes under Keep. Something they haven't answered yet goes under Undecided. If the file is in the private state repository, commit and push it there (`disk-cleanup: <what was decided>`); if the push fails, say so. Nothing from `decisions.md` goes into the public skills repository.
+  Whatever the owner saw and declined goes under Keep. Something they haven't answered yet goes under Undecided. If the file is in the private state repository, commit that file alone and push (`git add disk-cleanup/decisions.md`, then `git commit -m "disk-cleanup: <what was decided>" -- disk-cleanup/decisions.md`): other skills keep their state there too. If the push fails, say so. Nothing from `decisions.md` goes into the public skills repository.
 
 If a tool or skill keeps causing the same waste, say which one and what would stop it at the source: a cleanup only treats the symptom.
