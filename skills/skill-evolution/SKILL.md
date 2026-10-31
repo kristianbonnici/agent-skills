@@ -12,7 +12,7 @@ Skills evolve from what actually happened to them, never on their own. You colle
 ## 1. Find the files
 
 - **The skills repository:** where the skill you are judging comes from. Installed skills are links: `git -C "$(realpath <skill folder>)" rev-parse --show-toplevel`. It holds `docs/VERSIONING.md` and `docs/skills/<skill>/`. A skill that isn't from a repository with those can still get proposals; say where it lives.
-- **The lessons file:** open it with `<this skill's folder>/scripts/lessons begin` before reading or writing, and close it with `lessons end -m "skill evolution: <source>"` after, in the same turn, even if you only read. The script does the file's git work, so never commit, pull or push it yourself: it takes a lock (another run waits), pulls the owner's private state repository, creates and links the file there if it is missing (a plain local file only without that repository), and prints the file to edit (`file:`) and the number for a new entry (`next:`). `end` commits and pushes only that file. Both print `renumbered: L<a> -> L<b>` when another computer had taken one of this computer's unshown numbers: use the new number. Exit 3 means saved here but not pushed: say so, and that the numbers shown may still change; the next `begin` sends it, and any renumbering it prints goes to the owner too. Exit 2 means a number written twice (fix it and run `end` again). The entries' format is in [references/lessons-file.md](references/lessons-file.md).
+- **The lessons:** every incident and proposal is an entry of its own in the owner's private state repository, kept by `<this skill's folder>/scripts/lessons`. Read them with `lessons show`; write only through `lessons add`, `set` and `note` (section 4), never by editing or committing the files yourself: the script pulls, commits only its own files and pushes. Each entry gets an ID like `L-K7Q` that never changes, even one recorded offline. Exit 3 means saved here but not pushed (say so; the next `lessons` command sends it); `dropped: ... L-K7Q` means another computer changed that entry first and this computer's unsent change was dropped: record it again if it still holds. What an entry holds: [references/entries.md](references/entries.md).
 
 ## 2. Collect incidents
 
@@ -24,7 +24,7 @@ An incident is something a skill's rules caused, or didn't prevent, that cost th
 - a workaround outside the skill's rules, or a rule followed exactly that gave a wrong result;
 - a correction from the owner ("don't do that", "why didn't you…").
 
-Sources: the run's ledger ("Incidents", "Decisions log", "Side effects", nudges, relaunches, reviews that didn't converge) and the tasks' handoffs ("Couldn't check", reviews); or, outside a run, what the user just told you and what you saw. A task's own bug, a provider outage seen once, or a check that was flaky once is not an incident of a skill, unless the lessons file shows it before.
+Sources: the run's ledger ("Incidents", "Decisions log", "Side effects", nudges, relaunches, reviews that didn't converge) and the tasks' handoffs ("Couldn't check", reviews); or, outside a run, what the user just told you and what you saw. A task's own bug, a provider outage seen once, or a check that was flaky once is not an incident of a skill, unless the lessons show it before.
 
 ## 3. Judge each one
 
@@ -32,34 +32,32 @@ For each incident:
 
 1. **Find the rule.** The skill, file and section that govern what happened. Read the current text, not your memory of it: the skill may have changed since.
 2. **Would a change have prevented it?** If the text already covers it and was ignored, propose only a change that makes it hard to ignore: a script check instead of prose, the rule moved to where the agent reads it at that moment, a shorter rule. If nothing in a skill would have helped, record it as `seen` and stop.
-3. **Check the lessons file.** A proposal already `declined` comes back only with new evidence (a new incident of the same kind), and says it was declined before and why. One already `applied` that recurred is a lesson about that change: propose a fix to it. A `seen` entry of the same kind makes this a repeat: count it as evidence.
+3. **Check the lessons** (`lessons show`). A proposal already `declined` comes back only with new evidence (a new incident of the same kind), and says it was declined before and why. One already `applied` that recurred is a lesson about that change: propose a fix to it. A `seen` entry of the same kind makes this a repeat: count it as evidence.
 4. **Write the change small.** The rule as it would read, one or two sentences, and where it goes. Prefer tightening or replacing a rule to adding one, and a script check to prose when the check is mechanical. Every line added to a skill costs every future run some context.
 
 ## 4. Record and propose
 
-Between `lessons begin` and `lessons end` (section 1): new entries get the number `begin` printed, and the ones after it. Show the proposals only after `end`, with the numbers it left, so the owner sees what the file holds.
-
-- **Record every incident** in the lessons file: a proposal as `proposed`, the rest as `seen` (so a repeat later becomes evidence). The lessons file is private: run names, projects and details are fine there.
+- **Record every incident:** write each new entry to a file of its own (the form in [references/entries.md](references/entries.md), its heading `## L?. <skill>: <title>`), a proposal as `proposed`, the rest as `seen` (so a repeat later becomes evidence), and pass them all to one `lessons add <files>`; it prints each one's ID. A repeat of an existing entry is `lessons note <ID> "<run or session>: <what happened>"` instead. The lessons are private: run names, projects and details are fine there. Show the owner only IDs `add` printed.
 - **Propose at most three,** the ones with the highest cost prevented, chosen from this time's and the earlier ones still `proposed` in the file (check each earlier one against the skill's current text first: one the skill now covers becomes `seen`, with why). Each in this form:
 
   ```text
-  **L<n>. <skill>: <short title>.** <What happened, with when and what it cost, in one or two sentences.> <The change, as the rule would read.> (<file and section>; <major|minor|patch> by docs/VERSIONING.md.)
+  **<ID>. <skill>: <short title>.** <What happened, with when and what it cost, in one or two sentences.> <The change, as the rule would read.> (<file and section>; <major|minor|patch> by docs/VERSIONING.md.)
   **Recommended:** apply, because <one sentence>. <Or: "skip, because <…>".>
   ```
 
-  The rest stay `proposed` in the lessons file; say in one line how many wait there, so they come up again next time. With nothing worth proposing, say so in one line, or, for an orchestrator's report, return nothing.
+  The rest stay `proposed` in the lessons; say in one line how many wait there, so they come up again next time. With nothing worth proposing, say so in one line, or, for an orchestrator's report, return nothing.
 
 ## 5. When the owner decides
 
-Only the owner's explicit answer about a proposal counts ("apply L3", "skip L4"). A general "sounds good" to a report applies nothing. Record each decision between `lessons begin` and `lessons end`, so another computer sees it.
+Only the owner's explicit answer about a proposal counts ("apply L-K7Q", "skip L-M3D"). A general "sounds good" to a report applies nothing. Record each decision with `lessons set <ID> "<status>"`, so another computer sees it.
 
-- **Declined:** set it to `declined <date>`, with their reason if they gave one.
+- **Declined:** `lessons set <ID> "declined <date>: <their reason, if they gave one>"`.
 - **Accepted:** apply it in the skills repository, as a change of its own:
   1. Make the change. Raise the version and add the changelog entry as `docs/VERSIONING.md` says, in plain words, with the evidence in aggregate. The public repository never gets private details: no project names, people or paths from the owner's work. Longer evidence goes in `docs/skills/<skill>/evidence.md`.
   2. Run the repository's checks (its AGENTS.md lists them).
   3. Pass the `review-gate` skill at the level the diff calls for.
   4. Commit, and tag the version. Never push unless the owner asks.
-  5. Set the proposal to `applied <skill> <version> <date>`, between `lessons begin` and `lessons end`.
+  5. `lessons set <ID> "applied <skill> <version> <date>"`.
 
   In an orchestrator run, the orchestrator gives this to a small follow-up task in the skills repository instead of doing it itself.
 

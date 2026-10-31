@@ -57,7 +57,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 2. ...
 
 ## Skill changes proposed
-<Only when the skill-evolution step proposed any, at most three, in its form: "**L<n>. <skill>: <short title>.** <what happened and what it cost> <the change> (<where>; <bump>)." with "**Recommended:**" on the next line. End with: "Say which to apply ("apply L3") or skip; nothing changes until you do.">
+<Only when the skill-evolution step proposed any, at most three, in its form: "**<ID>. <skill>: <short title>.** <what happened and what it cost> <the change> (<where>; <bump>)." with "**Recommended:**" on the next line. End with: "Say which to apply ("apply L-K7Q") or skip; nothing changes until you do.">
 
 ## Suggested next steps
 <Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>

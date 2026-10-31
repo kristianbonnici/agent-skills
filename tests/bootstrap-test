@@ -39,7 +39,7 @@ test "$(readlink "$test_home/.claude/skills/remote-session-reporting")" = "$repo
 test -f "$test_home/.claude/skills/remote-session-reporting/SKILL.md"
 test "$(readlink "$test_home/.claude/skills/skill-evolution")" = "$repo_root/skills/skill-evolution"
 test -L "$test_home/.codex/skills/skill-evolution"
-test -f "$test_home/.agents/skills/skill-evolution/references/lessons-file.md"
+test -f "$test_home/.agents/skills/skill-evolution/references/entries.md"
 state_link="$test_home/.local/state/agent-skills/long-horizon-orchestrator/providers.md"
 test "$(readlink "$state_link")" = "$state_repo/long-horizon-orchestrator/providers.md"
 test ! -e "$test_home/.local/state/agent-skills/README.md"

@@ -14,9 +14,12 @@
   another computer took the numbers, before the owner sees them; the owner's decisions are pushed too;
   proposals still waiting compete for the three places each time, and the count of the rest is named.
 - Round 2 (Terra, 4 must-fix, no fewer than round 1, so the review stopped as not converging) showed the
-  prose git steps (a new file never added, a second computer never linked, numbers pushed before they
-  were checked, a diverged clone after an offline save) were the wrong approach: `scripts/lessons begin`
-  and `end` now do all of the file's git work (a lock, a pull with rebase, the file made and linked,
-  git's union merge so two computers' entries both stay, this computer's colliding unshown entries
-  renumbered before a push, an offline save sent by the next begin), with `tests/skill-evolution-test`
-  playing two computers against one remote.
+  prose git steps were the wrong approach. A first script around one shared file (`begin` and `end`,
+  sequential numbers, git's union merge) drew 7 findings from Terra and 3 from Claude Sonnet 5.5,
+  among them that the union merge can silently drop a line and that a number shown offline could
+  later change. So the lessons are now one file per entry with a random ID (`L-K7Q`) that never
+  changes, written only by `scripts/lessons` (`show`, `add`, `set`, `note`): two computers never edit
+  the same text, nothing is renumbered, each command holds a short lock tied to its process, pulls,
+  commits only its own files and pushes, and an unsent edit that meets another computer's edit of
+  the same entry is dropped and named, never leaving a rebase behind; `tests/skill-evolution-test`
+  plays two computers against one remote.
