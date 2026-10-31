@@ -12,7 +12,12 @@ Skills evolve from what actually happened to them, never on their own. You colle
 ## 1. Find the files
 
 - **The skills repository:** where the skill you are judging comes from. Installed skills are links: `git -C "$(realpath <skill folder>)" rev-parse --show-toplevel`. It holds `docs/VERSIONING.md` and `docs/skills/<skill>/`. A skill that isn't from a repository with those can still get proposals; say where it lives.
-- **The lessons:** every incident and proposal is an entry of its own in the owner's private state repository, kept by `<this skill's folder>/scripts/lessons`. Read them with `lessons show`; write only through `lessons add`, `set` and `note` (section 4), never by editing or committing the files yourself: the script pulls, commits only its own files and pushes. Each entry gets an ID like `L-K7Q` that never changes, even one recorded offline. Exit 3 means saved here but not pushed (say so; the next `lessons` command sends it); `dropped: ... L-K7Q` means another computer changed that entry first and this computer's unsent change was dropped: record it again if it still holds. What an entry holds: [references/entries.md](references/entries.md).
+- **The lessons:** every incident and proposal is an entry of its own in the owner's private state repository, kept by this skill's `scripts/lessons`: run the installed copy (the skill folder you read this from), not one in a worktree of the skills repository. `lessons show` lists one line per entry (ID, status, title); `lessons show <ID>...` prints those in full. Write only through `lessons add`, `set` and `note` (section 4), never by editing or committing the files yourself: the script pulls, commits only its own files and pushes. Each entry gets an ID like `L-K7QM` that never changes. What it prints:
+  - `not pushed` (exit 3): saved here; say so, the next `lessons` command sends it.
+  - `dropped: ... L-K7QM ...: <lines>`: another computer changed that entry first, and this computer's unsent change, the lines shown, was dropped; record it again if it still holds.
+  - `moved: ... L-K7QM is now L-P2WD`: two computers picked one ID; use the new one, and tell the owner if they saw the old.
+  - `no private state repository` on its error output: it is using this computer's files only; say so.
+  - Exit 4 (the state repository is mid-rebase or mid-merge), 75 (another run holds the lock for over a minute) or 64 (a mistake): nothing was written. Try once more; if it still fails, say what it printed and give your proposals without IDs. Never work around it with git. What an entry holds: [references/entries.md](references/entries.md).
 
 ## 2. Collect incidents
 
@@ -37,7 +42,7 @@ For each incident:
 
 ## 4. Record and propose
 
-- **Record every incident:** write each new entry to a file of its own (the form in [references/entries.md](references/entries.md), its heading `## L?. <skill>: <title>`), a proposal as `proposed`, the rest as `seen` (so a repeat later becomes evidence), and pass them all to one `lessons add <files>`; it prints each one's ID. A repeat of an existing entry is `lessons note <ID> "<run or session>: <what happened>"` instead. The lessons are private: run names, projects and details are fine there. Show the owner only IDs `add` printed.
+- **Record every incident:** write each new entry to a file of its own in a temporary folder outside any repository (`mktemp -d`; private details must never land in the skills repository), in the form in [references/entries.md](references/entries.md), its heading `## L?. <skill>: <title>`), a proposal as `proposed`, the rest as `seen` (so a repeat later becomes evidence), and pass them all to one `lessons add <files>`; it prints each one's ID. A repeat of an existing entry is `lessons note <ID> "<run or session>: <what happened>"` instead. The lessons are private: run names, projects and details are fine there. Show the owner only IDs `add` printed.
 - **Propose at most three,** the ones with the highest cost prevented, chosen from this time's and the earlier ones still `proposed` in the file (check each earlier one against the skill's current text first: one the skill now covers becomes `seen`, with why). Each in this form:
 
   ```text
@@ -49,7 +54,7 @@ For each incident:
 
 ## 5. When the owner decides
 
-Only the owner's explicit answer about a proposal counts ("apply L-K7Q", "skip L-M3D"). A general "sounds good" to a report applies nothing. Record each decision with `lessons set <ID> "<status>"`, so another computer sees it.
+Only the owner's explicit answer about a proposal counts ("apply L-K7QM", "skip L-M3DX"). A general "sounds good" to a report applies nothing. First read the entry (`lessons show <ID>`): if it is no longer `proposed` (applied or declined meanwhile, maybe on another computer), tell the owner and stop. Record each decision with `lessons set <ID> "<status>"`, so another computer sees it.
 
 - **Declined:** `lessons set <ID> "declined <date>: <their reason, if they gave one>"`.
 - **Accepted:** apply it in the skills repository, as a change of its own:

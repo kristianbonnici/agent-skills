@@ -5,7 +5,8 @@ committed and pushed to the owner's private state repository.
 SKILL.md ("Find the files", "Record and propose") says when to use it, and references/entries.md what an entry holds.
 
 Usage:
-  lessons show                          every entry, newest first (pulls first)
+  lessons show                          one line per entry (ID, status, title), newest first
+  lessons show <ID>... | --all          those entries, or all, in full
   lessons add <entry file>...           records new entries; prints each one's ID
   lessons set <ID> <status>             replaces an entry's status ("declined 2026-11-02: too costly")
   lessons note <ID> <incident>          adds an incident to an entry (a repeat)
@@ -15,16 +16,18 @@ Where they live: skill-evolution/lessons/<ID>.md in the owner's private state re
 without one, ${XDG_STATE_HOME:-~/.local/state}/agent-skills/skill-evolution/lessons/.
 
 An entry file given to `add` is one entry as references/entries.md shows it, its heading
-"## L?. <skill>: <title>"; the script gives it an ID (L-K7Q: three letters and digits, never reused)
+"## L?. <skill>: <title>"; the script gives it an ID (L-K7QM: four letters and digits, never reused)
 and a "Recorded:" date. Because every entry is its own file and IDs are chosen at random, two
 computers never write the same file, nothing is renumbered, and an ID shown to the owner holds
-for good, even one recorded offline.
+for good, even one recorded offline. (Should two computers ever pick the same ID offline, the one
+sent second moves to a new ID and says so: "moved: ... L-K7QM is now L-P2WD".)
 
 Every command takes a short lock (another run on this computer waits up to a minute), pulls with
 rebase, writes, commits only the files it wrote, and pushes, sending any earlier commit that
 couldn't be pushed. When this computer's unsent change to an entry meets another computer's change
-to the same entry, the other's wins and this one is dropped ("dropped: ... L-K7Q": record it again
-if it still holds). It never commits other files, never force-pushes, and never leaves a rebase
+to the same entry, the other's wins and this one is dropped, printed with what it said
+("dropped: ... L-K7QM ...: <its lines>"; record it again if it still holds). An entry an earlier
+command couldn't commit (a failed commit) is committed and sent by the next. It never commits other files, never force-pushes, and never leaves a rebase
 it started (any other conflict is aborted); a repository already mid-rebase or mid-merge is left
 alone.
 
@@ -41,9 +44,9 @@ import sys
 import time
 
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"     # no 0/O or 1/I
-ID = re.compile(r"^L-[A-Z2-9]{3}$")
-HEADING = re.compile(r"^## L(?:\?|-[A-Z2-9]{3})\. ", re.M)
-LOCK_WAIT = 60
+ID = re.compile(r"^L-[A-Z2-9]{3,4}$")
+HEADING = re.compile(r"^## L(?:\?|-[A-Z2-9]{3,4})\. ", re.M)
+LOCK_WAIT = float(os.environ.get("LESSONS_LOCK_WAIT", "60"))   # seconds; a check may shorten it
 REL = os.path.join("skill-evolution", "lessons")
 
 
@@ -55,12 +58,18 @@ def state_home():
 def state_repo():
     repo = os.environ.get("AGENT_SKILLS_STATE")
     if not repo:
+        # beside the skills repository's main checkout, also when this copy is in one of its worktrees
         here = os.path.dirname(os.path.realpath(__file__))
-        top = subprocess.run(["git", "-C", here, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
-        if top.returncode != 0:
+        common = subprocess.run(["git", "-C", here, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True)
+        if common.returncode != 0:
             return None
-        repo = os.path.join(os.path.dirname(top.stdout.strip()), "agent-skills-state")
-    return repo if os.path.isdir(os.path.join(repo, ".git")) else None
+        repo = os.path.join(os.path.dirname(os.path.dirname(common.stdout.strip())), "agent-skills-state")
+    if os.path.isdir(os.path.join(repo, ".git")):
+        return repo
+    print(f"lessons: no private state repository at {repo}: this computer's files only "
+          f"(set AGENT_SKILLS_STATE if it is elsewhere)", file=sys.stderr)
+    return None
 
 
 def git(repo, *args):
@@ -152,6 +161,7 @@ def settle_rebase(repo):
     computer's edit of the same entry, the other computer's (already sent, maybe already shown)
     wins and this one is dropped. Any other conflict is aborted. Returns the IDs dropped, or None."""
     dropped = []
+    path = os.path.join(repo, REL)
     for _ in range(50):
         if not busy(repo):
             return dropped
@@ -165,9 +175,22 @@ def settle_rebase(repo):
         if not all(f.startswith(REL + "/") for f in conflicted):
             break
         for f in conflicted:
-            git(repo, "checkout", "--ours", "--", f)  # in a rebase, "ours" is the other computer's
+            entry_id = os.path.basename(f)[:-3]
+            stages = {line.split()[2] for line in git(repo, "ls-files", "-u", "--", f).stdout.splitlines()}
+            mine = git(repo, "show", f":3:{f}").stdout      # in a rebase, stage 3 is this computer's
+            theirs = git(repo, "show", f":2:{f}").stdout
+            if "1" not in stages and mine:
+                # both computers recorded a new entry under the same ID: this one moves to a new ID
+                moved = new_id(path)
+                with open(os.path.join(path, moved + ".md"), "x", encoding="utf-8") as out:
+                    out.write(mine.replace(f"## {entry_id}. ", f"## {moved}. ", 1))
+                git(repo, "add", "--", os.path.join(REL, moved + ".md"))
+                print(f"moved: this computer's unsent entry {entry_id} is now {moved} (another computer took {entry_id})")
+            else:
+                lost = [line for line in mine.splitlines() if line not in theirs.splitlines()]
+                dropped.append((entry_id, lost))
+            git(repo, "checkout", "--ours", "--", f)      # and stage 2, "ours", the other computer's
             git(repo, "add", "--", f)
-            dropped.append(os.path.basename(f)[:-3])
     git(repo, "rebase", "--abort")
     return None
 
@@ -183,8 +206,9 @@ def sync(repo):
     if busy(repo):
         dropped = settle_rebase(repo)
         if dropped is not None:
-            for entry_id in sorted(set(dropped)):
-                print(f"dropped: this computer's unsent change to {entry_id} (another computer changed it first)")
+            for entry_id, lost in dropped:
+                print(f"dropped: this computer's unsent change to {entry_id} (another computer changed it first): "
+                      + (" | ".join(lost) if lost else "nothing that differed"))
             return None
     lines = (done.stderr or done.stdout).strip().splitlines()
     return lines[-1] if lines else "pull failed"
@@ -224,9 +248,25 @@ def entries(path):
 def new_id(path):
     taken = {name[:-3] for name in os.listdir(path)}
     while True:
-        candidate = "L-" + "".join(random.choice(ALPHABET) for _ in range(3))
+        candidate = "L-" + "".join(random.choice(ALPHABET) for _ in range(4))
         if candidate not in taken:
             return candidate
+
+
+def commit_leftovers(repo):
+    """Commits entry files an earlier command wrote but couldn't commit (a failed commit), so they
+    are sent like any other. Returns their IDs."""
+    leftovers = []
+    for line in git(repo, "status", "--porcelain", "--untracked-files=all", "--", REL).stdout.splitlines():
+        f = line[3:].strip().strip('"')
+        if f.startswith(REL + "/") and f.endswith(".md") and ID.match(os.path.basename(f)[:-3]):
+            leftovers.append(f)
+    if leftovers:
+        git(repo, "add", "--", *leftovers)
+        if git(repo, "commit", "-q", "-m", "skill evolution: entries an earlier command couldn't commit", "--",
+               *leftovers).returncode == 0:
+            print("committed earlier entries: " + ", ".join(os.path.basename(f)[:-3] for f in leftovers))
+    return leftovers
 
 
 def write(repo, files, message):
@@ -250,7 +290,7 @@ def write(repo, files, message):
 
 def find(path, entry_id):
     if not ID.match(entry_id):
-        fail(64, f"{entry_id} isn't an ID like L-K7Q")
+        fail(64, f"{entry_id} isn't an ID like L-K7QM")
     file = os.path.join(path, entry_id + ".md")
     if not os.path.isfile(file):
         fail(64, f"no entry {entry_id}")
@@ -262,9 +302,9 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 64
     command, args = argv[0], argv[1:]
-    if command not in ("show", "add", "set", "note") or (command == "show" and args) \
+    if command not in ("show", "add", "set", "note") \
             or (command == "add" and not args) or (command in ("set", "note") and len(args) != 2):
-        fail(64, "usage: lessons show | add <entry file>... | set <ID> <status> | note <ID> <incident>")
+        fail(64, "usage: lessons show [--all | <ID>...] | add <entry file>... | set <ID> <status> | note <ID> <incident>")
     texts = []
     if command == "add":
         for given in args:
@@ -282,14 +322,27 @@ def main(argv):
         problem = sync(repo) if repo else None
         if problem:
             print(f"not pulled: {problem} (this computer's copy)")
+        if repo:
+            commit_leftovers(repo)
         path = folder(repo)
         if command == "show":
             shown = entries(path)
             if not shown:
                 print("No lessons yet.")
-            for _, _, text in shown:
-                print(text.rstrip("\n") + "\n")
-            return 3 if (repo and push(repo)) else 0     # sends an earlier save that couldn't go
+            wanted = [a for a in args if a != "--all"]
+            for _, entry_id, text in shown:
+                if "--all" in args or entry_id in wanted:
+                    print(text.rstrip("\n") + "\n")
+                elif not wanted:
+                    title = text.split("\n", 1)[0][len(f"## {entry_id}. "):]
+                    status = re.search(r"^- Status: (.*)$", text, re.M)
+                    print(f"{entry_id}  {status.group(1) if status else '?'}  {title}")
+            for missing in sorted(set(wanted) - {e for _, e, _ in shown}):
+                print(f"no entry {missing}")
+            sent = push(repo) if repo else None       # sends an earlier save that couldn't go
+            if sent:
+                print(f"not pushed: {sent}; kept here, the next lessons command sends it")
+            return 3 if sent else 0
         today = time.strftime("%Y-%m-%d")
         if command == "add":
             written = []

@@ -20,8 +20,8 @@ flowchart TD
   past -->|"new, a repeat, or an applied<br/>change that recurred"| prop["Write the change small:<br/>the rule as it would read, where, bump"]
   prop --> top["Propose at most three, with their IDs;<br/>the rest wait in the lessons"]
   top --> owner{The owner}
-  owner -->|"apply L-K7Q"| apply["Change, version, changelog,<br/>checks, review gate, tag;<br/>no push"]
-  owner -->|"skip L-M3D"| declined["Recorded as declined"]
+  owner -->|"apply L-K7QM"| apply["Change, version, changelog,<br/>checks, review gate, tag;<br/>no push"]
+  owner -->|"skip L-M3DX"| declined["Recorded as declined"]
   owner -->|no answer| wait["Stays proposed"]
 ```
 

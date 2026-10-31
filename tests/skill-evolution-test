@@ -46,7 +46,7 @@ def entry(name, title, body="- Status: proposed\n- Incidents: 2026-10-31 run: so
     return path
 
 def ids(output):
-    return re.findall(r"^added: (L-[A-Z2-9]{3}) ", output, re.M)
+    return re.findall(r"^added: (L-[A-Z2-9]{4}) ", output, re.M)
 
 def on_remote(entry_id):
     done = subprocess.run(["git", "--git-dir", remote, "show", f"main:skill-evolution/lessons/{entry_id}.md"],
@@ -64,9 +64,11 @@ first = ids(done.stdout)[0]
 text = on_remote(first)
 assert text.startswith(f"## {first}. orchestrator: run folders grow\n- Recorded: ") and "- Incidents: 2026-10-31 run" in text, text
 
-# b sees it.
+# b sees it: one line per entry, the entry in full by its ID.
 done = lessons("b", "show")
-assert done.returncode == 0 and f"## {first}. orchestrator: run folders grow" in done.stdout, done.stdout
+assert done.returncode == 0 and f"{first}  proposed  orchestrator: run folders grow" in done.stdout, done.stdout
+done = lessons("b", "show", first)
+assert done.returncode == 0 and f"## {first}. orchestrator: run folders grow" in done.stdout and "- Incidents:" in done.stdout, done.stdout
 
 # Both add at once, with identical bodies (the shape a text merge would garble): both kept whole.
 a_add = entry("a", "review-gate: a's lesson", "- Status: seen\n")
@@ -76,7 +78,7 @@ done = lessons("b", "add", b_add)        # b hasn't pulled a's: its push is reje
 assert done.returncode == 0 and "pushed" in done.stdout, (done.stdout, done.stderr)
 b_id = ids(done.stdout)[0]
 assert on_remote(b_id).endswith("planner: b's lesson\n- Recorded: " + time.strftime("%Y-%m-%d") + "\n- Status: seen\n"), on_remote(b_id)
-shown = lessons("a", "show").stdout
+shown = lessons("a", "show", "--all").stdout
 assert shown.count("## L-") == 3 and "review-gate: a's lesson" in shown and "planner: b's lesson" in shown, shown
 
 # b offline: written and committed here, not pushed (3), its ID final; a adds meanwhile; b's next
@@ -88,14 +90,51 @@ offline = ids(done.stdout)[0]
 assert lessons("a", "add", entry("a", "orchestrator: a meanwhile")).returncode == 0
 git(clone["b"], "remote", "set-url", "origin", remote)
 done = lessons("b", "show")
-assert done.returncode == 0 and "orchestrator: a meanwhile" in done.stdout, done.stdout
+assert done.returncode == 0 and "orchestrator: a meanwhile" in done.stdout and "not pushed" not in done.stdout, done.stdout
 assert on_remote(offline) and on_remote(offline).startswith(f"## {offline}. orchestrator: offline lesson"), on_remote(offline)
 
 # Decisions and repeats: set and note on a, seen on b.
 assert lessons("a", "set", first, "declined 2026-11-01: not worth the context").returncode == 0
 assert lessons("a", "note", first, "orbos run: the disk filled again").returncode == 0
-text = lessons("b", "show").stdout
+text = lessons("b", "show", first).stdout
 assert "- Status: declined 2026-11-01: not worth the context" in text and "; " + time.strftime("%Y-%m-%d") + ": orbos run: the disk filled again" in text, text
+
+# A chain of unsent changes (a set, a note and an add) meeting another computer's change of the same
+# entry: the set and the note are dropped with what they said, the new entry survives with its ID.
+git(clone["b"], "remote", "set-url", "origin", os.path.join(work, "nowhere.git"))
+assert lessons("b", "set", first, "proposed 2026-11-04").returncode == 3
+assert lessons("b", "note", first, "laptop run: it happened again").returncode == 3
+done = lessons("b", "add", entry("b", "x: survives the conflict"))
+assert done.returncode == 3
+survivor = ids(done.stdout)[0]
+assert lessons("a", "set", first, "applied long-horizon-orchestrator 2.0.0 2026-11-04").returncode == 0
+git(clone["b"], "remote", "set-url", "origin", remote)
+done = lessons("b", "show")
+assert done.returncode == 0 and "it happened again" in done.stdout and "proposed 2026-11-04" in done.stdout, done.stdout
+assert on_remote(survivor) and "applied long-horizon-orchestrator 2.0.0" in on_remote(first), on_remote(first)
+
+# Two computers picking the same ID offline: the one sent second moves to a new ID and says so.
+git(clone["b"], "remote", "set-url", "origin", os.path.join(work, "nowhere.git"))
+done = lessons("b", "add", entry("b", "x: b's entry under a shared ID"))
+shared = ids(done.stdout)[0]
+os.makedirs(os.path.join(clone["a"], "skill-evolution", "lessons"), exist_ok=True)
+assert lessons("a", "show").returncode == 0
+open(os.path.join(clone["a"], "skill-evolution", "lessons", shared + ".md"), "w").write(f"## {shared}. x: a's entry\n- Status: seen\n")
+git(clone["a"], "add", "--", f"skill-evolution/lessons/{shared}.md"); git(clone["a"], "commit", "-q", "-m", "a's"); git(clone["a"], "push", "-q")
+git(clone["b"], "remote", "set-url", "origin", remote)
+done = lessons("b", "show")
+moved = re.search(rf"moved: this computer's unsent entry {shared} is now (L-[A-Z2-9]{{4}})", done.stdout)
+assert done.returncode == 0 and moved, (done.stdout, done.stderr)
+assert "x: a's entry" in on_remote(shared) and "x: b's entry under a shared ID" in on_remote(moved.group(1))
+
+# A failed commit (a signing error): the ID was shown, so the next command commits and sends it.
+git(clone["a"], "config", "commit.gpgsign", "true"); git(clone["a"], "config", "gpg.program", "false")
+done = lessons("a", "add", entry("a", "x: commit fails"))
+assert done.returncode == 3 and "not committed" in done.stdout, done.stdout
+unsent = ids(done.stdout)[0]
+git(clone["a"], "config", "--unset", "commit.gpgsign")
+done = lessons("a", "show")
+assert done.returncode == 0 and f"committed earlier entries: {unsent}" in done.stdout and on_remote(unsent), done.stdout
 
 # Only the lessons' files are ever committed: the owner's other edits, staged or not, stay theirs.
 open(os.path.join(clone["a"], "README.md"), "a").write("owner's edit\n")
@@ -118,9 +157,10 @@ git(clone["b"], "remote", "set-url", "origin", os.path.join(work, "nowhere.git")
 assert lessons("b", "set", b_id, "proposed again").returncode == 3
 assert lessons("a", "set", b_id, "applied planner 1.2.0 2026-11-03").returncode == 0
 git(clone["b"], "remote", "set-url", "origin", remote)
-done = lessons("b", "show")
+done = lessons("b", "show", b_id)
 assert done.returncode == 0 and f"dropped: this computer's unsent change to {b_id}" in done.stdout, (done.stdout, done.stderr)
-assert "applied planner 1.2.0" in done.stdout and "proposed again" not in done.stdout, done.stdout
+assert "- Status: proposed again" in done.stdout.split("\n", 1)[0] or "proposed again" in done.stdout.splitlines()[0], done.stdout
+assert "applied planner 1.2.0" in done.stdout and "## " in done.stdout, done.stdout
 for leftover in ("rebase-merge", "rebase-apply", "MERGE_HEAD"):
     assert not os.path.exists(os.path.join(clone["b"], ".git", leftover)), leftover
 assert git(clone["b"], "rev-list", "--count", "@{u}..HEAD").strip() == "0"
@@ -136,16 +176,15 @@ os.rmdir(os.path.join(clone["a"], ".git", "rebase-merge"))
 lock = os.path.join(work, "a", "state", "agent-skills", "skill-evolution", ".lock")
 os.mkdir(lock)
 open(os.path.join(lock, "pid"), "w").write(str(os.getpid()))
-script_text = open(script).read().replace("LOCK_WAIT = 60", "LOCK_WAIT = 1")
-quick = os.path.join(work, "lessons-quick")
-open(quick, "w").write(script_text)
-done = subprocess.run([sys.executable, "-I", quick, "show"], capture_output=True, text=True, env=env["a"], timeout=60)
+done = subprocess.run([sys.executable, "-I", script, "show"], capture_output=True, text=True,
+                      env=dict(env["a"], LESSONS_LOCK_WAIT="1"), timeout=60)
 assert done.returncode == 75, done.stderr
 dead = subprocess.Popen([sys.executable, "-c", "pass"]); dead.wait()
 open(os.path.join(lock, "pid"), "w").write(str(dead.pid))
 assert lessons("a", "show").returncode == 0 and not os.path.exists(lock)
 
-# Bad input.
+# Bad input: refused, nothing written.
+before = sorted(os.listdir(os.path.join(clone["a"], "skill-evolution", "lessons")))
 bad = os.path.join(work, "bad.md")
 open(bad, "w").write("## L?. one\n## L?. two\n")
 assert lessons("a", "add", bad).returncode == 64
@@ -154,11 +193,13 @@ assert lessons("a", "add", bad).returncode == 64
 assert lessons("a", "set", "L-ZZZ", "x").returncode == 64
 assert lessons("a", "set", "nonsense", "x").returncode == 64
 assert lessons("a", "frobnicate").returncode == 64
+assert sorted(os.listdir(os.path.join(clone["a"], "skill-evolution", "lessons"))) == before
+assert git(clone["a"], "status", "--porcelain") == ""
 
 # No state repository: plain local files.
 env["c"] = dict(os.environ, AGENT_SKILLS_STATE=os.path.join(work, "c", "not-a-repo"), XDG_STATE_HOME=os.path.join(work, "c", "state"))
 done = lessons("c", "add", entry("c", "x: local"))
-assert done.returncode == 0 and "this computer only" in done.stdout, done.stdout
+assert done.returncode == 0 and "this computer only" in done.stdout and "no private state repository" in done.stderr, done.stdout
 local_id = ids(done.stdout)[0]
 assert os.path.isfile(os.path.join(work, "c", "state", "agent-skills", "skill-evolution", "lessons", local_id + ".md"))
 assert "x: local" in lessons("c", "show").stdout
