@@ -40,3 +40,5 @@
 - Round 3 (Terra, 2, fewer again): a `set` or `note` on an ID its own pull just moved is refused with the
   new ID; pushes go to exactly this branch's upstream, whatever `push.default` says, so the owner's
   other branches never go along.
+- Round 4 (Terra, no must-fix: converged): its one note, that `push.followTags` could send the owner's
+  tags along, is fixed with `--no-follow-tags` (one flag, unreviewed).

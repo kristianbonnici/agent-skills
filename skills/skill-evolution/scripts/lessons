@@ -264,8 +264,8 @@ def push(repo):
     if not (branch and remote and merge):
         return "no upstream branch"
     for _ in range(3):
-        # exactly this branch to its upstream, whatever push.default says
-        if git(repo, "push", "-q", remote, f"HEAD:{merge}").returncode == 0:
+        # exactly this branch to its upstream, whatever push.default or push.followTags say
+        if git(repo, "push", "-q", "--no-follow-tags", remote, f"HEAD:{merge}").returncode == 0:
             return None
         problem = sync(repo)
         if problem:
