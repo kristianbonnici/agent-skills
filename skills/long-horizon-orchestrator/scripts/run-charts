@@ -434,7 +434,7 @@ def render(folder: Path, puppeteer_config: str | None) -> None:
 
 # --- usage: the samples scripts/usage-sampler wrote, drawn under the timeline -------------------
 
-PROVIDER_NAMES = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity", "copilot": "Copilot"}
+PROVIDER_NAMES = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity", "copilot": "Copilot", "opencode_go": "OpenCode Go"}
 NEUTRAL = "#8a8a93"
 
 

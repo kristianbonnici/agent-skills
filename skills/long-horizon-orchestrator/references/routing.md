@@ -63,8 +63,9 @@ The script asks each provider directly, so the numbers include use from other de
 
   Quota is used in proportion to the cost of the tokens, so a call's size matters more than how many calls there are. If `ai_credits_remaining` appears, the owner has paid credits that Antigravity can spend once a window is used up. Never let a run spend them: an Antigravity helper that reports a quota error stops there, even if credits would let it go on.
 - **Copilot:** GitHub's own quota endpoint (`gh api /copilot_internal/user`, the one its editors use), which spends nothing. Copilot has one window, `monthly`, with `units_entitled` and `units_remaining`; it resets on the first of the month. It is billed by token cost in fractional units, not per request. If the live read fails, `local_units_used_this_month` gives what this machine's Copilot sessions spent (from `~/.copilot/session-state`), but not what is left. If `overage_permitted` appears, GitHub would bill the owner past the budget: never let a run go past it.
+- **OpenCode Go:** the endpoint T3 Code reads (`opencode.ai/zen/go/v1/usage`), with the key OpenCode keeps for its console, which spends nothing. All Go models show as one set of windows, `five_hour`, `weekly` and `monthly`, in whole percents. The endpoint isn't documented, so if it stops answering, watch Go's helpers for errors instead. It is left out on an account without Go.
 
-When a live query fails, for example with no network, the script falls back to the last values Claude and Codex wrote to local logs and says so in `source`. Antigravity has no such logs, so it gets an `error` instead. Those are only as fresh as the last request made on this machine. `--cached` skips the live queries.
+When a live query fails, for example with no network, the script falls back to the last values Claude and Codex wrote to local logs and says so in `source`. Antigravity and OpenCode Go have no such logs, so they get an `error` instead. Those are only as fresh as the last request made on this machine. `--cached` skips the live queries.
 
 Codex may list free rate-limit resets (`reset_credits_available`). Never use one: spending them is the user's decision.
 
@@ -78,7 +79,7 @@ tasks that fit ≈ (100 − used_percent) / percent one task uses on that plan
 - **Learning it:** after each task, update the calibration from the snapshots taken before and after. If several tasks shared the provider, split the change between them by duration. Calibrate only from real runs, with tasks of about 20 minutes or longer. Short tasks and test runs give wildly misleading per-hour rates: a 3-minute task that moves a window by 3 points is not "60% per hour". When a run is too short to calibrate from, say so in the ledger and leave the profile unchanged.
 - **The 5-hour window limits a wave; the weekly window limits the whole run.** The weekly window also covers the user's next days, so don't plan to use more than about 80% of a weekly window without saying so in the contract.
 - **Staleness:** treat `observed_at` as the age of the number. A window with `reset_since_observed: true` has reset since it was read, so it is near zero again.
-- **Missing data:** if a provider's usage can't be read, say so and route by plan size alone. OpenCode's is never readable, so its helpers are watched for errors and slowdowns instead (section 4). Watch Antigravity's helpers that way too whenever its usage can't be read.
+- **Missing data:** if a provider's usage can't be read, say so and route by plan size alone. The usage of OpenCode's free tier is never readable, so its helpers are watched for errors and slowdowns instead (section 4). Watch Antigravity's helpers that way too whenever its usage can't be read.
 - **Other runs share the windows.** Another orchestrator run on the same machine draws on the same subscriptions. Before the contract and before each wave, look for other ledgers next to yours:
 
   ```sh
@@ -224,14 +225,14 @@ You may use them too, for the run's own chores: collecting thread times for the 
 
 **They run with the owner's own setup.** A helper loads the owner's configuration for its harness, including their MCP servers: on 2026-10-15, an OpenCode helper connected to the owner's running app through it. So every helper's prompt says: stay read-only, apart from the files a step names; never commit, merge, or touch the integration checkout; don't use tools that reach the owner's apps or services (speaking, messaging, their app's own tools); never ask the user anything.
 
-**Limits: switch, don't wait.** OpenCode's usage can't be read (Go's meters are only in the owner's web console), so watch its helpers themselves. Antigravity's can, so check it as well as watching its helpers.
+**Limits: switch, don't wait.** The usage of OpenCode's free tier can't be read, so watch its helpers themselves. Antigravity's and OpenCode Go's can, so check them as well as watching their helpers.
 - **OpenCode's free models are rate-limited, model by model.** Under load, most requests come back `429` and OpenCode quietly retries them, so a helper slows down rather than fails. On 2026-10-16, about 12 of 15 requests to GLM-5.3 Flash between 17:59 and 18:02 failed with `429`. The signs:
   - a step takes several times longer than the same kind of step did earlier;
   - `task_status` stays `working` while its child thread shows nothing new for several minutes;
   - it ends with a rate-limit (`429`) or "Upstream request failed" error.
 
   OpenCode's log (`~/.local/share/opencode/log/opencode.log`) records only that last error, not the retries before it. The owner's OpenCode console lists every request.
-- **OpenCode Go has limits of its own:** per 5 hours, per week and per month. The console shows one set of meters for all models, and the owner's own use counts too, so plan as if every Go model shares one limit. When it runs out, Go's requests fail with a quota error. A quota error from one Go model still means trying the other: if the limit is shared, that fails at once. Extra Usage stays off, so it can't bill past the plan: never turn it on. A Go model that "requires Global regions" isn't limited, just unavailable: use the other one.
+- **OpenCode Go has limits of its own:** per 5 hours, per week and per month. The console shows one set of meters for all models, and the owner's own use counts too, so plan as if every Go model shares one limit. Before each wave, read `opencode_go` in the snapshot: while `five_hour` or `weekly` is past about 85%, leave Go out of new briefs and start no whole task on it. When it runs out, Go's requests fail with a quota error. A quota error from one Go model still means trying the other: if the limit is shared, that fails at once. Extra Usage stays off, so it can't bill past the plan: never turn it on. A Go model that "requires Global regions" isn't limited, just unavailable: use the other one.
 - **Antigravity has a small plan with its own limits** (the owner's plan is in the profile). Flash draws on the Gemini group's 5-hour and weekly windows. Before each wave, read them in the usage snapshot: while `gemini_models_five_hour` is past about 85%, put OpenCode first in new briefs and leave Antigravity out until the reset. A helper that hits the limit anyway says so with a quota or rate-limit error.
 - **When a helper is limited,** cancel it (`task_cancel`) and switch. A task calling a helper in `wait` mode sees nothing while it waits, so it passes a `timeoutMs` of a few minutes; `waitTimedOut` is its sign to look at `task_status`. Then:
   1. **Model:** on OpenCode's free tier, delegate the same prompt again to its other good free model, unless the error was "Free usage limit reached", which covers both.
@@ -361,7 +362,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - Claude: <plan, e.g. Max 20x> (detected <date>)
 - Codex: <plan, e.g. ChatGPT Plus> (detected <date>)
 - Antigravity: <plan> with its own limits (owner, <date>); usage read by `agy -p /usage`, with Gemini 5-hour and weekly windows and a separate Argon weekly window
-- OpenCode: free models (owner, <date>), rate-limited model by model; OpenCode Go <plan and price>, Extra Usage off, as their backup (owner, <date>); usage not readable locally
+- OpenCode: free models (owner, <date>), rate-limited model by model; OpenCode Go <plan and price>, Extra Usage off, as their backup (owner, <date>); the free tier's usage not readable
 - Copilot: <plan, e.g. student (free_educational_quota)>, Auto routing only (<model it routes to>), <n> units a month (detected <date>); usage read by `gh api /copilot_internal/user`
 
 ## Preferences
@@ -395,10 +396,10 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
   - Give the reason for each task routed away from the home harness.
   - Say which tasks may use the fast helpers, and for what.
   - Give the run's Argon budget, in points of its weekly window, and which tasks may use it.
-  - Say which whole tasks start on OpenCode Go, if any, and that helpers and reviews may draw on the plan too. Its usage can't be read.
+  - Say which whole tasks start on OpenCode Go, if any, and that helpers and reviews may draw on the plan too.
 - **In the report:**
   - Add one line on usage, before and after.
   - Name any task that paused for a reset, and for how long.
   - Name other runs that used the same subscriptions meanwhile, because their use is in the numbers.
   - Mention a helper that was rate-limited or ran out, and what the work switched to.
-  - Say what used OpenCode Go: helpers, reviews, whole tasks. Its meters are only in the owner's console, so give no percentage.
+  - Say what used OpenCode Go (helpers, reviews, whole tasks), with its weekly window before and after.

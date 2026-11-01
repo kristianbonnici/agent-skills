@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print subscription usage and reset times for Claude, Codex, Antigravity and Copilot as JSON,
+"""Print subscription usage and reset times for Claude, Codex, Antigravity, Copilot and OpenCode Go as JSON,
 and the estimated dollars left of the owner's Claude API credits.
 
 Read-only. By default each provider is asked directly, through its own CLI and
@@ -13,11 +13,15 @@ sign-in, so the numbers include use from other devices and apps:
   - Copilot: GitHub's `copilot_internal/user` endpoint through `gh api`, which
     spends no quota. Its premium budget is a monthly window (`monthly`), billed
     by token cost in fractional units.
+  - OpenCode Go: opencode.ai's usage endpoint, the one T3 Code reads, with the key OpenCode keeps
+    for its console. Reading it spends nothing, but it isn't documented. All Go models show as one
+    set of windows (`five_hour`, `weekly`, `monthly`), in whole percents. Without a key, or when
+    OpenCode says the account has no Go plan, the provider is left out.
 When a live query fails, or with --cached, Claude and Codex values come from the
 last ones each provider wrote to local files (T3 Code provider logs, Codex session
 files), and "live_error" says why. Copilot's local session files give only what
-this machine used this month, not what is left. Antigravity keeps no such files,
-so it is read live only. A window whose reset time has passed is flagged as
+this machine used this month, not what is left. Antigravity and OpenCode Go keep no
+such files, so they are read live only. A window whose reset time has passed is flagged as
 reset. When nothing can be read, the provider gets an "error" instead of the
 script failing.
 
@@ -48,7 +52,8 @@ that isn't JSON, or lacks a cost, is skipped.
 from that time on, whatever grant paid it. Unlike "spent_since_usd" it never restarts when the Console
 reading in the file is replaced, so a chart takes a stretch's spend from two readings' difference.
 
-Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME, XDG_STATE_HOME.
+Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME, XDG_STATE_HOME,
+XDG_DATA_HOME, OPENCODE_API_KEY.
 """
 
 from __future__ import annotations
@@ -60,17 +65,23 @@ import os
 import re
 import select
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import quote
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
 TAIL_BYTES = 4 * 1024 * 1024
 MAX_FILES = 40
 LIVE_TIMEOUT = 45
+GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+GO_TIMEOUT = 10
 
 
 def iso(ts: float | None) -> str | None:
@@ -497,6 +508,75 @@ def copilot(now: float) -> dict:
     }
 
 
+def opencode_go_keys() -> list[str]:
+    """OpenCode's keys, in the order T3 Code tries them. They stay in this process: never print one."""
+    data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "opencode"
+    keys = []
+    if (data / "opencode.db").exists():
+        db = sqlite3.connect(f"file:{quote(str(data / 'opencode.db'))}?mode=ro", uri=True, timeout=0.1)
+        try:
+            for integration in ("opencode", "opencode-go"):
+                row = db.execute(
+                    "SELECT value FROM credential WHERE integration_id = ? AND active IS NOT 0 "
+                    "ORDER BY active DESC, time_created DESC, id DESC LIMIT 1", (integration,)).fetchone()
+                stored = json.loads(row[0]) if row else {}
+                server = (stored.get("metadata") or {}).get("server")
+                if stored.get("type") == "key" and (not isinstance(server, str) or server.rstrip("/") == "https://opencode.ai/console"):
+                    keys.append(stored["key"].strip())
+        except (sqlite3.Error, ValueError, KeyError, AttributeError):
+            pass  # an OpenCode that keeps its keys elsewhere, or a row of another shape
+        finally:
+            db.close()
+    try:
+        stored = json.loads((data / "auth.json").read_text()).get("opencode-go") or {}
+        if stored.get("type") == "api":
+            keys.append(stored["key"].strip())
+    except (OSError, ValueError, KeyError, AttributeError):
+        pass
+    keys.append(os.environ.get("OPENCODE_API_KEY", "").strip())
+    return list(dict.fromkeys(key for key in keys if key))
+
+
+class StayOnHost(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # a redirect would carry the key to another address
+
+
+def go_usage(key: str) -> dict:
+    request = Request(GO_USAGE_URL, headers={"Authorization": f"Bearer {key}", "User-Agent": "agent-skills-provider-usage"})
+    with build_opener(StayOnHost).open(request, timeout=GO_TIMEOUT) as reply:
+        return json.load(reply)
+
+
+def opencode_go_live(now: float) -> dict | None:
+    """OpenCode Go's three windows, shared by all its models, as OpenCode reports them to T3 Code."""
+    keys = opencode_go_keys()
+    status = None
+    for key in keys:
+        try:
+            usage = go_usage(key)["usage"]
+            break
+        except HTTPError as error:
+            status = error.code
+            if status not in (401, 403):
+                raise RuntimeError(f"opencode.ai answered {status}") from None
+    else:
+        if status == 401:
+            raise RuntimeError("opencode.ai refused every stored key")
+        return None  # no key, or no Go plan on this account
+    windows = {}
+    for name, source in (("five_hour", "rolling"), ("weekly", "weekly"), ("monthly", "monthly")):
+        reset = usage[source].get("resetsAt")
+        windows[name] = window(float(usage[source]["percent"]), stamp_seconds(reset) if reset else None, now)
+    return {"plan": "OpenCode Go", "windows": windows, "observed_at": iso(now), "source": "live: opencode.ai/zen/go/v1/usage"}
+
+
+def opencode_go(now: float) -> dict | None:
+    if not opencode_go_keys():
+        return None
+    return {"plan": None, "windows": {}, "source": GO_USAGE_URL, "error": "OpenCode Go's usage is read live only"}
+
+
 # --- Claude API credits: an estimate from the owner's grants and T3's logged API spend ---------
 
 CREDITS_SCAN_SECONDS = 40   # the logs are large; a scan that runs this long stops and says it is partial
@@ -744,6 +824,7 @@ def main() -> int:
         ("codex", with_fallback(codex_live, codex, not args.cached)),
         ("antigravity", with_fallback(antigravity_live, antigravity, not args.cached)),
         ("copilot", with_fallback(copilot_live, copilot, not args.cached)),
+        ("opencode_go", with_fallback(opencode_go_live, opencode_go, not args.cached)),
         ("claude_api", lambda at: claude_api(at, args.api_since)),  # local files only, so the same live or cached
     )
     for name, reader in readers:

@@ -6,7 +6,7 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
                    memory in use (ioreg's IOAccelerator PerformanceStatistics, no password), free disk
   providers.jsonl  every 5 min the subscriptions' windows as provider-usage --cached reads them from
                    the harnesses' own logs (current while their tasks run), and every 60 min a live
-                   reading (provider-usage, no quota used; Antigravity and Copilot only read live);
+                   reading (provider-usage, no quota used; Antigravity, Copilot and OpenCode Go only read live);
                    with it, the Claude API credits' estimated dollars left when the owner has a
                    credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd", "spent_usd"}],
                    "spent_since_usd", "balance_at" (when the Console was read), "api_spend_since_usd"
@@ -50,7 +50,8 @@ MACHINE_EVERY = float(os.environ.get("USAGE_SAMPLER_MACHINE_EVERY", 30))
 CACHED_EVERY = float(os.environ.get("USAGE_SAMPLER_CACHED_EVERY", 300))
 LIVE_EVERY = float(os.environ.get("USAGE_SAMPLER_LIVE_EVERY", 3600))
 # A live reading asks Claude, Codex, Antigravity (two commands) and Copilot in turn, each for up to
-# provider-usage's LIVE_TIMEOUT (45 s), so the reading may take 5 of them, and gets a minute more.
+# provider-usage's LIVE_TIMEOUT (45 s), so the reading may take 5 of them, and gets a minute more,
+# which also covers OpenCode Go (10 s for each stored key).
 LIVE_TIMEOUT = 45
 LIVE_CALLS = 5
 READ_TIMEOUT = float(os.environ.get("USAGE_SAMPLER_READ_TIMEOUT", LIVE_TIMEOUT * LIVE_CALLS + 60))

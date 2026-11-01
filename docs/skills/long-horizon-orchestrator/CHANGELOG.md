@@ -7,7 +7,8 @@ Major because a run now spends a plan that it didn't touch before: the owner's f
 - **A whole task on this pool starts on Go, not the free tier,** because a stop in the middle of a task costs a handoff. It then moves between the free tier, Go and Gemini as before.
 - **Only Go's two flash models are used:** its larger models count far more heavily, and the console's one set of meters means they may share one limit with the flash models ([review-gate's evidence](../review-gate/evidence.md)).
 - **A Go model that "requires Global regions" counts as unavailable, not limited,** so the other one is tried. DeepSeek on Go needs that workspace setting.
-- **The contract says which whole tasks start on Go, and the report says what used it,** since its usage can't be read. The helper section of a task's brief lists every target and copies these rules, because a task only sees its brief.
+- **`provider-usage` reads OpenCode Go's 5-hour, weekly and monthly windows,** the way T3 Code does (owner, 2026-11-01), so the snapshots, the usage sampler and the run map include it, and a wave leaves Go out once a window is past about 85%. The skill used to call OpenCode's usage unreadable; that holds only for the free tier.
+- **The contract says which whole tasks start on Go, and the report says what used it.** The helper section of a task's brief lists every target and copies these rules, because a task only sees its brief.
 - **Review (deep), with [review-gate 2.0.0](../review-gate/CHANGELOG.md):** see its entry for both rounds.
 
 ## 2.1.0 (2026-10-31)
