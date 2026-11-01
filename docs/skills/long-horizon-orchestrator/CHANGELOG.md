@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 3.2.0 (2026-11-01)
+
+- Settle every task and helper thread at the finish, and check the ledger against the active thread list. Unfinished work stays in the report, ledger and backlog, with its worktree and saved patch kept. Two unfinished threads stayed active for three days and a merged task stayed unsettled for six days.
+
 ## 3.1.0 (2026-11-01)
 
 - `provider-usage --only <provider>` reads one provider, for a quick check. The review gate uses it for OpenCode Go.

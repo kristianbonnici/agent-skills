@@ -120,7 +120,7 @@ A crashed or provider-failed run leaves the thread with status `failed`. A resta
    - remove anything still queued: `t3_queue` with `action: "list"`, then `action: "cancel"` for each (older T3 builds: `t3_queue_list`, `t3_queue_cancel`);
    - remove its worktree and branch if they hold nothing;
    - settle it.
-3. **If the nudge fails and the task did make progress,** mark it failed instead. Keep its worktree, leave its thread active and unread, and name it in the report.
+3. **If the nudge fails and the task did make progress,** mark it failed instead. Keep its worktree and name it in the report; settle its thread at the finish.
 
 ## Checking a task
 
@@ -165,16 +165,16 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 ## Keeping the thread list honest
 
-The user's active thread list should show only what still needs them. Use `t3_thread_organize`:
+Keep the user's thread list clear of this run's tasks. Use `t3_thread_organize`:
 
-- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Always pass `threadId`, and never call it without one during a run, since that means your own thread. Afterwards, `t3_thread_list({settled: false, includeSubagents: true})` should list only the threads you meant to keep.
+- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Always pass `threadId`, and never call it without one during a run, since that means your own thread. At the finish, check the run's thread IDs as below.
 - **Your own thread:**
   - Pin it (omit `threadId`) when the first wave launches, so it's easy to find during the run.
   - Keep it pinned after the final report. The user unpins it after reading.
   - Never settle it. It holds the report, and the user settles it after reading.
 - **A merged task:** settle its thread once you have verified the merge and removed its worktree. Settle it yourself rather than letting the task do it, because only you know the merge checked out. Its workspace no longer exists, and the transcript stays available in the settled list.
-- **A task's helper threads:** reviewers, `delegate_task` children and other sub-agents get threads of their own. List them with `t3_thread_list({includeSubagents: true, limit: 100})` (paginate with `cursor`). Those with `relationshipToParent: "subagent"` and a `parentThreadId` that is a task's thread belong to that task. Settle the idle ones when you settle the task, and at the finish settle the idle helpers of unfinished tasks too. In the first real run, 27 helper threads were left for the end.
-- **A task that isn't finished** (blocked, failed, parked or ready-but-not-merged): leave its thread active and `mark_unread` it, so the user's active list matches the report's "Not finished" section.
+- **A task's helper threads:** reviewers, `delegate_task` children and other sub-agents get threads of their own. List them with `t3_thread_list({includeSubagents: true, limit: 100})` (paginate with `cursor`). Those with `relationshipToParent: "subagent"` and a `parentThreadId` belonging to the task or its helpers belong to that task. Record their IDs in the ledger. Settle the idle ones when you settle the task, and settle all remaining helpers at the finish. In the first real run, 27 helper threads were left for the end.
+- **A task that isn't finished** (blocked, failed, parked or ready-but-not-merged): settle its thread at the finish. Put what needs the owner in the report, ledger and project backlog; keep its worktree, `KEEP` and saved patch untouched.
 - **Throwaway probe threads you created, and superseded threads** (a failed attempt you relaunched): settle them.
 
 Don't archive anything; settling is enough and easy to undo. A settled thread drops out of `t3_thread_list` by default. Track tasks by the thread IDs in the ledger, and unsettle a thread before sending it a follow-up.
@@ -192,10 +192,10 @@ When another run is active ([routing.md](routing.md#running-beside-another-orche
 ## When the run finishes
 
 1. Stop the keep-awake. Keep the heartbeat until step 7, so a turn that dies while you prepare the report is woken again.
-2. Confirm that every merged task's worktree and `scratch/` folder are removed and its thread and helper threads settled. Unfinished tasks keep their worktree, and their folder in the run directory holds `KEEP`; they stay active and unread.
+2. Confirm that every merged task's worktree and `scratch/` folder are removed. Unfinished tasks keep their worktree, `KEEP` and saved patch. Settle every task and helper thread, then check every thread ID in the ledger against `t3_thread_list({settled: false, includeSubagents: true})` (paginate): none may be listed. Leave your own thread pinned and unsettled.
 3. Gather the times for the report's timeline. For each task thread, and for your own thread, `t3_thread_read` with `limit: 1`, `maxCharsPerItem: 1` and `runLimit: 50` returns `recentRuns`, each turn with `startedAt`, `completedAt` and `status`. The sum of their durations is the task's worked time. Failed turns that ended together mark the start of a quota pause. The thread's `createdAt` is its launch time. All of these are in UTC; convert them to local time. If `runCount` is above 50, the oldest turns are missing, so say the worked time is a lower bound. A fast helper ([routing.md](routing.md#fast-helpers-antigravity-and-opencode)) can collect these for all the threads, which keeps the long results out of your context; check a few of its times against the ledger. Your own turns from the approval on give your worked time and wake count, for the facts file's `run`; the approval's time is in the ledger, and the run ends with the report. Write them into the facts file, keeping each thread's turns as its `turns`, and `scripts/run-charts` draws the run map and both charts ([final-report.md](final-report.md#the-runs-facts)).
 4. Show the run map: pass `run-map-t3.html`, as `run-charts` wrote it, to `html_preview` once and then to `html_render` ([final-report.md](final-report.md#run-map)).
 5. If you have OrbOS's tools, offer the report once, with its tour, just before posting it: run `scripts/report-offer` on the facts file and the saved report with `--pictures <run directory>` (and `--harness codex` when you are Codex), and it offers them through OrbOS's own command; only if it says `not offered`, call `offer_reading` yourself ([final-report.md](final-report.md#offer-it-to-listen-to-with-its-tour)). Your thread runs at the project's root, so pass `--repo` with the integration checkout.
 6. If any pull requests were created, link them with `link_pull_request`.
-7. Before posting, as the skill's Finish says: set the ledger to `finished`, delete the heartbeat and any resume wake (`list_scheduled_tasks` should then show none of this run's schedules), and send the push notification. The report is your last message; a live tour, when the offer couldn't keep its tour, waits for the user to ask.
+7. Before posting, check every task and helper thread ID in the ledger against `t3_thread_list({settled: false, includeSubagents: true})` (paginate); settle any still listed. As the skill's Finish says: set the ledger to `finished`, delete the heartbeat and any resume wake (`list_scheduled_tasks` should then show none of this run's schedules), and send the push notification. The report is your last message; a live tour, when the offer couldn't keep its tour, waits for the user to ask.
 8. Post the final report as your last message in your own thread, without the Mermaid charts. Leave the thread pinned and active.

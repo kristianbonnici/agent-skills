@@ -40,7 +40,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 ## Not finished
 <Only if some tasks are blocked, parked or failed, or merged with a narrow miss.>
 - **<Task>:** what's missing, why, and what it needs from you.
-- **<Task>, parked:** when it last worked and that nothing continued it after that, what its thread shows in the user's sidebar and why (a thread whose last turn ended on a quota error shows "Failed"), and that the thread and its worktree are kept for the next run, so it stays unsettled until then.
+- **<Task>, parked:** when it last worked, that nothing continued it after that, and what remains for the next run. Its thread is settled; its worktree, `KEEP` and saved patch are kept.
 - **<Task> merged one check short:** <the check, its result against its threshold>; <the follow-up task> carries it<, and how that ended>.
 
 ## Worth checking yourself

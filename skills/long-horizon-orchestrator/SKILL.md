@@ -2,7 +2,7 @@
 name: long-horizon-orchestrator
 description: Run a set of long-running agent tasks to completion while the user is away. Launch each task as its own agent (T3 threads on any provider, Claude Code background subagents, or Codex subagents). Get woken automatically when a task finishes or blocks, launch dependent tasks once their prerequisites are merged, and have finished work reviewed, checked and merged into the branch the run started from. End with a plain-language report of what was built, open decisions and next steps. Use whenever the user wants several tasks run in parallel or overnight, asks you to launch, coordinate, chain or babysit agents or follow-up tasks, says "launch everything and merge it", or wants work to continue while they sleep or step away, even if they never say "orchestrate". If no task list exists yet, plan one first and get a single approval.
 metadata:
-  version: 3.1.0
+  version: 3.2.0
 ---
 
 # Long-Horizon Orchestrator
@@ -162,7 +162,7 @@ When no task is running, paused or able to start (every task is merged, `ready`,
    - nothing was pushed;
    - the integration checkout is clean;
    - every merged task's worktree, branch and `scratch/` folder is removed, and its entry and its helper threads tidied;
-   - unfinished tasks keep theirs and stay visible, and each unmerged task's folder in the run directory holds an empty file named `KEEP`, so pruning later leaves its scratch and evidence whole;
+   - save each unfinished task's patch as in [integration.md](references/integration.md#a-task-the-user-stopped); unfinished tasks keep their worktree and saved patch, and each unmerged task's folder holds `KEEP`, so pruning leaves its scratch and evidence whole; settle every task and helper thread without touching these;
    - the run directory's size (`scripts/prune-runs --size <run directory>`), for the report's closing line.
 3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)). If another run is still active, leave the steps you share with it to whichever finishes last, as agreed, and tell it you have finished; if it hasn't answered all run, do them yourself, as [references/routing.md](references/routing.md#running-beside-another-orchestrator) says.
 4. If the project has a quick main check, run it once on the integration branch. Run it in a detached worktree (`git worktree add --detach <run directory>/final-check <integration branch>`, then `git worktree remove --force` it, since it holds no work) when another run still works in the checkout, or when the check writes files the user's own copy uses, such as the app they have running.
@@ -173,7 +173,7 @@ When no task is running, paused or able to start (every task is merged, `ready`,
 9. If you have OrbOS's `offer_reading` tool, offer the report once, as a reading to listen to later with its tour ([references/final-report.md](references/final-report.md#offer-it-to-listen-to-with-its-tour)). `scripts/report-offer` turns the facts file and the saved report into the tool's arguments and offers them through OrbOS's own command, so the tour shows the tasks' pictures too; if it can't, it says so and you call `offer_reading` yourself. It returns within moments, and the card waits in the notch for 8 hours, with **Tour** beside **Play**: the user plays the tour whenever they like, without you.
 10. Set the ledger's status to `finished`, then stop the heartbeat, the warm-up wake if it is still there, and any resume wake (the heartbeat stays until here, so a turn that dies while the report is prepared is woken again).
 11. If the host has a push-notification tool, send one line saying the run is finished.
-12. **Post the report in the chat as your final message.** This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. The saved copy isn't enough; the user reads the chat. Nothing comes after it in this turn.
+12. **Before the report,** in T3 check every task and helper thread ID in the ledger against `t3_thread_list({settled: false, includeSubagents: true})` (paginate); settle any still listed. Keep your own thread pinned and unsettled. **Post the report in the chat as your final message.** This applies to every ending: all tasks merged, some blocked or parked, or the run stopped early. The saved copy isn't enough; the user reads the chat. Nothing comes after it in this turn.
 
     Without OrbOS's tools, skip step 9 silently, and never speak aloud about it. When the offered reading couldn't keep its tour (an OrbOS that can't, or no offer) and you have OrbOS's `walkthrough` tool, the report's last line says a live tour is available on request ([references/final-report.md](references/final-report.md#the-live-tour-only-when-the-tour-didnt-wait)).
 13. The report ends the run. Start nothing new after it, even with allowance left: put further work under "Suggested next steps" and wait for the user. A tour they ask for ("walk me through the run") isn't new work: point them to **Tour** on the waiting card, or give it from the same files.
