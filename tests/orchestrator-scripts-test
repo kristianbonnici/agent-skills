@@ -1232,13 +1232,13 @@ EOF
 
 # provider-usage's OpenCode Go: the keys OpenCode stores, tried in T3 Code's order, and never shown
 mkdir -p "$work/pu/data/opencode"
+unset OPENCODE_API_KEY XDG_DATA_HOME
 python3 -I - "$scripts/provider-usage" "$work/pu/data" <<'EOF'
 import json, os, runpy, sqlite3, sys, time
 from urllib.error import HTTPError
 ns = runpy.run_path(sys.argv[1], run_name="provider_usage")
 live = ns["opencode_go_live"].__globals__
 os.environ["XDG_DATA_HOME"] = sys.argv[2]
-os.environ.pop("OPENCODE_API_KEY", None)
 now = time.time()
 assert ns["opencode_go_live"](now) is None and ns["opencode_go"](now) is None                     # no key: left out
 db = sqlite3.connect(os.path.join(sys.argv[2], "opencode", "opencode.db"))
@@ -1251,9 +1251,9 @@ db.executemany("INSERT INTO credential (integration_id, value, active, time_crea
 db.commit()
 db.close()
 with open(os.path.join(sys.argv[2], "opencode", "auth.json"), "w") as out:
-    json.dump({"opencode-go": {"type": "api", "key": "secret-auth"}}, out)
+    json.dump({"opencode-go": {"type": "api", "key": "secret-auth"}, "opencode": {"type": "api", "key": "secret-zen"}}, out)
 os.environ["OPENCODE_API_KEY"] = "secret-auth"                                                    # the same key is tried once
-assert ns["opencode_go_keys"]() == ["secret-console", "secret-auth"], ns["opencode_go_keys"]()
+assert ns["opencode_go_keys"]() == ["secret-console", "secret-auth", "secret-zen"], ns["opencode_go_keys"]()
 calls = []
 def answers(*statuses):
     pending = list(statuses)
@@ -1271,16 +1271,28 @@ got = ns["opencode_go_live"](now)
 assert calls == ["secret-console", "secret-auth"], calls
 assert {k: v["used_percent"] for k, v in got["windows"].items()} == {"five_hour": 12.0, "weekly": 7.0, "monthly": 3.0}, got
 assert got["windows"]["five_hour"]["reset_since_observed"] is True and got["windows"]["weekly"]["reset_since_observed"] is False, got
-answers(403, 403)
-assert ns["opencode_go_live"](now) is None                                                        # no Go plan on this account: left out
 read = ns["with_fallback"](ns["opencode_go_live"], ns["opencode_go"], True)
-answers(401, 401)
-refused = read(now)                                                                               # every key refused: a message, not a crash
-assert refused["windows"] == {} and "live_error" in refused and "error" in refused, refused
+answers(401, 403, 403)
+refused = read(now)                                                                               # every key refused: a message, not a gap or a crash
+assert refused["windows"] == {} and "403" in refused["live_error"] and "error" in refused, refused
 answers(500)
 failed = read(now)
 assert "500" in failed["live_error"], failed
-assert "secret" not in json.dumps([got, refused, failed]), "a key reached the report"
+def quoting(key):
+    raise ValueError(f"Invalid header value Bearer {key}")                                        # what Python's own error does
+live["go_usage"] = quoting
+quoted = read(now)
+assert "ValueError" in quoted["live_error"], quoted
+live["go_usage"] = lambda key: {"something": "else"}
+odd = read(now)
+assert "KeyError" in odd["live_error"], odd
+assert "secret" not in json.dumps([got, refused, failed, quoted, odd]), "a key reached the report"
+os.environ["OPENCODE_API_KEY"] = "secret\nsecond-line"                                             # a key with a line break is never sent
+assert not [key for key in ns["opencode_go_keys"]() if "second-line" in key]
+store = os.path.join(sys.argv[2], "opencode", "opencode.db")
+os.remove(store)
+os.mkdir(store)                                                                                   # a database that can't be opened: the other keys still count
+assert ns["opencode_go_keys"]() == ["secret-auth", "secret-zen"], ns["opencode_go_keys"]()
 EOF
 
 # provider-usage's Claude API credits: only the API instance's spend counts (never the subscription's),

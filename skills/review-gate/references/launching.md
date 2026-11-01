@@ -1,6 +1,6 @@
 # Launching reviewers
 
-Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
+Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries, and Muse, on OpenCode Go, 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
 
 ## In T3
 

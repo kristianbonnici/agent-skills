@@ -47,7 +47,7 @@ Limits:
 
 ### Trial reviewers
 
-Three cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor on OpenCode Go, at high reasoning. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether either earns a regular place.
+Three cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor on OpenCode Go, at high reasoning. Muse keeps prompts to train Meta's models, so leave it out of code the owner may not share. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether any earns a regular place.
 
 ## 3. Brief them
 

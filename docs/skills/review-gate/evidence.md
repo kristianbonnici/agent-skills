@@ -111,7 +111,10 @@ Why Go's two flash models take the free reviewers' place when the free tier stop
   13 turns. Iceman Contributor Free reported none in 78 turns and 25 minutes, past a free reviewer's time.
   One commit of Markdown proves little, and Muse's public scores disagree (Meta's own against
   [Vals' Terminal-Bench 4](https://www.vals.ai/benchmarks/terminal-bench-4)). → *Muse on trial, where the
-  gate never rests on it; Beam for helpers only; no Iceman.*
+  gate never rests on it; Beam for helpers only; no Iceman.* Beam Free keeps data 30 days and doesn't train
+  on it (OpenCode's docs). With the free tier stopped, `opencode/beam-free` refused while
+  `opencode-go/beam-free` answered, and Go's meters stayed at 7% and 3% through the trial. → *Beam goes
+  first on Go.*
 
 ## Left out
 

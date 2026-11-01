@@ -15,8 +15,9 @@ sign-in, so the numbers include use from other devices and apps:
     by token cost in fractional units.
   - OpenCode Go: opencode.ai's usage endpoint, the one T3 Code reads, with the key OpenCode keeps
     for its console. Reading it spends nothing, but it isn't documented. All Go models show as one
-    set of windows (`five_hour`, `weekly`, `monthly`), in whole percents. Without a key, or when
-    OpenCode says the account has no Go plan, the provider is left out.
+    set of windows (`five_hour`, `weekly`, `monthly`), in whole percents. Without a key the
+    provider is left out; when OpenCode refuses every key (an expired one, or no Go plan on the
+    account), it gets an "error".
 When a live query fails, or with --cached, Claude and Codex values come from the
 last ones each provider wrote to local files (T3 Code provider logs, Codex session
 files), and "live_error" says why. Copilot's local session files give only what
@@ -512,29 +513,33 @@ def opencode_go_keys() -> list[str]:
     """OpenCode's keys, in the order T3 Code tries them. They stay in this process: never print one."""
     data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "opencode"
     keys = []
-    if (data / "opencode.db").exists():
-        db = sqlite3.connect(f"file:{quote(str(data / 'opencode.db'))}?mode=ro", uri=True, timeout=0.1)
-        try:
-            for integration in ("opencode", "opencode-go"):
-                row = db.execute(
-                    "SELECT value FROM credential WHERE integration_id = ? AND active IS NOT 0 "
-                    "ORDER BY active DESC, time_created DESC, id DESC LIMIT 1", (integration,)).fetchone()
-                stored = json.loads(row[0]) if row else {}
-                server = (stored.get("metadata") or {}).get("server")
-                if stored.get("type") == "key" and (not isinstance(server, str) or server.rstrip("/") == "https://opencode.ai/console"):
-                    keys.append(stored["key"].strip())
-        except (sqlite3.Error, ValueError, KeyError, AttributeError):
-            pass  # an OpenCode that keeps its keys elsewhere, or a row of another shape
-        finally:
-            db.close()
     try:
-        stored = json.loads((data / "auth.json").read_text()).get("opencode-go") or {}
-        if stored.get("type") == "api":
-            keys.append(stored["key"].strip())
+        if (data / "opencode.db").exists():
+            db = sqlite3.connect(f"file:{quote(str(data / 'opencode.db'))}?mode=ro", uri=True, timeout=0.1)
+            try:
+                for integration in ("opencode", "opencode-go"):
+                    row = db.execute(
+                        "SELECT value FROM credential WHERE integration_id = ? AND active IS NOT 0 "
+                        "ORDER BY active DESC, time_created DESC, id DESC LIMIT 1", (integration,)).fetchone()
+                    stored = json.loads(row[0]) if row else {}
+                    server = (stored.get("metadata") or {}).get("server")
+                    if stored.get("type") == "key" and (not isinstance(server, str) or server.rstrip("/") == "https://opencode.ai/console"):
+                        keys.append(stored["key"].strip())
+            finally:
+                db.close()
+    except (sqlite3.Error, ValueError, KeyError, AttributeError):
+        pass  # a database that can't be read, or a row of another shape: the other sources still count
+    try:
+        auth = json.loads((data / "auth.json").read_text())
+        for integration in ("opencode-go", "opencode"):
+            stored = auth.get(integration) or {}
+            if stored.get("type") == "api":
+                keys.append(stored["key"].strip())
     except (OSError, ValueError, KeyError, AttributeError):
         pass
     keys.append(os.environ.get("OPENCODE_API_KEY", "").strip())
-    return list(dict.fromkeys(key for key in keys if key))
+    # Python quotes a header it refuses in its error, so a key with a line break in it is never sent
+    return list(dict.fromkeys(key for key in keys if re.fullmatch(r"[\x21-\x7e]+", key)))
 
 
 class StayOnHost(HTTPRedirectHandler):
@@ -551,6 +556,8 @@ def go_usage(key: str) -> dict:
 def opencode_go_live(now: float) -> dict | None:
     """OpenCode Go's three windows, shared by all its models, as OpenCode reports them to T3 Code."""
     keys = opencode_go_keys()
+    if not keys:
+        return None
     status = None
     for key in keys:
         try:
@@ -560,10 +567,10 @@ def opencode_go_live(now: float) -> dict | None:
             status = error.code
             if status not in (401, 403):
                 raise RuntimeError(f"opencode.ai answered {status}") from None
+        except Exception as error:  # only the type: a message could quote the request, and so the key
+            raise RuntimeError(f"reading opencode.ai failed: {type(error).__name__}") from None
     else:
-        if status == 401:
-            raise RuntimeError("opencode.ai refused every stored key")
-        return None  # no key, or no Go plan on this account
+        raise RuntimeError(f"opencode.ai refused every stored key ({status}): an expired key, or no Go plan")
     windows = {}
     for name, source in (("five_hour", "rolling"), ("weekly", "weekly"), ("monthly", "monthly")):
         reset = usage[source].get("resetsAt")
