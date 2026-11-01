@@ -228,6 +228,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-low { fill: none; stroke: var(--c); stroke-width: 1; stroke-dasharray: 2 2; opacity: .55; }
 .us-ref { stroke: var(--rm-muted); stroke-width: 1; stroke-dasharray: 3 4; opacity: .5; }
 .us-reset { stroke: var(--c); stroke-width: 1.1; stroke-dasharray: 2 3; opacity: .7; }
+.us-ended { stroke: var(--rm-muted); stroke-width: 1; stroke-dasharray: 2 3; opacity: .7; }
 .us-cross { stroke: var(--rm-fg); stroke-width: 1; opacity: .38; pointer-events: none; }
 .us-hdot { fill: var(--c); stroke: var(--rm-card); stroke-width: 2; pointer-events: none; }
 .us-tip { max-width: 330px; min-width: 210px; }
@@ -239,6 +240,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-tip .r .k i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex: 0 0 auto; }
 .us-tip .r .v { font-variant-numeric: tabular-nums; text-align: right; color: var(--rm-fg); }
 .us-tip .r .v em { font-style: normal; color: var(--rm-muted); }
+.us-tip .gap { margin-top: 5px; color: var(--rm-muted); font-size: 12px; }
 .us-tip .who2 { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--rm-border); font-size: 12px; color: var(--rm-muted); }
 .us-tip .who2 b { color: var(--rm-fg); font-weight: 600; }
 .tl-legend .ln { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--rm-muted); border-radius: 2px; }
@@ -931,6 +933,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   if (!provs.length && !mac && !A) return;
   const t0 = timeAxis ? timeAxis.t0 : U.t0, t1 = Math.max(t0 + 1, timeAxis ? timeAxis.t1 : U.t1);
   const runStart = ORCH.start != null ? ORCH.start : t0;
+  const [sampledFrom, sampledTo] = U.sampled;
   const neutral = "color-mix(in srgb, var(--rm-fg) 62%, var(--rm-card))";
   const colourOf = p => p.colour || neutral;
   const num = v => v != null;
@@ -1202,6 +1205,11 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       });
       hover.push({ kind: "disk", y: Y, colour: "var(--rm-warn)" });
     }
+    if (t1 - sampledTo >= 2) {  // the axis goes on to the report; the samples stopped here
+      const x = X(sampledTo), side = w - PADR - x > 100;
+      ns("line", { class: "us-ended", x1: x, x2: x, y1: 0, y2: H }, over);
+      yt(side ? x + 5 : x - 5, 11, "Sampling ended", side ? "" : "r");
+    }
     gHover = ns("g", { class: "us-hover" }, svg); gHover.style.display = "none";
     cross = ns("line", { class: "us-cross", y1: 0, y2: H }, gHover);
     hover.forEach(h => { h.dots = []; });
@@ -1229,7 +1237,9 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       const r = el("div", "r"), k = el("span", "k"), v = el("span", "v"); if (colour) { k.style.setProperty("--c", colour); k.append(el("i")); }
       k.append(name); v.innerHTML = value; r.append(k, v); parent.append(r);
     };
-    if (byId.subs) {
+    const before = m < Math.floor(sampledFrom), past = m >= Math.floor(sampledTo) + 1;
+    if (before || past) tip.append(el("div", "gap", `Not sampled: sampling ${past ? "ended" : "began"} at ${clock(Math.floor(past ? sampledTo : sampledFrom))}`));
+    if (byId.subs && !before && !past) {
       tip.append(el("div", "sec", "Subscriptions"));
       hover.filter(h => h.kind === "sub").reverse().forEach(h => {
         const p = h.p, bits = [];
@@ -1239,7 +1249,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
         row(tip, p.name, bits.length ? bits.join(" · ") + " <em>left</em>" : "<em>no reading</em>", h.colour);
       });
     }
-    if (byId.api) {
+    if (byId.api && !before && !past) {
       const h = hover.find(h => h.kind === "api"), v = valueAt({ segs: A.segs }, m), bits = [];
       tip.append(el("div", "sec", "Claude API credits (estimate)"));
       if (v != null) { bits.push(`${usd(v)} <em>left</em>`); dot(h.y(v), h.colour); }
@@ -1248,7 +1258,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       row(tip, "Over the run", apiText.replace(/&/g, "&amp;").replace(/</g, "&lt;"));
       if ((A.corrections || []).length) row(tip, "Balance corrected", A.corrections.map(([e, v]) => `${sign(v)} at ${clock(Math.floor(e))}`).join(", "));
     }
-    if (mac) {
+    if (mac && !before && !past) {
       tip.append(el("div", "sec", "This Mac"));
       const both = (name, avg, pkv, h, unit, colour) => { const a = macAt(avg, m), k = macAt(pkv, m); if (a == null) return;
         row(tip, name, `${fmt(a, 0)}${unit} <em>avg</em> · ${fmt(k, 0)}${unit} <em>peak</em>`, colour); dot(h.y(a), h.colour); };

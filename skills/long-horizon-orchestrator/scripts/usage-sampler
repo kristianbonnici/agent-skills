@@ -4,9 +4,10 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
 
   machine.jsonl    every 30 s: CPU (all cores, %), load, memory in use, GPU busy (%) and the GPU's
                    memory in use (ioreg's IOAccelerator PerformanceStatistics, no password), free disk
-  providers.jsonl  every 5 min the subscriptions' windows as provider-usage --cached reads them from
-                   the harnesses' own logs (current while their tasks run), and every 60 min a live
-                   reading (provider-usage, no quota used; Antigravity, Copilot and OpenCode Go only read live);
+  providers.jsonl  every 5 min the subscriptions' windows as provider-usage --cached --go-live reads them:
+                   the harnesses' own logs (current while their tasks run) and OpenCode Go's usage
+                   endpoint (one web request, no tokens); every 60 min a live reading
+                   (provider-usage, no quota used; Antigravity and Copilot only read live);
                    with it, the Claude API credits' estimated dollars left when the owner has a
                    credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd", "spent_usd"}],
                    "spent_since_usd", "balance_at" (when the Console was read), "api_spend_since_usd"
@@ -28,7 +29,11 @@ sampler runs per folder: a second one exits at once. SIGTERM (or SIGINT) ends it
 stopping a reading in progress.
 
 Usage: usage-sampler <folder> [provider-usage script]   (run it in the background; record its pid)
-The script defaults to the provider-usage next to this one. For tests, USAGE_SAMPLER_MACHINE_EVERY,
+       usage-sampler --final <folder> [provider-usage script]
+--final is the finish's snapshot, in the foreground: one live reading and one Mac sample added to the
+folder, so every subscription has an end point however short the run, and the reading printed as
+JSON. It works while the sampler runs or after it stopped, and refuses a folder that doesn't exist;
+it exits 1 when no subscription could be read. The script defaults to the provider-usage next to this one. For tests, USAGE_SAMPLER_MACHINE_EVERY,
 USAGE_SAMPLER_CACHED_EVERY and USAGE_SAMPLER_LIVE_EVERY change the intervals (seconds), and
 USAGE_SAMPLER_READ_TIMEOUT the longest a reading may take.
 """
@@ -158,6 +163,7 @@ class Reader:
         self.lock = threading.Lock()
         self.child = None
         self.thread = None
+        self.last = None   # the latest reading written
 
     def start(self, live):
         if not self.lock.acquire(blocking=False):
@@ -168,7 +174,7 @@ class Reader:
 
     def _read(self, live):
         try:
-            child = subprocess.Popen([self.script] + ([] if live else ["--cached"]) + ["--api-since", self.run_start], stdout=subprocess.PIPE,
+            child = subprocess.Popen([self.script] + ([] if live else ["--cached", "--go-live"]) + ["--api-since", self.run_start], stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, start_new_session=True)
             self.child = child
             if stopping.is_set():  # the signal came between the launch and here: kill() may have missed it
@@ -186,7 +192,9 @@ class Reader:
                 data = json.loads(out)
             except ValueError:
                 return
-            append(self.path, entry_of(data, live))
+            entry = entry_of(data, live)
+            append(self.path, entry)
+            self.last = entry
         except OSError:
             pass
         finally:
@@ -252,11 +260,36 @@ def cpu_seconds():
     return own.ru_utime + own.ru_stime + kids.ru_utime + kids.ru_stime
 
 
+def final(folder, script):
+    """The finish's snapshot: one live reading and one Mac sample added to the folder (no lock: each is
+    one appended line, so the sampler may still be running), and the reading printed."""
+    if not os.path.isdir(folder):
+        print(f"usage-sampler: no folder {folder}", file=sys.stderr)
+        return 2
+    reader = Reader(script, os.path.join(folder, "providers.jsonl"), run_start(folder))
+    reader.start(live=True)
+    reader.thread.join()
+    try:
+        append(os.path.join(folder, "machine.jsonl"), machine())
+    except OSError as error:
+        print(f"usage-sampler: the Mac's sample failed: {error}", file=sys.stderr)
+    if not reader.last or not reader.last["providers"]:
+        print("usage-sampler: no subscription could be read", file=sys.stderr)
+        return 1
+    print(json.dumps(reader.last))
+    return 0
+
+
 def main():
-    if len(sys.argv) < 2:
+    args = sys.argv[1:]
+    last = args[:1] == ["--final"]
+    args = args[1:] if last else args
+    if not args:
         raise SystemExit(__doc__)
-    folder = sys.argv[1]
-    script = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.realpath(__file__)), "provider-usage")
+    folder = args[0]
+    script = args[1] if len(args) > 1 else os.path.join(os.path.dirname(os.path.realpath(__file__)), "provider-usage")
+    if last:
+        return final(folder, script)
     os.makedirs(folder, exist_ok=True)
     lock = open(os.path.join(folder, "sampler.lock"), "w")
     try:

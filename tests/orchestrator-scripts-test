@@ -816,7 +816,7 @@ import json, os, sys
 rows = []
 for i, t in enumerate(("01:00:05", "01:05:05", "04:00:05", "04:05:05")):
     rows.append(json.dumps({"t": "2026-10-29T" + t + "+02:00", "kind": "cached", "providers": {"claude": {"windows": {"weekly": {"used": 3.0 + i, "resets_at": "2026-10-29T05:00:00+00:00"}}, "observed_at": "2026-10-29T00:00:00+00:00"},
-        "copilot": {"windows": {"monthly": {"used": 2.5}}, "observed_at": "2026-10-29T00:00:00+00:00"},   # never used in the run: not shown
+        "copilot": {"windows": {"monthly": {"used": 2.5}}, "observed_at": "2026-10-29T00:00:00+00:00"},   # a helper used it: shown, flat
         "antigravity": {"windows": {"gemini_models_five_hour": {"used": 9.0}, "gemini_models_weekly": {"used": 5.0 + i}, "claude_and_gpt_models_weekly": {"used": 10.0}, "gemini_4_argon_weekly": {"used": 23.0 + 2 * i}}, "observed_at": "2026-10-29T00:00:00+00:00"}}}))
 open(os.path.join(sys.argv[1], "providers.jsonl"), "w").write("\n".join(rows) + "\n")
 open(os.path.join(sys.argv[1], "machine.jsonl"), "w").write(json.dumps({"t": "2026-10-29T10:00:30+02:00", "cpu": 5.0, "mem_used_gb": 1.0, "mem_total_gb": 8.0, "disk_free_gb": 10.0}) + "\n")
@@ -834,11 +834,58 @@ def usage(name):
 gap = usage("charts-gap")
 assert [len(seg) for seg in gap["providers"][0]["long"]["segs"]] == [2, 2], gap["providers"][0]["long"]["segs"]
 lone = usage("charts-lone")
-assert [p["id"] for p in usage("charts-gap")["providers"]] == ["claude", "antigravity"]   # Copilot, unused, left out
-agy = usage("charts-gap")["providers"][1]
+assert [p["id"] for p in usage("charts-gap")["providers"]] == ["claude", "copilot", "antigravity"]   # Copilot, used by a helper, is flat
+agy = usage("charts-gap")["providers"][2]
 assert agy["id"] == "antigravity" and agy["long"]["label"] == "Gemini weekly" and [s["label"] for s in agy["more"]] == ["Gemini 4 Argon weekly"], agy
 assert agy["more"][0]["segs"][0][0][1] == 77.0 and agy["long"]["segs"][-1][-1][1] == 92.0   # Claude and GPT's limit, unmoved, left out
 assert lone["t1"] - lone["t0"] >= 1 and lone["count"] >= 2, lone
+EOF
+# a subscription the run used gets its line even when it stayed flat, one reading is a dot, an unused flat one
+# stays hidden and an unused one that moved shows; the harness in a label decides, not a model's name; and the
+# data says when sampling began and ended, which the page marks past the last sample.
+mkdir -p "$work/usage-flat"
+python3 -I - "$work/usage-flat" "$work/facts-flat.json" "$scripts/run-charts" <<'EOF'
+import json, os, runpy, sys
+folder, facts_path, script = sys.argv[1:4]
+def windows(used):
+    return {"windows": {"weekly": {"used": used, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": None, "source": "log", "plan": "x"}
+def entry(t, claude=None, go=None, copilot=None, codex=None, agy=None):
+    out = {}
+    for name, used in (("claude", claude), ("opencode_go", go), ("copilot", copilot), ("codex", codex), ("antigravity", agy)):
+        if used is not None:
+            out[name] = windows(used)
+            out[name]["observed_at"] = "2026-11-01T" + t + "+02:00"
+    return json.dumps({"t": "2026-11-01T" + t + "+02:00", "kind": "cached", "providers": out})
+rows = [entry("18:30:00", claude=77.0, go=7.0, copilot=1.0, codex=39.0, agy=5.0), entry("18:40:00", claude=77.0, copilot=1.0, codex=40.0, agy=6.0),
+        entry("18:55:00", claude=77.0, copilot=1.0, codex=41.0, agy=7.0)]
+open(os.path.join(folder, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+machine = [json.dumps({"t": "2026-11-01T18:" + m + ":00+02:00", "cpu": 20.0, "mem_used_gb": 30.0, "mem_total_gb": 64.0, "gpu": 10, "disk_free_gb": 100.0}) for m in ("26", "40", "59")]
+open(os.path.join(folder, "machine.jsonl"), "w").write("\n".join(machine) + "\n")
+facts = {"title": "Flat", "date": "Sun 1 Nov", "orchestrator": "Claude Code (T3) · Opus 5.5 (Extra High)", "integration": {"branch": "main", "head": "abc"},
+         "run": {"start": "18:24", "end": "19:14", "level": "xhigh", "worked_minutes": 5, "wakes": 2},
+         "usage": {"folder": folder},
+         "tasks": [{"id": "A", "name": "One", "level": "high", "agent": "Codex · GPT-6.1 Terra", "status": "merged", "needs": [], "first_wave": True, "launched": "18:28", "ended": "19:00",
+                    "worked_minutes": 30, "helpers": [{"label": "OpenCode Go · Muse Spark 1.3 Contributor (High)", "did": "review"}]}]}
+json.dump(facts, open(facts_path, "w"))
+used = runpy.run_path(script, run_name="charts")["subscriptions_used"]
+assert used(facts) == {"claude", "codex", "opencode_go"}, used(facts)
+assert used({"tasks": [{"agent": "OpenCode · DeepSeek V4.1 Flash"}, {"agent": "OpenCode · Claude Sonnet 5.5"}]}) == set()
+assert used({"tasks": [{"agent": "Copilot"}], "run": {"helpers": [{"label": "Antigravity · Gemini 4 Argon"}]}}) == {"copilot", "antigravity"}
+EOF
+"$scripts/run-charts" "$work/facts-flat.json" "$work/charts-flat" >/dev/null 2>&1
+python3 -I - "$work/charts-flat" <<'EOF'
+import json, os, re, sys
+page = open(os.path.join(sys.argv[1], "run-map.html")).read()
+u = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]
+by = {p["id"]: p for p in u["providers"]}
+assert set(by) == {"claude", "codex", "opencode_go", "antigravity"}, set(by)                 # Copilot, unused and flat, left out; Antigravity moved
+assert [v for seg in by["claude"]["long"]["segs"] for _, v in seg] == [23.0, 23.0, 23.0], by["claude"]
+assert by["opencode_go"]["long"]["segs"] == [[[1110.0, 93.0]]], by["opencode_go"]            # one reading: a dot
+assert u["sampled"] == [1106.0, 1139.0], u["sampled"]                                        # 18:26 to 18:59
+summary = open(os.path.join(sys.argv[1], "summary.txt")).read()
+assert "Claude weekly 23% → 23% left" in summary and "OpenCode Go weekly 93% → 93% left" in summary, summary
+mmd = open(os.path.join(sys.argv[1], "usage.mmd")).read()
+assert mmd.count("\n    line [") == 4 and "OpenCode Go" in mmd, mmd
 EOF
 if command -v node >/dev/null 2>&1; then
   python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
@@ -870,6 +917,26 @@ if [ -n "$chrome" ]; then
     if grep -q -E 'tl-pband|us-hatch' "$work/dom.html"; then exit 1; fi   # pauses are hatched on their own lanes only
   done
   grep -q 'class="us-cross"' "$work/dom.html"
+  # past the last sample the panel says so and the hover lists no readings; inside, the hover is as ever
+  dump_dom "file://$work/charts-flat/run-map.html#fit&cross=19:10"
+  grep -q 'class="us-ended"' "$work/dom.html" && grep -q 'Sampling ended' "$work/dom.html"
+  python3 -I - "$work/dom.html" past <<'EOF'
+import re, sys
+tip = re.search(r'class="tl-tip us-tip.*?class="tl-foot"', open(sys.argv[1]).read(), re.S).group(0)
+assert "Not sampled: sampling ended at 18:59" in tip and "This Mac" not in tip and "Subscriptions" not in tip, tip
+EOF
+  dump_dom "file://$work/charts-flat/run-map.html#dark&fit&cross=18:25"
+  python3 -I - "$work/dom.html" <<'EOF'
+import re, sys
+tip = re.search(r'class="tl-tip us-tip.*?class="tl-foot"', open(sys.argv[1]).read(), re.S).group(0)
+assert "Not sampled: sampling began at 18:26" in tip and "This Mac" not in tip, tip
+EOF
+  dump_dom "file://$work/charts-flat/run-map.html#fit&cross=18:40"
+  python3 -I - "$work/dom.html" <<'EOF'
+import re, sys
+tip = re.search(r'class="tl-tip us-tip.*?class="tl-foot"', open(sys.argv[1]).read(), re.S).group(0)
+assert "Not sampled" not in tip and "This Mac" in tip and "Subscriptions" in tip, tip
+EOF
   dump_dom "file://$work/charts/run-map.html#fit"
   grep -q 'aria-label="Timeline"' "$work/dom.html"
   if grep -q 'aria-label="Usage"' "$work/dom.html"; then exit 1; fi        # no samples, no panel
@@ -1205,6 +1272,43 @@ if [ -n "$chrome" ]; then
   grep -q '&lt;b id=pwn&gt;main' "$work/dom.html"
 fi
 
+# provider-usage: Claude's reader takes a warning's line whole (a warning has fields after its windows),
+# and the newest reading across the logs, not the newest file's, stopping at a file older than the one in hand.
+mkdir -p "$work/cl/logs/provider" "$work/cl/empty"
+claude_cached() { env T3_USERDATA="$work/cl" CLAUDE_CONFIG_DIR="$work/cl/empty" python3 -I "$scripts/provider-usage" --cached --only claude; }
+cat > "$work/cl/write.py" <<'EOF'
+import json, os, sys
+from datetime import datetime
+folder, name, stamp = sys.argv[1:4]
+def event(when, used, warning):
+    info = {"status": "allowed_warning" if warning else "allowed", "unifiedWindows": {
+        "five_hour": {"utilization": 0.11, "resetsAt": 1893456000, "status": "allowed"},
+        "seven_day": {"utilization": used, "resetsAt": 1893456000, "status": "allowed"}}}
+    if warning:
+        info["overageEnabled"] = False
+    body = {"provider": "claudeAgent", "payload": {"type": "rate_limit_event", "rate_limit_info": info, "uuid": "u", "session_id": "s"}}
+    return f"[{when}] NATIVE: " + json.dumps(body, separators=(",", ":"))
+rows = [event(*row.split(",")[:1], float(row.split(",")[1]), row.endswith("warning")) for row in sys.argv[4:]]
+path = os.path.join(folder, name)
+open(path, "w").write("\n".join(rows) + "\n")
+moment = datetime.fromisoformat(stamp).timestamp()
+os.utime(path, (moment, moment))
+EOF
+python3 -I "$work/cl/write.py" "$work/cl/logs/provider" events.a.log 2026-11-01T20:00:00+00:00 \
+  2026-10-29T04:03:15.000Z,0.48,allowed 2026-11-01T16:31:35.000Z,0.77,warning
+claude_cached > "$work/cl/warning.json"
+python3 -I "$work/cl/write.py" "$work/cl/logs/provider" events.b.log 2026-11-01T17:30:01+00:00 2026-11-01T17:30:00.000Z,0.78,warning
+python3 -I "$work/cl/write.py" "$work/cl/logs/provider" events.c.log 2026-11-01T17:00:00+00:00 2026-11-01T18:00:00.000Z,0.99,warning
+claude_cached > "$work/cl/across.json"
+python3 -I - "$work/cl" <<'EOF'
+import json, os, sys
+one = json.load(open(os.path.join(sys.argv[1], "warning.json")))["providers"]["claude"]
+assert one["windows"]["weekly"]["used_percent"] == 77 and one["windows"]["five_hour"]["used_percent"] == 11, one
+assert one["status"] == "allowed_warning" and one["observed_at"].startswith("2026-11-01T16:31"), one
+two = json.load(open(os.path.join(sys.argv[1], "across.json")))["providers"]["claude"]
+assert two["windows"]["weekly"]["used_percent"] == 78 and two["observed_at"].startswith("2026-11-01T17:30") and two["source"].endswith("events.b.log"), two
+EOF
+
 # provider-usage: a Codex app server that writes half a line and stalls is given up on at the deadline
 # (not waited on for ever) and stopped; a line split across reads is put together; one malformed line in
 # Claude's cached log or Copilot's is skipped, the newest one that parses used.
@@ -1329,6 +1433,32 @@ store = os.path.join(sys.argv[2], "opencode", "opencode.db")
 os.remove(store)
 os.mkdir(store)                                                                                   # a database that can't be opened: the other keys still count
 assert ns["opencode_go_keys"]() == ["secret-auth", "secret-zen"], ns["opencode_go_keys"]()
+EOF
+# --go-live reads OpenCode Go live even with --cached, which alone stays offline; a failed reading has no windows
+python3 -I - "$scripts/provider-usage" <<'EOF'
+import contextlib, io, json, runpy, sys
+ns = runpy.run_path(sys.argv[1], run_name="provider_usage")
+live = ns["main"].__globals__
+live["opencode_go_keys"] = lambda: ["key"]
+calls = []
+def fake(key):
+    calls.append(key)
+    return {"usage": {name: {"percent": 8, "resetsAt": "2099-01-01T00:00:00.000Z"} for name in ("rolling", "weekly", "monthly")}}
+live["go_usage"] = fake
+def read(*args):
+    sys.argv = ["provider-usage", "--only", "opencode_go", *args]
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        live["main"]()
+    return json.loads(out.getvalue())["providers"]["opencode_go"]
+offline = read("--cached")
+assert not calls and offline["windows"] == {}, (calls, offline)
+assert read("--cached", "--go-live")["windows"]["weekly"]["used_percent"] == 8 and calls == ["key"], calls
+def down(key):
+    raise OSError("no network")
+live["go_usage"] = down
+failed = read("--cached", "--go-live")
+assert failed["windows"] == {} and "live_error" in failed, failed
 EOF
 # --only reads one provider, for the review gate's quick check
 XDG_DATA_HOME="$work/pu/data" "$scripts/provider-usage" --only opencode_go --cached > "$work/pu/only.json"
@@ -1528,6 +1658,35 @@ different = read("different.json")["claude_api"]                                
 assert "one Console reading" in different["error"] and "left_usd" not in different, different
 EOF
 
+# usage-sampler --final: one live reading and one Mac sample added to the folder and the reading printed, a
+# missing folder refused and not made, and a reading of nothing a failure.
+mkdir -p "$work/final/out"
+cat > "$work/final/provider-usage" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$(dirname "$0")/args.log"
+if [ -e "$(dirname "$0")/empty" ]; then echo '{"providers": {}}'; exit 0; fi
+printf '%s\n' '{"providers": {"opencode_go": {"windows": {"weekly": {"used_percent": 8.0, "resets_at": "2026-11-03T00:00:00+00:00"}}, "observed_at": "2026-11-01T17:00:00+00:00", "source": "live", "plan": "OpenCode Go"}}}'
+EOF
+chmod +x "$work/final/provider-usage"
+"$scripts/usage-sampler" --final "$work/final/out" "$work/final/provider-usage" > "$work/final/printed.json"
+python3 -I - "$work/final" <<'EOF'
+import json, os, sys
+folder = sys.argv[1]
+reads = [json.loads(l) for l in open(os.path.join(folder, "out", "providers.jsonl"))]
+assert len(reads) == 1 and reads[0]["kind"] == "live" and reads[0]["providers"]["opencode_go"]["windows"]["weekly"]["used"] == 8.0, reads
+assert json.load(open(os.path.join(folder, "printed.json"))) == reads[0]
+assert len(open(os.path.join(folder, "out", "machine.jsonl")).readlines()) == 1
+args = open(os.path.join(folder, "args.log")).read().split()
+assert args[0] == "--api-since" and "--cached" not in args, args
+EOF
+status=0
+"$scripts/usage-sampler" --final "$work/final/nowhere" "$work/final/provider-usage" >/dev/null 2>&1 || status=$?
+test "$status" -eq 2 && test ! -e "$work/final/nowhere"
+touch "$work/final/empty"
+status=0
+"$scripts/usage-sampler" --final "$work/final/out" "$work/final/provider-usage" > "$work/final/none.json" 2>/dev/null || status=$?
+test "$status" -eq 1 && test ! -s "$work/final/none.json"
+
 # usage-sampler: valid lines in machine.jsonl and providers.jsonl, a reading at a time, a second
 # sampler on the folder refused, and SIGTERM ends it at once, even in the middle of a slow reading.
 mkdir -p "$work/sampler/fake"
@@ -1583,7 +1742,7 @@ assert api["api_spend_since_usd"] == 12.5 and api["api_spend_since"] == "2026-10
 started = open(os.path.join(folder, "out", "run-start")).read().strip()
 args = open(os.path.join(folder, "fake", "args.log")).read().splitlines()
 assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", started) and args[0] == f"--api-since {started}" and all(a.endswith(f"--api-since {started}") for a in args), (started, args[:2])
-assert args[0] == f"--api-since {started}" and all(a.startswith("--cached") for a in args[1:]), args[:3]
+assert args[0] == f"--api-since {started}" and all(a.startswith("--cached --go-live") for a in args[1:]), args[:3]
 import runpy
 run_start = runpy.run_path(os.path.join(os.environ["SCRIPTS"], "usage-sampler"), run_name="sampler_start")["run_start"]
 assert run_start(os.path.join(folder, "out")) == started and run_start(os.path.join(folder, "nowhere")) is not None

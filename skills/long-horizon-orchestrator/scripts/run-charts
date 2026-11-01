@@ -85,7 +85,8 @@ left (estimate; $114 expired at 02:00)"; "$158 → $160 left (estimate; $43 spen
 +$45)"; "estimate, incomplete" when the sampler's log scan was cut short).
 
 The usage panel sits under the timeline on the same time axis: each subscription's weekly window
-(Copilot's monthly one), for each subscription the run used, as the percent left, a smooth line falling from 100% as it is used,
+(Copilot's monthly one), for each subscription the run used (the harnesses the facts name, flat if it moved less than a percent, or
+any whose window moved), as the percent left, a smooth line falling from 100% as it is used,
 and a separate limit in use during the run (Antigravity's Gemini 4 Argon) as a dashed line, in its maker's colour
 (assets/marks/marks.json), with window resets dotted (a reading of a window that has reset since it was
 read is no point: the line holds to the reset and goes on from the next reading taken after it); its 5-hour window is left out, and so are
@@ -506,11 +507,24 @@ def line_colour(entry: dict | None) -> str | None:
     return None
 
 
-def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | None, makers: list[dict], mark_of) -> dict | None:
+def subscriptions_used(facts: dict) -> set[str]:
+    """The subscriptions the run used, from the harness in each label (the text before " · "): "OpenCode
+    Go · DeepSeek" is OpenCode Go, plain "OpenCode · X" its free tier, and a model's name is no plan."""
+    run = facts.get("run") or {}
+    labels = [facts.get("orchestrator")] + [t.get("agent") for t in facts.get("tasks", [])]
+    labels += [h.get("label") for item in [run] + facts.get("tasks", []) for h in item.get("helpers") or []]
+    harnesses = {str(label).split(" · ")[0].strip().lower() for label in labels if label}
+    return {name for name, title in PROVIDER_NAMES.items()
+            if any(h == title.lower() or h.startswith(title.lower() + " ") for h in harnesses)}
+
+
+def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | None, makers: list[dict], mark_of,
+               used: set[str] = frozenset()) -> dict | None:
     """The usage panel's data: minutes on the facts' own axis (as the map's times), the Mac's samples
-    aggregated per minute (average and peak), and each subscription's weekly or monthly windows as runs
-    of points in percent left (its 5-hour window isn't drawn).
-    span is the timeline's (start, end) in minutes, or None; mark_of(entry) gives a mark's file index."""
+    aggregated per minute (average and peak), each subscription's weekly or monthly windows as runs
+    of points in percent left (its 5-hour window isn't drawn), and when sampling began and ended.
+    span is the timeline's (start, end) in minutes, or None; mark_of(entry) gives a mark's file index;
+    used names the subscriptions that get a line even if they stayed flat."""
     machine = read_lines(folder / "machine.jsonl")
     reads = read_lines(folder / "providers.jsonl")
     stamps = [local_time(r["t"]) for r in machine + reads]
@@ -534,6 +548,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         return None
     t0, t1 = span if span else (min(seen), max(min(seen) + 1, max(seen)))
     start, count = int(t0 // 1), int(t1 // 1) - int(t0 // 1) + 1
+    near = [m for m in seen if t0 - 10 <= m <= t1 + 10]   # what the panel draws from: the run's own samples
 
     # the Mac: per minute, the average and the peak of the samples in it
     buckets: dict[int, list[dict]] = {}
@@ -684,8 +699,9 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
 
         # the weekly or monthly windows: the plan's own first (a key of just "weekly" or "monthly", else
         # the one read most often), then each separate limit (a model's own, as Antigravity's Gemini 4
-        # Argon) that the run used; a subscription none of whose windows moved isn't shown at all, and
-        # the 5-hour windows aren't drawn
+        # Argon) that the run used; a subscription the facts don't name and none of whose windows moved
+        # isn't shown at all (a named one stays, flat: a run can use less than a whole percent), and the
+        # 5-hour windows aren't drawn
         longs = [k for k in info["windows"] if k.endswith(("weekly", "monthly"))]
         picked = {}
         if longs:
@@ -694,7 +710,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             first = slot_of(main)
             if not first["segs"]:   # only stale readings of it: nothing to draw, so the next window leads
                 first, more = (more[0], more[1:]) if more else (None, [])
-            if first and (more or moved(first)):
+            if first and (more or moved(first) or name in used):
                 picked["long"] = first
             if more:
                 picked["more"] = more
@@ -705,7 +721,8 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     api = api_credits(api_reads, t0, t1, next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], "claude", re.I)), None), mark_of)
     if not mac and not providers and not api:
         return None
-    data = {"t0": t0, "t1": t1, "start": start, "count": count, "providers": providers, "mac": mac}
+    data = {"t0": t0, "t1": t1, "start": start, "count": count, "providers": providers, "mac": mac,
+            "sampled": [round(min(near), 2), round(max(near), 2)] if near else [t0, t1]}
     if api:
         data["api"] = api
     if mac:
@@ -1118,7 +1135,7 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         ends += [v for t in tasks if t["launched"] is not None and t["ended"] is not None for v in (t["launched"], t["ended"])]
         has_timeline = any(t["launched"] is not None and t["ended"] is not None for t in tasks)
         span_ = (min(ends), max(min(ends) + 1, *ends)) if ends and has_timeline else None
-        usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry))
+        usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry), subscriptions_used(facts))
         if usage:
             data["usage"] = usage
         else:
