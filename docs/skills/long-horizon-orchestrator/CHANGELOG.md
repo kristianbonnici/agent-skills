@@ -2,7 +2,7 @@
 
 ## 3.2.0 (2026-11-01)
 
-- Settle every task and helper thread at the finish; discover helper descendants and check their IDs against the active list, retrying failures and reporting any that remain. Unfinished work stays in the report and ledger, with its worktree, `KEEP` and saved patch kept; unsettle its thread before a follow-up. Two unfinished threads stayed active for three days and a merged task stayed unsettled for six days.
+- Settle every task and helper thread at the finish; discover the run's helper descendants and check their IDs against the active list, retrying failures and reporting any that remain. Unfinished work stays in the report and ledger, with its worktree, `KEEP` and saved patch kept; unsettle its thread before a follow-up. Two unfinished threads stayed active for three days and a merged task stayed unsettled for six days.
 
 ## 3.1.0 (2026-11-01)
 
