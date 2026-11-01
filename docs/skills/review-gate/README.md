@@ -54,11 +54,13 @@ flowchart TD
 
 ## The record
 
-Every gate ends with lines like these, which later studies count:
+Every gate ends with a verdict line and a table like these, which later studies count:
 
-```text
-review: level=deep (reads socket input) rounds=2
-reviewer=t3/codex gpt-6.1-terra/high rounds=1,2 must-fix=2 nit=3 pre-existing=1 rejected=1 only-one=1
-reviewer=t3/claude sonnet-5-5/high rounds=1 must-fix=1 nit=4 pre-existing=0 rejected=2 only-one=0
-reviewer=t3/opencode opencode/deepseek-v4.1-flash-free/high skipped=Free usage limit reached
-```
+**Review: Deep, 2 rounds.** It reads socket input. 3 must-fixes found, all fixed.
+
+| Reviewer | Rounds | Must-fix | Nits | Pre-existing | Rejected | Unique must-fix |
+|---|---|---|---|---|---|---|
+| Codex GPT-6.1 Terra, high | 1, 2 | **2** | 3 | 1 | 1 | 1 |
+| Claude Sonnet 5.5, high | 1 | **1** | 4 | – | 2 | – |
+
+*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*

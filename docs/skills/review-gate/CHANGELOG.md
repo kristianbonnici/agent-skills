@@ -1,5 +1,9 @@
 # review-gate changelog
 
+## 2.2.0 (2026-11-01)
+
+- The record is now a verdict line and a Markdown table instead of a block of raw lines (owner, 2026-11-01): it holds the same numbers and reads far better in chat. Nothing parses the old lines; studies read handoffs. `only-one` became "Unique must-fix", zeros show as `–`, must-fixes are bold, and model names carry `(free)`, `(Go)` or `(trial)`.
+
 ## 2.1.0 (2026-11-01)
 
 - The gate reads Go's windows before it launches a Go model (owner, 2026-11-01): past about 85% of any of them, Go counts as limited, so a free reviewer is dropped or, at Light, the cross reviewer takes over, and Muse isn't chosen for the trial. A reading that fails or finds no Go entry doesn't stop the launch.

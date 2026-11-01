@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 2.1.0
+  version: 2.2.0
 ---
 
 # Review Gate
@@ -48,7 +48,7 @@ Limits:
 
 ### Trial reviewers
 
-Three cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor on OpenCode Go, at high reasoning. Muse keeps prompts to train Meta's models, so leave it out of code the owner may not share. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short, not Muse when Go counts as limited). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether any earns a regular place.
+Three cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor on OpenCode Go, at high reasoning. Muse keeps prompts to train Meta's models, so leave it out of code the owner may not share. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short, not Muse when Go counts as limited). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `(trial)`, so a later study can decide whether any earns a regular place.
 
 ## 3. Brief them
 
@@ -81,15 +81,22 @@ Then report that the review didn't converge, list the open findings, and say whe
 
 ## 6. Record the result
 
-Put a Review section in your handoff, or in your reply to the user, starting with these lines in this format, since later studies of the gate count them:
+Put a Review section in your handoff, or in your reply to the user, starting with a verdict line and a table in this format, since later studies of the gate count them:
 
-```text
-review: level=<light|standard|deep> (<why, in a few words>) rounds=<n>
-reviewer=<harness/model/level> rounds=<1,2> must-fix=<n> nit=<n> pre-existing=<n> rejected=<n> only-one=<must-fixes no other reviewer raised> <trial=yes, for a trial reviewer>
-reviewer=<harness/model/level> skipped=<why: the limit error, or "Codex short">
+```markdown
+**Review: <Light, Standard or Deep>, <n> round(s).** <Why that level, in a few words.> <What was found, and what is still open.>
+
+| Reviewer | Rounds | Must-fix | Nits | Pre-existing | Rejected | Unique must-fix |
+|---|---|---|---|---|---|---|
+| <model>, <level> | <1, 2> | **<n>** | <n> | <n> | <n> | <n> |
+
+*Skipped: <model>: <why: the limit error, or "Codex short">.*
 ```
 
-For OpenCode, write the whole model name, so the free tier and Go stay apart (`opencode-go/glm-5.3-flash`). A reviewer that moved on gets a `skipped` line for each model it left.
+- Name each model in plain words, with its reasoning level: `Codex GPT-6.1 Terra, high`. Mark OpenCode's with `(free)` or `(Go)`, so the two tiers stay apart, and a trial reviewer with `(trial)`.
+- Write a zero as `–`, and put a must-fix count above zero in bold.
+- "Unique must-fix" counts the must-fixes no other reviewer raised.
+- The skipped line names every model that was skipped or that a reviewer moved on from, separated by semicolons. Leave it out when there are none.
 
 Then list each must-fix with its commit, the open nits and pre-existing findings, and the rejected findings with their reasons.
 
