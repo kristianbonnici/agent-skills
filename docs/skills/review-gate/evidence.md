@@ -105,6 +105,13 @@ Why Go's two flash models take the free reviewers' place when the free tier stop
   limit but doesn't prove it. A review estimated at $1.16 at list price (40 turns of 60K context, 90%
   cached) would be about 15% of a week. → *full GLM-5.3 stays out until the limit is shown to be
   separate.*
+- **One trial** (2026-11-01): the same brief on this change's first commit, whose problems three reviewers
+  had already found. Free DeepSeek V4.1 Flash reported 10 findings, mostly real. Muse Spark 1.3 Contributor
+  reported 6 in 10 turns and 4 minutes, one of them a loop nobody else had found. Beam Free reported 1 in
+  13 turns. Iceman Contributor Free reported none in 78 turns and 25 minutes, past a free reviewer's time.
+  One commit of Markdown proves little, and Muse's public scores disagree (Meta's own against
+  [Vals' Terminal-Bench 4](https://www.vals.ai/benchmarks/terminal-bench-4)). → *Muse on trial, where the
+  gate never rests on it; Beam for helpers only; no Iceman.*
 
 ## Left out
 
@@ -112,5 +119,6 @@ Weighed and not cited, so later checks don't weigh them again unless they change
 
 - **Muse Wonder Full as a reviewer:** some practitioners use it as a premium reviewer. It is available only
   in Muse Code's $50 and $200 plans, with no API, and those plans train on the owner's code by default.
+- **Iceman Contributor Free as a reviewer:** it found nothing in the trial above. Its maker isn't announced.
 - **MiniMax's M Plan:** MiniMax M3 scored F1 29.6 on Kodus, below the other cheap models, and the plan
   publishes no quota.

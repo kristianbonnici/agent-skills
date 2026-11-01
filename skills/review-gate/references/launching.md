@@ -21,8 +21,9 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 | GLM-5.3 Flash (Go) | `{providerInstanceId: "opencode", model: "opencode-go/glm-5.3-flash", options: [{id: "variant", value: "high"}]}` |
 | GPT-6 Luna (trial) | `{providerInstanceId: "codex", model: "gpt-6-luna", options: [{id: "reasoningEffort", value: "high"}]}` |
 | Claude Haiku 5.5 (trial) | `{providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{id: "effort", value: "high"}]}` |
+| Muse Spark 1.3 Contributor (trial) | `{providerInstanceId: "opencode", model: "opencode-go/muse-spark-1.3-contributor", options: [{id: "variant", value: "high"}]}` |
 
-A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed".
+A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed". Muse also stops with "trains on request data" while the workspace blocks such models; treat that as limited.
 
 The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, without `-free`, is a different model that bills per request.
 
@@ -32,6 +33,7 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
 - **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
+- **Muse Spark (trial):** the OpenCode command below with `-m 'opencode-go/muse-spark-1.3-contributor#high'`.
 - **Codex Terra:** a background Bash command from the worktree:
 
   ```sh
@@ -56,6 +58,6 @@ A subagent can't launch agents of its own: there, use the command-line forms for
   ```
 
   (or `claude-opus-5-5`), run from the worktree.
-- **Free reviewers:** the OpenCode command above.
+- **Free reviewers and Muse Spark (trial):** the OpenCode command above.
 
 If a host can't launch a reviewer of the family the level needs, use the next option from SKILL.md, section 2, and record why.

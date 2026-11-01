@@ -26,7 +26,7 @@ Read the whole diff against its base. Judge by what it touches, not by its size.
 
 ## 2. Choose the reviewers
 
-Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.1 Terra) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, free ones at their high variant. Gemini doesn't review. A "free reviewer" below is one of those two models on either tier. No other OpenCode model reviews: `opencode/` paid models bill per request, and Go's larger models use up the plan in a few reviews.
+Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.1 Terra) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, free ones at their high variant. Gemini doesn't review. A "free reviewer" below is one of those two models on either tier. No other OpenCode model reviews, apart from the trial below: `opencode/` paid models bill per request, and Go's larger models use up the plan in a few reviews.
 
 - **The cross reviewer** is the paid reviewer of another family: Codex's GPT-6.1 Terra for a change Claude wrote, Claude Sonnet 5.5 for a change any other family wrote.
 - **Codex is short** when your brief says so, or when a Codex reviewer fails on a usage limit. Then a Claude change's cross reviewer is the Claude model you aren't (Sonnet for Opus's change, Opus for Sonnet's), and a free reviewer joins to bring a second family back.
@@ -47,7 +47,7 @@ Limits:
 
 ### Trial reviewers
 
-Two cheap models are on trial as reviewers: Codex's GPT-6 Luna and Claude Haiku 5.5, at high reasoning. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether either earns a regular place.
+Three cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor on OpenCode Go, at high reasoning. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `trial=yes`, so a later study can decide whether either earns a regular place.
 
 ## 3. Brief them
 

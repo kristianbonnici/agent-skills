@@ -3,10 +3,12 @@
 ## 3.0.0 (2026-11-01)
 
 Major because a run now spends a plan that it didn't touch before: the owner's flat-rate OpenCode Go plan, with its Extra Usage off, so it can't bill past the plan's price.
-- **Go backs up OpenCode's free models** (owner, 2026-11-01, after the free limit stopped both for the whole computer on 2026-10-29): a helper stopped by the free tier moves to the same model on Go before it moves to another provider.
+- **Go backs up OpenCode's free models** (owner, 2026-11-01, after the free limit stopped both for the whole computer on 2026-10-29): a helper stopped by the free tier moves to Go's Beam Free, then to DeepSeek and GLM on Go, before it moves to another provider. Beam spends nothing of the plan, and the free tier's limit doesn't stop it.
 - **A whole task on this pool starts on Go, not the free tier,** because a stop in the middle of a task costs a handoff. It then moves between the free tier, Go and Gemini as before.
-- **Only Go's two flash models are used:** its larger models count far more heavily, and the console's one set of meters means they may share one limit with the flash models ([review-gate's evidence](../review-gate/evidence.md)).
+- **Only Beam Free and Go's two flash models are used by helpers and tasks:** its larger models count far more heavily, and the console's one set of meters means they may share one limit with the flash models ([review-gate's evidence](../review-gate/evidence.md)).
 - **A Go model that "requires Global regions" counts as unavailable, not limited,** so the other one is tried. DeepSeek on Go needs that workspace setting.
+- **Muse Spark 1.3 Contributor joins the trial reviewers,** so a run's contract splits the trial into thirds (owner, 2026-11-01).
+- **A helper that was on Antigravity goes through OpenCode's models once;** the old wording read as a loop back to the provider it had just tried.
 - **`provider-usage` reads OpenCode Go's 5-hour, weekly and monthly windows,** the way T3 Code does (owner, 2026-11-01), so the snapshots, the usage sampler and the run map include it, and a wave leaves Go out once a window is past about 85%. The skill used to call OpenCode's usage unreadable; that holds only for the free tier.
 - **The contract says which whole tasks start on Go, and the report says what used it.** The helper section of a task's brief lists every target and copies these rules, because a task only sees its brief.
 - **Review (deep), with [review-gate 2.0.0](../review-gate/CHANGELOG.md):** see its entry for both rounds.
