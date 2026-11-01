@@ -2,7 +2,8 @@
 
 ## 2.1.0 (2026-11-01)
 
-- The gate reads Go's windows before it launches a Go model (owner, 2026-11-01): past about 85% of any of them, Go counts as limited, so a free reviewer is dropped or, at Light, the cross reviewer takes over, and Muse isn't chosen for the trial. A reading that fails doesn't stop the launch.
+- The gate reads Go's windows before it launches a Go model (owner, 2026-11-01): past about 85% of any of them, Go counts as limited, so a free reviewer is dropped or, at Light, the cross reviewer takes over, and Muse isn't chosen for the trial. A reading that fails or finds no Go entry doesn't stop the launch.
+- **Review (standard):** Codex GPT-6.1 Terra found 1 must-fix, fixed in the wording of `launching.md` (a report with no Go entry had no instruction), and a test that didn't check the usage line's numbers, also fixed; the Muse Spark trial raised the first too. No logic changed, so no second round.
 
 ## 2.0.0 (2026-11-01)
 

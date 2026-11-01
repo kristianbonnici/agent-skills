@@ -806,7 +806,7 @@ assert go["name"] == "OpenCode Go" and go["plan"] == "OpenCode Go", go
 assert go["long"]["label"] == "Weekly" and [s["label"] for s in go["more"]] == ["Monthly"], go
 assert go["long"]["segs"][-1][-1][1] == 90.0 and go["more"][0]["segs"][-1][-1][1] == 96.0, go
 summary = open(os.path.join(sys.argv[1], "summary.txt")).read()
-assert "OpenCode Go" in summary, summary
+assert "OpenCode Go weekly 93% → 90% left" in summary and "monthly 97% → 96% left" in summary, summary
 EOF
 # a sampler that wasn't running for hours leaves a gap, not a line across it; and one sample with no timed
 # task still gets a time axis of a minute at least

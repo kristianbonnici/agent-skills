@@ -10,7 +10,7 @@ The Go targets below and Muse draw on the owner's OpenCode Go plan, so read its 
 <skills folder>/long-horizon-orchestrator/scripts/provider-usage --only opencode_go
 ```
 
-`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2). If the script is missing, or shows an `error`, launch anyway: a limit stops a Go model with a quota error.
+`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2). If the script is missing, or its report has no `opencode_go` windows (an `error`, or no entry at all), launch anyway: a limit stops a Go model with a quota error.
 
 ## In T3
 
