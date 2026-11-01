@@ -871,6 +871,7 @@ used = runpy.run_path(script, run_name="charts")["subscriptions_used"]
 assert used(facts) == {"claude", "codex", "opencode_go"}, used(facts)
 assert used({"tasks": [{"agent": "OpenCode · DeepSeek V4.1 Flash"}, {"agent": "OpenCode · Claude Sonnet 5.5"}]}) == set()
 assert used({"tasks": [{"agent": "Copilot"}], "run": {"helpers": [{"label": "Antigravity · Gemini 4 Argon"}]}}) == {"copilot", "antigravity"}
+assert used({"harness": "OpenCode Go · DeepSeek V4.1 Flash", "tasks": [{"id": "A"}]}) == {"opencode_go"}      # the one harness every task used
 EOF
 "$scripts/run-charts" "$work/facts-flat.json" "$work/charts-flat" >/dev/null 2>&1
 python3 -I - "$work/charts-flat" <<'EOF'

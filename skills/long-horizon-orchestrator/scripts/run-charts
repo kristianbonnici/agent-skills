@@ -511,7 +511,7 @@ def subscriptions_used(facts: dict) -> set[str]:
     """The subscriptions the run used, from the harness in each label (the text before " · "): "OpenCode
     Go · DeepSeek" is OpenCode Go, plain "OpenCode · X" its free tier, and a model's name is no plan."""
     run = facts.get("run") or {}
-    labels = [facts.get("orchestrator")] + [t.get("agent") for t in facts.get("tasks", [])]
+    labels = [facts.get("orchestrator"), facts.get("harness")] + [t.get("agent") for t in facts.get("tasks", [])]
     labels += [h.get("label") for item in [run] + facts.get("tasks", []) for h in item.get("helpers") or []]
     harnesses = {str(label).split(" · ")[0].strip().lower() for label in labels if label}
     return {name for name, title in PROVIDER_NAMES.items()
