@@ -772,6 +772,42 @@ for text in (usage_mmd, mac_mmd):
     labels = re.search(r"x-axis \[(.*)\]", text).group(1).count('"') // 2
     assert all(len(re.search(r"line \[(.*)\]", l).group(1).split(",")) == labels for l in text.splitlines() if l.startswith("    line ["))
 EOF
+# OpenCode Go's reading, from provider-usage's report through the sampler's record to the run map and the
+# report's usage line; the cached entry, which has no windows, leaves no record
+mkdir -p "$work/usage-go"
+python3 -I - "$scripts/usage-sampler" "$work/usage-go" <<'EOF'
+import json, os, runpy, sys
+entry_of = runpy.run_path(sys.argv[1], run_name="usage_sampler")["entry_of"]
+def report(five, weekly, monthly):
+    windows = {name: {"used_percent": used, "resets_at": "2026-11-02T00:00:00+00:00", "reset_since_observed": False}
+               for name, used in (("five_hour", five), ("weekly", weekly), ("monthly", monthly))}
+    return {"providers": {"opencode_go": {"plan": "OpenCode Go", "windows": windows, "observed_at": "2026-10-29T00:00:00+00:00",
+                                          "source": "live: opencode.ai/zen/go/v1/usage"}}}
+cached = {"providers": {"opencode_go": {"plan": None, "windows": {}, "source": "x", "error": "OpenCode Go's usage is read live only"}}}
+assert entry_of(cached, False)["providers"] == {}
+rows = []
+for t, used in zip(("01:00:05", "01:05:05", "04:00:05", "04:05:05"), ((0.0, 7.0, 3.0), (1.0, 8.0, 3.0), (2.0, 9.0, 4.0), (3.0, 10.0, 4.0))):
+    entry = entry_of(report(*used), True)
+    assert set(entry["providers"]["opencode_go"]["windows"]) == {"five_hour", "weekly", "monthly"}, entry
+    entry["t"] = "2026-10-29T" + t + "+02:00"
+    rows.append(json.dumps(entry))
+open(os.path.join(sys.argv[2], "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+EOF
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = {"folder": sys.argv[2]}; json.dump(f, open(sys.argv[3], "w"))' \
+  "$work/facts.json" "$work/usage-go" "$work/facts-go.json"
+"$scripts/run-charts" "$work/facts-go.json" "$work/charts-go" >/dev/null 2>&1
+python3 -I - "$work/charts-go" <<'EOF'
+import json, os, re, sys
+page = open(os.path.join(sys.argv[1], "run-map.html")).read()
+providers = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]["providers"]
+assert [p["id"] for p in providers] == ["opencode_go"], providers
+go = providers[0]
+assert go["name"] == "OpenCode Go" and go["plan"] == "OpenCode Go", go
+assert go["long"]["label"] == "Weekly" and [s["label"] for s in go["more"]] == ["Monthly"], go
+assert go["long"]["segs"][-1][-1][1] == 90.0 and go["more"][0]["segs"][-1][-1][1] == 96.0, go
+summary = open(os.path.join(sys.argv[1], "summary.txt")).read()
+assert "OpenCode Go" in summary, summary
+EOF
 # a sampler that wasn't running for hours leaves a gap, not a line across it; and one sample with no timed
 # task still gets a time axis of a minute at least
 mkdir -p "$work/usage-gap"
@@ -1294,6 +1330,16 @@ os.remove(store)
 os.mkdir(store)                                                                                   # a database that can't be opened: the other keys still count
 assert ns["opencode_go_keys"]() == ["secret-auth", "secret-zen"], ns["opencode_go_keys"]()
 EOF
+# --only reads one provider, for the review gate's quick check
+XDG_DATA_HOME="$work/pu/data" "$scripts/provider-usage" --only opencode_go --cached > "$work/pu/only.json"
+python3 -I - "$work/pu/only.json" <<'EOF'
+import json, sys
+text = open(sys.argv[1]).read()
+assert list(json.loads(text)["providers"]) == ["opencode_go"] and "secret" not in text, text
+EOF
+status=0
+"$scripts/provider-usage" --only nobody >/dev/null 2>&1 || status=$?
+[ "$status" -eq 2 ] || { echo "--only took an unknown provider" >&2; exit 1; }
 
 # provider-usage's Claude API credits: only the API instance's spend counts (never the subscription's),
 # the soonest-expiring grant is drawn first and the next takes what it can't cover (also across an

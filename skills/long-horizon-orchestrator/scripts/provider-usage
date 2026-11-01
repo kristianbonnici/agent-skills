@@ -53,6 +53,9 @@ that isn't JSON, or lacks a cost, is skipped.
 from that time on, whatever grant paid it. Unlike "spent_since_usd" it never restarts when the Console
 reading in the file is replaced, so a chart takes a stretch's spend from two readings' difference.
 
+--only <provider> reads just that one, for a quick check: the review gate reads OpenCode Go's windows
+this way before it launches a Go model.
+
 Environment overrides: CLAUDE_CONFIG_DIR, CODEX_HOME, T3_USERDATA, COPILOT_HOME, XDG_STATE_HOME,
 XDG_DATA_HOME, OPENCODE_API_KEY.
 """
@@ -821,6 +824,8 @@ def with_fallback(live, cached, use_live: bool):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cached", action="store_true", help="skip the live queries and read local logs only")
+    parser.add_argument("--only", choices=("claude", "codex", "antigravity", "copilot", "opencode_go", "claude_api"),
+                        help="read just this provider")
     parser.add_argument("--api-since", type=api_since_time, metavar="TIME",
                         help="also report the Claude API spend T3 logged since this ISO time (a run's start) as api_spend_since_usd")
     args = parser.parse_args()
@@ -835,6 +840,8 @@ def main() -> int:
         ("claude_api", lambda at: claude_api(at, args.api_since)),  # local files only, so the same live or cached
     )
     for name, reader in readers:
+        if args.only and name != args.only:
+            continue
         try:
             found = reader(now)
             if found is not None:  # claude_api is left out when the owner has no credits file

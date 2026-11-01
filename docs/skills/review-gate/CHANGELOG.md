@@ -1,5 +1,9 @@
 # review-gate changelog
 
+## 2.1.0 (2026-11-01)
+
+- The gate reads Go's windows before it launches a Go model (owner, 2026-11-01): past about 85% of any of them, Go counts as limited, so a free reviewer is dropped or, at Light, the cross reviewer takes over, and Muse isn't chosen for the trial. A reading that fails doesn't stop the launch.
+
 ## 2.0.0 (2026-11-01)
 
 Major because the gate now spends a plan that it didn't touch before: the owner's flat-rate OpenCode Go plan, with its Extra Usage off, so it can't bill past the plan's price.

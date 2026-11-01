@@ -1,5 +1,10 @@
 # long-horizon-orchestrator changelog
 
+## 3.1.0 (2026-11-01)
+
+- `provider-usage --only <provider>` reads one provider, for a quick check. The review gate uses it for OpenCode Go.
+- A Go reading is now tested the whole way: `provider-usage`'s report, the sampler's record, the run map and the report's usage line.
+
 ## 3.0.0 (2026-11-01)
 
 Major because a run now spends a plan that it didn't touch before: the owner's flat-rate OpenCode Go plan, with its Extra Usage off, so it can't bill past the plan's price.

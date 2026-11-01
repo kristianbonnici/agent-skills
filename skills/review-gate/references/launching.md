@@ -2,6 +2,16 @@
 
 Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries, and Muse, on OpenCode Go, 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
 
+## Before a Go model
+
+The Go targets below and Muse draw on the owner's OpenCode Go plan, so read its windows first. It spends nothing and takes a second:
+
+```sh
+<skills folder>/long-horizon-orchestrator/scripts/provider-usage --only opencode_go
+```
+
+`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2). If the script is missing, or shows an `error`, launch anyway: a limit stops a Go model with a quota error.
+
 ## In T3
 
 `delegate_task` with role `"review"`, one call per reviewer. Reviewers started this way aren't bound to your worktree, so the brief names its path.

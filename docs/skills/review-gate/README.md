@@ -43,7 +43,7 @@ flowchart TD
   which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
   alone on light changes, as an extra voice on deep ones, and in place of the lost family when Codex is
-  short. A limited one moves from the free tier to Go, and when neither answers it is dropped, or at light
+  short. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers it is dropped, or at light
   the cross reviewer takes its place. It is never waited for past its time.
 - **Gemini doesn't review:** its reviews were the weakest in past runs.
 - **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor add one cheap extra
