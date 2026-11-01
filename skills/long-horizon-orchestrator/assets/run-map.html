@@ -1205,7 +1205,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       });
       hover.push({ kind: "disk", y: Y, colour: "var(--rm-warn)" });
     }
-    if (t1 - sampledTo >= 2) {  // the axis goes on to the report; the samples stopped here
+    if (t1 >= Math.floor(sampledTo) + 1) {  // the axis goes on to the report; the samples stopped here
       const x = X(sampledTo), side = w - PADR - x > 100;
       ns("line", { class: "us-ended", x1: x, x2: x, y1: 0, y2: H }, over);
       yt(side ? x + 5 : x - 5, 11, "Sampling ended", side ? "" : "r");

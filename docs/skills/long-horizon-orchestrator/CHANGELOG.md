@@ -5,7 +5,7 @@
 - **The usage panel shows every subscription the run used** (owner, 2026-11-02, after a short run's panel showed one of its three): a subscription named by the orchestrator, a task or a helper gets its line even when it moved less than a whole percent, and only an unnamed one with no movement stays hidden.
 - **Claude's cached reading no longer freezes past a warning.** A warning's log line carries more fields after its windows, which the reader's pattern couldn't end on, so it fell back to older lines without saying so: every warning logged, 258 of 3,404 events. It now reads the object whole, and takes the newest reading across the logs rather than the first file that has one.
 - **OpenCode Go is read every 5 minutes,** one web request and no tokens (owner, 2026-11-02): the sampler passes the new `provider-usage --go-live`, and `--cached` alone stays offline.
-- **The final usage snapshot lands in the sampler's folder.** `usage-sampler --final` adds one live reading and one Mac sample, so every subscription has an end point however short the run; before, it went only to the ledger.
+- **The final usage snapshot lands in the sampler's folder,** after skill evolution, so it counts that work too. `usage-sampler --final` adds one live reading and one Mac sample, so every subscription has an end point however short the run; before, it went only to the ledger.
 - **The sampler stops just before the charts are drawn,** not at the start of the finish, and when sampling still ends before the axis does, the panel marks it and the hover says "Not sampled".
 
 ## 3.2.0 (2026-11-01)
