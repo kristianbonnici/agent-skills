@@ -11,7 +11,7 @@ Major because a run now spends a plan that it didn't touch before: the owner's f
 - **A helper that was on Antigravity goes through OpenCode's models once;** the old wording read as a loop back to the provider it had just tried.
 - **`provider-usage` reads OpenCode Go's 5-hour, weekly and monthly windows,** the way T3 Code does (owner, 2026-11-01), so the snapshots, the usage sampler and the run map include it, and a wave leaves Go out once any window is past about 85%. The skill used to call OpenCode's usage unreadable; that holds only for the free tier.
 - **The contract says which whole tasks start on Go, and the report says what used it.** The helper section of a task's brief lists every target and copies these rules, because a task only sees its brief.
-- **Review (deep), with [review-gate 2.0.0](../review-gate/CHANGELOG.md):** see its entry for both rounds.
+- **Review (deep), with [review-gate 2.0.0](../review-gate/CHANGELOG.md):** see its entry for the rounds.
 
 ## 2.1.0 (2026-10-31)
 

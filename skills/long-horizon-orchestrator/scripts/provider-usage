@@ -533,7 +533,7 @@ def opencode_go_keys() -> list[str]:
         auth = json.loads((data / "auth.json").read_text())
         for integration in ("opencode-go", "opencode"):
             stored = auth.get(integration) or {}
-            if stored.get("type") == "api":
+            if stored.get("type") == "api" and isinstance(stored.get("key"), str):
                 keys.append(stored["key"].strip())
     except (OSError, ValueError, KeyError, AttributeError):
         pass
