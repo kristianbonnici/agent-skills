@@ -62,5 +62,6 @@ Every gate ends with a verdict line and a table like these, which later studies 
 |---|---|---|---|---|---|---|
 | Codex GPT-6.1 Terra, high | 1, 2 | **2** | 3 | 1 | 1 | 1 |
 | Claude Sonnet 5.5, high | 1 | **1** | 4 | – | 2 | – |
+| GPT-6 Luna, high (trial) | 1 | – | 2 | – | 1 | – |
 
-*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*
+*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*

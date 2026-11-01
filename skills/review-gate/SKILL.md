@@ -84,11 +84,11 @@ Then report that the review didn't converge, list the open findings, and say whe
 Put a Review section in your handoff, or in your reply to the user, starting with a verdict line and a table in this format, since later studies of the gate count them:
 
 ```markdown
-**Review: <Light, Standard or Deep>, <n> round(s).** <Why that level, in a few words.> <What was found, and what is still open.>
+**Review: <Light, Standard or Deep>, <1 round or n rounds>.** <Why that level, in a few words.> <What the table adds up to, and what is still open.>
 
 | Reviewer | Rounds | Must-fix | Nits | Pre-existing | Rejected | Unique must-fix |
 |---|---|---|---|---|---|---|
-| <model>, <level> | <1, 2> | **<n>** | <n> | <n> | <n> | <n> |
+| <model>, <level> | <1, 2> | <n> | <n> | <n> | <n> | <n> |
 
 *Skipped: <model>: <why: the limit error, or "Codex short">.*
 ```

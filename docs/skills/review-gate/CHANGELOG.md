@@ -3,6 +3,7 @@
 ## 2.2.0 (2026-11-01)
 
 - The record is now a verdict line and a Markdown table instead of a block of raw lines (owner, 2026-11-01): it holds the same numbers and reads far better in chat. Nothing parses the old lines; studies read handoffs. `only-one` became "Unique must-fix", zeros show as `–`, must-fixes are bold, and model names carry `(free)`, `(Go)` or `(trial)`.
+- **Review (light):** OpenCode Go's DeepSeek V4.1 Flash, after the free tier stopped answering: no must-fix, 7 nits, 5 fixed. The harness no longer appears in the record; no study has used it.
 
 ## 2.1.0 (2026-11-01)
 

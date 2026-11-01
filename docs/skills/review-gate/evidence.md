@@ -47,7 +47,7 @@ as rough. The per-task details stay in the owner's private records.
 - **Reviews lost to limits:** several reviews hit a usage limit or stalled, and returned nothing. →
   *a fallback for every reviewer, and free reviewers never waited for.*
 - **OpenCode's free models:** this study has no data on them as reviewers. The gate records each
-  reviewer's must-fix, rejected and unique must-fix counts, so the next study can show whether they earn a
+  reviewer's must-fixes, the must-fixes only it found, and its rejected findings, so the next study can show whether they earn a
   place at more levels or fewer.
 
 ## Outside sources
