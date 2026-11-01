@@ -509,11 +509,13 @@ def line_colour(entry: dict | None) -> str | None:
 
 def subscriptions_used(facts: dict) -> set[str]:
     """The subscriptions the run used, from the harness in each label (the text before " · "): "OpenCode
-    Go · DeepSeek" is OpenCode Go, plain "OpenCode · X" its free tier, and a model's name is no plan."""
+    Go · DeepSeek" is OpenCode Go, plain "OpenCode · X" its free tier, a model's name is no plan, and Claude
+    billed by the API ("Claude Code (API) · Opus") draws on no subscription."""
     run = facts.get("run") or {}
     labels = [facts.get("orchestrator"), facts.get("harness")] + [t.get("agent") for t in facts.get("tasks", [])]
     labels += [h.get("label") for item in [run] + facts.get("tasks", []) for h in item.get("helpers") or []]
     harnesses = {str(label).split(" · ")[0].strip().lower() for label in labels if label}
+    harnesses = {h for h in harnesses if not re.search(r"\bapi\b", h)}
     return {name for name, title in PROVIDER_NAMES.items()
             if any(h == title.lower() or h.startswith(title.lower() + " ") for h in harnesses)}
 

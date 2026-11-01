@@ -872,8 +872,12 @@ assert used(facts) == {"claude", "codex", "opencode_go"}, used(facts)
 assert used({"tasks": [{"agent": "OpenCode · DeepSeek V4.1 Flash"}, {"agent": "OpenCode · Claude Sonnet 5.5"}]}) == set()
 assert used({"tasks": [{"agent": "Copilot"}], "run": {"helpers": [{"label": "Antigravity · Gemini 4 Argon"}]}}) == {"copilot", "antigravity"}
 assert used({"harness": "OpenCode Go · DeepSeek V4.1 Flash", "tasks": [{"id": "A"}]}) == {"opencode_go"}      # the one harness every task used
+assert used({"harness": "Claude Code (API) · Opus 5.5", "tasks": [{"agent": "Claude API · Sonnet 5.5"}]}) == set()   # billed by the API, no subscription
 EOF
 "$scripts/run-charts" "$work/facts-flat.json" "$work/charts-flat" >/dev/null 2>&1
+# the last sample at 18:59 and the timeline's end at 19:00: a tail of a minute gets its mark too
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["run"]["end"] = "19:00"; json.dump(f, open(sys.argv[2], "w"))' "$work/facts-flat.json" "$work/facts-tail.json"
+"$scripts/run-charts" "$work/facts-tail.json" "$work/charts-tail" >/dev/null 2>&1
 python3 -I - "$work/charts-flat" <<'EOF'
 import json, os, re, sys
 page = open(os.path.join(sys.argv[1], "run-map.html")).read()
@@ -918,6 +922,8 @@ if [ -n "$chrome" ]; then
     if grep -q -E 'tl-pband|us-hatch' "$work/dom.html"; then exit 1; fi   # pauses are hatched on their own lanes only
   done
   grep -q 'class="us-cross"' "$work/dom.html"
+  dump_dom "file://$work/charts-tail/run-map.html#fit"
+  grep -q 'class="us-ended"' "$work/dom.html"
   # past the last sample the panel says so and the hover lists no readings; inside, the hover is as ever
   dump_dom "file://$work/charts-flat/run-map.html#fit&cross=19:10"
   grep -q 'class="us-ended"' "$work/dom.html" && grep -q 'Sampling ended' "$work/dom.html"
