@@ -1,5 +1,14 @@
 # long-horizon-orchestrator changelog
 
+## 3.4.0 (2026-11-03)
+
+- **The orchestrator may decide a review's one open fix.** When a task's review stops with one must-fix open, its finding names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach, the orchestrator may send that fix in one follow-up, with one fresh look by the cross reviewer at the whole diff; a must-fix in that look that changes logic stops it, and the report names the decision. Before, this skill said to keep such a task unmerged while the review gate said the orchestrator decides. Two tasks needed this in one evening's run, and both merged clean.
+- **`usage.mmd` and the usage line stop where sampling did.** They repeated the last reading to the end of the run; now the chart's axis ends at the last sample and both say when sampling ended.
+- **The map's "Sampling ended" line comes after the last sampled minute,** which it could sit inside, and now agrees with where the hover starts saying "Not sampled".
+- **The final usage snapshot says how to allow its 5 minutes:** a 5-minute timeout on the shell call, since a shorter default could cut a slow live reading.
+- `references/routing.md` mentions `provider-usage --go-live`, and `references/machine.md` says what happens to a sampler when a turn dies before stopping it.
+- `usage-sampler --final` beside a running sampler is tested, and the log-scan test says why it plants a line newer than its file.
+
 ## 3.3.0 (2026-11-02)
 
 - **The usage panel shows every subscription the run used** (owner, 2026-11-02, after a short run's panel showed one of its three): a subscription named by the orchestrator, a task or a helper gets its line even when it moved less than a whole percent, and only an unnamed one with no movement stays hidden.

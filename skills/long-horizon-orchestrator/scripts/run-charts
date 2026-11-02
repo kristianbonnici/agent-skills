@@ -78,7 +78,7 @@ been rendered. run-map.html is the same map on its own, to open in a browser.
 summary.txt gets the report's run-time line: how long the run took, how much of it was paused,
 how long the orchestrator and the tasks worked, and how many tasks ran at once at most. With a
 usage folder, a second line says each subscription's use from start to end and the Mac's peaks,
-and, when the run spent some of the owner's Claude API credits, a grant of them expired during it, or
+where sampling ended if it ended before the run did, and, when the run spent some of the owner's Claude API credits, a grant of them expired during it, or
 an estimate was incomplete, their estimated dollars left in whole dollars, with what isn't plain
 spending named: what expired, the spend beside it, a corrected balance ("Claude API credits $314 → $200
 left (estimate; $114 expired at 02:00)"; "$158 → $160 left (estimate; $43 spent, balance corrected
@@ -873,9 +873,15 @@ def window_ends(slot: dict, t0: float, t1: float) -> tuple[float, float, int]:
     return inside[0][1], inside[-1][1], len(slot["resets"])
 
 
+def sampling_ended(usage: dict) -> float | None:
+    """When the last sample was taken, if the axis goes on past its minute (the map marks the same), else None."""
+    last = usage["sampled"][1]
+    return last if usage["t1"] >= last // 1 + 1 else None
+
+
 def usage_line(usage: dict) -> str:
     """The report's usage line for summary.txt: each subscription's windows from start to end, in percent
-    left, and the Mac's peaks."""
+    left, the Mac's peaks, and where sampling ended if the run went on past it."""
     parts = []
     for p in usage["providers"]:
         bits = []
@@ -906,6 +912,9 @@ def usage_line(usage: dict) -> str:
             sentence = f"{sentence}, and {disk}" if sentence else f"On the Mac, {disk}"
         if sentence:
             text += " " + sentence + "."
+    ended = sampling_ended(usage)
+    if ended is not None:
+        text += f" Sampling ended at {clock_text(ended)}; the figures stop there."
     return text
 
 
@@ -919,7 +928,9 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
     usage-mac.mmd (CPU, GPU and memory, the peak in each stretch), as xychart-beta line charts."""
     t0, t1 = usage["t0"], usage["t1"]
     width = next((w for w in (5, 10, 15, 30, 60, 120, 180, 240) if (t1 - t0) / w <= 24), 360)
+    ended = sampling_ended(usage)
     starts = [t0 + i * width for i in range(int((t1 - t0) // width) + 1)]
+    starts = [s for s in starts if ended is None or s <= ended] or [t0]   # no stretch past the last sample: nothing was read there
     labels = ", ".join(f'"{clock_text(s)}"' for s in starts)
     axis = "%%{init: {\"theme\": \"base\", \"fontFamily\": \"" + FONT + "\", \"themeVariables\": {\"xyChart\": {\"backgroundColor\": \"transparent\", \"titleColor\": \"#71717a\", " \
         "\"xAxisLabelColor\": \"#71717a\", \"xAxisTitleColor\": \"#71717a\", \"xAxisTickColor\": \"#8a8a93\", \"xAxisLineColor\": \"#8a8a93\", " \
@@ -954,7 +965,8 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
     if lines:
         title = ("Subscriptions' weekly or monthly windows, % left" if subs else "Claude API credits, % of their highest reading") \
                 + f" at the end of each {span(width)} · " + " · ".join(names) \
-                + (" · the API credits' line is % of their highest reading" if subs and api else "")
+                + (" · the API credits' line is % of their highest reading" if subs and api else "") \
+                + (f" · sampling ended at {clock_text(ended)}" if ended is not None else "")
         out["usage.mmd"] = "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"', f"    x-axis [{labels}]",
                                       '    y-axis "% left" 0 --> 100'] + lines) + "\n"
 

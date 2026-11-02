@@ -735,7 +735,7 @@ python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = 
 for name in graph.mmd timeline.mmd; do cmp "$work/charts/$name" "$work/charts-usage/$name"; done
 head -1 "$work/charts-usage/summary.txt" | cmp - "$work/charts/summary.txt"
 test "$(wc -l < "$work/charts-usage/summary.txt")" -eq 2
-sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude weekly 90% → 98% left (reset 1×); Codex weekly 98% → 97% left. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB.'
+sed -n 2p "$work/charts-usage/summary.txt" | grep -qx 'Usage: Claude weekly 90% → 98% left (reset 1×); Codex weekly 98% → 97% left. The Mac peaked at 50% CPU, 60% GPU and 34 of 64 GB memory, and free disk went from 99.5 to 98.5 GB. Sampling ended at 02:10; the figures stop there.'
 grep -q 'usage.mmd and .*usage-mac.mmd' "$work/charts-usage.out"
 python3 -I - "$work/charts-usage" <<'EOF'
 import json, os, re, sys
@@ -891,6 +891,11 @@ summary = open(os.path.join(sys.argv[1], "summary.txt")).read()
 assert "Claude weekly 23% → 23% left" in summary and "OpenCode Go weekly 93% → 93% left" in summary, summary
 mmd = open(os.path.join(sys.argv[1], "usage.mmd")).read()
 assert mmd.count("\n    line [") == 4 and "OpenCode Go" in mmd, mmd
+# past the last sample there's no reading to repeat: usage.mmd stops there and both texts say so
+assert "Sampling ended at 18:59; the figures stop there." in summary, summary
+labels = re.search(r"x-axis \[(.*)\]", mmd).group(1).split(", ")
+assert labels[-1] == '"18:59"' and "sampling ended at 18:59" in mmd, labels
+assert all(len(line.split(", ")) == len(labels) for line in re.findall(r"line \[(.*)\]", mmd)), mmd
 EOF
 if command -v node >/dev/null 2>&1; then
   python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
@@ -927,6 +932,13 @@ if [ -n "$chrome" ]; then
   # past the last sample the panel says so and the hover lists no readings; inside, the hover is as ever
   dump_dom "file://$work/charts-flat/run-map.html#fit&cross=19:10"
   grep -q 'class="us-ended"' "$work/dom.html" && grep -q 'Sampling ended' "$work/dom.html"
+  python3 -I - "$work/dom.html" <<'EOF'
+import re, sys
+page = open(sys.argv[1]).read()
+ended = float(re.search(r'class="us-ended" x1="([\d.]+)"', page).group(1))
+dots = [float(v) for v in re.findall(r'class="us-dot1" cx="([\d.]+)"', page)]
+assert dots and max(dots) <= ended, (max(dots), ended)   # the mark comes after the last sampled minute, not inside it
+EOF
   python3 -I - "$work/dom.html" past <<'EOF'
 import re, sys
 tip = re.search(r'class="tl-tip us-tip.*?class="tl-foot"', open(sys.argv[1]).read(), re.S).group(0)
@@ -1039,26 +1051,28 @@ for name in credits still expiry mixed before correct partial refresh refresh2 m
   "$scripts/run-charts" "$work/facts-usage-$name.json" "$work/charts-$name" >"$work/charts-$name.out" 2>"$work/charts-$name.err"
   if grep -q -E "Traceback|usage" "$work/charts-$name.err"; then exit 1; fi   # (the facts' missing picture is warned about)
 done
+# the usage line without its last sentence, since these runs' samples all stop before their axis does
+usage_figures() { sed -n 2p "$1" | sed 's/ Sampling ended at [0-9:]*; the figures stop there\.$//'; }
 mac_line='The Mac peaked at 10% CPU and 30 of 64 GB memory, and free disk went from 100 to 100 GB.'
-sed -n 2p "$work/charts-credits/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$142 left (estimate). $mac_line"
-sed -n 2p "$work/charts-expiry/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$114 expired at 02:00). $mac_line"
-sed -n 2p "$work/charts-mixed/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$190 left (estimate, incomplete; \$114 expired at 02:00, \$10 spent). $mac_line"
-sed -n 2p "$work/charts-before/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$110 expired at 02:00, \$4 spent). $mac_line"
-sed -n 2p "$work/charts-correct/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45). $mac_line"
-sed -n 2p "$work/charts-afterexp/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$57 left (estimate; \$40 expired at 02:00, \$3 spent). $mac_line"
-sed -n 2p "$work/charts-afterexp2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$50 left (estimate; \$40 expired at 02:00, \$10 spent). $mac_line"
-sed -n 2p "$work/charts-beforeexp/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$60 left (estimate; \$35 expired at 02:00, \$5 spent). $mac_line"
-sed -n 2p "$work/charts-twoexp/summary.txt" | grep -qx "Usage: Claude API credits \$170 → \$100 left (estimate; \$40 expired at 01:10, \$30 at 01:40). $mac_line"
-sed -n 2p "$work/charts-cut/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$99 left (estimate, incomplete). $mac_line"
-sed -n 2p "$work/charts-correctlog/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45). $mac_line"
-sed -n 2p "$work/charts-refresh/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$93 left (estimate). $mac_line"
-sed -n 2p "$work/charts-refresh2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$95 left (estimate). $mac_line"
-sed -n 2p "$work/charts-masked1/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$80 left (estimate; \$40 expired at 02:00, balance corrected +\$20). $mac_line"
-sed -n 2p "$work/charts-masked2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$100 left (estimate; \$40 expired at 02:00, balance corrected +\$40). $mac_line"
-sed -n 2p "$work/charts-down/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$68 left (estimate; \$12 spent, balance corrected −\$20). $mac_line"
-sed -n 2p "$work/charts-late/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$95 left (estimate; \$9 spent, balance corrected +\$4). $mac_line"
-sed -n 2p "$work/charts-partial/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$158 left (estimate, incomplete). $mac_line"
-sed -n 2p "$work/charts-still/summary.txt" | grep -qx "Usage: $mac_line"
+usage_figures "$work/charts-credits/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$142 left (estimate). $mac_line"
+usage_figures "$work/charts-expiry/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$114 expired at 02:00). $mac_line"
+usage_figures "$work/charts-mixed/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$190 left (estimate, incomplete; \$114 expired at 02:00, \$10 spent). $mac_line"
+usage_figures "$work/charts-before/summary.txt" | grep -qx "Usage: Claude API credits \$314 → \$200 left (estimate; \$110 expired at 02:00, \$4 spent). $mac_line"
+usage_figures "$work/charts-correct/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45). $mac_line"
+usage_figures "$work/charts-afterexp/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$57 left (estimate; \$40 expired at 02:00, \$3 spent). $mac_line"
+usage_figures "$work/charts-afterexp2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$50 left (estimate; \$40 expired at 02:00, \$10 spent). $mac_line"
+usage_figures "$work/charts-beforeexp/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$60 left (estimate; \$35 expired at 02:00, \$5 spent). $mac_line"
+usage_figures "$work/charts-twoexp/summary.txt" | grep -qx "Usage: Claude API credits \$170 → \$100 left (estimate; \$40 expired at 01:10, \$30 at 01:40). $mac_line"
+usage_figures "$work/charts-cut/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$99 left (estimate, incomplete). $mac_line"
+usage_figures "$work/charts-correctlog/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$160 left (estimate; \$43 spent, balance corrected +\$45). $mac_line"
+usage_figures "$work/charts-refresh/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$93 left (estimate). $mac_line"
+usage_figures "$work/charts-refresh2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$95 left (estimate). $mac_line"
+usage_figures "$work/charts-masked1/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$80 left (estimate; \$40 expired at 02:00, balance corrected +\$20). $mac_line"
+usage_figures "$work/charts-masked2/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$100 left (estimate; \$40 expired at 02:00, balance corrected +\$40). $mac_line"
+usage_figures "$work/charts-down/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$68 left (estimate; \$12 spent, balance corrected −\$20). $mac_line"
+usage_figures "$work/charts-late/summary.txt" | grep -qx "Usage: Claude API credits \$100 → \$95 left (estimate; \$9 spent, balance corrected +\$4). $mac_line"
+usage_figures "$work/charts-partial/summary.txt" | grep -qx "Usage: Claude API credits \$158 → \$158 left (estimate, incomplete). $mac_line"
+usage_figures "$work/charts-still/summary.txt" | grep -qx "Usage: $mac_line"
 grep -q 'Claude API credits' "$work/charts-credits.out"
 if grep -q 'API credits' "$work/charts-still/summary.txt" "$work/charts-still/usage-mac.mmd"; then exit 1; fi
 test ! -e "$work/charts-still/usage.mmd"
@@ -1281,6 +1295,8 @@ fi
 
 # provider-usage: Claude's reader takes a warning's line whole (a warning has fields after its windows),
 # and the newest reading across the logs, not the newest file's, stopping at a file older than the one in hand.
+# events.c.log's line is stamped after its file's own time, which can't happen in a real log, on purpose: a
+# truthful older line gives the same answer whether the scan stops or not, so only this one shows that it stopped.
 mkdir -p "$work/cl/logs/provider" "$work/cl/empty"
 claude_cached() { env T3_USERDATA="$work/cl" CLAUDE_CONFIG_DIR="$work/cl/empty" python3 -I "$scripts/provider-usage" --cached --only claude; }
 cat > "$work/cl/write.py" <<'EOF'
@@ -1766,6 +1782,34 @@ assert cut["incomplete"] is True and "incomplete" not in entry_of({"providers": 
 # one reading at a time: every start is followed by its end before the next start
 marks = [l.split()[0] for l in open(os.path.join(folder, "fake", "reads.log"))]
 assert marks[0] == "+" and all(a != b for a, b in zip(marks, marks[1:])), marks
+EOF
+# --final beside a running sampler: it isn't refused, adds its one live reading, and the sampler goes on and stops as ever
+"$scripts/usage-sampler" "$work/sampler/beside" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ "$(grep -c . "$work/sampler/beside/providers.jsonl" 2>/dev/null || echo 0)" -ge 2 ]; do
+  tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1
+done
+"$scripts/usage-sampler" --final "$work/sampler/beside" "$work/sampler/fake/provider-usage" > "$work/sampler/beside.json"
+kill -0 "$sampler"
+samples=$(grep -c . "$work/sampler/beside/machine.jsonl")
+tries=0
+until [ "$(grep -c . "$work/sampler/beside/machine.jsonl")" -gt "$samples" ]; do
+  tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1
+done
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 50; sleep 0.1; done
+wait "$sampler"
+grep -q 'stopped after .* machine samples' "$work/sampler/beside/sampler.log"
+python3 -I - "$work/sampler" <<'EOF'
+import json, os, sys
+folder = sys.argv[1]
+reads = [json.loads(l) for l in open(os.path.join(folder, "beside", "providers.jsonl"))]   # every line whole, the two writers side by side
+assert [r["kind"] for r in reads].count("live") == 2 and reads[0]["kind"] == "live", [r["kind"] for r in reads]   # the sampler's first and --final's
+assert json.load(open(os.path.join(folder, "beside.json"))) in reads
+[json.loads(l) for l in open(os.path.join(folder, "beside", "machine.jsonl"))]
 EOF
 # SIGTERM in the middle of a reading that hangs: the sampler ends within moments and the reading's process is gone
 touch "$work/sampler/fake/slow"
