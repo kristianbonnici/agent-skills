@@ -30,7 +30,7 @@ A task may report more than once: after review fixes, a rebase or a follow-up. A
 
 A task whose review gate stopped with a must-fix open, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known defect.
 
-When one must-fix is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach, you may decide that fix. Send one follow-up with it: the task makes the fix, gets one fresh look at the whole diff from the cross reviewer, and goes to the merge gate. A must-fix in that look that changes logic stops it. Name the decision in the report.
+When one must-fix is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach, you may decide that fix. Send one follow-up with it: the task makes the fix, gets one fresh look at the whole diff from the cross reviewer, fixes what that look finds as the review gate says, and goes to the merge gate. A must-fix in that look that changes logic stops it. Name the decision in the report.
 
 Otherwise, or when that look stops it, keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
 

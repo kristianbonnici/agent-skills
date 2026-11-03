@@ -768,6 +768,8 @@ mac_mmd = open(os.path.join(folder, "usage-mac.mmd")).read()
 assert usage_mmd.count("\n    line [") == 2 and '"plotColorPalette": "#D97757, #10a37f"' in usage_mmd and "\nxychart-beta\n" in usage_mmd
 assert "Claude orange weekly 90% → 98% left" in usage_mmd and "5-hour" not in usage_mmd and '"% left"' in usage_mmd and 'y-axis "% left" 0 --> 100' in usage_mmd
 assert mac_mmd.count("\n    line [") == 3 and "CPU blue" in mac_mmd and "free disk 99.5 → 98.5 GB" in mac_mmd
+# the last sample, 02:10, falls between two labels: the stretch from 01:50 is the last, and it holds that reading
+assert re.search(r"x-axis \[(.*)\]", usage_mmd).group(1).endswith('"01:50"') and re.search(r"line \[(.*)\]", usage_mmd).group(1).endswith(", 98"), usage_mmd
 for text in (usage_mmd, mac_mmd):
     labels = re.search(r"x-axis \[(.*)\]", text).group(1).count('"') // 2
     assert all(len(re.search(r"line \[(.*)\]", l).group(1).split(",")) == labels for l in text.splitlines() if l.startswith("    line ["))
