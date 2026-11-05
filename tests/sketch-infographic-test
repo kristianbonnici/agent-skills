@@ -58,6 +58,21 @@ for e in els:
 EOF
 python3 -I -c 'import sys; sys.exit(open(sys.argv[1], "rb").read(8) != b"\x89PNG\r\n\x1a\n")' "$work/example.png" || fail "example.png isn't a PNG"
 
+# 2b. A failed write leaves the earlier pair as it was.
+mkdir "$work/locked"
+cp "$skill/assets/example.json" "$work/locked/page.json"
+node "$build" "$work/locked/page.json" >/dev/null
+before=$(cksum "$work/locked/page.png" "$work/locked/page.excalidraw")
+chmod 555 "$work/locked"
+set +e
+node "$build" "$work/locked/page.json" >"$work/locked.out" 2>&1
+status=$?
+set -e
+chmod 755 "$work/locked"
+[ "$status" -eq 1 ] && grep -q "Could not write the outputs" "$work/locked.out" || { cat "$work/locked.out"; fail "a failed write should say so and exit 1, got $status"; }
+[ "$before" = "$(cksum "$work/locked/page.png" "$work/locked/page.excalidraw")" ] || fail "a failed write changed the earlier outputs"
+[ -z "$(ls "$work/locked" | grep '\.tmp$')" ] || fail "a failed write left temporary files"
+
 # 3. The checks catch what they claim to.
 cat >"$work/bad.json" <<'EOF'
 { "title": "Bad", "panels": [ { "id": "b", "heading": "Broken", "elements": [

@@ -586,8 +586,19 @@ async function main() {
       // Every glyph was checked against Excalifont above; system fonts are
       // only needed for the ones it lacks.
       systemFonts: missingGlyphs });
-    fs.writeFileSync(`${stem}.png`, Buffer.from(png.data, 'base64'));
-    fs.writeFileSync(`${stem}.excalidraw`, JSON.stringify(scene, null, 1));
+    // Write both beside their targets first, then rename them into place: a
+    // failed write leaves the earlier pair untouched instead of half replaced.
+    const tmp = `.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(`${stem}.png${tmp}`, Buffer.from(png.data, 'base64'));
+      fs.writeFileSync(`${stem}.excalidraw${tmp}`, JSON.stringify(scene, null, 1));
+      fs.renameSync(`${stem}.png${tmp}`, `${stem}.png`);
+      fs.renameSync(`${stem}.excalidraw${tmp}`, `${stem}.excalidraw`);
+    } catch (e) {
+      for (const f of [`${stem}.png${tmp}`, `${stem}.excalidraw${tmp}`]) fs.rmSync(f, { force: true });
+      console.error(`Could not write the outputs next to ${stem}: ${e.message}`);
+      process.exit(1);
+    }
     for (const w of png.warnings) warnings.push(`renderer: ${w}`);
     console.log(`wrote ${stem}.excalidraw\nwrote ${stem}.png (${png.width}×${png.height})`);
   }
