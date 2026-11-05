@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 2.2.0
+  version: 2.3.0
 ---
 
 # Review Gate
@@ -39,9 +39,9 @@ Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.
 
 Limits:
 
-- **A free reviewer gets its time and no more** (15 minutes for each model). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, or no answer in its time) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM. When the order runs out, it is dropped, except at Light, where the cross reviewer takes its place.
+- **A free reviewer gets its time and no more** (15 minutes for each model). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, no reply yet or replies more than a minute apart when you check it after about 5 minutes, or no answer in its time) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM. When the order runs out, it is dropped, except at Light, where the cross reviewer takes its place.
   - OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, go straight to Go.
-  - After no answer in its time, skip the other model on that tier.
+  - A model that is slow or doesn't answer is limited on its own: the next model in the order still gets its turn, since slowness is often one model's, not the tier's.
   - A Go model that "requires Global regions" isn't limited, just unavailable: try the other.
   - Before you launch a Go model, read Go's windows ([references/launching.md](references/launching.md)). Past about 85% of any of them, Go counts as limited.
 - **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Terra by the Claude model you aren't, or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.

@@ -1,5 +1,13 @@
 # review-gate changelog
 
+## 2.3.0 (2026-11-06)
+
+- Free and trial reviewers are told they have 12 minutes and about 20 commands, and to report what they have when they reach either (owner, 2026-11-06). A free reviewer in a Deep review ran 44 turns over its whole 15 minutes and was stopped before writing anything; its notes held two real bugs.
+- A free or trial reviewer is checked about 5 minutes after launch: no reply yet, or replies more than a minute apart, counts as limited then, instead of after its full 15 minutes. In the same review a Go model waited 90 to 123 seconds for each reply and returned nothing. The owner first approved "no reply after 3 minutes"; that model's first reply came after 89 seconds, so the check looks at the pace of replies instead.
+- A slow or silent model no longer skips the other model on its tier: the next in the order still gets its turn, since slowness is often one model's (owner, 2026-11-06). Neither GLM model was tried in that review. The free tier's shared limit still sends the order straight to Go.
+- In T3, OpenCode reviewers launch with `interactionMode: "plan"`, which runs OpenCode's read-only `plan` agent: until now they ran as `build`, which can edit, and only the brief kept them read-only (checked in OpenCode's session records).
+- A reviewer's remaining time is worked out from its launch time (its thread's `createdAt`), never from memory: a Go reviewer was stopped after 10 of its 15 minutes.
+
 ## 2.2.0 (2026-11-01)
 
 - The record is now a verdict line and a Markdown table instead of a block of raw lines (owner, 2026-11-01): it holds the same numbers and reads far better in chat. Nothing parses the old lines; studies read handoffs. `only-one` became "Unique must-fix", zeros show as `–`, must-fixes are bold, and model names carry `(free)`, `(Go)` or `(trial)`.

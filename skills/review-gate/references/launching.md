@@ -1,6 +1,6 @@
 # Launching reviewers
 
-Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries, and Muse, on OpenCode Go, 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Stop a reviewer that timed out before you launch its replacement.
+Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries, and Muse, on OpenCode Go, 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Check each free and trial reviewer about 5 minutes after its launch: one with no reply yet, or whose replies come more than a minute apart, won't finish in its time, so it counts as limited then. Its brief gives it 12 minutes and about 20 commands, so it reports before its time runs out. Work out a reviewer's time from when it was launched (in T3, its thread's `createdAt` from `t3_thread_read`), never from memory. Stop a reviewer that timed out before you launch its replacement.
 
 ## Before a Go model
 
@@ -14,10 +14,10 @@ The Go targets below and Muse draw on the owner's OpenCode Go plan, so read its 
 
 ## In T3
 
-`delegate_task` with role `"review"`, one call per reviewer. Reviewers started this way aren't bound to your worktree, so the brief names its path.
+`delegate_task` with role `"review"`, one call per reviewer, and `interactionMode: "plan"` for every OpenCode reviewer (free, Go and Muse): that runs OpenCode's read-only `plan` agent instead of `build`, which can edit. Reviewers started this way aren't bound to your worktree, so the brief names its path.
 
 - **One reviewer:** mode `"wait"` with `timeoutMs` (1800000 for a paid reviewer, 900000 for a free one).
-- **Several:** launch all but the round's main paid reviewer with mode `"async"`, then the main one with mode `"wait"` and its `timeoutMs`; that wait is your deadline. When it returns, read each async reviewer's result if it has finished. A free reviewer that turns out to be limited moves on now: launch its next model with mode `"wait"` and its own 900000. For one still running, wait on its thread (`t3_thread_wait` with its `childThreadId` and `timeoutMs` set to what is left of its time); if that times out, stop it with `task_cancel` and count it as limited. Don't poll with `task_status` in between.
+- **Several:** launch them all with mode `"async"`. Wait on the main paid reviewer's thread for 300000 (`t3_thread_wait` with its `childThreadId`), then read each free and trial reviewer's thread (`t3_thread_read` with a small `limit`): one with no reply yet, or with replies more than a minute apart, is limited; stop it with `task_cancel` and launch its next model the same way, checking it 5 minutes later. Then wait on the main reviewer for the rest of its 1800000; that wait is your deadline. When it returns, read each async reviewer's result if it has finished. For one still running, wait on its thread with `timeoutMs` set to what is left of its time; if that times out, stop it with `task_cancel` and count it as limited. Don't poll with `task_status` in between.
 - **A wait that times out** (`waitTimedOut`) doesn't stop the reviewer: stop it with `task_cancel` before you launch its replacement.
 
 | Reviewer | target |
