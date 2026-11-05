@@ -1,6 +1,11 @@
 # Launching reviewers
 
-Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Allow a paid reviewer 30 minutes and a free one 15 for each model it tries, and Muse, on OpenCode Go, 15; one that hasn't answered by then counts as limited (SKILL.md, section 2). Check each free and trial reviewer about 5 minutes after its launch: one with no reply yet, or whose replies come more than a minute apart, won't finish in its time, so it counts as limited then. Its brief gives it 12 minutes and about 20 commands, so it reports before its time runs out. Work out a reviewer's time from when it was launched (in T3, its thread's `createdAt` from `t3_thread_read`), never from memory. Stop a reviewer that timed out before you launch its replacement.
+Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Then follow each reviewer's checkpoints until every one has reported or been stopped:
+
+- **Its deadline:** 30 minutes after its launch for a paid reviewer, 15 for a free or trial one (each model a free reviewer tries gets its own 15). One still running then is limited (SKILL.md, section 2). Its brief gives a free or trial reviewer 12 minutes and about 20 commands, so it reports before its deadline.
+- **Its pace check,** for a free or trial reviewer only: 5 minutes after its launch, look at its activity (the commands it ran, the files it read, its messages). Activity a few seconds apart is one turn of the model. No turn yet, or turns typically more than a minute apart, means it won't finish in its time: it is limited then. A healthy reviewer takes a turn every few seconds to half a minute; a provider too slow to finish takes a minute or more for each.
+- **Time comes from the launch:** the time left to a checkpoint is launch time + allowance − now, with the launch time read from the host (in T3, the thread's `createdAt` from `t3_thread_read`), never carried from memory.
+- **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; a trial reviewer is dropped, never replaced; a paid one is replaced as SKILL.md, section 2 says.
 
 ## Before a Go model
 
@@ -16,9 +21,11 @@ The Go targets below and Muse draw on the owner's OpenCode Go plan, so read its 
 
 `delegate_task` with role `"review"`, one call per reviewer, and `interactionMode: "plan"` for every OpenCode reviewer (free, Go and Muse): that runs OpenCode's read-only `plan` agent instead of `build`, which can edit. Reviewers started this way aren't bound to your worktree, so the brief names its path.
 
-- **One reviewer:** mode `"wait"` with `timeoutMs` (1800000 for a paid reviewer, 900000 for a free one).
-- **Several:** launch them all with mode `"async"`. Wait on the main paid reviewer's thread for 300000 (`t3_thread_wait` with its `childThreadId`), then read each free and trial reviewer's thread (`t3_thread_read` with a small `limit`): one with no reply yet, or with replies more than a minute apart, is limited; stop it with `task_cancel` and launch its next model the same way, checking it 5 minutes later. Then wait on the main reviewer for the rest of its 1800000; that wait is your deadline. When it returns, read each async reviewer's result if it has finished. For one still running, wait on its thread with `timeoutMs` set to what is left of its time; if that times out, stop it with `task_cancel` and count it as limited. Don't poll with `task_status` in between.
-- **A wait that times out** (`waitTimedOut`) doesn't stop the reviewer: stop it with `task_cancel` before you launch its replacement.
+Launch every reviewer, a single one too, with mode `"async"`. Then, until each has reported or been stopped:
+
+- **Wait for the next checkpoint:** `t3_thread_wait` on the thread of the reviewer whose checkpoint comes first, with `timeoutMs` set to the time left to it. A wait that returns early because that reviewer finished: read its result and wait for the next checkpoint. Don't poll with `task_status` in between.
+- **At a pace check:** `t3_thread_read` the reviewer's thread with `view: "activity"`; each item has its time (`updatedAt`). Judge its pace as above.
+- **At a deadline, or a limited pace:** stop the reviewer with `task_cancel` (a wait that times out doesn't stop it), then launch what replaces it, if anything does.
 
 | Reviewer | target |
 |---|---|
@@ -39,7 +46,7 @@ The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, withou
 
 ## In Claude Code without T3
 
-A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3"). From the main session:
+A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3"). Note each reviewer's launch time. A background command's output is its activity: at a pace check, read what it has printed so far, and stop a limited one by its process ID. A reviewer whose progress you can't read, such as a Claude subagent from the `Agent` tool, gets its deadline only. From the main session:
 
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
 - **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
@@ -69,5 +76,6 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
   (or `claude-opus-5-5`), run from the worktree.
 - **Free reviewers and Muse Spark (trial):** the OpenCode command above.
+- **Checkpoints:** `wait_agent` with its timeout set to the time left to the next checkpoint; a background command's output is its activity, as under "In Claude Code without T3".
 
 If a host can't launch a reviewer of the family the level needs, use the next option from SKILL.md, section 2, and record why.

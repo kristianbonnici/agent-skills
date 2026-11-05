@@ -39,7 +39,7 @@ Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.
 
 Limits:
 
-- **A free reviewer gets its time and no more** (15 minutes for each model). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, no reply yet or replies more than a minute apart when you check it after about 5 minutes, or no answer in its time) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM. When the order runs out, it is dropped, except at Light, where the cross reviewer takes its place.
+- **A free reviewer gets its time and no more** (15 minutes for each model). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, no activity yet or turns typically more than a minute apart when you check its pace 5 minutes after launch, or no answer in its time; [references/launching.md](references/launching.md) has the checkpoints) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM. When the order runs out, it is dropped, except at Light, where the cross reviewer takes its place.
   - OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, go straight to Go.
   - A model that is slow or doesn't answer is limited on its own: the next model in the order still gets its turn, since slowness is often one model's, not the tier's.
   - A Go model that "requires Global regions" isn't limited, just unavailable: try the other.

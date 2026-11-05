@@ -44,8 +44,8 @@ flowchart TD
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
   alone on light changes, as an extra voice on deep ones, and in place of the lost family when Codex is
   short. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers it is dropped, or at light
-  the cross reviewer takes its place. It is never waited for past its time, and one that has no reply
-  after about 5 minutes, or replies more than a minute apart, is replaced then. Its brief gives it 12 minutes
+  the cross reviewer takes its place. It is never waited for past its time, and one with no activity
+  5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
 - **Gemini doesn't review:** its reviews were the weakest in past runs.
 - **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor add one cheap extra
