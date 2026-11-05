@@ -15,7 +15,7 @@ The drawing is the easy part. The page is only worth posting if every panel says
 
 Read all of it. Then write the plan in your reply, before any JSON:
 
-- **Title:** the topic in two to five words. **Subtitle:** who said it and what about, in one line ("Addy Osmani on the judgment that still belongs to the person who ships the work").
+- **Title:** the topic in two to five words. **Subtitle:** who said it and what about, in one line ("A transit planner on why buses beat new rail lines in small cities").
 - **Shape:** 3:4 portrait (1500×2000) unless the user names another, or their example page has another shape. Other formats are in [references/spec.md](references/spec.md).
 - **Six or seven panels, enough to fill the page.** A 3:4 page holds about four rows: three rows of two half panels and one full-width panel. Each panel has a heading that makes the point (not a topic label), a picture idea, and a takeaway of at most two sentences and about 30 words. The full-width panel holds the richest example.
 - **Footer:** the source (author, title, date) and any caveat the source gives, such as "design notes and a prototype, not a shipped product".
@@ -24,7 +24,7 @@ Wait for the user's go-ahead on the plan when the source is long or the angle is
 
 **Working from an example page** the user shares: list its panels first and keep every one in your plan, unless the user asked for fewer. Matching its look but dropping a panel is the most common way to fall short of it.
 
-**Stay true to the source.** Every number, name and claim on the page must be in the source. Attribute opinions ("Osmani describes..."). When you add your own illustration of a point, say so on the page ("An email setting illustrates how that could happen"). Leave out what you can't draw honestly rather than inventing a figure for it.
+**Stay true to the source.** Every number, name and claim on the page must be in the source. Attribute opinions ("the author argues..."). When you add your own illustration of a point, say so on the page ("a made-up example of how that could happen"). Leave out what you can't draw honestly rather than inventing a figure for it.
 
 ## 2. Pick a picture for each panel
 

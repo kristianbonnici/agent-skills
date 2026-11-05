@@ -22,7 +22,14 @@ fail() { echo "sketch-infographic-test: $*" >&2; exit 1; }
 python3 -I - "$skill/references/patterns.md" "$work/patterns.json" <<'EOF'
 import json, re, sys
 text = open(sys.argv[1]).read()
-blocks = re.findall(r"^## (.+?)\n.*?```json\n(.*?)```", text, re.S | re.M)
+# One JSON block per "## " section: a section without one is an error, not merged into the next.
+sections = re.split(r"^## ", text, flags=re.M)[1:]
+blocks = []
+for section in sections:
+    title = section.splitlines()[0]
+    found = re.findall(r"```json\n(.*?)```", section, re.S)
+    assert len(found) == 1, f"pattern {title!r} has {len(found)} JSON blocks"
+    blocks.append((title, found[0]))
 assert len(blocks) >= 8, f"expected at least 8 patterns, found {len(blocks)}"
 panels = [{"id": f"p{i}", "heading": title.split(":")[0], "elements": json.loads(body)}
           for i, (title, body) in enumerate(blocks)]

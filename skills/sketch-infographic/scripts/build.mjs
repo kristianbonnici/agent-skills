@@ -560,12 +560,20 @@ async function main() {
   const lintOnly = args.includes('--lint-only'); if (lintOnly) args.splice(args.indexOf('--lint-only'), 1);
   const outDir = flag('--out-dir', null), scale = Number(flag('--scale', 2));
   const input = args[0];
-  if (!input) { console.error('usage: build.mjs page.json [--out-dir DIR] [--scale N] [--lint-only]'); process.exit(2); }
+  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--scale 1-4] [--lint-only]';
+  if (!input) { console.error(usage); process.exit(2); }
+  if (!(scale >= 1 && scale <= 4)) { console.error(`--scale must be a number from 1 to 4\n${usage}`); process.exit(2); }
+  if (outDir && !fs.statSync(outDir, { throwIfNoEntry: false })?.isDirectory()) {
+    console.error(`--out-dir ${outDir} is not a folder`); process.exit(2);
+  }
   let spec;
   try { spec = JSON.parse(fs.readFileSync(input, 'utf8')); }
   catch (e) { console.error(`Could not read ${input}: ${e.message}`); process.exit(1); }
 
-  const { elements, warnings, report, size, missingGlyphs } = await build(spec);
+  let built;
+  try { built = await build(spec); }
+  catch (e) { console.error(`Could not build ${input}: ${e.message}`); process.exit(1); }
+  const { elements, warnings, report, size, missingGlyphs } = built;
   const stem = path.join(outDir ?? path.dirname(path.resolve(input)), path.basename(input).replace(/\.json$/i, ''));
   console.log(`page ${size[0]}×${size[1]}`);
   for (const r of report) console.log(r);

@@ -4,8 +4,8 @@
 
 ```json
 {
-  "title": "Super-agent",
-  "subtitle": "How one always-on agent handles many tasks at once",
+  "title": "Small teams",
+  "subtitle": "A team lead on why four people ship faster than twelve",
   "format": "3:4",
   "panels": [
     { "id": "now", "heading": "...", "elements": [ ... ], "takeaway": "..." },
