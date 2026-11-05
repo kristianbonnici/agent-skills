@@ -64,6 +64,8 @@ HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-
 grep -q "sketch-infographic runtime" "$test_home/doctor-claude.out"
 
 # A newer release of a pinned runtime is a warning, never a failure; no answer from npm is a skip.
+# Doctor asks npm only about an installed runtime, so this part needs the repository's runtime.
+if [ -f "$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server/package.json" ]; then
 fake_bin="$test_home/fake-npm"
 mkdir -p "$fake_bin"
 printf '#!/bin/sh\n[ "$1" = view ] && echo 99.0.0\n' >"$fake_bin/npm"
@@ -74,6 +76,11 @@ if grep -q "FAIL.*99.0.0" "$test_home/doctor-newer.out"; then echo "a newer rele
 printf '#!/bin/sh\nexit 1\n' >"$fake_bin/npm"
 AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-offline.out" 2>&1 || true
 grep -q "SKIP could not ask npm whether mcp-excalidraw-server" "$test_home/doctor-offline.out"
+# A prerelease of the pinned version is older than it, not newer.
+printf '#!/bin/sh\n[ "$1" = view ] && echo 2.1.2-rc.1\n' >"$fake_bin/npm"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-pre.out" 2>&1 || true
+grep -q "mcp-excalidraw-server 2.1.2 is newer than npm's latest release, 2.1.2-rc.1" "$test_home/doctor-pre.out"
+fi
 
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
 test ! -e "$test_home/.config/opencode/skills/product-design"
