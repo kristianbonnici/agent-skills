@@ -97,6 +97,7 @@ adapter_one() {
 }
 
 selected_product_design=0
+selected_sketch_infographic=0
 if [ "$install_links" -eq 1 ]; then
   while IFS=$(printf '\t') read -r row_host mode source target; do
     case "$row_host" in ''|'#'*) continue ;; esac
@@ -110,6 +111,7 @@ if [ "$install_links" -eq 1 ]; then
       *) echo "Unknown manifest mode: $mode" >&2; exit 1 ;;
     esac
     case "$source" in skills/product-design*) selected_product_design=1 ;; esac
+    case "$source" in skills/sketch-infographic*) selected_sketch_infographic=1 ;; esac
   done < "$manifest"
 
   if [ -d "$state_repo/.git" ]; then
@@ -129,6 +131,17 @@ if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$sele
     echo "DRY RUN: npm ci --prefix $repo_root/runtime/playwright"
   else
     npm ci --prefix "$repo_root/runtime/playwright" --no-audit --no-fund
+  fi
+fi
+
+# sketch-infographic draws with a pinned mcp-excalidraw-server. --ignore-scripts: none of its
+# packages need an install script, so none get to run one.
+if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_sketch_infographic" -eq 1 ] || [ "$host" = all ]; }; then
+  command -v npm >/dev/null 2>&1 || { echo "npm is required for sketch-infographic." >&2; exit 1; }
+  if [ "$dry_run" -eq 1 ]; then
+    echo "DRY RUN: npm ci --ignore-scripts --prefix $repo_root/runtime/excalidraw"
+  else
+    npm ci --ignore-scripts --prefix "$repo_root/runtime/excalidraw" --no-audit --no-fund
   fi
 fi
 

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sketch Infographic"
+  short_description: "One-page hand-drawn infographic in Excalidraw's style, as PNG and .excalidraw"
+  default_prompt: "Use $sketch-infographic to turn this source into a one-page hand-drawn infographic: plan the panels, build the page, fix every warning, and check the picture."
+
+policy:
+  allow_implicit_invocation: true

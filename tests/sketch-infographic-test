@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# sketch-infographic: every pattern in references/patterns.md and the example page build with no
+# warnings, the outputs are a valid .excalidraw scene and a PNG, and the checks catch what they
+# claim to (a label too long for its box, text crossing another element, an element outside its
+# panel, a character Excalifont lacks).
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+skill="$repo_root/skills/sketch-infographic"
+build="$skill/scripts/build.mjs"
+work="$(mktemp -d "${TMPDIR:-/tmp}/sketch-infographic-test.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+if [ ! -d "$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server" ]; then
+  echo "sketch-infographic-test: runtime missing; run ./scripts/bootstrap first" >&2
+  exit 1
+fi
+
+fail() { echo "sketch-infographic-test: $*" >&2; exit 1; }
+
+# 1. Every pattern, one panel each, on one page.
+python3 -I - "$skill/references/patterns.md" "$work/patterns.json" <<'EOF'
+import json, re, sys
+text = open(sys.argv[1]).read()
+blocks = re.findall(r"^## (.+?)\n.*?```json\n(.*?)```", text, re.S | re.M)
+assert len(blocks) >= 8, f"expected at least 8 patterns, found {len(blocks)}"
+panels = [{"id": f"p{i}", "heading": title.split(":")[0], "elements": json.loads(body)}
+          for i, (title, body) in enumerate(blocks)]
+json.dump({"title": "Patterns", "format": "auto", "panels": panels, "footer": "test"}, open(sys.argv[2], "w"))
+EOF
+node "$build" "$work/patterns.json" >"$work/patterns.out" || { cat "$work/patterns.out"; fail "a pattern doesn't build cleanly"; }
+
+# 2. The example page.
+cp "$skill/assets/example.json" "$work/example.json"
+node "$build" "$work/example.json" >"$work/example.out" || { cat "$work/example.out"; fail "the example doesn't build cleanly"; }
+[ -s "$work/example.png" ] || fail "no PNG written"
+grep -q "^page 1500×2000$" "$work/example.out" || { cat "$work/example.out"; fail "the example isn't a 3:4 page"; }
+python3 -I - "$work/example.excalidraw" <<'EOF'
+import json, sys
+scene = json.load(open(sys.argv[1]))
+assert scene["type"] == "excalidraw" and scene["version"] == 2
+els = scene["elements"]
+ids = [e["id"] for e in els]
+assert len(ids) == len(set(ids)), "duplicate ids"
+idx = [e["index"] for e in els]
+assert all(a < b for a, b in zip(idx, idx[1:])), "fractional indices not ascending"
+assert {e["fontFamily"] for e in els if e["type"] == "text"} == {5}, "a text isn't Excalifont"
+for e in els:
+    if e["type"] == "text" and e.get("containerId"):
+        assert any(c["id"] == e["containerId"] for c in els), "bound text without its container"
+EOF
+python3 -I -c 'import sys; sys.exit(open(sys.argv[1], "rb").read(8) != b"\x89PNG\r\n\x1a\n")' "$work/example.png" || fail "example.png isn't a PNG"
+
+# 3. The checks catch what they claim to.
+cat >"$work/bad.json" <<'EOF'
+{ "title": "Bad", "panels": [ { "id": "b", "heading": "Broken", "elements": [
+  { "type": "rectangle", "id": "small", "x": 0, "y": 0, "width": 120, "height": 40, "label": "A label far too long for a box this small" },
+  { "type": "rectangle", "id": "box", "x": 200, "y": 0, "width": 200, "height": 80, "label": "Middle label" },
+  { "type": "text", "x": 230, "y": 30, "text": "crossing text" },
+  { "type": "rectangle", "id": "wide", "x": 500, "y": 0, "width": 300, "height": 50 },
+  { "type": "text", "x": 0, "y": 120, "text": "on → off ✓" },
+  { "type": "text", "x": 0, "y": 200, "text": "crossed caption" },
+  { "type": "arrow", "x": 60, "y": 180, "points": [[0, 0], [0, 60]] },
+  { "type": "rectangle", "id": "cyl", "x": 300, "y": 200, "width": 80, "height": 60, "group": "c" },
+  { "type": "ellipse", "id": "cyltop", "x": 300, "y": 190, "width": 80, "height": 20, "group": "c" },
+  { "type": "rectangle", "id": "near1", "x": 0, "y": 300, "width": 100, "height": 40 },
+  { "type": "rectangle", "id": "near2", "x": 0, "y": 352, "width": 100, "height": 40 },
+  { "type": "arrow", "id": "stub", "start": "near1", "end": "near2" }
+] } ] }
+EOF
+set +e
+node "$build" "$work/bad.json" --lint-only >"$work/bad.out"
+status=$?
+set -e
+[ "$status" -eq 3 ] || { cat "$work/bad.out"; fail "a broken page should exit 3, got $status"; }
+for expect in '"small" grew' 'overlap' '"wide" reaches outside' '"→" "✓" isn'"'"'t in Excalifont' 'runs through the text' '"stub" is only'; do
+  grep -q -- "$expect" "$work/bad.out" || { cat "$work/bad.out"; fail "missing warning: $expect"; }
+done
+! grep -q '"cyl"' "$work/bad.out" || { cat "$work/bad.out"; fail "a group's parts were reported as overlapping"; }
+
+# 4. Content taller than the format is a warning that says how much to cut.
+python3 -I - "$work/tall.json" <<'PY'
+import json, sys
+panel = lambda i: {"id": f"t{i}", "span": 2, "heading": "Tall", "elements": [
+    {"type": "rectangle", "id": "r", "x": 0, "y": 0, "width": 200, "height": 300}]}
+json.dump({"title": "Tall", "format": "square", "panels": [panel(i) for i in range(4)]}, open(sys.argv[1], "w"))
+PY
+set +e
+node "$build" "$work/tall.json" --lint-only >"$work/tall.out"
+status=$?
+set -e
+[ "$status" -eq 3 ] && grep -q "but square is 1500 px tall: cut" "$work/tall.out" || { cat "$work/tall.out"; fail "an overfull page should warn"; }
+
+# 5. Arrows into one side of a box fan out, and arrows to an ellipse end on its curve, not on one point.
+cat >"$work/fan.json" <<'JSON'
+{ "title": "Fan", "format": "auto", "panels": [ { "id": "f", "heading": "Fan", "elements": [
+  { "type": "rectangle", "id": "a", "x": 0, "y": 0, "width": 100, "height": 40 },
+  { "type": "rectangle", "id": "b", "x": 0, "y": 80, "width": 100, "height": 40 },
+  { "type": "rectangle", "id": "c", "x": 0, "y": 160, "width": 100, "height": 40 },
+  { "type": "rectangle", "id": "box", "x": 260, "y": 60, "width": 140, "height": 80 },
+  { "type": "ellipse", "id": "dot", "x": 260, "y": 220, "width": 120, "height": 120 },
+  { "type": "arrow", "id": "x1", "start": "a", "end": "box" }, { "type": "arrow", "id": "x2", "start": "b", "end": "box" },
+  { "type": "arrow", "id": "x3", "start": "c", "end": "box" },
+  { "type": "arrow", "id": "y1", "start": "a", "end": "dot" }, { "type": "arrow", "id": "y2", "start": "c", "end": "dot" }
+] } ] }
+JSON
+node "$build" "$work/fan.json" >/dev/null || fail "the fan page doesn't build cleanly"
+python3 -I - "$work/fan.excalidraw" <<'PY'
+import json, sys
+els = {e["id"]: e for e in json.load(open(sys.argv[1]))["elements"]}
+tip = lambda i: tuple(round(v) for v in (els[i]["x"] + els[i]["points"][-1][0], els[i]["y"] + els[i]["points"][-1][1]))
+for group in (["f.x1", "f.x2", "f.x3"], ["f.y1", "f.y2"]):
+    tips = [tip(i) for i in group]
+    assert len(set(tips)) == len(tips), f"arrowheads share a point: {tips}"
+PY
+
+echo "sketch-infographic: ok"

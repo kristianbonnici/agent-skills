@@ -1,0 +1,8 @@
+{
+  "name": "agent-skills-excalidraw-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "mcp-excalidraw-server": "2.1.2"
+  }
+}
