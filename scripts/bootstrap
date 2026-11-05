@@ -134,10 +134,13 @@ if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$sele
   fi
 fi
 
-# sketch-infographic draws with a pinned mcp-excalidraw-server. --ignore-scripts: none of its
-# packages need an install script, so none get to run one.
+# sketch-infographic draws with a pinned mcp-excalidraw-server, which needs Node 20 or newer.
+# --ignore-scripts: its only package with an install script is fsevents, an optional macOS file
+# watcher the renderer never uses, so no install script needs to run.
 if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_sketch_infographic" -eq 1 ] || [ "$host" = all ]; }; then
   command -v npm >/dev/null 2>&1 || { echo "npm is required for sketch-infographic." >&2; exit 1; }
+  node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  [ "$node_major" -ge 20 ] 2>/dev/null || { echo "sketch-infographic needs Node 20 or newer (found ${node_major})." >&2; exit 1; }
   if [ "$dry_run" -eq 1 ]; then
     echo "DRY RUN: npm ci --ignore-scripts --prefix $repo_root/runtime/excalidraw"
   else

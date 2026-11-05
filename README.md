@@ -89,3 +89,19 @@ Remove managed links without touching unrelated files:
 ```bash
 ./scripts/uninstall --all
 ```
+
+### Bumping a pinned runtime
+
+`runtime/` pins each tool a skill runs to an exact version, in `runtime/<name>/package.json` and its lockfile, so a new upstream release can't change a skill's behavior unannounced. `scripts/doctor` reads each pin from that file, fails when the installed version differs, and warns, without failing, when npm has a newer release (`AGENT_SKILLS_NO_UPDATE_CHECK=1` skips asking npm, for example offline).
+
+To bump one on purpose:
+
+1. Read the package's changes between the two versions. For `mcp-excalidraw-server`, also check the internal modules the sketch-infographic build imports ([runtime/excalidraw/README.md](runtime/excalidraw/README.md)).
+2. Update the pin and the lockfile together:
+
+   ```bash
+   npm install --prefix runtime/<name> --ignore-scripts --save-exact <package>@<version>
+   ```
+
+3. Run `./scripts/doctor --all` and the checks of the skills that use it: `./tests/sketch-infographic-test` for Excalidraw, a Product Design browser capture for Playwright.
+4. Commit `package.json` and `package-lock.json` together. If a skill now behaves differently, raise its version too ([docs/VERSIONING.md](docs/VERSIONING.md)).

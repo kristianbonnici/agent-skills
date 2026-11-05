@@ -77,10 +77,36 @@ command -v python3 >/dev/null 2>&1 && pass "python3 available" || fail "python3 
 command -v node >/dev/null 2>&1 && pass "node available" || fail "node missing"
 command -v npm >/dev/null 2>&1 && pass "npm available" || fail "npm missing"
 
+# Pinned runtimes. Each runtime/<name>/package.json pins one package to an exact version: that pin
+# is what must be installed. A newer release on npm is a warning, never a failure: bump the pin on
+# purpose (README, "Bumping a pinned runtime"). AGENT_SKILLS_NO_UPDATE_CHECK=1 skips asking npm.
+pinned_version() {
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["dependencies"][sys.argv[2]])' "$1" "$2" 2>/dev/null
+}
+installed_version() {
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$1" 2>/dev/null
+}
+check_newer() {
+  if [ -n "${AGENT_SKILLS_NO_UPDATE_CHECK:-}" ]; then
+    echo "SKIP newer-release check for $1 (AGENT_SKILLS_NO_UPDATE_CHECK)"
+    return
+  fi
+  latest=$(npm view "$1" version --fetch-timeout=5000 --fetch-retries=0 2>/dev/null || true)
+  if [ -z "$latest" ]; then
+    echo "SKIP could not ask npm whether $1 has a newer release"
+  elif [ "$latest" != "$2" ] && [ "$(printf '%s\n%s\n' "$2" "$latest" | sort -V | tail -n 1)" = "$latest" ]; then
+    echo "WARN $1 $latest is out; the runtime pins $2. Bump it on purpose: README, \"Bumping a pinned runtime\"."
+  else
+    pass "$1 $2 is its newest release"
+  fi
+}
+
 browser_bin="$repo_root/runtime/playwright/node_modules/.bin/playwright-cli"
+playwright_pin=$(pinned_version "$repo_root/runtime/playwright/package.json" "@playwright/cli")
 if [ -x "$browser_bin" ]; then
   version=$($browser_bin --version 2>/dev/null || true)
-  case "$version" in *0.1.18*) pass "Playwright CLI $version" ;; *) fail "unexpected Playwright CLI version: $version" ;; esac
+  case "$version" in "$playwright_pin"|*" $playwright_pin") pass "Playwright CLI $version" ;; *) fail "Playwright CLI is $version, the runtime pins $playwright_pin" ;; esac
+  check_newer @playwright/cli "$playwright_pin"
 else
   fail "Product Design browser runtime is not installed"
 fi
@@ -88,12 +114,17 @@ fi
 # The sketch-infographic runtime matters only for hosts that install the skill: bootstrap for
 # another host never installs it.
 if [ "$host" = all ] || awk -F '\t' -v h="$host" '$1 == h && $3 ~ /^skills\/sketch-infographic/ { found = 1 } END { exit !found }' "$manifest"; then
-  excalidraw_pkg="$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server/package.json"
-  if [ -f "$excalidraw_pkg" ]; then
-    version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$excalidraw_pkg" 2>/dev/null || true)
-    [ "$version" = 2.1.2 ] && pass "sketch-infographic runtime mcp-excalidraw-server $version" || fail "unexpected mcp-excalidraw-server version: $version"
-  else
+  node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  [ "$node_major" -ge 20 ] 2>/dev/null && pass "Node $node_major for sketch-infographic" || fail "sketch-infographic needs Node 20 or newer (found ${node_major})"
+  excalidraw_pin=$(pinned_version "$repo_root/runtime/excalidraw/package.json" mcp-excalidraw-server)
+  version=$(installed_version "$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server/package.json")
+  if [ -z "$version" ]; then
     fail "sketch-infographic runtime is not installed (runtime/excalidraw)"
+  elif [ "$version" = "$excalidraw_pin" ]; then
+    pass "sketch-infographic runtime mcp-excalidraw-server $version"
+    check_newer mcp-excalidraw-server "$excalidraw_pin"
+  else
+    fail "mcp-excalidraw-server is $version, the runtime pins $excalidraw_pin"
   fi
 fi
 

@@ -13,6 +13,8 @@ printf '# Providers\n' > "$state_repo/long-horizon-orchestrator/providers.md"
 printf '# State\n' > "$state_repo/README.md"
 export AGENT_SKILLS_STATE="$state_repo"
 export XDG_STATE_HOME="$test_home/.local/state"
+# Doctor asks npm for newer releases of the pinned runtimes; the test does that with a stand-in npm.
+export AGENT_SKILLS_NO_UPDATE_CHECK=1
 
 HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
 HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
@@ -57,6 +59,18 @@ if grep -q "sketch-infographic runtime" "$test_home/doctor-factory.out"; then
 fi
 HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-claude.out" 2>&1 || true
 grep -q "sketch-infographic runtime" "$test_home/doctor-claude.out"
+
+# A newer release of a pinned runtime is a warning, never a failure; no answer from npm is a skip.
+fake_bin="$test_home/fake-npm"
+mkdir -p "$fake_bin"
+printf '#!/bin/sh\n[ "$1" = view ] && echo 99.0.0\n' >"$fake_bin/npm"
+chmod +x "$fake_bin/npm"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-newer.out" 2>&1 || true
+grep -q "WARN mcp-excalidraw-server 99.0.0 is out; the runtime pins" "$test_home/doctor-newer.out"
+if grep -q "FAIL.*99.0.0" "$test_home/doctor-newer.out"; then echo "a newer release failed doctor" >&2; exit 1; fi
+printf '#!/bin/sh\nexit 1\n' >"$fake_bin/npm"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-offline.out" 2>&1 || true
+grep -q "SKIP could not ask npm whether mcp-excalidraw-server" "$test_home/doctor-offline.out"
 
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
 test ! -e "$test_home/.config/opencode/skills/product-design"
