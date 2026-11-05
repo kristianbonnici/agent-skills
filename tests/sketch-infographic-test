@@ -107,6 +107,7 @@ cat >"$work/bad.json" <<'EOF'
   { "type": "arrow", "id": "stub", "start": "near1", "end": "near2" },
   { "type": "text", "id": "outer", "x": 400, "y": 300, "text": "a long caption that sits here", "fontSize": 20 },
   { "type": "text", "id": "inner", "x": 440, "y": 302, "text": "inside", "fontSize": 16 },
+  { "type": "text", "id": "longword", "x": 0, "y": 520, "width": 120, "text": "Supercalifragilisticexpialidocious" },
   { "type": "rectangle", "id": "toplong", "x": 0, "y": 440, "width": 100, "height": 40, "label": { "text": "A top label far too long for this", "valign": "top" } },
   { "type": "rectangle", "id": "leftlong", "x": 200, "y": 440, "width": 120, "height": 40, "label": { "text": "A left label far too long for this box", "align": "left" } }
 ] } ] }
@@ -116,7 +117,7 @@ node "$build" "$work/bad.json" --lint-only >"$work/bad.out"
 status=$?
 set -e
 [ "$status" -eq 3 ] || { cat "$work/bad.out"; fail "a broken page should exit 3, got $status"; }
-for expect in '"small" grew' 'overlap' '"wide" reaches outside' '"→" "✓" isn'"'"'t in Excalifont' 'runs through the text' '"stub" is only' 'the label of "toplong" doesn'"'"'t fit' 'the label of "leftlong" doesn'"'"'t fit' '"outer" and "inner" overlap'; do
+for expect in '"small" grew' 'overlap' '"wide" reaches outside' '"→" "✓" isn'"'"'t in Excalifont' 'runs through the text' '"stub" is only' 'the label of "toplong" doesn'"'"'t fit' 'the label of "leftlong" doesn'"'"'t fit' '"outer" and "inner" overlap' '"longword" has a word wider than its 120 px width'; do
   grep -q -- "$expect" "$work/bad.out" || { cat "$work/bad.out"; fail "missing warning: $expect"; }
 done
 ! grep -q '"cyl"' "$work/bad.out" || { cat "$work/bad.out"; fail "a group's parts were reported as overlapping"; }
@@ -147,7 +148,13 @@ cat >"$work/nohead.json" <<'JSON'
 JSON
 node "$build" "$work/nohead.json" --lint-only >"$work/nohead.out" 2>&1 || { cat "$work/nohead.out"; fail "a panel without a heading doesn't build"; }
 
-# 7. Arrows into one side of a box fan out, and arrows to an ellipse end on its curve, not on one point.
+# 7. A page without a title builds.
+cat >"$work/notitle.json" <<'JSON'
+{ "title": "", "format": "auto", "panels": [ { "id": "t", "heading": "H", "elements": [ { "type": "rectangle", "x": 0, "y": 0 } ] } ] }
+JSON
+node "$build" "$work/notitle.json" --lint-only >"$work/notitle.out" 2>&1 || { cat "$work/notitle.out"; fail "a page without a title doesn't build"; }
+
+# 8. Arrows into one side of a box fan out, and arrows to an ellipse end on its curve, not on one point.
 cat >"$work/fan.json" <<'JSON'
 { "title": "Fan", "format": "auto", "panels": [ { "id": "f", "heading": "Fan", "elements": [
   { "type": "rectangle", "id": "a", "x": 0, "y": 0, "width": 100, "height": 40 },

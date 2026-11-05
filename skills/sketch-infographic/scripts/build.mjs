@@ -353,8 +353,11 @@ export async function build(spec, opts = {}) {
 
   // Header
   let y = P.top;
-  const title = textEl('page.title', P.margin, y, spec.title ?? 'Untitled', STYLE.title.size, { width: innerW });
-  elements.push(title); y += title.height + 6;
+  // Like a panel's heading, the title is optional: Excalidraw drops an empty text.
+  if (String(spec.title ?? '').trim()) {
+    const title = textEl('page.title', P.margin, y, spec.title, STYLE.title.size, { width: innerW });
+    elements.push(title); y += title.height + 6;
+  }
   if (spec.subtitle) {
     const sub = textEl('page.subtitle', P.margin, y, spec.subtitle, STYLE.subtitle.size, { width: innerW, color: STYLE.muted });
     elements.push(sub); y += sub.height;
@@ -510,6 +513,15 @@ function lintPanel(p, warnings) {
       if (intersects(A, B) && !nested) {
         warnings.push(`${p.pid}: ${shortId(a, p)} and ${shortId(b, p)} overlap`);
       }
+    }
+  }
+  // 3b. A word too long for its text's width: wrapping can't break it, so it spills out.
+  // Excalidraw widens such a text to fit, so compare with the width the spec asked for.
+  for (const tx of p.skel) {
+    if (tx.type !== 'text' || tx.autoResize !== false) continue;
+    const widest = Math.max(...String(tx.text).split('\n').map(l => textWidth(l, tx.fontSize)));
+    if (widest > tx.width + 1) {
+      warnings.push(`${p.pid}: ${shortId(tx, p)} has a word wider than its ${Math.round(tx.width)} px width: widen it or shorten the word`);
     }
   }
   // 4. An arrow too short to read as one.
