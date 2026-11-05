@@ -85,12 +85,16 @@ else
   fail "Product Design browser runtime is not installed"
 fi
 
-excalidraw_pkg="$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server/package.json"
-if [ -f "$excalidraw_pkg" ]; then
-  version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$excalidraw_pkg" 2>/dev/null || true)
-  [ "$version" = 2.1.2 ] && pass "sketch-infographic runtime mcp-excalidraw-server $version" || fail "unexpected mcp-excalidraw-server version: $version"
-else
-  fail "sketch-infographic runtime is not installed (runtime/excalidraw)"
+# The sketch-infographic runtime matters only for hosts that install the skill: bootstrap for
+# another host never installs it.
+if [ "$host" = all ] || awk -F '\t' -v h="$host" '$1 == h && $3 ~ /^skills\/sketch-infographic/ { found = 1 } END { exit !found }' "$manifest"; then
+  excalidraw_pkg="$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server/package.json"
+  if [ -f "$excalidraw_pkg" ]; then
+    version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$excalidraw_pkg" 2>/dev/null || true)
+    [ "$version" = 2.1.2 ] && pass "sketch-infographic runtime mcp-excalidraw-server $version" || fail "unexpected mcp-excalidraw-server version: $version"
+  else
+    fail "sketch-infographic runtime is not installed (runtime/excalidraw)"
+  fi
 fi
 
 if [ "$host" = all ] || [ "$host" = opencode ]; then

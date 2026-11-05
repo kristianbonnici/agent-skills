@@ -50,6 +50,14 @@ state_link="$test_home/.local/state/agent-skills/long-horizon-orchestrator/provi
 test "$(readlink "$state_link")" = "$state_repo/long-horizon-orchestrator/providers.md"
 test ! -e "$test_home/.local/state/agent-skills/README.md"
 
+# Doctor checks the sketch-infographic runtime only for hosts that install that skill.
+HOME="$test_home" "$repo_root/scripts/doctor" --host factory >"$test_home/doctor-factory.out" 2>&1 || true
+if grep -q "sketch-infographic runtime" "$test_home/doctor-factory.out"; then
+  echo "doctor --host factory checks the sketch-infographic runtime" >&2; exit 1
+fi
+HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-claude.out" 2>&1 || true
+grep -q "sketch-infographic runtime" "$test_home/doctor-claude.out"
+
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
 test ! -e "$test_home/.config/opencode/skills/product-design"
 test ! -e "$test_home/.factory/skills/product-design"
