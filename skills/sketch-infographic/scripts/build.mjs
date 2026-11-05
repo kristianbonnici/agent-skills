@@ -375,7 +375,8 @@ export async function build(spec, opts = {}) {
     const skel = raw.map(el => (el.type === 'arrow' || el.type === 'line') && el._spec
       ? finishLinear(el, pid, boxes, warnings) : el).filter(Boolean);
     const prepared = skel.length ? await prepareScene(skel) : [];
-    const heading = textEl(`${pid}.heading`, 0, 0, p.heading ?? '', PS.heading, { width: areaW });
+    // The heading is optional: Excalidraw drops an empty text, so none is drawn.
+    const heading = String(p.heading ?? '').trim() ? textEl(`${pid}.heading`, 0, 0, p.heading, PS.heading, { width: areaW }) : null;
     const takeaway = p.takeaway
       ? textEl(`${pid}.takeaway`, 0, 0, p.takeaway, PS.body, { width: Math.min(areaW, p.takeawayWidth ?? PS.takeawayWidth) })
       : null;
@@ -390,7 +391,8 @@ export async function build(spec, opts = {}) {
     if (p.span === 1 && last && last.length === 1 && last[0].span === 1) last.push(p);
     else rows.push([p]);
   }
-  const natural = p => PS.pad + p.heading.height + PS.headingGap + Math.max(0, p.drawn.y + p.drawn.h)
+  const headH = p => p.heading ? p.heading.height + PS.headingGap : 0;
+  const natural = p => PS.pad + headH(p) + Math.max(0, p.drawn.y + p.drawn.h)
     + (p.takeaway ? PS.takeawayGap + p.takeaway.height : 0) + PS.pad;
 
   const report = [];
@@ -412,11 +414,11 @@ export async function build(spec, opts = {}) {
     const h = heights[ri];
     row.forEach((p, j) => {
       const px = P.margin + j * (colW + P.gap), py = y;
-      const ax = px + PS.pad, ay = py + PS.pad + p.heading.height + PS.headingGap;
+      const ax = px + PS.pad, ay = py + PS.pad + headH(p);
       elements.push({ id: `${p.pid}.card`, type: 'rectangle', x: px, y: py, width: p.w, height: h,
         strokeColor: p.spec.strokeColor ?? STYLE.panelStroke, backgroundColor: p.spec.backgroundColor ?? '#ffffff',
         fillStyle: 'solid', strokeWidth: 2, roughness: 1, roundness: { type: 3 } });
-      elements.push({ ...p.heading, x: px + PS.pad, y: py + PS.pad });
+      if (p.heading) elements.push({ ...p.heading, x: px + PS.pad, y: py + PS.pad });
       for (const el of p.prepared) elements.push({ ...el, x: el.x + ax, y: el.y + ay });
       if (p.takeaway) elements.push({ ...p.takeaway, x: px + PS.pad, y: ay + Math.max(0, p.drawn.y + p.drawn.h) + PS.takeawayGap });
       lintPanel(p, warnings);
