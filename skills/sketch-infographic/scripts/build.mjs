@@ -568,12 +568,14 @@ async function main() {
   if (!lintOnly) {
     const scene = { type: 'excalidraw', version: 2, source: 'sketch-infographic',
       elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };
-    fs.writeFileSync(`${stem}.excalidraw`, JSON.stringify(scene, null, 1));
+    // Render first: if it fails, neither file is touched, so the PNG and the
+    // .excalidraw on disk never come from different builds.
     const png = await renderScene({ elements, files: {} }, { format: 'png', scale, padding: 0,
       // Every glyph was checked against Excalifont above; system fonts are
       // only needed for the ones it lacks.
       systemFonts: missingGlyphs });
     fs.writeFileSync(`${stem}.png`, Buffer.from(png.data, 'base64'));
+    fs.writeFileSync(`${stem}.excalidraw`, JSON.stringify(scene, null, 1));
     for (const w of png.warnings) warnings.push(`renderer: ${w}`);
     console.log(`wrote ${stem}.excalidraw\nwrote ${stem}.png (${png.width}×${png.height})`);
   }
