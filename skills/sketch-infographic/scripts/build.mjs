@@ -80,6 +80,10 @@ export function wrap(text, size, maxWidth) {
   return out;
 }
 
+// A word too long for a wrapped text's width: wrapping can't break it, so it spills out.
+const wordTooWide = el => el && el.autoResize === false &&
+  Math.max(...String(el.text).split('\n').map(l => textWidth(l, el.fontSize))) > el.width + 1;
+
 function textEl(id, x, y, text, size, opts = {}) {
   const lines = opts.width ? wrap(text, size, opts.width) : String(text).split('\n');
   const width = opts.width ?? Math.ceil(Math.max(...lines.map(l => textWidth(l, size))));
@@ -356,10 +360,12 @@ export async function build(spec, opts = {}) {
   // Like a panel's heading, the title is optional: Excalidraw drops an empty text.
   if (String(spec.title ?? '').trim()) {
     const title = textEl('page.title', P.margin, y, spec.title, STYLE.title.size, { width: innerW });
+    if (wordTooWide(title)) warnings.push('page: the title has a word wider than the page: shorten it');
     elements.push(title); y += title.height + 6;
   }
   if (spec.subtitle) {
     const sub = textEl('page.subtitle', P.margin, y, spec.subtitle, STYLE.subtitle.size, { width: innerW, color: STYLE.muted });
+    if (wordTooWide(sub)) warnings.push('page: the subtitle has a word wider than the page: shorten it');
     elements.push(sub); y += sub.height;
   }
   y += 24;
@@ -384,6 +390,9 @@ export async function build(spec, opts = {}) {
       ? textEl(`${pid}.takeaway`, 0, 0, p.takeaway, PS.body, { width: Math.min(areaW, p.takeawayWidth ?? PS.takeawayWidth) })
       : null;
     const drawn = union(prepared.filter(e => !e.isDeleted).map(bbox));
+    for (const [el, name] of [[heading, 'heading'], [takeaway, 'takeaway']]) {
+      if (wordTooWide(el)) warnings.push(`${pid}: the ${name} has a word wider than the panel: shorten it`);
+    }
     panels.push({ pid, span, w, areaW, prepared, heading, takeaway, drawn, spec: p, skel });
   }
 
@@ -402,6 +411,7 @@ export async function build(spec, opts = {}) {
   const heights = rows.map(row => Math.max(...row.map(p => Math.max(natural(p), p.spec.minHeight ?? 0))));
   const footerEl = spec.footer
     ? textEl('page.footer', P.margin, 0, spec.footer, STYLE.footer.size, { width: innerW, color: STYLE.muted }) : null;
+  if (wordTooWide(footerEl)) warnings.push('page: the footer has a word wider than the page: shorten it');
   const footerH = footerEl ? 16 + footerEl.height : 0;
   const contentH = y + heights.reduce((a, b) => a + b, 0) + P.gap * Math.max(0, rows.length - 1) + footerH + P.margin;
   const targetH = ratio ? Math.round(pageW * ratio) : contentH;
@@ -518,9 +528,8 @@ function lintPanel(p, warnings) {
   // 3b. A word too long for its text's width: wrapping can't break it, so it spills out.
   // Excalidraw widens such a text to fit, so compare with the width the spec asked for.
   for (const tx of p.skel) {
-    if (tx.type !== 'text' || tx.autoResize !== false) continue;
-    const widest = Math.max(...String(tx.text).split('\n').map(l => textWidth(l, tx.fontSize)));
-    if (widest > tx.width + 1) {
+    if (tx.type !== 'text') continue;
+    if (wordTooWide(tx)) {
       warnings.push(`${p.pid}: ${shortId(tx, p)} has a word wider than its ${Math.round(tx.width)} px width: widen it or shorten the word`);
     }
   }
