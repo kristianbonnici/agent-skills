@@ -8,6 +8,7 @@
 - A slow or silent model no longer skips the other model on its tier: the next in the order still gets its turn, since slowness is often one model's (owner, 2026-11-06). Neither GLM model was tried in that review. The free tier's shared limit still sends the order straight to Go.
 - In T3, OpenCode reviewers launch with `interactionMode: "plan"`, which runs OpenCode's read-only `plan` agent: until now they ran as `build`, which can edit, and only the brief kept them read-only (checked in OpenCode's session records).
 - A reviewer's remaining time is worked out from its launch time (its thread's `createdAt`), never from memory: a Go reviewer was stopped after 10 of its 15 minutes.
+- **Review (standard), 3 rounds:** Codex GPT-6.1 Terra found 5 must-fixes in the first version's launch procedure (a single reviewer skipped the pace check, the paid wait let a free reviewer outrun its time or checked too early, a slow trial reviewer was told to launch a next model, other hosts had no way to check pace), all fixed by the checkpoint procedure; Muse Spark 1.3 Contributor (trial) raised the same and one more, that "a reply" was undefined, fixed by judging turns. Round 2 found the pace check still unworkable on hosts without T3 ("not fixed", which stops the gate); the owner had left reruns to the agent's judgment, so the check was scoped to T3 and round 3 found nothing. Muse ran under the new rules: plan mode, the 20-command budget (it used about 12) and a report in 76 seconds.
 
 ## 2.2.0 (2026-11-01)
 
