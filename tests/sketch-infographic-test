@@ -73,6 +73,23 @@ chmod 755 "$work/locked"
 [ "$before" = "$(cksum "$work/locked/page.png" "$work/locked/page.excalidraw")" ] || fail "a failed write changed the earlier outputs"
 [ -z "$(ls "$work/locked" | grep '\.tmp$')" ] || fail "a failed write left temporary files"
 
+# 2c. Bad command lines and bad specs get a message and an exit code, not a stack trace.
+expect_exit() {
+  want=$1; shift
+  set +e; node "$build" "$@" >"$work/cli.out" 2>&1; got=$?; set -e
+  [ "$got" -eq "$want" ] || { cat "$work/cli.out"; fail "build $* should exit $want, got $got"; }
+  ! grep -q "    at " "$work/cli.out" || { cat "$work/cli.out"; fail "build $* printed a stack trace"; }
+}
+expect_exit 2 "$work/example.json" --out-dir
+expect_exit 2 "$work/example.json" --out-dir "$work/no-such-folder"
+expect_exit 2 "$work/example.json" --scale
+expect_exit 2 "$work/example.json" --scale 9
+expect_exit 2
+printf '{ not json' >"$work/broken.json"
+expect_exit 1 "$work/broken.json"
+printf '{ "panels": 5 }' >"$work/odd.json"
+expect_exit 1 "$work/odd.json"
+
 # 3. The checks catch what they claim to.
 cat >"$work/bad.json" <<'EOF'
 { "title": "Bad", "panels": [ { "id": "b", "heading": "Broken", "elements": [

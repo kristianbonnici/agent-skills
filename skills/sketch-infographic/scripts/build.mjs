@@ -556,11 +556,17 @@ const shortId = (el, p) => `"${String(el.id).replace(`${p.pid}.`, '')}"`;
 
 async function main() {
   const args = process.argv.slice(2);
-  const flag = (name, def) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : def; };
+  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--scale 1-4] [--lint-only]';
+  const flag = (name, def) => {
+    const i = args.indexOf(name);
+    if (i < 0) return def;
+    const value = args.splice(i, 2)[1];
+    if (value === undefined || value.startsWith('--')) { console.error(`${name} needs a value\n${usage}`); process.exit(2); }
+    return value;
+  };
   const lintOnly = args.includes('--lint-only'); if (lintOnly) args.splice(args.indexOf('--lint-only'), 1);
   const outDir = flag('--out-dir', null), scale = Number(flag('--scale', 2));
   const input = args[0];
-  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--scale 1-4] [--lint-only]';
   if (!input) { console.error(usage); process.exit(2); }
   if (!(scale >= 1 && scale <= 4)) { console.error(`--scale must be a number from 1 to 4\n${usage}`); process.exit(2); }
   if (outDir && !fs.statSync(outDir, { throwIfNoEntry: false })?.isDirectory()) {
