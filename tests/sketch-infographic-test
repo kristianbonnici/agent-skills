@@ -95,7 +95,14 @@ status=$?
 set -e
 [ "$status" -eq 3 ] && grep -q "but square is 1500 px tall: cut" "$work/tall.out" || { cat "$work/tall.out"; fail "an overfull page should warn"; }
 
-# 5. Arrows into one side of a box fan out, and arrows to an ellipse end on its curve, not on one point.
+# 5. Elements without ids: two stacks in one panel build.
+cat >"$work/noid.json" <<'JSON'
+{ "title": "No ids", "format": "auto", "panels": [ { "id": "n", "heading": "Stacks", "elements": [
+  { "type": "stack", "x": 0, "y": 0, "items": ["a", "b"] }, { "type": "stack", "x": 320, "y": 0, "items": ["c", "d"] } ] } ] }
+JSON
+node "$build" "$work/noid.json" --lint-only >"$work/noid.out" 2>&1 || { cat "$work/noid.out"; fail "two stacks without ids don't build"; }
+
+# 6. Arrows into one side of a box fan out, and arrows to an ellipse end on its curve, not on one point.
 cat >"$work/fan.json" <<'JSON'
 { "title": "Fan", "format": "auto", "panels": [ { "id": "f", "heading": "Fan", "elements": [
   { "type": "rectangle", "id": "a", "x": 0, "y": 0, "width": 100, "height": 40 },

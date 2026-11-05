@@ -172,7 +172,9 @@ function expand(el, pid, boxes, warnings) {
       const items = el.items ?? ['one', 'two', 'three'];
       const [dx, dy] = el.offset ?? [36, 30];
       const w = el.width ?? 220, h = el.height ?? 80;
-      items.forEach((title, i) => out.push(...expand({ type: 'window', id: `${el.id}.${i}`, x: el.x + i * dx,
+      // The windows' ids come from the stack's own, generated when it has none.
+      const local = id.slice(pid.length + 1);
+      items.forEach((title, i) => out.push(...expand({ type: 'window', id: `${local}.${i}`, x: el.x + i * dx,
         y: el.y + i * dy, width: w, height: h, title, lines: i === items.length - 1 ? el.lines : undefined,
         color: el.color, dots: el.dots }, pid, {}, warnings)
         .map(e => ({ ...e, groupIds: [...(e.groupIds ?? []), id + '.stack'] }))));
