@@ -132,7 +132,7 @@ function expand(el, pid, boxes, warnings) {
         out.push(s);
         const size = L.fontSize ?? STYLE.panel.body, left = L.align === 'left';
         const t = textEl(`${id}.label`, left ? s.x + 18 : s.x + s.width / 2, s.y + 12, L.text, size,
-          { width: left ? s.width - 36 : undefined, align: left ? 'left' : 'center',
+          { width: Math.max(1, s.width - 36), align: left ? 'left' : 'center',
             color: L.color ?? STYLE.ink, groupIds: s.groupIds });
         if (L.valign !== 'top') t.y = s.y + (s.height - t.height) / 2;
         out.push(t);
@@ -478,6 +478,14 @@ function lintPanel(p, warnings) {
     if (got && (got.height > s.height + 1 || got.width > s.width + 1)) {
       warnings.push(`${p.pid}: ${shortId(s, p)} grew from ${s.width}×${s.height} to ${Math.round(got.width)}×${Math.round(got.height)} ` +
         `to fit its label: make it bigger or the label shorter`);
+    }
+  }
+  // 2b. A top or left label (free text grouped with its shape) that doesn't fit inside it.
+  for (const tx of live) {
+    if (tx.type !== 'text' || tx.containerId || !String(tx.id).endsWith('.label')) continue;
+    const shape = live.find(e => e.id === String(tx.id).slice(0, -'.label'.length));
+    if (shape && SHAPES.has(shape.type) && !contains(bbox(shape), bbox(tx), -2)) {
+      warnings.push(`${p.pid}: the label of ${shortId(shape, p)} doesn't fit inside it: make it bigger or the label shorter`);
     }
   }
   // 3. Partial overlaps between solid things (one fully inside another is fine).
