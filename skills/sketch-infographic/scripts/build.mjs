@@ -501,7 +501,9 @@ function lintPanel(p, warnings) {
       if (shared.some(g => g.endsWith('.stack'))) continue;  // stacked windows overlap by design
       if (shared.length && !(a.type === 'text' && b.type === 'text')) continue;
       const A = bbox(a), B = bbox(b);
-      if (intersects(A, B) && !contains(A, B) && !contains(B, A)) {
+      // Text inside a box is fine; text inside another text's box never is.
+      const nested = !(a.type === 'text' && b.type === 'text') && (contains(A, B) || contains(B, A));
+      if (intersects(A, B) && !nested) {
         warnings.push(`${p.pid}: ${shortId(a, p)} and ${shortId(b, p)} overlap`);
       }
     }
