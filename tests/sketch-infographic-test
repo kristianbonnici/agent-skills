@@ -72,6 +72,20 @@ chmod 755 "$work/locked"
 [ "$status" -eq 1 ] && grep -q "Could not write the outputs" "$work/locked.out" || { cat "$work/locked.out"; fail "a failed write should say so and exit 1, got $status"; }
 [ "$before" = "$(cksum "$work/locked/page.png" "$work/locked/page.excalidraw")" ] || fail "a failed write changed the earlier outputs"
 [ -z "$(ls "$work/locked" | grep '\.tmp$')" ] || fail "a failed write left temporary files"
+# A target that can't be replaced (a locked file, on macOS) leaves both earlier files as they were.
+if command -v chflags >/dev/null 2>&1; then
+  # A different title, so a half-replaced pair would show in the checksums.
+  python3 -I -c 'import json, sys; p = json.load(open(sys.argv[1])); p["title"] = "Changed"; json.dump(p, open(sys.argv[1], "w"))' "$work/locked/page.json"
+  chflags uchg "$work/locked/page.excalidraw"
+  set +e
+  node "$build" "$work/locked/page.json" >"$work/locked2.out" 2>&1
+  status=$?
+  set -e
+  chflags nouchg "$work/locked/page.excalidraw"
+  [ "$status" -eq 1 ] || { cat "$work/locked2.out"; fail "a locked output should fail the build, got $status"; }
+  [ "$before" = "$(cksum "$work/locked/page.png" "$work/locked/page.excalidraw")" ] || fail "a locked output left a PNG and an .excalidraw from different builds"
+  [ -z "$(ls "$work/locked" | grep '\.\(tmp\|bak\)$')" ] || fail "a locked output left temporary files"
+fi
 
 # 2c. Bad command lines and bad specs get a message and an exit code, not a stack trace.
 expect_exit() {

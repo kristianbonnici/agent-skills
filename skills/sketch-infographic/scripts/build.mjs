@@ -604,17 +604,25 @@ async function main() {
       // Every glyph was checked against Excalifont above; system fonts are
       // only needed for the ones it lacks.
       systemFonts: missingGlyphs });
-    // Write both beside their targets first, then rename them into place: a
-    // failed write leaves the earlier pair untouched instead of half replaced.
-    const tmp = `.${process.pid}.tmp`;
+    // The PNG and the .excalidraw file must always come from one build. Write
+    // both beside their targets, move the earlier pair aside, move the new one
+    // in; if any step fails, put the earlier pair back as it was.
+    const outputs = [[`${stem}.png`, Buffer.from(png.data, 'base64')],
+      [`${stem}.excalidraw`, JSON.stringify(scene, null, 1)]];
+    const tmp = `.${process.pid}.tmp`, bak = `.${process.pid}.bak`;
+    const setAside = [], placed = [];
     try {
-      fs.writeFileSync(`${stem}.png${tmp}`, Buffer.from(png.data, 'base64'));
-      fs.writeFileSync(`${stem}.excalidraw${tmp}`, JSON.stringify(scene, null, 1));
-      fs.renameSync(`${stem}.png${tmp}`, `${stem}.png`);
-      fs.renameSync(`${stem}.excalidraw${tmp}`, `${stem}.excalidraw`);
+      for (const [f, data] of outputs) fs.writeFileSync(f + tmp, data);
+      for (const [f] of outputs) if (fs.existsSync(f)) { fs.renameSync(f, f + bak); setAside.push(f); }
+      for (const [f] of outputs) { fs.renameSync(f + tmp, f); placed.push(f); }
+      for (const f of setAside) fs.rmSync(f + bak, { force: true });
     } catch (e) {
-      for (const f of [`${stem}.png${tmp}`, `${stem}.excalidraw${tmp}`]) fs.rmSync(f, { force: true });
-      console.error(`Could not write the outputs next to ${stem}: ${e.message}`);
+      for (const f of placed) fs.rmSync(f, { force: true });
+      for (const f of setAside) { try { fs.renameSync(f + bak, f); } catch { /* reported below */ } }
+      for (const [f] of outputs) fs.rmSync(f + tmp, { force: true });
+      const lost = setAside.filter(f => !fs.existsSync(f));
+      console.error(`Could not write the outputs next to ${stem}: ${e.message}` +
+        (lost.length ? `\nThe earlier ${lost.join(' and ')} could not be put back: see ${lost.map(f => f + bak).join(', ')}` : ''));
       process.exit(1);
     }
     for (const w of png.warnings) warnings.push(`renderer: ${w}`);
