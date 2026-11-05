@@ -3,7 +3,7 @@
 Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Then follow each reviewer's checkpoints until every one has reported or been stopped:
 
 - **Its deadline:** 30 minutes after its launch for a paid reviewer, 15 for a free or trial one (each model a free reviewer tries gets its own 15). One still running then is limited (SKILL.md, section 2). Its brief gives a free or trial reviewer 12 minutes and about 20 commands, so it reports before its deadline.
-- **Its pace check,** for a free or trial reviewer only: 5 minutes after its launch, look at its activity (the commands it ran, the files it read, its messages). Activity a few seconds apart is one turn of the model. No turn yet, or turns typically more than a minute apart, means it won't finish in its time: it is limited then. A healthy reviewer takes a turn every few seconds to half a minute; a provider too slow to finish takes a minute or more for each.
+- **Its pace check,** for a free or trial reviewer launched through T3, the one host that shows when each of its steps happened: 5 minutes after its launch, look at its activity (the commands it ran, the files it read, its messages). Activity a few seconds apart is one turn of the model. No turn yet, or turns typically more than a minute apart, means it won't finish in its time: it is limited then. A healthy reviewer takes a turn every few seconds to half a minute; a provider too slow to finish takes a minute or more for each.
 - **Time comes from the launch:** the time left to a checkpoint is launch time + allowance − now, with the launch time read from the host (in T3, the thread's `createdAt` from `t3_thread_read`), never carried from memory.
 - **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; a trial reviewer is dropped, never replaced; a paid one is replaced as SKILL.md, section 2 says.
 
@@ -46,7 +46,7 @@ The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, withou
 
 ## In Claude Code without T3
 
-A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3"). Note each reviewer's launch time. A background command's output is its activity: at a pace check, read what it has printed so far, and stop a limited one by its process ID. A reviewer whose progress you can't read, such as a Claude subagent from the `Agent` tool, gets its deadline only. From the main session:
+A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3"). Here, and in Codex without T3, a free or trial reviewer gets its deadline only, with no pace check: a background command's output and a subagent's progress carry no times to judge its pace by. Note each reviewer's launch time for its deadline. From the main session:
 
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
 - **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
@@ -76,6 +76,5 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
   (or `claude-opus-5-5`), run from the worktree.
 - **Free reviewers and Muse Spark (trial):** the OpenCode command above.
-- **Checkpoints:** `wait_agent` with its timeout set to the time left to the next checkpoint; a background command's output is its activity, as under "In Claude Code without T3".
 
 If a host can't launch a reviewer of the family the level needs, use the next option from SKILL.md, section 2, and record why.
