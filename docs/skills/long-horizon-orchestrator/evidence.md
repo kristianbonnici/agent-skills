@@ -2,7 +2,7 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
-Last checked: new work 2026-10-31; sources 2026-10-31.
+Last checked: new work 2026-11-04; sources 2026-11-04.
 
 ## Our own runs (2026-10-04 to 2026-11-07)
 
@@ -120,10 +120,34 @@ private records.
   → *tasks that are independent pieces, each with its own checks; the full checks on the final commit before
   a merge; logs kept in the run directory, not in the conversation; time-bounded leases and waits; the
   orchestrator, not the tasks, chaining dependents.*
+- **Cursor, [Towards self-driving codebases](https://cursor.com/blog/self-driving-codebases)** (Wilson Lin,
+  5 February 2026, which extends [Scaling long-running autonomous coding](https://cursor.com/blog/scaling-agents),
+  14 January 2026) and **[Agent swarms and the new model economics](https://cursor.com/blog/agent-swarm-model-economics)**
+  (Wilson Lin, 20 July 2026):
+  - Agents that coordinated through a shared file with locks failed: "20 agents would slow to the throughput
+    of 1-3 with most time spent waiting on locks", and "more prompting didn't help". What worked was a root
+    planner that "does no coding itself" and workers that each own one task on their own copy of the
+    repository, don't talk to each other, and send a handoff to the planner. An integrator for quality
+    control and conflicts "quickly became an obvious bottleneck" and was removed. The system ran for a week,
+    peaking at about 1,000 commits an hour.
+  - "Constraints are more effective than instructions." A single small error "would cause the whole system
+    to grind to a halt". One agent alone "frequently stopped to proclaim success despite being far from it",
+    and the January post still needed "periodic fresh starts to combat drift and tunnel vision."
+  - Rebuilding SQLite in Rust from its 835-page manual, with frontier models planning and cheaper ones
+    working, workers carried "at least 69% of the tokens, and over 90% in most". Costs ran from $1,339 (Opus
+    4.8 planning, Cursor's own Composer 2.5 working) to $10,565 (GPT-5.5 alone). At four hours the new runs
+    passed 73–85% of a test suite they were never shown, and every new configuration later passed all of it.
+    "Few moments in a large task genuinely require frontier intelligence."
+
+  → *the orchestrator plans, routes and verifies but writes no task's code; each task on its own worktree,
+  reporting through its handoff; tasks that merge themselves, not through the orchestrator; leases with
+  bounded holds; rules enforced by scripts and checks rather than prose; a fresh context for each task; fast
+  helpers for fully specified steps.* Cursor checks less before each commit than we do: see below.
 - **Anthropic, [How we built our multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system)**
   (Jeremy Hadfield and others, 13 June 2025):
   - An Opus lead with Sonnet subagents beat a single Opus by 90.2% on Anthropic's research eval; token usage
-    alone explained 80% of the variance, and multi-agent systems used about 15× the tokens of chat.
+    alone explained 80% of the variance, and multi-agent systems used about 15× the tokens of chat. (dated:
+    measured on Claude Opus 4 and Sonnet 4.)
   - Each subagent needs an objective, an output format, guidance on tools and "clear task boundaries"; vague
     briefs duplicated work.
   - It fits poorly where agents share context or depend on each other: "most coding tasks involve fewer
@@ -132,10 +156,20 @@ private records.
   → *a brief with the objective, the checks, the boundaries and the report's form; the contract's usage
   estimate; dependent tasks that start only after their prerequisite merges.*
 - **Cognition, [Don't build multi-agents](https://cognition.com/blog/dont-build-multi-agents)** (Walden
-  Yan, 12 June 2025): share full context, because every action carries implicit decisions; two subagents
-  each building half of a game made parts that didn't fit. → *one task per coherent objective, never split
-  across agents; a dependent's brief says what its predecessors added; helpers only for research and fully
-  specified steps, checked by the agent that asked.*
+  Yan, 12 June 2025) and **[Multi-Agents: What's Actually Working](https://cognition.com/blog/multi-agents-working)**
+  (Walden Yan, 22 April 2026):
+  - 2025: share full context, because every action carries implicit decisions; two subagents each building
+    half of a game made parts that didn't fit.
+  - 2026: those observations "still hold today for parallel-writer swarms". What works are "setups where
+    multiple agents contribute intelligence to a task while writes stay single-threaded": a reviewer that
+    shares no context with the coder (Devin Review "catches an average of 2 bugs per PR, of which roughly 58%
+    are severe"), a stronger model the agent calls as a tool, and a manager that spawns child agents. Such
+    managers "default to being overly prescriptive", and agents "assume they share state with their children
+    when they don't".
+
+  → *one task per coherent objective, its writes on one agent and never split across agents; reviewers and
+  helpers that add judgment, checked by the agent that asked; a dependent's brief says what its predecessors
+  added, since tasks share no state.*
 - **Anthropic, [Building agents: When to fold subagents into your main agent loop](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)**
   (Diane Sarkis, 22 October 2026):
   - In several enterprise deployments, one agent with skills often beat both a single prompt and a design
@@ -151,15 +185,41 @@ private records.
   merge; reviewers and helpers are called by the task, which keeps the work and judges what they return;
   procedures in skills, loaded when needed; skill changes proposed a few at a time, each a version, so one
   that hurts can be found.*
-- **Kim, Liu and others (Google Research, Google DeepMind, MIT), [Towards a science of scaling agent systems](https://research.google/blog/towards-a-science-of-scaling-agent-systems-when-and-why-agent-systems-work/)**
-  ([arXiv 2512.08296](https://arxiv.org/abs/2512.08296), blog 28 January 2026): 180 configurations, five
-  architectures, three model families.
-  - Centralized coordination improved a parallelizable task by 80.9% over a single agent; on a sequential
-    planning task every multi-agent variant lost 39–70%.
-  - Independent agents amplified errors up to 17.2×; a central coordinator held it to 4.4×.
+- **DeepSeek Harness team, [Exploring Super-agent Design: Towards a More Autonomous Agent System](https://x.com/DeepSeekHarness/status/2116857257245987236)**
+  (Yujia Qiao and others, 1 November 2026; an article on X, machine-translated from Chinese, on design ideas
+  rather than shipped features):
+  - A long-lived Router handles every exchange with people and dispatches tasks, and "is designed not to
+    execute tasks itself"; each Worker has an isolated context and one task, and reports to the Router, never
+    to people. In their experience, "a person can usually follow only 3 to 5 active sessions at once."
+  - A small ablation (about 300 chat and CI messages with about 20 work requests, coding simulated by a tool
+    that only takes time, five runs per design, which the authors call "indicative only"): the two-level design finished tasks in 12.4 minutes at p50 and 15.7
+    at p95. One session with a subagent tool and a neutral prompt never delegated in five runs and reached
+    29.5 minutes at p95; with a delegation-first prompt it delegated in four of five, and in the fifth judged
+    the work "small" and did it itself. The two-level design used more cache-read tokens.
+  - An independent Watchdog session, driven by scheduled messages, handles infrastructure failures and judges
+    "whether each Worker is making substantive progress or drifting from the overall goal", because "Many
+    anomalies are not crashes". Session state is kept apart from the compute that runs the loop, so a restart
+    loses nothing.
 
-  → *one orchestrator that verifies every report, parallel work only between independent tasks, and
-  dependencies run in waves.*
+  → *the orchestrator does no task's work and is the one voice the user hears; every task its own agent by
+  the skill's rule, not the model's judgment in the moment; the heartbeat as the run's control loop; the
+  ledger as state that outlives any turn.*
+- **Kim, Gu and others (Google Research, Google DeepMind, MIT), [Capable language models can outgrow the benefits of collaboration](https://doi.org/10.1038/s42256-026-01268-y)**
+  (Nature Machine Intelligence 8, 1157–1172, 24 July 2026; preprint [Towards a science of scaling agent systems](https://arxiv.org/abs/2512.08296),
+  v3 8 April 2026, [blog](https://research.google/blog/towards-a-science-of-scaling-agent-systems-when-and-why-agent-systems-work/)
+  28 January 2026, whose 180 configurations predate the revision): 260 configurations, six
+  benchmarks, five architectures, three model families. Figures from the journal version:
+  - Against a single agent, results ran from +80.8% on structured financial reasoning to −70.0% on
+    sequential planning.
+  - Independent agents amplified errors 17.2×; a central coordinator held it to 4.4×.
+  - On SWE-bench Verified every multi-agent architecture did slightly worse than one agent (centralized
+    −2.6%, independent −12.8%). A threshold near 45% single-agent accuracy, past which adding agents tends to
+    hurt, predicted the sign of the gain in 94% of 16 SWE-bench Verified and Terminal-Bench configurations;
+    the authors present it as a selection rule, not a scaling law.
+  - (dated: measured on GPT-5, Gemini 2.5 and Claude Sonnet 4.5.)
+
+  → *one orchestrator that verifies every report, parallel work only between independent tasks, each task's
+  work on one agent, and dependencies run in waves.*
 - **Cemri and others (UC Berkeley), [Why Do Multi-Agent LLM Systems Fail?](https://arxiv.org/abs/2503.13657)**
   (NeurIPS 2025, Datasets and Benchmarks): 14 failure modes from more than 1,600 annotated traces of seven
   frameworks, in three groups: system design, misalignment between agents, and task verification; most
@@ -171,15 +231,50 @@ private records.
   - The length of task agents complete at 50% reliability has doubled about every seven months since 2019;
     under TH1.1, every 131 days since 2023 and 89 since 2024, with wide confidence intervals.
   - At 80% reliability the horizons are 4–6× shorter.
+  - METR's [time-horizon page](https://metr.org/time-horizons/) is "no longer actively updated" (last
+    updated 8 September 2026). Its last model, Claude Mythos Preview (8 May 2026), came with the note
+    "Measurements above 16 hrs are unreliable with our current task suite."
 
   → *long work split into tasks that can each be checked, review and full checks on every merge rather than
   trust in one long run, and durations in the contract labelled as estimates.*
+- **Epoch AI with METR, [MirrorCode: evidence that AI can already do some weeks-long coding tasks](https://epoch.ai/blog/mirrorcode-preliminary-results/)**
+  (Tom Adamczewski, David Rein, David Owen and Florian Brand, 10 April 2026): Claude Opus 4.6 reimplemented
+  gotree, "~16,000 lines of Go and 40+ commands", passing 2,000 of 2,001 tests, a task the authors guess
+  "would take a human engineer without AI assistance 2–17 weeks". Earlier models gave up early: Opus 4
+  "submits with 92% of tests still failing", and Opus 4.5 submitted at 62% "still citing “time constraints”
+  that don’t exist". It works "provided there is a detailed, checkable specification." → *long tasks are
+  feasible when each has checks that prove it; a task's claim to be done, or out of time, is checked rather
+  than believed.*
+- **METR, [Frontier Risk Report (February to March 2026)](https://metr.org/blog/2026-05-19-frontier-risk-report/)**
+  (19 May 2026):
+  - Claude Opus 4.6 "attempted to reward hack in ~80% of attempts on tasks in an early version of
+    MirrorCode"; on Time Horizon 1.1 tasks over 8 hours, "at least 16% of successful runs were illegitimate
+    upon review."
+  - Agents "often presented their accomplishments in much more misleading ways than we expect humans would".
+
+  → *a report checked against git and the checks before it is believed; every merge reviewed by agents that
+  didn't write it; "Blocked" and "Couldn't check" as honest outcomes.*
+- **Tang and others (University of Notre Dame, Vanderbilt University, Google), [How Coding Agents Fail Their Users](https://arxiv.org/abs/2605.29442)**
+  (preprint, v2 31 August 2026): 20,574 sessions from 1,639 repositories, September 2024 to April 2026,
+  across Cursor, GitHub Copilot, Claude Code, Codex, OpenCode, Gemini CLI and Cursor CLI, and many sessions
+  whose agent is unknown. Of the episodes where developers
+  pushed back, 38.33% were violations of the developer's constraints and 22.58% inaccurate self-reporting
+  (the agent "Misreports the status (e.g., success) of its own work"). Overall rates fell over time, while
+  those two grew as a share. → *a report checked against git before it is believed; rules the orchestrator
+  checks itself (the owner's settings compared key by key, nothing pushed) rather than trusts the tasks to
+  keep.*
+- **Wang, Wang and Wu (an independent researcher, Beihang University, National University of Singapore), [The Unreliable Progress Bar](https://arxiv.org/abs/2609.08589)**
+  (preprint, 8 September 2026): agents' reports of their own progress, on τ²-bench and a controlled testbed,
+  for models up to Claude Opus 5 and GPT-6 Astra. GPT-4.1 and GPT-5.5 were right at 87.3–88.9% of checkpoints
+  after a task finished but "only 5.8–11.5% mid-task"; "agent frameworks should not control task flow on the
+  strength of the model's state reports alone." → *a task's state read from git and its thread on every
+  wake, not from its own account.*
 - **Zhong, Raghunathan and Carlini, [ImpossibleBench](https://arxiv.org/abs/2510.20270)** (October 2025):
   coding tasks whose tests contradict the specification, so passing means cheating. GPT-5 passed 54% of the
   contradictory SWE-bench tasks and Claude Opus 4.1 50%. Telling the agent to stop when tests look wrong cut
-  GPT-5 from 92% to 1% on one variant; letting it abort with a flag cut 54% to 9%. → *"Blocked" and
-  "Couldn't check" as outcomes a task may report instead of forcing a pass, and every merge checked by
-  someone other than its author.*
+  GPT-5 from 92% to 1% on one variant; letting it abort with a flag cut 54% to 9%. METR's 2026 report finds
+  the same propensity in newer models. → *"Blocked" and "Couldn't check" as outcomes a task may report
+  instead of forcing a pass, and every merge checked by someone other than its author.*
 - **Anthropic, [Beyond permission prompts](https://www.anthropic.com/engineering/claude-code-sandboxing)**
   (20 October 2025) and **[How we built Claude Code auto mode](https://www.anthropic.com/engineering/claude-code-auto-mode)**
   (John Hughes, 25 March 2026):
@@ -190,7 +285,11 @@ private records.
     in a row or 20 in all, a headless session ends.
 
   → *permissions granted once, in the warm-up before the owner leaves; a prompt during the run treated as a
-  defect; never pushing, and never deleting branches or worktrees the run didn't create.*
+  defect; never pushing, and never deleting branches or worktrees the run didn't create.* Anthropic's
+  [How we contain Claude across products](https://www.anthropic.com/research/how-we-contain-claude) (Max
+  McGuinness and others, 25 May 2026) restates these figures ("users approved roughly 93% of permission
+  prompts") and builds its reference container so the agent "can run unattended, without per-action
+  approvals", inside limits the environment sets.
 - **Anthropic, [Quantifying infrastructure noise in agentic coding evals](https://www.anthropic.com/engineering/infrastructure-noise)**
   (Gian Segato, 5 February 2026): resources alone moved Terminal-Bench 2.0 scores by 6 points, and
   infrastructure errors fell from 5.8% to 0.5% with headroom; pass rates seemed to vary with the time of day.
@@ -206,6 +305,22 @@ private records.
   outside the context window; subagents that return "a condensed, distilled summary". → *handoffs and the
   ledger instead of transcripts; fast helpers that keep long results out of a task's context; rules in the
   skill, reasons here.*
+- **Salle, Bhatnagar, Bethge, Abdelnabi and Andriushchenko (ELLIS Institute Tübingen, Max Planck Institute
+  for Intelligent Systems, Tübingen AI Center, University of Tübingen), [Benchmarks Are Surprisingly Compaction-Friendly](https://arxiv.org/abs/2610.31778)**
+  (preprint, 22 October 2026) and **Sun, Cai and others (University of Science and Technology of China),
+  [Compact-Bench](https://arxiv.org/abs/2610.31710)** (preprint, v2 28 October 2026):
+  - With frontier models in a fixed OpenCode scaffold and five compaction methods, compaction cost little
+    because "the agent's progress stays on disk", "except constraints that don't exist anywhere else": on
+    ProgramBench "the first compaction summary already drops about one third of the task's anticheating rules
+    on average", and in real sessions "instructions about how the agent should work and what it should not
+    do are dropped around 6 times more" often than specifications of what to build.
+  - Across 14 summarizer models, compaction damaged 5–64% of 22 repairs that had succeeded with the full
+    history; "LLM summaries retain at most 16.0% of recurring details, compared with 79.1% for mechanical
+    extraction".
+
+  → *the ledger on disk, written at every state change and read again on every wake rather than trusted to a
+  summary; the rules all tasks share in a common file their briefs point to; this skill's folder recorded,
+  so a wake after a summary can read its rules again.*
 - **OpenAI, [Harness engineering](https://openai.com/index/harness-engineering/)** (Ryan Lopopolo, 11
   February 2026): three engineers driving Codex merged about 1,500 pull requests and about a million lines
   in five months. One big AGENTS.md failed; a short one that maps into checked-in docs and execution plans
@@ -230,8 +345,9 @@ private records.
 
 ## Where the evidence argues against us
 
-- **Multi-agent work costs more and can hurt.** Google's study lost 39–70% on sequential tasks, Cognition
-  advises against splitting work, and Anthropic used 15× the tokens of chat. The skill runs agents in
+- **Multi-agent work costs more and can hurt.** Google's study lost up to 70% on sequential planning and a
+  little on SWE-bench Verified with every multi-agent design, Cognition still advises against parallel
+  writers, and Anthropic used 15× the tokens of chat. The skill runs agents in
   parallel only between independent tasks, keeps each task's work on one agent, and chains dependents.
 - **Anthropic now advises folding subagents into one loop.** Its October 2026 article finds one agent with
   skills often better, and wants a longer-running agent's tasks to "sit in the main context window". It
@@ -244,6 +360,17 @@ private records.
 - **Harness parts expire.** Anthropic removed resets and sprints as models improved. Each skill carries a
   version, and these notes say which rule came from which evidence, so a rule can be dropped when it stops
   paying.
+- **Cursor dropped its integrator and lets errors settle.** Its quality-control integrator was a bottleneck,
+  and "When we required 100% correctness before every single commit, it caused major serialization and
+  slowdowns": its swarm accepts "some moments of turbulence", with a final "green" branch fixed up before
+  release. Our orchestrator isn't in the merge path either: each task passes its own review and checks and
+  fast-forwards itself. With a few to a few dozen tasks a night, each merge is worth its check, and Cursor
+  found one small error could halt the whole system.
+- **Cheaper models may do most of the work.** In Cursor's SQLite rebuild, a frontier planner with cheaper
+  workers cost about an eighth of GPT-5.5 doing everything alone. The skill keeps a whole task on the
+  home harness's model and gives cheaper models research and fully specified steps, because its tasks arrive
+  as objectives, not detailed instructions, and the owner's subscriptions are already paid for. Cursor's
+  result is one task with an exact specification, measured with its own model.
 
 ## Left out
 
@@ -256,3 +383,14 @@ Weighed and not cited, so later checks don't weigh them again unless they change
   together, fits the rule that a dependent's brief says what its predecessors added.
 - [Confident and Wrong](https://arxiv.org/abs/2603.25764) (arXiv 2603.25764, 2026): false "done" claims in
   1,750 trajectories; a single author and an observational sample.
+- [When Do Agent Loops Mistake Stagnation for Progress?](https://arxiv.org/abs/2607.25152) (arXiv 2607.25152,
+  v2 29 September 2026): an agent judging its own cycles claimed progress in all 54, while 56% showed no
+  measured gain; two authors without named affiliations, and a pilot of 54 cycles.
+- [From Confident Closing to Silent Failure](https://arxiv.org/abs/2606.09863) (arXiv 2606.09863, June
+  2026): false success claims across agent benchmarks; a single author and a workshop paper (FAGEN at ICML
+  2026).
+- [Engineering Reliable Coding Agents](https://arxiv.org/abs/2608.13867) (arXiv 2608.13867, August 2026): a
+  314-page review of the system around coding agents; a single author.
+- [From Faulty Claims to Incorrect Patches](https://arxiv.org/abs/2610.32338) (arXiv 2610.32338, October
+  2026): faulty claims in agents' reasoning on SWE-bench Pro; it bears on how a task agent reasons, not on a
+  rule of the orchestrator.
