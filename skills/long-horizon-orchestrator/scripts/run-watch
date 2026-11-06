@@ -20,16 +20,22 @@ below are printed for every task.
 
 Each line starts with a word saying what it is:
 
-  hang <task>      a running task's tool call with no result for over 6 minutes whose processes
-                   are idle (no CPU or GPU in ps's last-minute average and a 2-second sample),
-                   started nothing and wrote nothing for 6 minutes; it names the call, its
-                   process IDs and the kill that stops them
+  hang <task>      a running task's tool call with no result for over 6 minutes whose own
+                   processes (those started with the call, and what they started) used no CPU
+                   over those 6 minutes, are idle now (no CPU or GPU in ps's last-minute average
+                   and a 2-second sample), started nothing and wrote nothing, and hold no network
+                   connection; it names the call, its process IDs and the kill that stops them
+                   (no kill when calls that started together share the processes)
+  idle <task>      the same call idle now, with nothing written or started for 6 minutes, but it
+                   used CPU earlier in that time or holds a network connection: look, don't stop it
+                   yet; the next wake says hang if it stays idle
   approval <task>  a running task's shell call open over 6 minutes with no process for it: an
                    approval prompt, or a hang before the command started
   quiet <task>     a running task whose session log, worktree and run folder haven't changed for
                    20 minutes and whose processes are idle
-  blind <task>     (once per task) a harness whose session log this script can't read: it sees
-                   only that task's processes and files
+  blind <task>     (once per task) a running task whose session log this script can't read (a
+                   harness it doesn't know, or a log it didn't find): it sees only that task's
+                   processes and files
   hog <pid>        a process started since the run began, not the run's, above 80% of a core for
                    10 minutes
   disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB; swap above 20 GB
@@ -57,14 +63,15 @@ What it reads:
 A shell call is one the harness runs a command for: Claude Code's Bash (and a Bash call the
 harness moved to the background when it timed out, until its notification arrives); Codex's
 shell, exec_command or exec. Waits are never a hang: calls that wait on a thread, an agent or a
-task (t3_thread_wait, delegate_task, wait_agent, Agent…), a call whose processes include `lease`
-(queued for a shared resource) or an agent's command line (a reviewer: codex, claude, opencode,
-gemini, agy, copilot), and a call that keeps starting processes (a sleep loop) or writes files.
+task (t3_thread_wait, delegate_task, wait_agent, Agent…), a call whose `lease` still waits for its
+turn (one that holds it and runs a command is judged by that command), a call running an agent's
+command line (a reviewer: codex, claude, opencode, gemini, agy, copilot), and a call that keeps
+starting processes (a sleep loop) or writes files.
 
 It writes only its state file, <run directory>/run-watch.state.json, to compare with its last
 run (CPU samples for the hog check, the disk's recent readings, the times it already printed). It exits 0 (2 for a
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
-RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
+RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
 RUN_WATCH_SWAP_GB and RUN_WATCH_DISK_FREE_GB change its thresholds and inputs.
 """
 
@@ -83,6 +90,7 @@ HOG_MIN = float(os.environ.get("RUN_WATCH_HOG_MINUTES", 10))
 HOG_SHARE = 0.8              # of one core
 IDLE_SHARE = 0.02            # a call's processes below 2% of a core count as using no CPU
 BUSY_SHARE = 0.05            # a task's processes at 5% of a core or more are working
+CALL_START_S = float(os.environ.get("RUN_WATCH_CALL_START_SECONDS", 60))  # a call's own processes start this soon
 SAMPLE_S = float(os.environ.get("RUN_WATCH_SAMPLE_SECONDS", 2))
 DISK_DROP_GB, DISK_DROP_MIN, DISK_LOW_GB, SWAP_GB = 10, 5, 20, 20
 KEEP_SAMPLES_S = 2 * 3600
@@ -540,8 +548,9 @@ def main(argv: list[str]) -> int:
         running = task.get("status", "running") == "running"
         if log:
             sessions[tid] = log
-        elif kind is None and tid not in blind_told:
-            lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): no session log this script reads; "
+        elif tid not in blind_told and task.get("status", "running") == "running":
+            why = "no session log this script reads" if kind is None else "its session log wasn't found (give its session_log in watch.json)"
+            lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
                          "it sees only the task's processes and files, so read its thread for stuck calls")
             blind_told.add(tid)
         calls, reports, logs = {}, [], []
@@ -601,44 +610,89 @@ def main(argv: list[str]) -> int:
     def gpu_moved(pid: int) -> bool:
         return pid in gpu and gpu2.get(pid, 0) > gpu[pid]
 
+    def call_processes(c: dict, tp: set) -> set:
+        """The processes of one call: those of the task started within a minute of the call (the
+        topmost of them), and everything they started since. A process of another call, started
+        earlier or later, isn't counted."""
+        near = {pid for pid in tp if c["start"] - 5 <= procs[pid]["start"] <= c["start"] + CALL_START_S}
+        roots = [pid for pid in near if procs[pid]["ppid"] not in near]
+        return descendants(roots, kids) & set(procs)
+
+    def is_lease(pid: int) -> bool:
+        return exe(procs[pid]) == "lease" or bool(re.search(r"/lease\s+(acquire|run)\b", procs[pid]["args"]))
+
+    def idle_all_window(pid: int) -> bool:
+        """Whether the process used (almost) no CPU over the whole hang window: from an earlier
+        sample at least that old, else from all it used since it started."""
+        p = procs[pid]
+        share = rate_since(samples.get(key(pid, p), []), p["cpu"], t_now, hang_s)
+        if share is None:
+            share = p["cpu"] / max(1.0, t_now - p["start"] - 1)
+        return share < IDLE_SHARE
+
+    def on_network(pids) -> bool:
+        out = run(["lsof", "-a", "-nP", "-iTCP", "-sTCP:ESTABLISHED", "-p", ",".join(map(str, pids))], timeout=15)
+        return len(out.splitlines()) > 1
+
     for tid, f in findings.items() if cwd else []:
         tp = task_procs.get(tid, set())
         hung_or_waiting = False
+        judged = []
         for cid, c in sorted(f["old"], key=lambda x: x[1]["start"]):
             mins = (t_now - c["start"]) / 60
-            mine = sorted(pid for pid in tp if procs[pid]["start"] >= c["start"] - 5)
             if not c["shell"]:
                 if not f["wrote"]:
                     lines.append(f"hang {tid}: {c['tool']} call open {mins:.0f} min (since {hm(c['start'])}), nothing written for "
                                  f"{HANG_MIN:g} min: {short(c['text'])} (no process of its own; read its thread, and interrupt the turn if it is stuck)")
                     hung_or_waiting = True
                 continue
+            mine = call_processes(c, tp)
             if not mine:
                 lines.append(f"approval {tid}: {c['tool']} call open {mins:.0f} min (since {hm(c['start'])}) with no process running for it: "
                              f"{short(c['text'])} (an approval prompt or a hang before it started; read its thread's pending request, "
                              "interrupt the turn and tell the task how to finish without it)")
                 hung_or_waiting = True
                 continue
-            if any(exe(procs[pid]) == "lease" or re.search(r"/lease\s+(acquire|run)\b", procs[pid]["args"])
-                   or agent_cli(procs[pid]) for pid in mine):
-                hung_or_waiting = True     # queued for a lease, or a reviewer: a wait with its own limit
+            # A lease still waiting for its turn, or a reviewer's command line, is a wait with its own
+            # limit. A lease that holds its turn and runs a command is judged by that command.
+            leases = [pid for pid in mine if is_lease(pid)]
+            waiting = [pid for pid in leases if not [k for k in kids.get(pid, []) if k in procs
+                                                     and "grace, ends, margin" not in procs[k]["args"]]]
+            if waiting or any(agent_cli(procs[pid]) for pid in mine):
+                hung_or_waiting = True
                 continue
-            later = descendants([pid for pid in mine if pid in procs2], kids2)
-            if any(t_now - procs[pid]["start"] < hang_s for pid in mine) or \
+            work = {pid for pid in mine if not is_lease(pid) and "grace, ends, margin" not in procs[pid]["args"]}
+            later = descendants([pid for pid in work if pid in procs2], kids2)
+            if any(t_now - procs[pid]["start"] < hang_s for pid in work) or \
                     any(t_now - procs2[pid]["start"] < hang_s for pid in later if pid in procs2):
                 continue                    # it keeps starting processes: a loop that is working
             if f["wrote"]:
                 continue                    # something was written
-            if sum(recent_cpu(pid) for pid in mine) >= IDLE_SHARE or any(gpu_moved(pid) for pid in mine):
+            if sum(recent_cpu(pid) for pid in work) >= IDLE_SHARE or any(gpu_moved(pid) for pid in work):
                 continue
-            alive = [pid for pid in mine if pid in procs2]
-            if not alive:
-                continue
-            top = [pid for pid in alive if procs[pid]["ppid"] not in alive]
-            lines.append(f"hang {tid}: {c['tool']} call open {mins:.0f} min (since {hm(c['start'])}), its processes used no CPU and wrote "
-                         f"nothing for {HANG_MIN:g} min: {short(c['text'])}; pids {' '.join(map(str, alive))} "
-                         f"({short(', '.join(exe(procs[p]) for p in alive), 60)}); stop with: kill {' '.join(map(str, top))} "
-                         "(check each with ps -p <pid> -o command= first), then tell the task")
+            alive = sorted(pid for pid in work if pid in procs2)
+            if alive:
+                judged.append((c, alive, mins))
+        claimed = {}
+        for c, alive, _ in judged:
+            for pid in alive:
+                claimed[pid] = claimed.get(pid, 0) + 1
+        for c, alive, mins in judged:
+            names = short(", ".join(exe(procs[p]) for p in alive), 60)
+            head = (f"{c['tool']} call open {mins:.0f} min (since {hm(c['start'])}): {short(c['text'])}; "
+                    f"pids {' '.join(map(str, alive))} ({names})")
+            network = on_network(alive)
+            if network or not all(idle_all_window(pid) for pid in alive):
+                why = "it holds a network connection" if network else "it used CPU earlier in that time"
+                lines.append(f"idle {tid}: {head}: idle now and nothing written or started for {HANG_MIN:g} min, but {why}: "
+                             "look at the call and its thread; don't stop it yet (a later wake says hang if it stays idle)")
+            elif any(claimed[pid] > 1 for pid in alive):
+                lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min, but calls that started "
+                             "together share these processes: find which is stuck (ps -p <pid> -o command=) before you stop it, then tell the task")
+            else:
+                top = [pid for pid in alive if procs[pid]["ppid"] not in alive]
+                lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min; "
+                             f"stop with: kill {' '.join(map(str, top))} (check each with ps -p <pid> -o command= first), then tell the task")
             hung_or_waiting = True
         if f["quiet"] and not hung_or_waiting:
             busy = sum(recent_cpu(pid) for pid in tp) >= BUSY_SHARE or any(gpu_moved(pid) for pid in tp)

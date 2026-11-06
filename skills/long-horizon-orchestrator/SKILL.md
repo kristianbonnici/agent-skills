@@ -132,7 +132,8 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
 1. **Re-read the ledger.** Your context may have been summarized since the last wake.
 2. **Find out what changed and verify it at the source.**
    - Run `<skill folder>/scripts/run-watch <run directory>` first (a few seconds; files and processes only) and act on each line it prints. Nothing printed means nothing to act on.
-     - `hang`: a running task's tool call with no result for over 6 minutes whose processes used no CPU and wrote nothing meanwhile. Stop what hangs by the process IDs it names (check each with `ps -p <pid> -o command=` first), and tell the task what hung and how to avoid it.
+     - `hang`: a running task's tool call with no result for over 6 minutes whose own processes used no CPU, started nothing and wrote nothing meanwhile. Stop what hangs by the process IDs it names (check each with `ps -p <pid> -o command=` first), and tell the task what hung and how to avoid it. When it names no kill, calls that started together share the processes: find which one is stuck first.
+     - `idle`: the same, except the call used CPU earlier in those 6 minutes or holds a network connection, so it may still be working. Look at the call and its thread, and don't stop it yet: a later wake says `hang` if it stays idle.
      - `approval`: a shell call with no process running for it, which is an approval prompt (or a hang before the command started). Clear it as the next bullet says.
      - `quiet`: a running task whose session log, worktree and run folder haven't changed for 20 minutes. Read its thread: it may be waiting on reviewers, stuck, or done without reporting.
      - `hog`: a process started since the run began, not the run's, above 80% of a core for 10 minutes (such as a system service a task's tests set off). Don't stop it. Find what drives it, tell the tasks, and note it.

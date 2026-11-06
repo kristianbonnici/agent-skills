@@ -17,7 +17,7 @@ Codex subagents share your working directory. Parallel writing tasks would colli
 git worktree add "<repo parent>/<repo>-worktrees/<task branch>" -b <task branch> <integration branch, or under "leave on branch" the predecessor's branch for a stacked task>
 ```
 
-Put that path in the brief's constraints: "Work only in `<path>`; run every command there." Add the task to `watch.json` with that worktree and `"harness": "codex"` (SKILL.md, "Launch the ready tasks"); `run-watch` finds its rollout in `~/.codex/sessions` by the worktree.
+Put that path in the brief's constraints: "Work only in `<path>`; run every command there." Add the task to `watch.json` with that worktree and `"harness": "codex"` (SKILL.md, "Launch the ready tasks"). A subagent works in your session's folder, so its rollout in `~/.codex/sessions` may not name the worktree: when you can tell which rollout is the subagent's (one named with the agent ID `spawn_agent` returned), set it as `session_log`. Otherwise `run-watch` says once that it can't read that task's calls (`blind`), and you keep reading its messages.
 
 You created these worktrees, so you remove them. Once a merge is verified, call `close_agent` on its subagent, then remove the worktree and branch as [integration.md](integration.md) describes.
 
