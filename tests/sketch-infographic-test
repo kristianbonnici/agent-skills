@@ -263,6 +263,8 @@ cat >"$work/edges.json" <<'JSON'
 { "title": "", "format": "fit", "frame": false, "panels": [ { "id": "e", "span": 2, "elements": [
   { "type": "chart", "id": "z", "x": 0, "y": 0, "width": 600, "height": 300,
     "xAxis": { "min": 0, "max": 10 }, "series": [ { "label": "flat", "points": [[0, 0], [10, 0]] }, { "label": "late", "points": [[5, 0], [10, 0]] } ] },
+  { "type": "chart", "id": "neg", "x": 0, "y": 360, "width": 600, "height": 300, "labels": "none",
+    "series": [ { "points": [[0, -10], [1, -5]] } ] },
   { "type": "chart", "kind": "bar", "id": "b", "x": 700, "y": 0, "width": 500,
     "bars": [ { "label": "none", "value": 0 }, { "label": "all", "value": 10 } ] }
 ] } ] }
@@ -275,6 +277,8 @@ assert "e.z.s0" in els and "e.z.s1" in els, "an all-zero series should still be 
 late, label = els["e.z.s1"], els["e.z.label1"]
 assert 0 < late["x"] - (label["x"] + label["width"]) < 20, "a start label should sit just left of its series' first point"
 assert "e.b.b0" not in els and "e.b.b1" in els, "a zero bar should draw no bar"
+n, top = els["e.neg.s0"], els["e.neg.yaxis"]["y"] + 6
+assert abs(n["y"] + n["points"][-1][1] - top) < 0.5, "the largest value of an all-negative series should sit at the top"
 PY
 
 cat >"$work/badchart.json" <<'JSON'

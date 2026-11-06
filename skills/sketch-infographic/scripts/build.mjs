@@ -272,9 +272,10 @@ function lineChart(el, id, g, common, pid, warnings) {
   const pts = series.flatMap(s => s.points);
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const xmin = X.min ?? Math.min(...xs), xmax = X.max ?? Math.max(...xs);
-  // The y axis takes in 0 by default; data that is all one value still gets a range.
+  // The y axis starts at 0 unless a value is negative, and ends at the largest
+  // value; data that is all one value still gets a range.
   const ymin = Y.min ?? Math.min(0, ...ys);
-  let ymax = Y.max ?? Math.max(0, ...ys);
+  let ymax = Y.max ?? Math.max(...ys);
   if (Y.max === undefined && ymax === ymin) ymax = ymin + 1;
   if (!(xmax > xmin) || !(ymax > ymin)) {
     warnings.push(`${pid}: chart "${el.id ?? 'no id'}": an axis has no range (min must be below max)`);
