@@ -37,6 +37,7 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 - Use `scripts/bootstrap` to create or repair links and `scripts/uninstall` to remove them.
 - Per-owner skill state lives in the owner's private `agent-skills-state` repository (next to this one, or `AGENT_SKILLS_STATE`); bootstrap links its `<skill>/<file>` entries into `${XDG_STATE_HOME:-~/.local/state}/agent-skills/`. Never copy its contents into this public repository.
 - Full-directory links are preferred. Use `adapter` mode only for hosts that cannot discover a symlinked skill directory.
+- When a skill is renamed or removed, replace each of its `link` rows with a `retired` row for the old path: bootstrap and uninstall then remove a link an earlier version installed, and doctor fails while one is left. Keep retired rows at least until every computer has run bootstrap since.
 - Never expose `skills/product-design` through `~/.agents/skills` or `~/.codex/skills`. It is an OpenCode/Factory/Antigravity compatibility implementation; Codex must use the official Product Design plugin.
 - After changing links or skill metadata, restart the target app or open a new conversation so skills are reindexed.
 

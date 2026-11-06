@@ -52,7 +52,7 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
   source_path="$repo_root/$source"
   target_path=$(expand_target "$target")
   case "$mode" in
-    link) remove_link "$source_path" "$target_path" ;;
+    link|retired) remove_link "$source_path" "$target_path" ;;
     adapter)
       adapter_source=$source_path
       adapter_target=$target_path

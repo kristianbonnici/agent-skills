@@ -45,6 +45,13 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
   target_path=$(expand_target "$target")
   case "$mode" in
     link) check_link "$source_path" "$target_path" ;;
+    retired)
+      if [ -L "$target_path" ] && [ "$(readlink "$target_path")" = "$source_path" ]; then
+        fail "$target_path is a retired link still installed: run scripts/bootstrap"
+      else
+        pass "retired $target_path not installed"
+      fi
+      ;;
     adapter)
       adapter_source=$source_path
       adapter_target=$target_path

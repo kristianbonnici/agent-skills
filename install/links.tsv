@@ -30,3 +30,6 @@ claude	link	skills/disk-cleanup	~/.claude/skills/disk-cleanup
 codex	link	skills/excalidraw-drawing	~/.agents/skills/excalidraw-drawing
 codex	link	skills/excalidraw-drawing	~/.codex/skills/excalidraw-drawing
 claude	link	skills/excalidraw-drawing	~/.claude/skills/excalidraw-drawing
+codex	retired	skills/sketch-infographic	~/.agents/skills/sketch-infographic
+codex	retired	skills/sketch-infographic	~/.codex/skills/sketch-infographic
+claude	retired	skills/sketch-infographic	~/.claude/skills/sketch-infographic

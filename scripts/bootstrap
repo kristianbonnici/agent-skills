@@ -96,6 +96,19 @@ adapter_one() {
   done
 }
 
+# A retired row names a link an earlier version installed (a renamed or removed skill): it is
+# removed when it still points at this repository, and anything else at that path is kept.
+retire_one() {
+  retire_source=$1
+  retire_target=$2
+  if [ -L "$retire_target" ] && [ "$(readlink "$retire_target")" = "$retire_source" ]; then
+    run rm "$retire_target"
+    echo "REMOVED retired link $retire_target"
+  elif [ -e "$retire_target" ] || [ -L "$retire_target" ]; then
+    echo "KEEP $retire_target: not the retired link this repository installed" >&2
+  fi
+}
+
 selected_product_design=0
 selected_excalidraw_drawing=0
 if [ "$install_links" -eq 1 ]; then
@@ -104,6 +117,7 @@ if [ "$install_links" -eq 1 ]; then
     [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
     source_path="$repo_root/$source"
     target_path=$(expand_target "$target")
+    if [ "$mode" = retired ]; then retire_one "$source_path" "$target_path"; continue; fi
     [ -e "$source_path" ] || { echo "Missing source: $source_path" >&2; exit 1; }
     case "$mode" in
       link) link_one "$source_path" "$target_path" ;;

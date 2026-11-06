@@ -16,8 +16,26 @@ export XDG_STATE_HOME="$test_home/.local/state"
 # Doctor asks npm for newer releases of the pinned runtimes; the test does that with a stand-in npm.
 export AGENT_SKILLS_NO_UPDATE_CHECK=1
 
-HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
-HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null
+# An upgrade from a release that installed sketch-infographic (renamed excalidraw-drawing in 2.0.0):
+# this repository's old links are retired; a path someone else put there is kept.
+mkdir -p "$test_home/.claude/skills" "$test_home/.agents/skills" "$test_home/.codex/skills"
+ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
+ln -s "$repo_root/skills/sketch-infographic" "$test_home/.agents/skills/sketch-infographic"
+ln -s "$test_home/elsewhere/sketch-infographic" "$test_home/.codex/skills/sketch-infographic"
+HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-retired.out" 2>&1 || true
+grep -q "sketch-infographic is a retired link still installed" "$test_home/doctor-retired.out"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >/dev/null 2>&1
+test -L "$test_home/.claude/skills/sketch-infographic"
+
+HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/bootstrap.out" 2>&1
+HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+test ! -L "$test_home/.claude/skills/sketch-infographic"
+test ! -L "$test_home/.agents/skills/sketch-infographic"
+test "$(readlink "$test_home/.codex/skills/sketch-infographic")" = "$test_home/elsewhere/sketch-infographic"
+grep -q "KEEP $test_home/.codex/skills/sketch-infographic" "$test_home/bootstrap.out"
+HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-retired.out" 2>&1 || true
+grep -q "PASS retired $test_home/.claude/skills/sketch-infographic not installed" "$test_home/doctor-retired.out"
+rm "$test_home/.codex/skills/sketch-infographic"
 
 test -L "$test_home/.config/opencode/skills/product-design"
 test -L "$test_home/.config/opencode/commands/product-design.md"
@@ -82,7 +100,10 @@ AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_ro
 grep -q "mcp-excalidraw-server 2.1.2 is newer than npm's latest release, 2.1.2-rc.1" "$test_home/doctor-pre.out"
 fi
 
+# Uninstall removes a retired link that is still there too.
+ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
+test ! -L "$test_home/.claude/skills/sketch-infographic"
 test ! -e "$test_home/.config/opencode/skills/product-design"
 test ! -e "$test_home/.factory/skills/product-design"
 test ! -e "$test_home/.gemini/config/skills/product-design"
