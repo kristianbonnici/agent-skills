@@ -92,7 +92,7 @@ A `chart` places every point and bar from the numbers you give it, so nothing is
 | `series` | `[{ "label", "color", "points": [[x, y], ...] }]`, two or more points each. Per series: `curve`, `markers`, `strokeStyle` (`dashed` for a forecast), `strokeWidth` |
 | `xAxis`, `yAxis` | `{ "label", "min", "max", "ticks" }`. `min`/`max` default to the data (y from 0 when no value is negative). `ticks` are values, or `[value, "text"]` pairs such as `[1, "Jan"]` |
 | `labels` | Where each series is named: `start` (left of the y axis, the default without y ticks), `end` (after the last point, the default with them) or `none`. Names too close together are pushed apart |
-| `curve` | Smooth curves through the points; default `true`. Use `false` for measurements |
+| `curve` | Smooth curves through the points: the default without y ticks (a sketched trend). With y ticks the points are measurements and the default is straight segments, since a curve can bulge past them |
 | `markers` | A dot on every point |
 | `grid` | Faint dashed lines at the y ticks |
 | `fontSize` | Labels, default 18; tick numbers are 2 px smaller |

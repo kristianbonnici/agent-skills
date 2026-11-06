@@ -333,7 +333,9 @@ function lineChart(el, id, g, common, pid, warnings) {
     out.push({ ...common, id: `${id}.s${i}`, type: 'line', x: P[0][0], y: P[0][1],
       points: P.map(([a, b]) => [a - P[0][0], b - P[0][1]]), strokeColor: color,
       strokeWidth: s.strokeWidth ?? el.strokeWidth ?? 2, strokeStyle: s.strokeStyle ?? 'solid',
-      roundness: (s.curve ?? el.curve ?? true) ? { type: 2 } : null, groupIds: g });
+      // Smooth curves suit a sketched trend; with y ticks the points are
+      // measurements, and a curve could bulge past them, so lines are straight.
+      roundness: (s.curve ?? el.curve ?? !yt.length) ? { type: 2 } : null, groupIds: g });
     if (s.markers ?? el.markers) P.forEach(([a, b], k) => out.push({ ...common, id: `${id}.s${i}.m${k}`, type: 'ellipse',
       x: a - 5, y: b - 5, width: 10, height: 10, strokeColor: color, backgroundColor: color, strokeWidth: 1, groupIds: g }));
     if (side === 'none' || !s.label) return;
@@ -349,6 +351,9 @@ function lineChart(el, id, g, common, pid, warnings) {
     unstack(group);
     for (const l of group) text(`label${l.i}`, l.x, l.y, l.text, fs, l.color);
   }
+  // Names pushed apart may end below the footprint: the box must hold them, for arrows routed to it.
+  const bottom = Math.max(...out.filter(e => e.type === 'text').map(t => t.y + t.height));
+  if (bottom > y0 + H) box.h = bottom - y0;
   return { out, box };
 }
 

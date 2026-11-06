@@ -29,11 +29,11 @@ Several of these on one topic is an infographic page, not one diagram: plan it a
 
 ## Line chart: "how it changed", with real numbers
 
-Use the `chart` element ([spec.md](spec.md)) and give it the numbers: it scales every point, so none is placed by hand. With real numbers, show ticks and a grid, mark the points (`"markers": true`) and draw straight segments (`"curve": false`), since a smooth curve between measurements suggests values nobody measured. Start the y axis at 0 unless the source's own chart doesn't. With y ticks, each series is named at its last point.
+Use the `chart` element ([spec.md](spec.md)) and give it the numbers: it scales every point, so none is placed by hand. With real numbers, show ticks and a grid, and mark the points (`"markers": true`). With y ticks the segments are straight, since a smooth curve between measurements suggests values nobody measured. Start the y axis at 0 unless the source's own chart doesn't. With y ticks, each series is named at its last point.
 
 ```json
 [
-  { "type": "chart", "id": "users", "x": 0, "y": 0, "width": 900, "height": 420, "xAxis": { "label": "week", "min": 1, "max": 8, "ticks": [1, 2, 3, 4, 5, 6, 7, 8]}, "yAxis": { "label": "active users (thousands)", "min": 0, "max": 12, "ticks": [0, 4, 8, 12]}, "grid": true, "markers": true, "curve": false, "series": [{ "label": "web", "color": "blue", "points": [[1, 3], [2, 3.5], [3, 4.2], [4, 5], [5, 5.4], [6, 6.8], [7, 7.5], [8, 8.1]]}, { "label": "mobile", "color": "orange", "points": [[1, 1], [2, 1.6], [3, 2.9], [4, 4.4], [5, 6], [6, 7.9], [7, 9.6], [8, 11.2]]}]}
+  { "type": "chart", "id": "users", "x": 0, "y": 0, "width": 900, "height": 420, "xAxis": { "label": "week", "min": 1, "max": 8, "ticks": [1, 2, 3, 4, 5, 6, 7, 8]}, "yAxis": { "label": "active users (thousands)", "min": 0, "max": 12, "ticks": [0, 4, 8, 12]}, "grid": true, "markers": true, "series": [{ "label": "web", "color": "blue", "points": [[1, 3], [2, 3.5], [3, 4.2], [4, 5], [5, 5.4], [6, 6.8], [7, 7.5], [8, 8.1]]}, { "label": "mobile", "color": "orange", "points": [[1, 1], [2, 1.6], [3, 2.9], [4, 4.4], [5, 6], [6, 7.9], [7, 9.6], [8, 11.2]]}] }
 ]
 ```
 
@@ -43,7 +43,7 @@ The same element without ticks: a shape, not measurements. Curves are on by defa
 
 ```json
 [
-  { "type": "chart", "id": "trend", "x": 0, "y": 0, "width": 900, "height": 420, "xAxis": { "label": "Time", "min": 0, "max": 10}, "yAxis": { "label": "Cost", "min": 0, "max": 10}, "series": [{ "label": "Old way", "color": "gray", "points": [[0, 2], [3, 3], [6, 5.5], [8, 7.8], [10, 9.5]]}, { "label": "New way", "color": "green", "points": [[0, 6], [2, 5.6], [4, 4.2], [7, 3.4], [10, 3]]}]}
+  { "type": "chart", "id": "trend", "x": 0, "y": 0, "width": 900, "height": 420, "xAxis": { "label": "Time", "min": 0, "max": 10}, "yAxis": { "label": "Cost", "min": 0, "max": 10}, "series": [{ "label": "Old way", "color": "gray", "points": [[0, 2], [3, 3], [6, 5.5], [8, 7.8], [10, 9.5]]}, { "label": "New way", "color": "green", "points": [[0, 6], [2, 5.6], [4, 4.2], [7, 3.4], [10, 3]]}] }
 ]
 ```
 
@@ -53,7 +53,7 @@ The same element without ticks: a shape, not measurements. Curves are on by defa
 
 ```json
 [
-  { "type": "chart", "kind": "bar", "id": "speed", "x": 0, "y": 0, "width": 700, "unit": "minutes per task", "bars": [{ "label": "New way", "value": 12, "color": "blue" }, { "label": "Old way", "value": 27.5, "color": "gray" }]}
+  { "type": "chart", "kind": "bar", "id": "speed", "x": 0, "y": 0, "width": 700, "unit": "minutes per task", "bars": [{ "label": "New way", "value": 12, "color": "blue" }, { "label": "Old way", "value": 27.5, "color": "gray" }] }
 ]
 ```
 
@@ -92,7 +92,7 @@ A large tinted rectangle drawn first, its name as a text in its top-left corner,
   { "type": "rectangle", "id": "svc", "x": 560, "y": 90, "width": 220, "height": 64, "color": "purple", "label": "Model service" },
   { "type": "rectangle", "id": "db", "x": 595, "y": 224, "width": 150, "height": 66, "color": "cyan", "label": "Database", "group": "db" },
   { "type": "ellipse", "id": "dbtop", "x": 595, "y": 212, "width": 150, "height": 26, "color": "cyan", "group": "db" },
-  { "type": "rectangle", "id": "note", "x": 930, "y": 80, "width": 300, "height": 84, "color": "yellow", "sharp": true, "label": { "text": "Only the API is reachable from outside.", "align": "left" }},
+  { "type": "rectangle", "id": "note", "x": 930, "y": 80, "width": 300, "height": 84, "color": "yellow", "sharp": true, "label": { "text": "Only the API is reachable from outside.", "align": "left" } },
   { "type": "arrow", "start": "user", "end": "api" },
   { "type": "arrow", "start": "api", "end": "svc" },
   { "type": "arrow", "start": "svc", "end": "db" },
@@ -109,14 +109,14 @@ Actors in boxes along the top, a dashed lifeline under each, and a narrow bar on
   { "type": "rectangle", "id": "hb", "x": 0, "y": 0, "width": 160, "height": 50, "color": "white", "label": "Browser" },
   { "type": "rectangle", "id": "hs", "x": 400, "y": 0, "width": 160, "height": 50, "color": "blue", "backgroundColor": "#e7f5ff", "label": "Server" },
   { "type": "rectangle", "id": "hd", "x": 800, "y": 0, "width": 160, "height": 50, "color": "cyan", "backgroundColor": "#e3fafc", "label": "Database" },
-  { "type": "line", "x": 80, "y": 58, "points": [[0, 0], [0, 390]], "strokeColor": "#74c0fc", "strokeStyle": "dashed", "strokeWidth": 1},
-  { "type": "line", "x": 480, "y": 58, "points": [[0, 0], [0, 390]], "strokeColor": "#74c0fc", "strokeStyle": "dashed", "strokeWidth": 1},
-  { "type": "line", "x": 880, "y": 58, "points": [[0, 0], [0, 390]], "strokeColor": "#74c0fc", "strokeStyle": "dashed", "strokeWidth": 1},
-  { "type": "rectangle", "id": "sbar", "x": 472, "y": 110, "width": 16, "height": 270, "color": "blue", "backgroundColor": "#1971c2", "sharp": true, "roughness": 0},
-  { "type": "rectangle", "id": "dbar", "x": 872, "y": 170, "width": 16, "height": 70, "color": "cyan", "backgroundColor": "#0c8599", "sharp": true, "roughness": 0},
-  { "type": "arrow", "x": 90, "y": 110, "points": [[0, 0], [382, 0]], "roughness": 0},
+  { "type": "line", "x": 80, "y": 58, "points": [[0, 0], [0, 390]], "strokeColor": "#74c0fc", "strokeStyle": "dashed", "strokeWidth": 1 },
+  { "type": "line", "x": 480, "y": 58, "points": [[0, 0], [0, 390]], "strokeColor": "#74c0fc", "strokeStyle": "dashed", "strokeWidth": 1 },
+  { "type": "line", "x": 880, "y": 58, "points": [[0, 0], [0, 390]], "strokeColor": "#74c0fc", "strokeStyle": "dashed", "strokeWidth": 1 },
+  { "type": "rectangle", "id": "sbar", "x": 472, "y": 110, "width": 16, "height": 270, "color": "blue", "backgroundColor": "#1971c2", "sharp": true, "roughness": 0 },
+  { "type": "rectangle", "id": "dbar", "x": 872, "y": 170, "width": 16, "height": 70, "color": "cyan", "backgroundColor": "#0c8599", "sharp": true, "roughness": 0 },
+  { "type": "arrow", "x": 90, "y": 110, "points": [[0, 0], [382, 0]], "roughness": 0 },
   { "type": "text", "x": 281, "y": 82, "align": "center", "text": "GET /order" },
-  { "type": "arrow", "x": 488, "y": 170, "points": [[0, 0], [384, 0]], "roughness": 0},
+  { "type": "arrow", "x": 488, "y": 170, "points": [[0, 0], [384, 0]], "roughness": 0 },
   { "type": "text", "x": 680, "y": 142, "align": "center", "text": "query" },
   { "type": "arrow", "x": 872, "y": 240, "points": [[0, 0], [-384, 0]], "roughness": 0, "strokeStyle": "dashed" },
   { "type": "text", "x": 680, "y": 212, "align": "center", "text": "rows" },
@@ -182,10 +182,10 @@ Ellipses around a circle, joined by curved arrows (`"curve": true` with three po
   { "type": "ellipse", "id": "build", "x": 580, "y": 168, "width": 160, "height": 64, "color": "purple", "label": "Build" },
   { "type": "ellipse", "id": "ship", "x": 320, "y": 336, "width": 160, "height": 64, "color": "green", "label": "Ship" },
   { "type": "ellipse", "id": "learn", "x": 60, "y": 168, "width": 160, "height": 64, "color": "orange", "label": "Learn" },
-  { "type": "arrow", "curve": true, "x": 472, "y": 44, "points": [[0, 0], [118, 22], [180, 116]]},
-  { "type": "arrow", "curve": true, "x": 652, "y": 240, "points": [[0, 0], [-52, 96], [-172, 116]]},
-  { "type": "arrow", "curve": true, "x": 328, "y": 356, "points": [[0, 0], [-118, -22], [-180, -116]]},
-  { "type": "arrow", "curve": true, "x": 148, "y": 160, "points": [[0, 0], [52, -96], [172, -116]]},
+  { "type": "arrow", "curve": true, "x": 472, "y": 44, "points": [[0, 0], [118, 22], [180, 116]] },
+  { "type": "arrow", "curve": true, "x": 652, "y": 240, "points": [[0, 0], [-52, 96], [-172, 116]] },
+  { "type": "arrow", "curve": true, "x": 328, "y": 356, "points": [[0, 0], [-118, -22], [-180, -116]] },
+  { "type": "arrow", "curve": true, "x": 148, "y": 160, "points": [[0, 0], [52, -96], [172, -116]] },
   { "type": "text", "x": 400, "y": 188, "align": "center", "color": "#495057", "text": "every two weeks" }
 ]
 ```
@@ -204,19 +204,19 @@ The root on top, children in a row under it. Draw the branches as a short stem, 
   { "type": "rectangle", "id": "w2", "x": 220, "y": 260, "width": 180, "height": 52, "color": "gray", "label": "Search" },
   { "type": "rectangle", "id": "a1", "x": 840, "y": 260, "width": 180, "height": 52, "color": "gray", "label": "Public" },
   { "type": "rectangle", "id": "a2", "x": 1060, "y": 260, "width": 180, "height": 52, "color": "gray", "label": "Internal" },
-  { "type": "line", "x": 620, "y": 56, "points": [[0, 0], [0, 37]]},
-  { "type": "line", "x": 220, "y": 93, "points": [[0, 0], [800, 0]]},
-  { "type": "arrow", "x": 220, "y": 93, "points": [[0, 0], [0, 31]]},
-  { "type": "arrow", "x": 620, "y": 93, "points": [[0, 0], [0, 31]]},
-  { "type": "arrow", "x": 1020, "y": 93, "points": [[0, 0], [0, 31]]},
-  { "type": "line", "x": 220, "y": 186, "points": [[0, 0], [0, 37]]},
-  { "type": "line", "x": 90, "y": 223, "points": [[0, 0], [220, 0]]},
-  { "type": "arrow", "x": 90, "y": 223, "points": [[0, 0], [0, 31]]},
-  { "type": "arrow", "x": 310, "y": 223, "points": [[0, 0], [0, 31]]},
-  { "type": "line", "x": 1020, "y": 186, "points": [[0, 0], [0, 37]]},
-  { "type": "line", "x": 930, "y": 223, "points": [[0, 0], [220, 0]]},
-  { "type": "arrow", "x": 930, "y": 223, "points": [[0, 0], [0, 31]]},
-  { "type": "arrow", "x": 1150, "y": 223, "points": [[0, 0], [0, 31]]}
+  { "type": "line", "x": 620, "y": 56, "points": [[0, 0], [0, 37]] },
+  { "type": "line", "x": 220, "y": 93, "points": [[0, 0], [800, 0]] },
+  { "type": "arrow", "x": 220, "y": 93, "points": [[0, 0], [0, 31]] },
+  { "type": "arrow", "x": 620, "y": 93, "points": [[0, 0], [0, 31]] },
+  { "type": "arrow", "x": 1020, "y": 93, "points": [[0, 0], [0, 31]] },
+  { "type": "line", "x": 220, "y": 186, "points": [[0, 0], [0, 37]] },
+  { "type": "line", "x": 90, "y": 223, "points": [[0, 0], [220, 0]] },
+  { "type": "arrow", "x": 90, "y": 223, "points": [[0, 0], [0, 31]] },
+  { "type": "arrow", "x": 310, "y": 223, "points": [[0, 0], [0, 31]] },
+  { "type": "line", "x": 1020, "y": 186, "points": [[0, 0], [0, 37]] },
+  { "type": "line", "x": 930, "y": 223, "points": [[0, 0], [220, 0]] },
+  { "type": "arrow", "x": 930, "y": 223, "points": [[0, 0], [0, 31]] },
+  { "type": "arrow", "x": 1150, "y": 223, "points": [[0, 0], [0, 31]] }
 ]
 ```
 
@@ -226,24 +226,24 @@ Sharp rectangles edge to edge: a colored header row, a left column of criteria w
 
 ```json
 [
-  { "type": "rectangle", "id": "h0", "x": 0, "y": 0, "width": 300, "height": 52, "color": "gray", "sharp": true},
+  { "type": "rectangle", "id": "h0", "x": 0, "y": 0, "width": 300, "height": 52, "color": "gray", "sharp": true },
   { "type": "rectangle", "id": "h300", "x": 300, "y": 0, "width": 220, "height": 52, "color": "blue", "sharp": true, "label": "Option A" },
   { "type": "rectangle", "id": "h520", "x": 520, "y": 0, "width": 220, "height": 52, "color": "purple", "sharp": true, "label": "Option B" },
-  { "type": "rectangle", "id": "r0", "x": 0, "y": 52, "width": 300, "height": 52, "color": "white", "sharp": true, "label": { "text": "Answers right away", "align": "left" }},
-  { "type": "rectangle", "id": "a0", "x": 300, "y": 52, "width": 220, "height": 52, "color": "white", "sharp": true},
-  { "type": "rectangle", "id": "b0", "x": 520, "y": 52, "width": 220, "height": 52, "color": "white", "sharp": true},
-  { "type": "rectangle", "id": "r1", "x": 0, "y": 104, "width": 300, "height": 52, "color": "white", "sharp": true, "label": { "text": "Handles long work", "align": "left" }},
-  { "type": "rectangle", "id": "a1", "x": 300, "y": 104, "width": 220, "height": 52, "color": "white", "sharp": true},
-  { "type": "rectangle", "id": "b1", "x": 520, "y": 104, "width": 220, "height": 52, "color": "white", "sharp": true},
-  { "type": "rectangle", "id": "r2", "x": 0, "y": 156, "width": 300, "height": 52, "color": "white", "sharp": true, "label": { "text": "Extra setup", "align": "left" }},
-  { "type": "rectangle", "id": "a2", "x": 300, "y": 156, "width": 220, "height": 52, "color": "white", "sharp": true},
-  { "type": "rectangle", "id": "b2", "x": 520, "y": 156, "width": 220, "height": 52, "color": "white", "sharp": true},
-  { "type": "line", "x": 395, "y": 78, "points": [[0, 0], [10, 12], [30, -10]], "color": "green", "strokeWidth": 3},
+  { "type": "rectangle", "id": "r0", "x": 0, "y": 52, "width": 300, "height": 52, "color": "white", "sharp": true, "label": { "text": "Answers right away", "align": "left" } },
+  { "type": "rectangle", "id": "a0", "x": 300, "y": 52, "width": 220, "height": 52, "color": "white", "sharp": true },
+  { "type": "rectangle", "id": "b0", "x": 520, "y": 52, "width": 220, "height": 52, "color": "white", "sharp": true },
+  { "type": "rectangle", "id": "r1", "x": 0, "y": 104, "width": 300, "height": 52, "color": "white", "sharp": true, "label": { "text": "Handles long work", "align": "left" } },
+  { "type": "rectangle", "id": "a1", "x": 300, "y": 104, "width": 220, "height": 52, "color": "white", "sharp": true },
+  { "type": "rectangle", "id": "b1", "x": 520, "y": 104, "width": 220, "height": 52, "color": "white", "sharp": true },
+  { "type": "rectangle", "id": "r2", "x": 0, "y": 156, "width": 300, "height": 52, "color": "white", "sharp": true, "label": { "text": "Extra setup", "align": "left" } },
+  { "type": "rectangle", "id": "a2", "x": 300, "y": 156, "width": 220, "height": 52, "color": "white", "sharp": true },
+  { "type": "rectangle", "id": "b2", "x": 520, "y": 156, "width": 220, "height": 52, "color": "white", "sharp": true },
+  { "type": "line", "x": 395, "y": 78, "points": [[0, 0], [10, 12], [30, -10]], "color": "green", "strokeWidth": 3 },
   { "type": "line", "x": 620, "y": 68, "points": [[0, 0], [20, 20]], "color": "red", "strokeWidth": 3, "group": "x63052" },
   { "type": "line", "x": 640, "y": 68, "points": [[0, 0], [-20, 20]], "color": "red", "strokeWidth": 3, "group": "x63052" },
   { "type": "line", "x": 400, "y": 120, "points": [[0, 0], [20, 20]], "color": "red", "strokeWidth": 3, "group": "x410104" },
   { "type": "line", "x": 420, "y": 120, "points": [[0, 0], [-20, 20]], "color": "red", "strokeWidth": 3, "group": "x410104" },
-  { "type": "line", "x": 615, "y": 130, "points": [[0, 0], [10, 12], [30, -10]], "color": "green", "strokeWidth": 3},
+  { "type": "line", "x": 615, "y": 130, "points": [[0, 0], [10, 12], [30, -10]], "color": "green", "strokeWidth": 3 },
   { "type": "text", "x": 410, "y": 170, "align": "center", "text": "none" },
   { "type": "text", "x": 630, "y": 170, "align": "center", "text": "a job queue" }
 ]

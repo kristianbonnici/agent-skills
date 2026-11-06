@@ -46,7 +46,10 @@ panels = []
 for section in re.split(r"^## ", text, flags=re.M)[1:]:
     title = section.splitlines()[0]
     found = re.findall(r"```json\n(.*?)```", section, re.S)
-    assert len(found) <= 1, f"diagram {title!r} has {len(found)} JSON blocks"
+    # Every section but the picking table is a diagram with exactly one snippet.
+    if title.startswith("Pick by"):
+        continue
+    assert len(found) == 1, f"diagram {title!r} has {len(found)} JSON blocks"
     if found:
         panels.append({"id": f"d{len(panels)}", "span": 2, "heading": title.split(":")[0], "elements": json.loads(found[0])})
 assert len(panels) >= 10, f"expected at least 10 diagrams, found {len(panels)}"
@@ -228,7 +231,9 @@ cat >"$work/chart.json" <<'JSON'
     "series": [ { "color": "blue", "points": [[0, 0], [5, 2.5], [10, 10]] } ] },
   { "type": "chart", "kind": "bar", "id": "br", "x": 700, "y": 0, "width": 500,
     "bars": [ { "label": "a", "value": 10 }, { "label": "b", "value": 5 } ] },
-  { "type": "line", "id": "cv", "x": 0, "y": 460, "curve": true, "points": [[0, 0], [60, 30], [120, 0]] }
+  { "type": "line", "id": "cv", "x": 0, "y": 460, "curve": true, "points": [[0, 0], [60, 30], [120, 0]] },
+  { "type": "chart", "id": "tk", "x": 0, "y": 560, "width": 600, "height": 300, "labels": "none",
+    "yAxis": { "ticks": [0, 5, 10] }, "series": [ { "points": [[0, 0], [1, 10]] } ] }
 ] } ] }
 JSON
 node "$build" "$work/chart.json" >"$work/chart.out" || { cat "$work/chart.out"; fail "the chart page doesn't build cleanly"; }
@@ -247,10 +252,11 @@ assert close(pts[0], (left, bottom)), f"(0, 0) should sit on the origin, got {pt
 assert close(pts[2], (right, top)), f"(10, 10) should sit at the top right, got {pts[2]}"
 mid = (left + (right - left) * 0.5, bottom - (bottom - top) * 0.25)
 assert close(pts[1], mid), f"(5, 2.5) should sit at {mid}, got {pts[1]}"
-assert s["roundness"] == {"type": 2}, "a line chart is curved by default"
+assert s["roundness"] == {"type": 2}, "a line chart without y ticks is curved by default"
 a, b = els["c.br.b0"]["width"], els["c.br.b1"]["width"]
 assert abs(a - 2 * b) < 0.5, f"a bar of 10 should be twice one of 5: {a} and {b}"
 assert els["c.cv"]["roundness"] == {"type": 2}, "curve: true should make a round line"
+assert els["c.tk.s0"]["roundness"] is None, "a chart with y ticks draws straight segments by default"
 PY
 # Zero data still draws, a start label sits by its series' first point, and a zero bar has no bar.
 cat >"$work/edges.json" <<'JSON'
