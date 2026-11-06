@@ -46,13 +46,31 @@ remove_link() {
   fi
 }
 
+# Is $1 a link an earlier version installed for the retired source $2? It is when it still points
+# at $2, or when it is broken and points at a skills/<same name> folder (a checkout since moved).
+is_retired_link() {
+  [ -L "$1" ] || return 1
+  retired_to=$(readlink "$1")
+  [ "$retired_to" = "$2" ] && return 0
+  [ ! -e "$1" ] || return 1
+  case "${retired_to%/}" in */skills/"$(basename -- "$2")") return 0 ;; esac
+  return 1
+}
+
 while IFS=$(printf '\t') read -r row_host mode source target; do
   case "$row_host" in ''|'#'*) continue ;; esac
   [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
   source_path="$repo_root/$source"
   target_path=$(expand_target "$target")
   case "$mode" in
-    link|retired) remove_link "$source_path" "$target_path" ;;
+    link) remove_link "$source_path" "$target_path" ;;
+    retired)
+      if is_retired_link "$target_path" "$source_path"; then
+        if [ "$dry_run" -eq 1 ]; then echo "DRY RUN: rm $target_path"; else rm "$target_path"; echo "REMOVED $target_path"; fi
+      elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
+        echo "KEEP $target_path: not the retired link this repository installed" >&2
+      fi
+      ;;
     adapter)
       adapter_source=$source_path
       adapter_target=$target_path

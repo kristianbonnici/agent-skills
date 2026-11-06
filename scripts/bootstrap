@@ -96,14 +96,25 @@ adapter_one() {
   done
 }
 
+# Is $1 a link an earlier version installed for the retired source $2? It is when it still points
+# at $2, or when it is broken and points at a skills/<same name> folder (a checkout since moved).
+is_retired_link() {
+  [ -L "$1" ] || return 1
+  retired_to=$(readlink "$1")
+  [ "$retired_to" = "$2" ] && return 0
+  [ ! -e "$1" ] || return 1
+  case "${retired_to%/}" in */skills/"$(basename -- "$2")") return 0 ;; esac
+  return 1
+}
+
 # A retired row names a link an earlier version installed (a renamed or removed skill): it is
-# removed when it still points at this repository, and anything else at that path is kept.
+# removed, and anything else at that path is kept.
 retire_one() {
   retire_source=$1
   retire_target=$2
-  if [ -L "$retire_target" ] && [ "$(readlink "$retire_target")" = "$retire_source" ]; then
+  if is_retired_link "$retire_target" "$retire_source"; then
     run rm "$retire_target"
-    echo "REMOVED retired link $retire_target"
+    [ "$dry_run" -eq 1 ] || echo "REMOVED retired link $retire_target"
   elif [ -e "$retire_target" ] || [ -L "$retire_target" ]; then
     echo "KEEP $retire_target: not the retired link this repository installed" >&2
   fi

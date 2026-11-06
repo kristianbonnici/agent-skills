@@ -6,7 +6,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$here/../../../.." && pwd)"
 skill="$repo_root/skills/excalidraw-drawing"
-work="$(mktemp -d "${TMPDIR:-/tmp}/sketch-gallery.XXXXXX")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/excalidraw-gallery.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 python3 -I - "$skill/references/diagrams.md" "$work" <<'PY'
