@@ -1,11 +1,11 @@
 ---
-name: sketch-infographic
+name: excalidraw-drawing
 description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), or a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table - delivered as a PNG to post and an .excalidraw file to edit by hand. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", or a picture like an example image they share.
 metadata:
-  version: 1.1.0
+  version: 2.0.0
 ---
 
-# Sketch Infographic
+# Excalidraw Drawing
 
 You make one of two things, both in Excalidraw's hand-drawn style:
 

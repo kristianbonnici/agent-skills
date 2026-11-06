@@ -141,17 +141,17 @@ else
   fail "Product Design browser runtime is not installed"
 fi
 
-# The sketch-infographic runtime matters only for hosts that install the skill: bootstrap for
+# The excalidraw-drawing runtime matters only for hosts that install the skill: bootstrap for
 # another host never installs it.
-if [ "$host" = all ] || awk -F '\t' -v h="$host" '$1 == h && $3 ~ /^skills\/sketch-infographic/ { found = 1 } END { exit !found }' "$manifest"; then
+if [ "$host" = all ] || awk -F '\t' -v h="$host" '$1 == h && $3 ~ /^skills\/excalidraw-drawing/ { found = 1 } END { exit !found }' "$manifest"; then
   node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
-  [ "$node_major" -ge 20 ] 2>/dev/null && pass "Node $node_major for sketch-infographic" || fail "sketch-infographic needs Node 20 or newer (found ${node_major})"
+  [ "$node_major" -ge 20 ] 2>/dev/null && pass "Node $node_major for excalidraw-drawing" || fail "excalidraw-drawing needs Node 20 or newer (found ${node_major})"
   excalidraw_pin=$(pinned_version "$repo_root/runtime/excalidraw/package.json" mcp-excalidraw-server)
   version=$(installed_version "$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server/package.json")
   if [ -z "$version" ]; then
-    fail "sketch-infographic runtime is not installed (runtime/excalidraw)"
+    fail "excalidraw-drawing runtime is not installed (runtime/excalidraw)"
   elif [ "$version" = "$excalidraw_pin" ]; then
-    pass "sketch-infographic runtime mcp-excalidraw-server $version"
+    pass "excalidraw-drawing runtime mcp-excalidraw-server $version"
     check_newer mcp-excalidraw-server "$excalidraw_pin"
   else
     fail "mcp-excalidraw-server is $version, the runtime pins $excalidraw_pin"

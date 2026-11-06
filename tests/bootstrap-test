@@ -48,20 +48,20 @@ test -f "$test_home/.agents/skills/skill-evidence/references/bar.md"
 test "$(readlink "$test_home/.claude/skills/disk-cleanup")" = "$repo_root/skills/disk-cleanup"
 test -L "$test_home/.codex/skills/disk-cleanup"
 test -x "$test_home/.agents/skills/disk-cleanup/scripts/scan"
-test "$(readlink "$test_home/.claude/skills/sketch-infographic")" = "$repo_root/skills/sketch-infographic"
-test -L "$test_home/.codex/skills/sketch-infographic"
-test -f "$test_home/.agents/skills/sketch-infographic/scripts/build.mjs"
+test "$(readlink "$test_home/.claude/skills/excalidraw-drawing")" = "$repo_root/skills/excalidraw-drawing"
+test -L "$test_home/.codex/skills/excalidraw-drawing"
+test -f "$test_home/.agents/skills/excalidraw-drawing/scripts/build.mjs"
 state_link="$test_home/.local/state/agent-skills/long-horizon-orchestrator/providers.md"
 test "$(readlink "$state_link")" = "$state_repo/long-horizon-orchestrator/providers.md"
 test ! -e "$test_home/.local/state/agent-skills/README.md"
 
-# Doctor checks the sketch-infographic runtime only for hosts that install that skill.
+# Doctor checks the excalidraw-drawing runtime only for hosts that install that skill.
 HOME="$test_home" "$repo_root/scripts/doctor" --host factory >"$test_home/doctor-factory.out" 2>&1 || true
-if grep -q "sketch-infographic runtime" "$test_home/doctor-factory.out"; then
-  echo "doctor --host factory checks the sketch-infographic runtime" >&2; exit 1
+if grep -q "excalidraw-drawing runtime" "$test_home/doctor-factory.out"; then
+  echo "doctor --host factory checks the excalidraw-drawing runtime" >&2; exit 1
 fi
 HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-claude.out" 2>&1 || true
-grep -q "sketch-infographic runtime" "$test_home/doctor-claude.out"
+grep -q "excalidraw-drawing runtime" "$test_home/doctor-claude.out"
 
 # A newer release of a pinned runtime is a warning, never a failure; no answer from npm is a skip.
 # Doctor asks npm only about an installed runtime, so this part needs the repository's runtime.
@@ -97,8 +97,8 @@ test ! -e "$test_home/.codex/skills/remote-session-reporting"
 test ! -e "$test_home/.claude/skills/skill-evolution"
 test ! -e "$test_home/.claude/skills/skill-evidence"
 test ! -e "$test_home/.claude/skills/disk-cleanup"
-test ! -e "$test_home/.claude/skills/sketch-infographic"
-test ! -e "$test_home/.agents/skills/sketch-infographic"
+test ! -e "$test_home/.claude/skills/excalidraw-drawing"
+test ! -e "$test_home/.agents/skills/excalidraw-drawing"
 test ! -e "$test_home/.codex/skills/skill-evidence"
 test ! -L "$state_link"
 test -f "$state_repo/long-horizon-orchestrator/providers.md"

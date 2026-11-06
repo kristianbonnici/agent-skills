@@ -27,6 +27,6 @@ claude	link	skills/skill-evidence	~/.claude/skills/skill-evidence
 codex	link	skills/disk-cleanup	~/.agents/skills/disk-cleanup
 codex	link	skills/disk-cleanup	~/.codex/skills/disk-cleanup
 claude	link	skills/disk-cleanup	~/.claude/skills/disk-cleanup
-codex	link	skills/sketch-infographic	~/.agents/skills/sketch-infographic
-codex	link	skills/sketch-infographic	~/.codex/skills/sketch-infographic
-claude	link	skills/sketch-infographic	~/.claude/skills/sketch-infographic
+codex	link	skills/excalidraw-drawing	~/.agents/skills/excalidraw-drawing
+codex	link	skills/excalidraw-drawing	~/.codex/skills/excalidraw-drawing
+claude	link	skills/excalidraw-drawing	~/.claude/skills/excalidraw-drawing

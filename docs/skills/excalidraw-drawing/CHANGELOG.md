@@ -1,4 +1,8 @@
-# sketch-infographic changelog
+# excalidraw-drawing changelog
+
+## 2.0.0 (2026-11-06)
+
+- Renamed from `sketch-infographic` to `excalidraw-drawing`: since 1.1.0 it draws charts and diagrams as well as infographic pages, and the old name described only the pages. The new one names what every picture is made in, so it stays true as more kinds are added. A host or prompt that calls `sketch-infographic` must use the new name; the skill, its docs, its test (`tests/excalidraw-drawing-test`) and its install links all moved, and the runtime override is now `EXCALIDRAW_DRAWING_RUNTIME`. Releases up to 1.1.0 are tagged `sketch-infographic/v<version>`; from 2.0.0, `excalidraw-drawing/v<version>`. Nothing else about what the skill draws changed.
 
 ## 1.1.0 (2026-11-06)
 

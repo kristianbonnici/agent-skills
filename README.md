@@ -65,7 +65,7 @@ Each skill's version is in its `SKILL.md`; its changelog, and for some a flow di
 | `skill-evolution` | Codex and Claude Code user locations | Turn what went wrong with a skill into at most three proposed changes, with their evidence, for the owner to apply or decline; the orchestrator calls it at a run's finish. See its [flow](docs/skills/skill-evolution/README.md). |
 | `skill-evidence` | Codex and Claude Code user locations | Keep each skill's evidence current: new top-tier work that bears on its rules, cited sources rechecked, edits on a branch for the owner to merge, and rule changes as skill-evolution proposals; a T3 scheduled task runs it. See its [flow](docs/skills/skill-evidence/README.md). |
 | `disk-cleanup` | Codex and Claude Code user locations | Find what is wasting disk space on a Mac with a read-only scan, prove it is unused, and clear only what the owner picks, remembering their decisions so later rounds show what's new; a T3 scheduled task runs the report. |
-| `sketch-infographic` | Codex and Claude Code user locations | Turn one source into a one-page hand-drawn infographic in Excalidraw's style: a panel plan, a JSON spec, and a build that lays out the grid, checks it and writes a PNG and an editable `.excalidraw` file. |
+| `excalidraw-drawing` | Codex and Claude Code user locations | Draw in Excalidraw's hand-drawn style: a one-page infographic that explains one source, or a single chart or diagram (line and bar charts from numbers, flowcharts, sequence diagrams, timelines and more). A JSON spec, and a build that lays it out, checks it and writes a PNG and an editable `.excalidraw` file. |
 | `agent-ready-repo` | Codex user locations | Audit agent readiness for new, existing, and maintained repositories; apply improvements when explicitly requested. |
 | `remote-session-reporting` | Codex and Claude Code user locations | Show results in chat (screenshots, pasted text, check summaries) while the user follows a session remotely. |
 | `product-design` | OpenCode, Factory, and Google Antigravity | Research, audit, ideate, prototype, visually QA, and share product experiences. See its [README](skills/product-design/README.md). |
@@ -96,12 +96,12 @@ Remove managed links without touching unrelated files:
 
 To bump one on purpose:
 
-1. Read the package's changes between the two versions. For `mcp-excalidraw-server`, also check the internal modules the sketch-infographic build imports ([runtime/excalidraw/README.md](runtime/excalidraw/README.md)).
+1. Read the package's changes between the two versions. For `mcp-excalidraw-server`, also check the internal modules the excalidraw-drawing build imports ([runtime/excalidraw/README.md](runtime/excalidraw/README.md)).
 2. Update the pin and the lockfile together:
 
    ```bash
    npm install --prefix runtime/<name> --ignore-scripts --save-exact <package>@<version>
    ```
 
-3. Run `./scripts/doctor --all` and the checks of the skills that use it: `./tests/sketch-infographic-test` for Excalidraw, a Product Design browser capture for Playwright.
+3. Run `./scripts/doctor --all` and the checks of the skills that use it: `./tests/excalidraw-drawing-test` for Excalidraw, a Product Design browser capture for Playwright.
 4. Commit `package.json` and `package-lock.json` together. If a skill now behaves differently, raise its version too ([docs/VERSIONING.md](docs/VERSIONING.md)).

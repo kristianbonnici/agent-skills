@@ -1,6 +1,6 @@
 {
   "title": "Making a sketch page",
-  "subtitle": "How the sketch-infographic skill turns one source into one hand-drawn page",
+  "subtitle": "How the excalidraw-drawing skill turns one source into one hand-drawn page",
   "panels": [
     {
       "id": "one",
@@ -536,6 +536,6 @@
       "takeaway": "Choose the pattern that matches the claim, not the busiest one. Text inside a drawing is a few words, never a sentence."
     }
   ],
-  "footer": "Example page for the sketch-infographic skill. Drawn with Excalidraw's renderer via mcp-excalidraw-server 2.1.2.",
+  "footer": "Example page for the excalidraw-drawing skill. Drawn with Excalidraw's renderer via mcp-excalidraw-server 2.1.2.",
   "format": "3:4"
 }

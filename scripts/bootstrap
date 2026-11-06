@@ -97,7 +97,7 @@ adapter_one() {
 }
 
 selected_product_design=0
-selected_sketch_infographic=0
+selected_excalidraw_drawing=0
 if [ "$install_links" -eq 1 ]; then
   while IFS=$(printf '\t') read -r row_host mode source target; do
     case "$row_host" in ''|'#'*) continue ;; esac
@@ -111,7 +111,7 @@ if [ "$install_links" -eq 1 ]; then
       *) echo "Unknown manifest mode: $mode" >&2; exit 1 ;;
     esac
     case "$source" in skills/product-design*) selected_product_design=1 ;; esac
-    case "$source" in skills/sketch-infographic*) selected_sketch_infographic=1 ;; esac
+    case "$source" in skills/excalidraw-drawing*) selected_excalidraw_drawing=1 ;; esac
   done < "$manifest"
 
   if [ -d "$state_repo/.git" ]; then
@@ -134,16 +134,16 @@ if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$sele
   fi
 fi
 
-# sketch-infographic draws with a pinned mcp-excalidraw-server, which needs Node 20 or newer.
+# excalidraw-drawing draws with a pinned mcp-excalidraw-server, which needs Node 20 or newer.
 # --ignore-scripts: its only package with an install script is fsevents, an optional macOS file
 # watcher the renderer never uses, so no install script needs to run.
-if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_sketch_infographic" -eq 1 ] || [ "$host" = all ]; }; then
-  command -v npm >/dev/null 2>&1 || { echo "npm is required for sketch-infographic." >&2; exit 1; }
+if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_excalidraw_drawing" -eq 1 ] || [ "$host" = all ]; }; then
+  command -v npm >/dev/null 2>&1 || { echo "npm is required for excalidraw-drawing." >&2; exit 1; }
   node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
   if ! [ "$node_major" -ge 20 ] 2>/dev/null; then
     # One skill's runtime doesn't fail the whole bootstrap: the other skills stay installed, and
     # doctor reports this runtime as missing.
-    echo "Skipping the sketch-infographic runtime: it needs Node 20 or newer (found ${node_major})." >&2
+    echo "Skipping the excalidraw-drawing runtime: it needs Node 20 or newer (found ${node_major})." >&2
   elif [ "$dry_run" -eq 1 ]; then
     echo "DRY RUN: npm ci --ignore-scripts --prefix $repo_root/runtime/excalidraw"
   else

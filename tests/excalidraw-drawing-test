@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sketch-infographic: every pattern in references/patterns.md, every diagram in
+# excalidraw-drawing: every pattern in references/patterns.md, every diagram in
 # references/diagrams.md and the example page build with no warnings, the outputs are a valid
 # .excalidraw scene and a PNG, the checks catch what they claim to (a label too long for its box,
 # text crossing another element, an element outside its panel, a character Excalifont lacks), and
@@ -7,17 +7,17 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-skill="$repo_root/skills/sketch-infographic"
+skill="$repo_root/skills/excalidraw-drawing"
 build="$skill/scripts/build.mjs"
-work="$(mktemp -d "${TMPDIR:-/tmp}/sketch-infographic-test.XXXXXX")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/excalidraw-drawing-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 if [ ! -d "$repo_root/runtime/excalidraw/node_modules/mcp-excalidraw-server" ]; then
-  echo "sketch-infographic-test: runtime missing; run ./scripts/bootstrap first" >&2
+  echo "excalidraw-drawing-test: runtime missing; run ./scripts/bootstrap first" >&2
   exit 1
 fi
 
-fail() { echo "sketch-infographic-test: $*" >&2; exit 1; }
+fail() { echo "excalidraw-drawing-test: $*" >&2; exit 1; }
 
 # 1. Every pattern, one panel each, on one page.
 python3 -I - "$skill/references/patterns.md" "$work/patterns.json" <<'EOF'
@@ -295,4 +295,4 @@ for expect in 'series "s" has a point outside the axis range' 'a y tick is outsi
   grep -q -- "$expect" "$work/badchart.out" || { cat "$work/badchart.out"; fail "missing warning: $expect"; }
 done
 
-echo "sketch-infographic: ok"
+echo "excalidraw-drawing: ok"

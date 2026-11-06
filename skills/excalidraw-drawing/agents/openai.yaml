@@ -1,0 +1,7 @@
+interface:
+  display_name: "Excalidraw Drawing"
+  short_description: "Hand-drawn infographic pages, charts and diagrams in Excalidraw's style, as PNG and .excalidraw"
+  default_prompt: "Use $excalidraw-drawing to draw this as a hand-drawn infographic page or diagram: plan it, build it, fix every warning, and check the picture."
+
+policy:
+  allow_implicit_invocation: true

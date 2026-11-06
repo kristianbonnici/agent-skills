@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Render every diagram in the skill's references/diagrams.md to a PNG in this folder, for the
-# gallery in README.md. Run it after changing a diagram: ./docs/skills/sketch-infographic/gallery/build
+# gallery in README.md. Run it after changing a diagram: ./docs/skills/excalidraw-drawing/gallery/build
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$here/../../../.." && pwd)"
-skill="$repo_root/skills/sketch-infographic"
+skill="$repo_root/skills/excalidraw-drawing"
 work="$(mktemp -d "${TMPDIR:-/tmp}/sketch-gallery.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 

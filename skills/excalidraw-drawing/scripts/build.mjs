@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Build a sketch-infographic page from a page spec (JSON).
+// Build a excalidraw-drawing page from a page spec (JSON).
 //
 //   node build.mjs page.json [--out-dir DIR] [--scale N] [--lint-only]
 //
@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 // ---------- runtime ----------
 
 const here = path.dirname(fs.realpathSync(fileURLToPath(import.meta.url)));
-const runtimeRoot = process.env.SKETCH_INFOGRAPHIC_RUNTIME
+const runtimeRoot = process.env.EXCALIDRAW_DRAWING_RUNTIME
   || path.resolve(here, '../../../runtime/excalidraw');
 const pkg = path.join(runtimeRoot, 'node_modules/mcp-excalidraw-server');
 if (!fs.existsSync(pkg)) {
@@ -783,7 +783,7 @@ async function main() {
   console.log(`page ${size[0]}×${size[1]}`);
   for (const r of report) console.log(r);
   if (!lintOnly) {
-    const scene = { type: 'excalidraw', version: 2, source: 'sketch-infographic',
+    const scene = { type: 'excalidraw', version: 2, source: 'excalidraw-drawing',
       elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };
     // Render first: if it fails, neither file is touched, so the PNG and the
     // .excalidraw on disk never come from different builds.

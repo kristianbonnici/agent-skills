@@ -1,8 +1,8 @@
-# sketch-infographic diagram gallery
+# excalidraw-drawing diagram gallery
 
-What each diagram in [references/diagrams.md](../../../../skills/sketch-infographic/references/diagrams.md) looks like, built from the snippet there with no changes. Use it to pick a kind ("like the sequence one") when there's no example image to hand. Agents read the catalog, not this page.
+What each diagram in [references/diagrams.md](../../../../skills/excalidraw-drawing/references/diagrams.md) looks like, built from the snippet there with no changes. Use it to pick a kind ("like the sequence one") when there's no example image to hand. Agents read the catalog, not this page.
 
-Rebuild after changing a diagram: `./docs/skills/sketch-infographic/gallery/build`.
+Rebuild after changing a diagram: `./docs/skills/excalidraw-drawing/gallery/build`.
 
 | Diagram | Use it for |
 |---|---|
