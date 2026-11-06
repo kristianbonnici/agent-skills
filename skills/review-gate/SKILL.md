@@ -64,7 +64,7 @@ Sort every finding into one of these:
 - **pre-existing:** true, but the diff didn't cause it. Don't fix it here unless it is small and in the files you changed; list it for the report.
 - **rejected:** wrong or not applicable. Give one line on why.
 
-You decide the tag; a reviewer's is a suggestion. Data loss and security or privacy holes are blockers even when they need rare timing or input, and a real defect you're unsure about is a blocker.
+You decide the tag; a reviewer's is a suggestion. Data loss, a security or privacy hole and a build or test that fails are blockers even when they need rare timing or input. A real defect on a common path that neither list names, such as a large slowdown, is a blocker, and so is a real defect you're unsure about.
 
 Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a blocker or follow-up that only one reviewer raised and that you can't show with a test goes to the other paid reviewer for a yes or no with its reason, before you change code.
 

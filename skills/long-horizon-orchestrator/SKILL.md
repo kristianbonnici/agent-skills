@@ -45,7 +45,7 @@ Read [references/routing.md](references/routing.md) before assigning providers. 
 - Otherwise:
   - If `long-horizon-task-planner` is installed, run it to propose tasks.
   - If it isn't, apply its intent inline: tasks grounded in the current project, ready now, each one coherent objective with checks that prove completion.
-- Split a task that will change more than about 800 lines into milestones that each pass the review gate and merge on their own, the first one a thin working version of the feature, so a later stop holds back only the last slice and dependents build on merged code. The brief lists the milestones and asks for the first; once one merges, send the next to the same thread as a follow-up. Each report names its milestone (`task=B milestone=1/3`); the task stays `running` until its last one merges, with each merge an event in the ledger.
+- Split a task that will change more than about 800 lines into milestones that each pass the review gate and merge on their own, the first one a thin working version of the feature, so a later stop holds back only the last slice and dependents build on merged code. The brief lists the milestones and asks for the first; once one merges (under "leave on branch", once it is `ready`, and the next continues on the same branch), send the next to the same thread as a follow-up. Each report names its milestone (`task=B milestone=1/3`); the task stays `running` until its last one merges, with each merge an event in the ledger.
 - Draw the dependency graph. A task that needs another task's code starts only after that predecessor is merged, or only the milestone it needs. Group tasks into waves.
 - If the user wants the run to use up an allowance ("most of this week's usage"), size the list for it now: add a ranked reserve of extra tasks to the contract. Launch reserve tasks while the run is going, as places free up, and never after the final report.
 - Give each task an ID (A, B, C…) and a branch name.
@@ -109,7 +109,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
 
 ### 4. Launch the ready tasks
 
-Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready` because of that policy, not for a review that didn't converge or found no reviewer), and then the next reserve task:
+Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready` because of that policy, not for a review that didn't converge or found no reviewer; for a prerequisite split into milestones, the milestone it needs), and then the next reserve task:
 1. Write its brief from [references/task-brief.md](references/task-brief.md), and save it in the run directory.
 2. Launch it as the host reference describes.
 3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level.

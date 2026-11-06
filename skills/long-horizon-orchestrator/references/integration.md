@@ -36,7 +36,7 @@ A task whose review gate stopped, because its rounds stopped converging or in th
 
 Then the task gets one fresh look at the whole diff from the cross reviewer, fixes nits, follow-ups and blockers that don't change logic as the review gate says, and goes to the merge gate. A blocker in that look that changes logic stops it; after a split, any blocker on what's left does, logic or not.
 
-Otherwise, or when that look stops it: if the task names a concrete fix for each open blocker and doesn't doubt its approach, launch a fresh fix-up agent on its branch and worktree while its own agent stays idle (in T3, `t3_thread_launch` with `workspaceStrategy: {type: "existing_worktree", worktreePath: "<its worktree>"}`). Its brief is the [continuation brief](task-brief.md#continuation-brief) with the open findings and their fixes as the work, then the original brief's "Finish and merge" and "Report back": it applies the fixes with tests, gets one more look by the cross reviewer as above, and merges. At most two fix-ups per task. Only a disputed approach, a product decision, a blocker with no concrete fix or a third stop (the gate's and each look's count) waits for the owner: keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
+Otherwise, or when that look stops it: if the task names a concrete fix for each open blocker and doesn't doubt its approach, launch a fresh fix-up agent on its branch and worktree while its own agent stays idle (in T3, `t3_thread_launch` with `workspaceStrategy: {type: "existing_worktree", worktreePath: "<its worktree>"}`). Its brief is the [continuation brief](task-brief.md#continuation-brief) with the open findings and their fixes as the work: it applies the fixes with tests, commits, gets one more look by the cross reviewer as above in place of a new review gate, then follows steps 3 and 4 of the original brief's "Finish and merge" and its "Report back". At most two fix-ups per task. Only a disputed approach, a product decision, a blocker with no concrete fix or a third stop (the gate's and each look's count) waits for the owner: keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
 
 ## Follow-up findings
 
@@ -56,7 +56,7 @@ The integration branch may have moved, or the checkout may have been dirty at th
 
 ## Launching dependents
 
-A dependent task launches only when every prerequisite is `merged` (or `ready`, under "leave on branch"). A prerequisite that merged after a split doesn't count for a dependent that needs its kept code: that dependent stays `parked` until the kept code merges.
+A dependent task launches only when every prerequisite is `merged` (or `ready`, under "leave on branch"); for a prerequisite split into milestones, once the milestone it needs is. A prerequisite that merged after a split doesn't count for a dependent that needs its kept code: that dependent stays `parked` until the kept code merges.
 
 - Base it on the current integration branch head, or, under "leave on branch", on the predecessor's branch: in T3 that branch is the launch's `baseRef`, and its brief says to rebase onto that branch, not the integration branch.
 - Mention in its brief what the predecessors added and where. This is the context a fresh agent lacks.
