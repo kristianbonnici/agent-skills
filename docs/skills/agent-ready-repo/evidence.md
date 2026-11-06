@@ -1,6 +1,6 @@
 # Source rationale
 
-Last checked: new work 2026-09-18; sources 2026-09-18.
+Last checked: new work 2026-11-06; sources 2026-09-18.
 
 This skill is an original synthesis, not a vendored copy of a course or upstream skill. It adds no runtime dependencies. The sources below inform decisions; they do not override the target project's requirements or authorize actions.
 
@@ -29,10 +29,13 @@ Treat its examples as context-specific proposals. Do not import mandatory filena
 
 ## Empirical counterweights
 
-- [Gloaguen et al., Evaluating AGENTS.md](https://arxiv.org/abs/2602.11988v2), version 2, 2026-06-23: context files did not generally improve task success in the evaluated settings and increased average inference cost. The authors distinguish useful non-standard practices from unhelpful repository overviews. This supports selective instructions and testing their effects, not banning instruction files.
+- [Gloaguen et al., Evaluating AGENTS.md](https://arxiv.org/abs/2602.11988v3), ETH Zurich, version 3, 2026-09-29 (abstract unchanged from version 2 of 2026-06-23); preprint, presented at the ICLR 2026 Workshop on Memory for LLM-Based Agentic Systems (a workshop, not a main track), per the [authors' publication page](https://www.sri.inf.ethz.ch/publications/gloaguen2026agentsmd): context files did not generally improve task success in the evaluated settings and increased average inference cost. The authors distinguish useful non-standard practices from unhelpful repository overviews. This supports selective instructions and testing their effects, not banning instruction files.
 - [Lulla et al., On the Impact of AGENTS.md Files on the Efficiency of AI Coding Agents](https://arxiv.org/abs/2601.20404v2), version 2, 2026-03-30: a study of 10 repositories and 124 pull requests associated context files with lower median runtime and output-token consumption, with comparable completion behavior. This supports measuring efficiency as well as outcomes, not promising a universal speedup.
+- [He et al., Acquiring and Verifying Repository Norms for Coding Agents](https://arxiv.org/abs/2610.07757), Sun Yat-sen University and Singapore Management University, 2026-10-06, preprint: "Changes produced by coding agents can pass functional tests while leaving repository contribution requirements unmet." Supplying norms extracted and checked against repository evidence, across three coding models and 121 tasks, raised overall norm compliance by 7.42–10.77% (relative) over no added guidance and beat generated documentation (CodeWiki) for every model; functional success rose 5.79–9.09 points, short of significance. This supports instructions that state non-obvious, checkable project constraints rather than general overviews, and a passing test suite not being taken as proof that a change meets the project's rules. → *Use repository-specific instructions for non-obvious constraints; treat passing evidence as specific to what was tested.*
+- [Zhang et al., Rethinking Verification in Agent Harnesses](https://arxiv.org/abs/2610.34577), Cornell University and Alibaba Group, 2026-10-25, preprint: 17 verification designs across seven frontier coding models on Terminal-Bench and SWE-bench Verified. Initial instructions and mid-turn reminders gave "modest, model-dependent average gains"; completion gates "can yield larger gains but may substantially increase cost"; independent review by a critic improved accuracy by 5.9–9.5 points on Terminal-Bench and 3.9–6.6 on SWE-bench at 1.13–1.25× and 1.00–1.04× baseline cost. Only "6.2–13.6% of detected editing turns are followed by a recognized checking command" before the next edit. This supports treating written rules as advisory unless a check enforces them, and scaling verification to the failure modes rather than adding prose. → *Written rules are advisory unless a checker or runner enforces them; scale verification to the change.*
+- [Mohsin et al., Teaching Agents to Code Reliably](https://arxiv.org/abs/2610.03984), AWS AI Labs and Stanford University, 2026-10-02, preprint (submitted to ICLR 2027): on SWE-bench Verified, "a test the agent writes for its own patch accepts many incorrect ones"; the authors' reinforcement objective, which trains the verifier against incorrect variants, "lifts verifier precision from 26.8% to 41.7%". This supports verification evidence that does not rest on checks the agent wrote for its own change alone. → *Treat passing evidence as specific to the tested code; do not weaken existing checks or completion criteria to claim improvement.*
 
-These studies use different settings and measures. Do not combine their results into a single expected improvement. Neither settles the value of a particular project's instruction file. Correctness, time, and token cost remain separate observations.
+These studies use different settings and measures. Do not combine their results into a single expected improvement. None settles the value of a particular project's instruction file. Correctness, time, and token cost remain separate observations.
 
 ## Updating this guidance
 
@@ -40,4 +43,9 @@ Revisit a source when a proposed change depends on a newer claim or a host's cha
 
 ## Left out
 
-Weighed and not cited, so later checks don't weigh them again unless they change: none recorded yet.
+Weighed and not cited, so later checks don't weigh them again unless they change:
+
+- [Khatri, Do Context Files Help Coding Agents? A Two-Agent Ablation Study on Real Repositories](https://arxiv.org/abs/2607.27250), 2026-07-28: bears on the context-file rules (no measurable correctness effect over 288 runs), but a single-author preprint.
+- [Zarzycki, What Open-Source Projects Tell Their Coding Agents: A Census of AGENTS.md and CLAUDE.md](https://arxiv.org/abs/2610.31715), version 2, 2026-10-26: bears on what instruction files contain (74.0% of directives give no reason), but a single-author preprint without a named affiliation.
+- [Anthropic: Redesigning source control at Anthropic](https://www.anthropic.com/research/redesigning-source-control), 2026-10-13: first-party, but about version-control infrastructure at agent scale; bears on no rule of this skill.
+- [GitHub: Building Git infrastructure for agent-scale development](https://github.blog/engineering/architecture-optimization/building-git-infrastructure-for-agent-scale-development/), 2026-10-06 (updated 2026-10-26): first-party, but about hosting infrastructure load; bears on no rule of this skill.
