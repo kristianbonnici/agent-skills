@@ -25,7 +25,7 @@ Each line starts with a word saying what it is:
                    over those 6 minutes, are idle now (no CPU or GPU in ps's last-minute average
                    and a 2-second sample), started nothing and wrote nothing, and hold no network
                    connection; it names the call, its process IDs and the kill that stops it once
-                   the orchestrator can name what it waits on that won't answer (lsof, sample), and
+                   the orchestrator can name what it waits on and why that won't answer (lsof, sample), and
                    otherwise says to tell the task (no kill when another shell call started within
                    a minute of it)
   idle <task>      the same call idle now, with nothing written or started for 6 minutes, but not
@@ -729,8 +729,8 @@ def main(argv: list[str]) -> int:
             else:
                 top = [pid for pid in alive if procs[pid]["ppid"] not in alive]
                 lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min. Idle isn't proof "
-                             "it is stuck: stop it only when you can name what it waits on that won't answer (lsof -p <pid> -d 0,1,2: "
-                             "a pipe or terminal nobody writes; sample <pid> 1: a stack parked in a framework wait), with: kill "
+                             "it is stuck: stop it only when you can name what it waits on and why that won't answer (lsof -p <pid> -d 0,1,2: "
+                             "a pipe only the harness holds the other end of; sample <pid> 1: a wait the run knows stalls), with: kill "
                              f"{' '.join(map(str, top))} (check each with ps -p <pid> -o command= first), then tell the task; "
                              "otherwise tell the task what looks stuck and let it decide")
             hung_or_waiting = True
