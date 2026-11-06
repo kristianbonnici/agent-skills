@@ -28,13 +28,13 @@ A task may report more than once: after review fixes, a rebase or a follow-up. A
 
 ## A review that didn't converge
 
-A task whose review gate stopped, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known defect or unreviewed fixes. You may send it one follow-up, at most once per task, in the first case that fits, and name the decision in the report:
+A task whose review gate stopped, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and its open or unreviewed findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known defect or unreviewed fixes. You may send it one follow-up, at most once per task, in the first case whose conditions all hold, and name the decision in the report:
 
 - **One fix that removes code:** one must-fix is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach. The task makes that fix.
 - **Only the last fixes unreviewed:** every must-fix is fixed with tests, and only the last fixes haven't been reviewed.
-- **The dispute sits in one part:** the open findings all sit in code the task can name. The task puts that code back to the integration branch's behavior and keeps it, with the findings, on a branch of its own, which goes under "Not finished" in the report; dependents that need it wait.
+- **The dispute sits in one part:** the open findings all sit in code the task can name. The task puts that code back to the integration branch's behavior and keeps it, with the findings, on a branch of its own. Once the rest merges, the task is `merged` with that branch noted in the ledger and under "Not finished" in the report, and dependents that need the kept code stay parked.
 
-Then the task gets one fresh look at the whole diff from the cross reviewer, fixes nits and must-fixes that don't change logic as the review gate says, and goes to the merge gate. A must-fix in that look that changes logic stops it; after a split, any must-fix on what's left does.
+Then the task gets one fresh look at the whole diff from the cross reviewer, fixes nits and must-fixes that don't change logic as the review gate says, and goes to the merge gate. A must-fix in that look that changes logic stops it; after a split, any must-fix on what's left does, logic or not.
 
 Otherwise, or when that look stops it, keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
 
@@ -52,7 +52,7 @@ The integration branch may have moved, or the checkout may have been dirty at th
 
 ## Launching dependents
 
-A dependent task launches only when every prerequisite is `merged` (or `ready`, under "leave on branch").
+A dependent task launches only when every prerequisite is `merged` (or `ready`, under "leave on branch"). A prerequisite that merged after a split doesn't count for a dependent that needs its kept code: that dependent stays `parked` until the kept code merges.
 
 - Base it on the current integration branch head, or, under "leave on branch", on the predecessor's branch: in T3 that branch is the launch's `baseRef`, and its brief says to rebase onto that branch, not the integration branch.
 - Mention in its brief what the predecessors added and where. This is the context a fresh agent lacks.
@@ -88,7 +88,7 @@ Then clean up:
 4. **Tidy the host's task list:** settle the task's T3 thread, or close the subagent in Codex. See the host reference.
 5. **Remove its scratch folder:** `<skill folder>/scripts/prune-runs --scratch <run directory>/<task ID>`, which deletes `<run directory>/<task ID>/scratch/` (builds, downloads, other projects' source, intermediate renders) and nothing else, and says how much it freed. It refuses a folder outside a run, and leaves a git worktree inside alone. The task's notes, evidence and pictures stay. If it can't remove something (a read-only folder, a worktree inside), record what in the ledger and the report's "Side effects", and go on.
 
-Cleanup is for merged work only. A blocked, failed, parked, stopped or ready-but-not-merged task keeps its worktree, branch and scratch folder, because they hold the unmerged work or what it needs to go on. At the finish, put an empty `KEEP` file in each such task's folder in the run directory, so `prune-runs` leaves that folder whole in later runs too. Name them in the final report.
+Cleanup is for merged work only, and a split's kept branch stays. A blocked, failed, parked, stopped or ready-but-not-merged task keeps its worktree, branch and scratch folder, because they hold the unmerged work or what it needs to go on. At the finish, put an empty `KEEP` file in each such task's folder in the run directory, so `prune-runs` leaves that folder whole in later runs too. Name them in the final report.
 
 ## A task the user stopped
 

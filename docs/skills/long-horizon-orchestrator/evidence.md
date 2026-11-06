@@ -33,8 +33,8 @@ private records.
   and again 33 minutes after it came back; one task waited out both and was parked unfinished. → *the same
   models on the OpenCode Go plan as their backup, and whole tasks starting there.*
 - **Stopped reviews became the common case** (2026-11-03 and -06): the review gate's stop rule stopped 10
-  of 22 tasks in one run and 8 of 9 deep-reviewed tasks in another, each with its must-fixes fixed and only the
-  last fixes unreviewed; the one path out fitted two of the eighteen. Worked outside the text, one
+  of 22 tasks in one run and 8 of 9 deep-reviewed tasks in another, nearly all with every must-fix fixed and only
+  the last fixes unreviewed, while the one path out, which needs a must-fix still open, fitted two. Worked outside the text, one
   fresh look by the cross reviewer at the whole diff merged three clean and stopped four on new, real logic
   defects, and putting the disputed part back to the integration branch's behavior merged the rest six
   times, about 40 fixes. → *one follow-up per stopped task: the removal fix, the fresh look, or the split.*

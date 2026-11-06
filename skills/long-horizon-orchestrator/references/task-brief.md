@@ -46,7 +46,7 @@ Required work:
 
 Constraints, besides those in the common file:
 - Work only in this task's workspace: <worktree path, or "the active task workspace">. Do not edit other checkouts.
-- Use ports <ports> for anything that listens.
+- Use ports <ports> for servers you start by hand. Tests you commit bind port 0 and read the port back.
 - Keep this task's files that must outlive it (handoff, evidence logs) in <run directory>/<task ID>/.
 - <Rules for this task only, such as a resource it alone may use.>
 
