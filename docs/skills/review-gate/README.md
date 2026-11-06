@@ -17,14 +17,14 @@ flowchart TD
   level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus,<br/>+ a free reviewer if one answers"]
   light -->|no free model answers| standard
   standard -.->|Codex short| sub["Claude substitute<br/>+ a free reviewer"]
-  light & standard & sub & deep --> sort["Check every finding:<br/>must-fix · nit · pre-existing · rejected"]
-  sort -->|"deep: a must-fix only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
+  light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
+  sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
   second --> sort
-  sort -->|a must-fix changed logic| rereview["Re-review the fix's diff only,<br/>paid reviewers, no repeated findings"]
+  sort -->|a fix changed logic| rereview["Re-review the fix's diff only,<br/>paid reviewers, no repeated findings"]
   rebase["Rebase: a conflict resolution<br/>that changed logic"] --> rereview
-  rereview -->|"no fewer must-fixes than the last round,<br/>a fixed finding back, or round 5"| stop([Stop: report not converging,<br/>don't merge])
+  rereview -->|"no fewer blockers two rounds in a row,<br/>the approach in dispute, or a blocker in round 5"| stop([Stop: report not converging,<br/>don't merge])
   rereview --> sort
-  sort -->|nothing left to fix| record([Record the Review section,<br/>go to the merge gate])
+  sort -->|"no blocker left;<br/>follow-ups fixed or listed"| record([Record the Review section,<br/>go to the merge gate])
 ```
 
 ## Who reviews
@@ -32,8 +32,8 @@ flowchart TD
 | Level | Round 1 | Later rounds |
 |---|---|---|
 | Light | one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
-| Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the must-fix, or the cross reviewer for a fix only a free reviewer asked for |
-| Deep | two paid reviewers, different focus, + a free reviewer if one answers | the paid reviewers who found must-fixes |
+| Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only a free reviewer asked for |
+| Deep | two paid reviewers, different focus, + a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
 - **Paid reviewers** run at high reasoning: Codex's GPT-6.1 Terra (preferred to Sol, which costs more of
   the Codex plan), Claude Sonnet 5.5 and Opus 5.5.
@@ -51,19 +51,19 @@ flowchart TD
 - **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor add one cheap extra
   review in round 1 at Standard and Deep, split evenly across a run's tasks. Their findings are checked and fixed
   like any other, but the gate never rests on them. Once each has about 20 reviews, a study compares
-  them with Terra and Sonnet: must-fixes found, must-fixes nobody else found, and findings rejected.
+  them with Terra and Sonnet: blockers and follow-ups found, those nobody else found, and findings rejected.
   One that holds up could take Terra's or Sonnet's place at Light, or stand in when Codex is short.
 
 ## The record
 
 Every gate ends with a verdict line and a table like these, which later studies count:
 
-**Review: Deep, 2 rounds.** It reads socket input. 3 must-fixes found, all fixed.
+**Review: Deep, 2 rounds.** It reads socket input. 2 blockers and 1 follow-up found, all fixed.
 
-| Reviewer | Rounds | Must-fix | Nits | Pre-existing | Rejected | Unique must-fix |
-|---|---|---|---|---|---|---|
-| Codex GPT-6.1 Terra, high | 1, 2 | **2** | 3 | 1 | 1 | 1 |
-| Claude Sonnet 5.5, high | 1 | **1** | 4 | – | 2 | – |
-| GPT-6 Luna, high (trial) | 1 | – | 2 | – | 1 | – |
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Codex GPT-6.1 Terra, high | 1, 2 | **1** | 1 | 3 | 1 | 1 | 1 |
+| Claude Sonnet 5.5, high | 1 | **1** | – | 4 | – | 2 | – |
+| GPT-6 Luna, high (trial) | 1 | – | – | 2 | – | 1 | – |
 
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*

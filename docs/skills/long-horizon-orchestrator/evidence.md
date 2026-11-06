@@ -41,6 +41,14 @@ private records.
 - **A committed test on a fixed port** (2026-11-06): one task's end-to-end test bound the port its brief gave
   it; once merged, every parallel worktree's checks ran it, and four tasks hit "Address already in use" until
   a follow-up moved it to a free port. → *tests a task commits bind port 0.*
+- **Known fixes waited for the morning** (2026-11-06): four tasks' reviews stopped overnight with their fixes
+  written up and the approach not in doubt, after their one follow-up; they waited about 8 hours, and the
+  owner approved each fix, about 30 minutes of work each, while the run still had time and quota. → *a fresh
+  fix-up agent on the same branch, at most two per task.*
+- **One diff at the end** (2026-11-06): each part of a new app, 2 to 5 thousand changed lines, was reviewed as
+  one diff when it was done; rounds kept finding issues across the whole diff, and a stop held back the whole
+  feature, the undisputed parts too, so the owner woke to a placeholder instead of a basic working app. →
+  *tasks over about 800 lines merge in milestones, a thin working version first.*
 
 ## Outside sources
 

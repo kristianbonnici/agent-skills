@@ -28,15 +28,19 @@ A task may report more than once: after review fixes, a rebase or a follow-up. A
 
 ## A review that didn't converge
 
-A task whose review gate stopped, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and its open or unreviewed findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known defect or unreviewed fixes. You may send it one follow-up, at most once per task, in the first case whose conditions all hold, and name the decision in the report:
+A task whose review gate stopped, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and its open or unreviewed findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known blocker or unreviewed fixes. You may send it one follow-up, at most once per task, in the first case whose conditions all hold, and name the decision in the report:
 
-- **One fix that removes code:** one must-fix is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach. The task makes that fix.
-- **Only the last fixes unreviewed:** every must-fix is fixed with tests, and only the last fixes haven't been reviewed.
-- **The dispute sits in one part:** the open findings all sit in code the task can name. The task puts that code back to the integration branch's behavior and keeps it, with the findings, on a branch of its own. Once the rest merges, the task is `merged` with that branch noted in the ledger and under "Not finished" in the report, and dependents that need the kept code stay parked.
+- **One fix that removes code:** one blocker is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach. The task makes that fix.
+- **Only the last fixes unreviewed:** every blocker is fixed with tests, and only the last fixes haven't been reviewed.
+- **The dispute sits in one part:** the open blockers all sit in code the task can name. The task puts that code back to the integration branch's behavior and keeps it, with the findings, on a branch of its own. Once the rest merges, the task is `merged` with that branch noted in the ledger and under "Not finished" in the report, and dependents that need the kept code stay parked.
 
-Then the task gets one fresh look at the whole diff from the cross reviewer, fixes nits and must-fixes that don't change logic as the review gate says, and goes to the merge gate. A must-fix in that look that changes logic stops it; after a split, any must-fix on what's left does, logic or not.
+Then the task gets one fresh look at the whole diff from the cross reviewer, fixes nits, follow-ups and blockers that don't change logic as the review gate says, and goes to the merge gate. A blocker in that look that changes logic stops it; after a split, any blocker on what's left does, logic or not.
 
-Otherwise, or when that look stops it, keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
+Otherwise, or when that look stops it: if the task names a concrete fix for each open blocker and doesn't doubt its approach, launch a fresh fix-up agent on its branch and worktree while its own agent stays idle (in T3, `t3_thread_launch` with `workspaceStrategy: {type: "existing_worktree", worktreePath: "<its worktree>"}`). Its brief is the [continuation brief](task-brief.md#continuation-brief) with the open findings and their fixes as the work, then the original brief's "Finish and merge" and "Report back": it applies the fixes with tests, gets one more look by the cross reviewer as above, and merges. At most two fix-ups per task. Only a disputed approach, a product decision, a blocker with no concrete fix or a third stop (the gate's and each look's count) waits for the owner: keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
+
+## Follow-up findings
+
+The review gate's follow-ups are real defects that need rare timing or input, or missing hardening, and they don't hold back a merge. Record a merged task's open ones, with their fixes, in the ledger. Give them to one follow-up task within the contract (from the reserve, or a new task with the same scope) while the run has room; otherwise list them under "Not finished" in the report.
 
 ## A task with no independent reviewer
 

@@ -41,6 +41,7 @@ Boundaries:
 - Deferred: <adjacent work to leave alone>.
 
 Required work:
+<For a task that will change more than about 800 lines: "Milestones: 1. <a thin working version of the feature> 2. <the next slice> ... Each passes the review gate and merges on its own. Do milestone 1 now: its items below, then all of 'Finish and merge', and report with milestone=1/<m> after task=. The orchestrator sends the next milestone to this thread once it merges.">
 1. <intrinsically necessary item with an observable result>
 2. ...
 
@@ -58,16 +59,16 @@ Validation (show the output in the conversation):
 
 Finish and merge:
 1. Commit on <task branch> following the project's commit rules. Review the staged diff, stage explicit files, and never commit credentials, local traces or scratch output.
-2. Pass the review gate: follow the `review-gate` skill (the common file says where it is) at level <light, standard or deep>, or higher if your diff touches a deep area<; your trial reviewer is <GPT-6 Luna, Claude Haiku 5.5 or Muse Spark 1.3 Contributor>>. It chooses your reviewers, and you check every finding and fix the real ones with tests, as additional commits. A review that stops converging (the gate says when, five rounds at most) means stop: report status=ready with the open findings.
+2. Pass the review gate: follow the `review-gate` skill (the common file says where it is) at level <light, standard or deep>, or higher if your diff touches a deep area<; your trial reviewer is <GPT-6 Luna, Claude Haiku 5.5 or Muse Spark 1.3 Contributor>>. It chooses your reviewers, and you check every finding and fix the real ones with tests, as additional commits. Only blockers hold back the merge; list each open follow-up with the fix it needs in the handoff. A review that stops converging (the gate says when, five rounds at most) means stop: report status=ready with the open findings.
 3. Rebase onto the latest <integration branch>. Resolve conflicts by meaning. Regenerate generated files rather than hand-merging them. Re-run the full validation. If resolving a conflict changed logic (not only generated files, docs or imports), send the resolution's diff to your cross reviewer, as the review gate says for a conflict resolution.
-4. Merge gate: only if every check passes and no confirmed defect remains, confirm that <integration checkout path> is on <integration branch> with no tracked modifications, then run:
+4. Merge gate: only if every check passes and no blocker remains open, confirm that <integration checkout path> is on <integration branch> with no tracked modifications, then run:
    git -C <integration checkout path> merge --ff-only <task branch>
    If the fast-forward fails because the branch moved, go back to step 3. Never force-update, never push.
    If one check misses narrowly while the main goal is met, don't merge, and don't loosen, skip or re-baseline the check: report status=ready with "narrow miss", the check's threshold and its results before and after your change, then stop. The orchestrator decides, and may tell you to merge.
 <For the "leave on branch" policy, replace steps 3–4 with: "Rebase onto <integration branch, or for a task stacked on another, that task's branch>, re-run validation, and stop. Do not merge.">
 
 Blocked. Stop without merging, report the evidence, then do the report-back:
-- <conditions that genuinely need the owner: missing prerequisite, a product decision, a confirmed defect you can't fix safely, checks that cannot pass>
+- <conditions that genuinely need the owner: missing prerequisite, a product decision, a blocker you can't fix safely, checks that cannot pass>
 - <A dirty integration checkout at the gate is not one of these either: report status=ready, and the orchestrator retries once it is clean.>
 - <A real-screen check that couldn't run is not one of these, unless it is the task's main deliverable. It goes under "Couldn't check".>
 
@@ -116,7 +117,7 @@ Rules added during the run:
 Keep it short and machine-friendly. The facts you need sit on the first lines; a few plain sentences follow:
 
 ```text
-[long-horizon-orchestrator] run=<run ID> task=<task ID> status=<merged|ready|blocked|failed>
+[long-horizon-orchestrator] run=<run ID> task=<task ID>< milestone=<n/m>> status=<merged|ready|blocked|failed>
 branch=<task branch> head=<commit> integrated=<yes|no>
 agent=<harness/model/reasoning level that did the work> helpers=<harness/model/reasoning level × count for each hand-off, or none>
 unchecked=<checks that couldn't run, such as real-screen checks on a locked screen, or none>
@@ -124,7 +125,7 @@ prompts=<password, keychain or permission dialogs you saw and what you did, or n
 summary: <two to five plain sentences: what was built, what is left, and the decision needed if blocked>
 ```
 
-The `prompts` line tells the orchestrator about dialogs on the user's screen. The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the report's charts take each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
+A task split into milestones adds `milestone=<n/m>` after its ID, so the orchestrator knows which one merged. The `prompts` line tells the orchestrator about dialogs on the user's screen. The `helpers` line tells the orchestrator about hand-offs it can't see otherwise. The `agent` line is only a cross-check: an agent doesn't always know its own reasoning level, so the report's charts take each agent's harness, model and reasoning level from the orchestrator's own launch record. The `unchecked` line feeds the report's list of things the user should look at.
 
 A task whose usage limit runs out can't send a report at all. The orchestrator notices from the thread's state and resumes it after the reset.
 

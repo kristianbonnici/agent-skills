@@ -116,6 +116,17 @@ Why Go's two flash models take the free reviewers' place when the free tier stop
   `opencode-go/beam-free` answered, and Go's meters stayed at 7% and 3% through the trial. → *Beam goes
   first on Go.*
 
+## Blockers and follow-ups (2026-11-06)
+
+One overnight run of nine deep-reviewed tasks building a new app: the stop rule stopped 8 of the 9, and four
+parts waited the night for the owner. A must-fix had no severity, so a race during an undo, a redirect that
+kept a stale id or a malformed URL held back a merge exactly as data loss on a common path would. Counts
+fell round by round (6, 2, 1; 13, 5, 1, 1; 11, 7, 1, 1), and one narrower re-find of the last finding, or
+one round as high as the one before, read as "didn't converge". Nearly every finding that stopped a review
+was of the rare-timing or rare-input kind. → *only blockers hold back the merge and count for convergence;
+follow-ups are fixed when cheap or listed; a stop needs two rounds without a fall, a disputed approach or a
+blocker in round 5.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:

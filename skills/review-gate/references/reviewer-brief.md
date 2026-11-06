@@ -16,7 +16,8 @@ Report each issue as:
 - a short title;
 - file and line;
 - what goes wrong and when, as a concrete case;
-- must-fix (a defect this change introduces or exposes), nit (real but minor) or pre-existing (true, but not caused by this diff);
+- blocker (a defect this change introduces or exposes that causes data loss or corruption, a security or privacy hole, a crash, hang or wrong result on a common path, or a broken build or test), follow-up (a defect this change introduces or exposes that needs unusual timing, rare input or a corner case, or a missing hardening), nit (real but minor) or pre-existing (true, but not caused by this diff);
+- for a blocker or follow-up, the fix it needs;
 - how often it would happen, from 1 to 10, and how bad it would be, from 1 to 10;
 - confirmed (you traced it through the code or ran it) or suspected.
 

@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 2.3.0
+  version: 3.0.0
 ---
 
 # Review Gate
@@ -58,26 +58,29 @@ Launch the round's reviewers in parallel, each with the same neutral brief from 
 
 Sort every finding into one of these:
 
-- **must-fix:** a real defect this change introduces or exposes. Show it with a failing test where you can, then fix it with that test, as its own commit. If it names a kind of bug, fix every instance in the diff.
+- **blocker:** a real defect this change introduces or exposes that causes data loss or corruption, a security or privacy hole, a crash, hang or wrong result on a common path, or a broken build or test. Only blockers hold back the merge and count in section 5. Show it with a failing test where you can, then fix it with that test, as its own commit. If it names a kind of bug, fix every instance in the diff.
+- **follow-up:** a real defect this change introduces or exposes that needs unusual timing, rare input or a corner case to show, or a hardening the code lacks. Fix it as a blocker when that's cheap and a round is left to review a fix that changes logic; otherwise list it with the fix it needs. In an orchestrated run, the orchestrator makes the listed ones a follow-up task.
 - **nit:** real but minor, such as wording, naming, or a weak test of something that works. Fix it when that's cheap; otherwise list it.
 - **pre-existing:** true, but the diff didn't cause it. Don't fix it here unless it is small and in the files you changed; list it for the report.
 - **rejected:** wrong or not applicable. Give one line on why.
 
-Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a must-fix that only one reviewer raised and that you can't show with a test goes to the other paid reviewer for a yes or no with its reason, before you change code.
+You decide the tag; a reviewer's is a suggestion. Data loss and security or privacy holes are blockers even when they need rare timing or input, and a real defect you're unsure about is a blocker.
+
+Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a blocker or follow-up that only one reviewer raised and that you can't show with a test goes to the other paid reviewer for a yes or no with its reason, before you change code.
 
 ## 5. Re-review while it converges
 
-Re-review only when a must-fix changed logic, not for docs, tests or wording. Send the paid reviewers who found must-fixes the diff since their review and the list of findings already raised, and ask about the fix and what it touches: no earlier finding again, except one a fix didn't settle, reported as "not fixed". Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
+Re-review only when a fix changed logic, not for docs, tests or wording. Send the paid reviewers who found blockers or follow-ups the diff since their review and the list of findings already raised, and ask about the fix and what it touches: no earlier finding again, except one a fix didn't settle, reported as "not fixed". Free and trial reviewers don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
 
-A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the count of rounds; if that look finds a must-fix, stop as for a review that didn't converge, below.
+A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the count of rounds; if that look finds a blocker, stop as for a review that didn't converge, below.
 
-Up to three rounds, re-review as above. Rounds 4 and 5 only while the review is settling: each must come after a round that found fewer must-fixes than the round before it. Stop, and don't merge, when:
+Up to five rounds, re-review as above. A blocker that comes back as "not fixed" counts as a blocker of its round; one that comes back narrower (the fix settled most of it, a smaller case still fails) is progress while the count falls. Stop, and don't merge, only when:
 
-- a round from round 2 on finds as many must-fixes as the round before it, or more;
-- a round finds again something an earlier fix was meant to settle;
-- round 5 still finds a must-fix.
+- the blocker count doesn't fall over two rounds: two rounds in a row each find as many blockers as the round before them, or more (4, 4, 2 goes on; 4, 4, 4 stops at round 3);
+- the approach itself is in dispute: a finding says the design is wrong, not a detail of it, and no fix inside the approach settles it;
+- round 5 still finds a blocker.
 
-Then report that the review didn't converge, list the open findings, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
+Then report that the review didn't converge, list the open blockers and follow-ups with the fix each needs, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
 
 ## 6. Record the result
 
@@ -86,20 +89,20 @@ Put a Review section in your handoff, or in your reply to the user, starting wit
 ```markdown
 **Review: <Light, Standard or Deep>, <1 round or n rounds>.** <Why that level, in a few words.> <What the table adds up to, and what is still open.>
 
-| Reviewer | Rounds | Must-fix | Nits | Pre-existing | Rejected | Unique must-fix |
-|---|---|---|---|---|---|---|
-| <model>, <level> | <1, 2> | <n> | <n> | <n> | <n> | <n> |
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| <model>, <level> | <1, 2> | <n> | <n> | <n> | <n> | <n> | <n> |
 
 *Skipped: <model>: <why: the limit error, or "Codex short">.*
 ```
 
 - Name each model in plain words, with its reasoning level: `Codex GPT-6.1 Terra, high`. Mark OpenCode's with `(free)` or `(Go)`, so the two tiers stay apart, and a trial reviewer with `(trial)`.
-- Write a zero as `–`, and put a must-fix count above zero in bold.
-- "Unique must-fix" counts the must-fixes no other reviewer raised.
+- Write a zero as `–`, and put a blocker count above zero in bold.
+- "Unique defects" counts the blockers and follow-ups no other reviewer raised.
 - The skipped line names every model that was skipped or that a reviewer moved on from, separated by semicolons. Leave it out when there are none.
 
-Then list each must-fix with its commit, the open nits and pre-existing findings, and the rejected findings with their reasons.
+Then list each blocker with its commit, each follow-up with its commit or, if open, the fix it needs, the open nits and pre-existing findings, and the rejected findings with their reasons.
 
 ## When the user asks for a review
 
-Run the same gate. If they asked for a review only, show the must-fix and pre-existing findings and wait for their answer before changing code.
+Run the same gate. If they asked for a review only, show the blockers, follow-ups and pre-existing findings and wait for their answer before changing code.

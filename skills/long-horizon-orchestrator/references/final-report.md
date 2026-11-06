@@ -38,10 +38,11 @@ The reader is returning after hours away, and probably after several tasks' wort
 <One or two lines the map or charts can't say on their own, such as why the pauses happened, why effort levels changed, a helper that hit a rate limit and what its work switched to, or what you changed because the user asked during the run.>
 
 ## Not finished
-<Only if some tasks are blocked, parked or failed, or merged with a narrow miss.>
+<Only if some tasks are blocked, parked or failed, merged with a narrow miss, or merged with review follow-ups no task fixed.>
 - **<Task>:** what's missing, why, and what it needs from you.
 - **<Task>, parked:** when it last worked, that nothing continued it after that, and what remains for the next run. Its thread is settled; its worktree, `KEEP` and saved patch are kept.
 - **<Task> merged one check short:** <the check, its result against its threshold>; <the follow-up task> carries it<, and how that ended>.
+- **<Task> merged with review follow-ups:** each open one in a line: what goes wrong and when, and the fix it needs<; then the follow-up task that carries them>.
 
 ## Worth checking yourself
 <Only if some checks couldn't run, from the tasks' "unchecked" lines, for example real-screen checks while the screen was locked.>
