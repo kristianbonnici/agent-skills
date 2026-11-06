@@ -26,6 +26,7 @@ The page is 1500 px wide with two columns, and `format` fixes its height:
 | `a4` | 1500×2121 | printing |
 | `square` | 1500×1500 | a short page |
 | `auto` | grows to fit | drafts only |
+| `fit` | grows to fit, and narrows to the drawing | a single diagram ([diagrams.md](diagrams.md)) |
 
 Spare height is spread evenly over the rows, and panels keep their drawing at the top. Content taller than the format is a warning that says how many pixels to cut. A 3:4 page holds about four rows of panels, one of them full width. Fill the page: a page with a lot of empty space is missing a panel.
 
@@ -39,8 +40,9 @@ Panels fill rows in order: a `"span": 2` panel takes a whole row; two half panel
 | `takeaway` | One or two sentences, 17 px, under the drawing, wrapped to 520 px (`takeawayWidth` to change) |
 | `span` | `2` for full width |
 | `minHeight` | Force a taller panel |
+| `frame` | `false` drops the panel's card and its padding: a bare drawing. Set it on the page to apply to every panel |
 
-**Coordinates are local to the panel's drawing area:** `x: 0, y: 0` is its top-left corner, just under the heading. Its width is 639 px for a half panel and 1356 px for a full one (the build prints it). Its height grows to fit the drawing. Keep `x` and `y` at 0 or more.
+**Coordinates are local to the panel's drawing area:** `x: 0, y: 0` is its top-left corner, just under the heading. Its width is 639 px for a half panel and 1356 px for a full one, 48 px more without a frame (the build prints it). Its height grows to fit the drawing. Keep `x` and `y` at 0 or more.
 
 ## Colors
 
@@ -70,13 +72,41 @@ Every element can take `id` (needed to connect arrows to it), `color`, `strokeCo
 |---|---|---|
 | `rectangle`, `ellipse`, `diamond` | `x, y, width, height, label` | `label` is a string or `{ "text", "fontSize", "align": "left", "valign": "top", "color" }`. Labels wrap to the box; a label that doesn't fit makes the box grow, and the build warns. `"\n"` breaks a line. `"sharp": true` gives square corners. |
 | `text` | `x, y, text, fontSize, width, align, color` | With `width` it wraps; without, it stays on its lines. Default size 17. `"align": "center"` centres it on `x`. |
-| `arrow`, `line` | `start, end` (ids), or `x, y, points` | With `start` and `end` the build routes it side to side or top to bottom and binds it to boxes. `points` are relative to `x, y`, for bends and loops. `"elbow": true` makes a routed arrow bend at right angles. `label` puts text on it. `startArrowhead`, `endArrowhead`: `arrow`, `triangle`, `dot`, `bar` or `null`. |
+| `arrow`, `line` | `start, end` (ids), or `x, y, points` | With `start` and `end` the build routes it side to side or top to bottom and binds it to boxes. `points` are relative to `x, y`, for bends and loops. `"curve": true` draws a smooth curve through the points instead of straight segments. `"elbow": true` makes a routed arrow bend at right angles. `label` puts text on it, with the line drawn through it in the PNG; to name a branch, a `text` beside the arrow reads better. `startArrowhead`, `endArrowhead`: `arrow`, `triangle`, `dot`, `bar` or `null`. |
+| `chart` | `x, y, width, height, series` or `kind: "bar", bars` | A line or bar chart scaled from numbers: see Charts below. |
 | `window` | `x, y, width, height, title, lines, dots` | A card with "•••" and a title in its bar, like an app window or a document. `lines` draws that many gray placeholder lines in it. `"dots": false` drops the dots, for a sheet of paper. |
 | `stack` | `x, y, width, height, items, offset, lines, dots` | Overlapping windows, one per item, back to front. `offset: [dx, dy]`, default `[36, 30]`; `[10, -10]` fans a pile of sheets up and to the right. Its `id` connects arrows to the whole stack. |
 | `person` | `x, y, size, label` | A stick figure about 50×90 at size 1, with a caption under it. |
 | `lines` | `x, y, width, count, gap` | Gray placeholder lines, for text that isn't the point. |
 
 Arrows connect by id within one panel. Leave at least 40 px between connected boxes: an arrow under 20 px is a stub, and the build warns. Several arrows into or out of one side of a box fan out along that side, and arrows to an ellipse end on its curve, so their heads don't pile up. An arrow drawn with `points` must start and end on something: put its ends on the edge of the shapes it links. Shapes Excalidraw lacks are built from parts: a funnel or other polygon is a `line` whose `points` end where they start, with a `backgroundColor`; a cylinder is a rectangle with an ellipse on top; an eye is an ellipse with a small dark one inside.
+
+## Charts
+
+A `chart` places every point and bar from the numbers you give it, so nothing is scaled by hand. Its parts are grouped: they move together in Excalidraw.
+
+**Line chart** (the default `kind`). `x, y, width, height` are the whole chart, labels included; the plot is what the labels leave.
+
+| Field | Meaning |
+|---|---|
+| `series` | `[{ "label", "color", "points": [[x, y], ...] }]`, two or more points each. Per series: `curve`, `markers`, `strokeStyle` (`dashed` for a forecast), `strokeWidth` |
+| `xAxis`, `yAxis` | `{ "label", "min", "max", "ticks" }`. `min`/`max` default to the data (y from 0 when no value is negative). `ticks` are values, or `[value, "text"]` pairs such as `[1, "Jan"]` |
+| `labels` | Where each series is named: `start` (left of the y axis, the default without y ticks), `end` (after the last point, the default with them) or `none`. Names too close together are pushed apart |
+| `curve` | Smooth curves through the points; default `true`. Use `false` for measurements |
+| `markers` | A dot on every point |
+| `grid` | Faint dashed lines at the y ticks |
+| `fontSize` | Labels, default 18; tick numbers are 2 px smaller |
+
+A point outside the axis range, a tick outside it, or a plot squeezed under 120×80 px by its labels is a warning.
+
+**Bar chart** (`"kind": "bar"`). `x, y, width`; the height follows from the bars.
+
+| Field | Meaning |
+|---|---|
+| `bars` | `[{ "label", "value", "color", "display" }]`. `value` is 0 or more; `display` replaces the printed value, such as `"27.5 min"` |
+| `unit` | A caption above the bars, such as "minutes per task" |
+| `max` | Scale to this value instead of the largest bar, to compare charts side by side |
+| `barHeight`, `gap`, `fillStyle`, `fontSize` | Defaults 32, 18, `hachure`, 17 |
 
 ## Text sizes
 

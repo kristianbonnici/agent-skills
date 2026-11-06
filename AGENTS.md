@@ -52,7 +52,7 @@ Before saying a skill is installed, run:
 ./tests/skill-evolution-test        # skill-evolution's lessons script: two computers sharing the private lessons, one file per entry
 ./tests/evidence-test               # every evidence file has skill-evidence's "Last checked" line and "Left out" section
 ./tests/disk-cleanup-test           # disk-cleanup's scan script in a made-up home folder
-./tests/sketch-infographic-test     # every documented pattern and the example page build cleanly, and the checks catch what they claim
+./tests/sketch-infographic-test     # every documented pattern and diagram and the example page build cleanly, charts place points by their numbers, and the checks catch what they claim
 ```
 
 The doctor must confirm Product Design is absent from Codex discovery paths.

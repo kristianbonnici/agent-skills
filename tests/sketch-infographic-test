@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# sketch-infographic: every pattern in references/patterns.md and the example page build with no
-# warnings, the outputs are a valid .excalidraw scene and a PNG, and the checks catch what they
-# claim to (a label too long for its box, text crossing another element, an element outside its
-# panel, a character Excalifont lacks).
+# sketch-infographic: every pattern in references/patterns.md, every diagram in
+# references/diagrams.md and the example page build with no warnings, the outputs are a valid
+# .excalidraw scene and a PNG, the checks catch what they claim to (a label too long for its box,
+# text crossing another element, an element outside its panel, a character Excalifont lacks), and
+# charts put every point where its numbers say.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,6 +37,22 @@ panels = [{"id": f"p{i}", "heading": title.split(":")[0], "elements": json.loads
 json.dump({"title": "Patterns", "format": "auto", "panels": panels, "footer": "test"}, open(sys.argv[2], "w"))
 EOF
 node "$build" "$work/patterns.json" >"$work/patterns.out" || { cat "$work/patterns.out"; fail "a pattern doesn't build cleanly"; }
+
+# 1b. Every diagram in the catalog, one frameless full-width panel each, on one page.
+python3 -I - "$skill/references/diagrams.md" "$work/diagrams.json" <<'EOF2'
+import json, re, sys
+text = open(sys.argv[1]).read()
+panels = []
+for section in re.split(r"^## ", text, flags=re.M)[1:]:
+    title = section.splitlines()[0]
+    found = re.findall(r"```json\n(.*?)```", section, re.S)
+    assert len(found) <= 1, f"diagram {title!r} has {len(found)} JSON blocks"
+    if found:
+        panels.append({"id": f"d{len(panels)}", "span": 2, "heading": title.split(":")[0], "elements": json.loads(found[0])})
+assert len(panels) >= 10, f"expected at least 10 diagrams, found {len(panels)}"
+json.dump({"title": "Diagrams", "format": "fit", "frame": False, "panels": panels}, open(sys.argv[2], "w"))
+EOF2
+node "$build" "$work/diagrams.json" --lint-only >"$work/diagrams.out" || { cat "$work/diagrams.out"; fail "a diagram doesn't build cleanly"; }
 
 # 2. The example page.
 cp "$skill/assets/example.json" "$work/example.json"
@@ -202,5 +219,51 @@ for group in (["f.x1", "f.x2", "f.x3"], ["f.y1", "f.y2"]):
     tips = [tip(i) for i in group]
     assert len(set(tips)) == len(tips), f"arrowheads share a point: {tips}"
 PY
+
+# 10. Charts put every point where its numbers say, and warn about what they can't draw.
+cat >"$work/chart.json" <<'JSON'
+{ "title": "", "format": "fit", "frame": false, "panels": [ { "id": "c", "span": 2, "elements": [
+  { "type": "chart", "id": "ln", "x": 0, "y": 0, "width": 600, "height": 400, "labels": "none",
+    "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10 },
+    "series": [ { "color": "blue", "points": [[0, 0], [5, 2.5], [10, 10]] } ] },
+  { "type": "chart", "kind": "bar", "id": "br", "x": 700, "y": 0, "width": 500,
+    "bars": [ { "label": "a", "value": 10 }, { "label": "b", "value": 5 } ] },
+  { "type": "line", "id": "cv", "x": 0, "y": 460, "curve": true, "points": [[0, 0], [60, 30], [120, 0]] }
+] } ] }
+JSON
+node "$build" "$work/chart.json" >"$work/chart.out" || { cat "$work/chart.out"; fail "the chart page doesn't build cleanly"; }
+width=$(sed -n 's/^page \([0-9]*\)×.*/\1/p' "$work/chart.out")
+[ "$width" -lt 1500 ] || { cat "$work/chart.out"; fail "format fit should narrow the page, got $width px"; }
+python3 -I - "$work/chart.excalidraw" <<'PY'
+import json, sys
+els = {e["id"]: e for e in json.load(open(sys.argv[1]))["elements"]}
+assert not any(i.endswith(".card") for i in els), "a frameless panel drew a card"
+s, xa, ya = els["c.ln.s0"], els["c.ln.xaxis"], els["c.ln.yaxis"]
+pts = [(s["x"] + px, s["y"] + py) for px, py in s["points"]]
+left, bottom = ya["x"], xa["y"]
+right, top = xa["x"] + xa["points"][-1][0] - 6, ya["y"] + 6
+close = lambda a, b: abs(a[0] - b[0]) < 0.5 and abs(a[1] - b[1]) < 0.5
+assert close(pts[0], (left, bottom)), f"(0, 0) should sit on the origin, got {pts[0]}"
+assert close(pts[2], (right, top)), f"(10, 10) should sit at the top right, got {pts[2]}"
+mid = (left + (right - left) * 0.5, bottom - (bottom - top) * 0.25)
+assert close(pts[1], mid), f"(5, 2.5) should sit at {mid}, got {pts[1]}"
+assert s["roundness"] == {"type": 2}, "a line chart is curved by default"
+a, b = els["c.br.b0"]["width"], els["c.br.b1"]["width"]
+assert abs(a - 2 * b) < 0.5, f"a bar of 10 should be twice one of 5: {a} and {b}"
+assert els["c.cv"]["roundness"] == {"type": 2}, "curve: true should make a round line"
+PY
+cat >"$work/badchart.json" <<'JSON'
+{ "title": "Bad chart", "format": "auto", "panels": [ { "id": "k", "span": 2, "elements": [
+  { "type": "chart", "id": "out", "x": 0, "y": 0, "width": 600, "height": 300,
+    "yAxis": { "min": 0, "max": 5, "ticks": [0, 5, 8] }, "series": [ { "label": "s", "points": [[0, 1], [1, 9]] } ] },
+  { "type": "chart", "id": "empty", "x": 0, "y": 340, "width": 600, "height": 200, "series": [ { "points": [[0, 1]] } ] },
+  { "type": "chart", "kind": "bar", "id": "neg", "x": 700, "y": 0, "bars": [ { "label": "n", "value": -2 } ] }
+] } ] }
+JSON
+set +e; node "$build" "$work/badchart.json" --lint-only >"$work/badchart.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] || { cat "$work/badchart.out"; fail "a broken chart should exit 3, got $status"; }
+for expect in 'series "s" has a point outside the axis range' 'a y tick is outside the axis range' 'needs two or more' 'chart "empty" has no series' 'bar "n" needs a value of 0 or more'; do
+  grep -q -- "$expect" "$work/badchart.out" || { cat "$work/badchart.out"; fail "missing warning: $expect"; }
+done
 
 echo "sketch-infographic: ok"

@@ -96,17 +96,12 @@ At most one per page, often at the bottom of the full-width panel. Keep it to tw
 
 ## Bar chart: "how much faster / cheaper"
 
-Horizontal bars, hatched, scaled by hand: pick px per unit so the longest bar fits (here 11 px per minute). Put the value at the bar's end and the label on the left. Use the source's numbers, never rounded into a different claim.
+A `chart` with `"kind": "bar"`: it scales the bars to the largest value and writes each value at its bar's end, so no length is worked out by hand. Use the source's numbers as they are, never rounded into a different claim. More charts are in [diagrams.md](diagrams.md).
 
 ```json
 [
-  { "type": "text", "x": 0, "y": 0, "fontSize": 16, "color": "#495057", "text": "minutes per task" },
-  { "type": "text", "x": 0, "y": 44, "fontSize": 17, "text": "New way" },
-  { "type": "rectangle", "id": "b1", "x": 230, "y": 40, "width": 132, "height": 32, "color": "blue", "fillStyle": "hachure", "sharp": true },
-  { "type": "text", "x": 372, "y": 44, "fontSize": 17, "text": "12.0" },
-  { "type": "text", "x": 0, "y": 94, "fontSize": 17, "text": "Old way" },
-  { "type": "rectangle", "id": "b2", "x": 230, "y": 90, "width": 303, "height": 32, "color": "gray", "fillStyle": "hachure", "sharp": true },
-  { "type": "text", "x": 543, "y": 94, "fontSize": 17, "text": "27.5" }
+  { "type": "chart", "kind": "bar", "id": "speed", "x": 0, "y": 0, "width": 560, "unit": "minutes per task",
+    "bars": [ { "label": "New way", "value": 12, "color": "blue" }, { "label": "Old way", "value": 27.5, "color": "gray" } ] }
 ]
 ```
 

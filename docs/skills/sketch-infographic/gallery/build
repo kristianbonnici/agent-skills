@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Render every diagram in the skill's references/diagrams.md to a PNG in this folder, for the
+# gallery in README.md. Run it after changing a diagram: ./docs/skills/sketch-infographic/gallery/build
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$here/../../../.." && pwd)"
+skill="$repo_root/skills/sketch-infographic"
+work="$(mktemp -d "${TMPDIR:-/tmp}/sketch-gallery.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+python3 -I - "$skill/references/diagrams.md" "$work" <<'PY'
+import json, re, sys
+text = open(sys.argv[1]).read()
+for section in re.split(r"^## ", text, flags=re.M)[1:]:
+    title = section.splitlines()[0].split(":")[0].strip()
+    found = re.findall(r"```json\n(.*?)```", section, re.S)
+    if not found:
+        continue
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    page = {"title": title, "format": "fit", "frame": False,
+            "panels": [{"id": "d", "span": 2, "elements": json.loads(found[0])}]}
+    json.dump(page, open(f"{sys.argv[2]}/{slug}.json", "w"))
+PY
+for spec in "$work"/*.json; do
+  node "$skill/scripts/build.mjs" "$spec" --scale 1 >/dev/null
+  cp "${spec%.json}.png" "$here/"
+  echo "wrote $(basename "${spec%.json}.png")"
+done

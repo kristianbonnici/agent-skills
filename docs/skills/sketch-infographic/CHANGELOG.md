@@ -1,5 +1,13 @@
 # sketch-infographic changelog
 
+## 1.1.0 (2026-11-06)
+
+- Draws single diagrams as well as infographic pages: the description and the workflow now cover a line or bar chart, flowchart, boundary, sequence diagram, timeline, quadrant, cycle, tree or comparison table, planned from the user's numbers, description or example image. From the owner asking whether the skill could redo three example images (a hand-drawn line chart, a middleware flow diagram and a sync-vs-async sequence diagram): all three built, but only by tracing points by eye, passing an undocumented Excalidraw field through, and fighting the page frame, and a request for "a hand-drawn chart" might not have loaded the skill at all.
+- New `references/diagrams.md`: a table for picking a diagram by its point, then one tested full-width snippet per kind with what to watch for. The test builds every one, so a snippet can't silently break.
+- New `chart` element: a line chart (series of points, axes with optional ticks, grid and markers, each series named at its first or last point) or a bar chart, scaled from the numbers, so no point or bar length is worked out by hand. A point or tick outside its axis, a squeezed plot, a series of fewer than two points or a negative bar is a warning. The patterns' bar chart uses it instead of hand-scaled rectangles.
+- `"curve": true` on a line or arrow draws a smooth curve through its points; `"frame": false` on the page or a panel drops the panel's card and padding; `"format": "fit"` also trims the page's width to the drawing. Arrow labels are documented as drawn over by their line in the PNG, with a text beside the arrow as the alternative, after the first flowchart in the catalog had "yes" and "no" struck through.
+- A gallery of every catalog diagram, rendered, in `docs/skills/sketch-infographic/gallery/`, for the owner to pick from; agents never load it.
+
 ## 1.0.0 (2026-11-05)
 
 - First release: plan a page from one source (title, five to seven panels, footer), write it as a JSON spec, and build it into a PNG and an editable `.excalidraw` file. The build lays out a two-column grid, wraps text, routes arrows, and warns about elements outside their panel, overlaps, boxes that grew for their label, and characters Excalifont lacks. From recreating a hand-drawn infographic seen on X as a private test: the first build showed that typed arrows and check marks fall back to a system font, that the renderer centres a label it was asked to put at the top, and that an overlap check skipping text inside boxes misses the collision that results.

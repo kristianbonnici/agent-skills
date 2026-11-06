@@ -51,7 +51,9 @@ export const STYLE = {
 };
 
 // Page shapes as height ÷ width. 3:4 is what these posts use (1500×2000).
-export const FORMATS = { '3:4': 4 / 3, '4:5': 5 / 4, 'a4': Math.SQRT2, 'square': 1, 'auto': null };
+// "auto" grows to fit the content; "fit" also trims the width to it, for a
+// single diagram that doesn't fill the page.
+export const FORMATS = { '3:4': 4 / 3, '4:5': 5 / 4, 'a4': Math.SQRT2, 'square': 1, 'auto': null, 'fit': null };
 
 const COLORS = {
   green: ['#b2f2bb', '#2f9e44'], orange: ['#ffd8a8', '#e8590c'], red: ['#ffc9c9', '#e03131'],
@@ -209,8 +211,17 @@ function expand(el, pid, boxes, warnings) {
       break;
     }
     case 'line': case 'arrow': {
-      const { group: _g, ...rest } = el;
-      out.push({ ...common, ...rest, id, _spec: el, strokeColor: el.strokeColor ?? strokeOf(el.color) ?? STYLE.ink });
+      const { group: _g, curve, ...rest } = el;
+      const l = { ...common, ...rest, id, _spec: el, strokeColor: el.strokeColor ?? strokeOf(el.color) ?? STYLE.ink };
+      // Excalidraw draws a smooth curve through the points of a "round" line.
+      if (curve) l.roundness = { type: 2 };
+      out.push(l);
+      break;
+    }
+    case 'chart': {
+      const c = el.kind === 'bar' ? barChart(el, id, g, common, pid, warnings) : lineChart(el, id, g, common, pid, warnings);
+      out.push(...c.out);
+      boxes[id] = { ...c.box, bind: false };
       break;
     }
     default:
@@ -228,6 +239,147 @@ function lines(el, id, g) {
     id: `${id}.l${i}`, type: 'line', x: el.x, y: el.y + i * gap, strokeColor: STYLE.faint, strokeWidth: 1,
     roughness: 1, points: [[0, 0], [i === n - 1 ? w * 0.7 : w, 0]], groupIds: g
   }));
+}
+
+// ---------- charts (scaled from data, so no number is placed by hand) ----------
+
+const tickList = ticks => (ticks ?? []).map(t => Array.isArray(t) ? { v: t[0], text: String(t[1]) } : { v: t, text: String(t) });
+const finite = v => typeof v === 'number' && Number.isFinite(v);
+
+// Push labels down until none overlaps the one above it, keeping their order.
+function unstack(labels, gap = 4) {
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    const prev = labels[i - 1];
+    if (labels[i].y < prev.y + prev.height + gap) labels[i].y = prev.y + prev.height + gap;
+  }
+}
+
+// A line chart: axes, optional ticks and grid, one line per series, each
+// series named next to its first or last point. x, y, width and height are
+// the chart's whole footprint; the plot area is what the labels leave.
+function lineChart(el, id, g, common, pid, warnings) {
+  const fs = el.fontSize ?? 18, small = Math.max(14, fs - 2);
+  const x0 = el.x ?? 0, y0 = el.y ?? 0, W = el.width ?? 600, H = el.height ?? 360;
+  const X = el.xAxis ?? {}, Y = el.yAxis ?? {};
+  const series = (el.series ?? []).filter(s => {
+    const ok = Array.isArray(s.points) && s.points.length >= 2 && s.points.every(p => finite(p?.[0]) && finite(p?.[1]));
+    if (!ok) warnings.push(`${pid}: chart "${el.id ?? 'no id'}": series "${s.label ?? '?'}" needs two or more [x, y] number points: skipped`);
+    return ok;
+  });
+  const box = { x: x0, y: y0, w: W, h: H };
+  if (!series.length) { warnings.push(`${pid}: chart "${el.id ?? 'no id'}" has no series to draw`); return { out: [], box }; }
+  const pts = series.flatMap(s => s.points);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const xmin = X.min ?? Math.min(...xs), xmax = X.max ?? Math.max(...xs);
+  const ymin = Y.min ?? Math.min(0, ...ys), ymax = Y.max ?? Math.max(...ys);
+  if (!(xmax > xmin) || !(ymax > ymin)) {
+    warnings.push(`${pid}: chart "${el.id ?? 'no id'}": an axis has no range (min must be below max)`);
+    return { out: [], box };
+  }
+  const xt = tickList(X.ticks), yt = tickList(Y.ticks);
+  const side = el.labels ?? (yt.length ? 'end' : 'start');
+  const named = side === 'none' ? [] : series.filter(s => s.label);
+  const labelW = Math.max(0, ...named.map(s => textWidth(s.label, fs)));
+  const yTickW = yt.length ? Math.max(...yt.map(t => textWidth(t.text, small))) + 16 : 0;
+  const leftM = (side === 'start' && named.length ? labelW + 20 : 4) + yTickW;
+  const rightM = Math.max(X.label ? textWidth(X.label, fs) + 18 : 4, side === 'end' && named.length ? labelW + 18 : 0);
+  const topM = Y.label ? fs * STYLE.lineHeight + 18 : 12;
+  const bottomM = Math.max(xt.length ? small * STYLE.lineHeight + 14 : 0, fs * 0.7);
+  const px = x0 + leftM, py = y0 + topM, pw = W - leftM - rightM, ph = H - topM - bottomM;
+  if (pw < 120 || ph < 80) {
+    warnings.push(`${pid}: chart "${el.id ?? 'no id'}" leaves a plot of only ${Math.round(pw)}×${Math.round(ph)} px after its labels: make it bigger`);
+  }
+  const sx = v => px + (v - xmin) / (xmax - xmin) * pw;
+  const sy = v => py + ph - (v - ymin) / (ymax - ymin) * ph;
+  const out = [];
+  const line = (sid, x, y, points, extra = {}) => out.push({ ...common, id: `${id}.${sid}`, type: 'line', x, y, points,
+    strokeColor: STYLE.muted, groupIds: g, ...extra });
+  const text = (sid, x, y, s, size, color = STYLE.ink) => {
+    const t = textEl(`${id}.${sid}`, x, y, s, size, { color, groupIds: g });
+    out.push(t); return t;
+  };
+
+  if (el.grid) yt.forEach((t, i) => line(`grid${i}`, px, sy(t.v), [[0, 0], [pw, 0]],
+    { strokeColor: '#dee2e6', strokeWidth: 1, strokeStyle: 'dashed', roughness: 0 }));
+  line('yaxis', px, py - 6, [[0, 0], [0, ph + 6]]);
+  line('xaxis', px, py + ph, [[0, 0], [pw + 6, 0]]);
+  if (Y.label) { const w = textWidth(Y.label, fs); text('ylabel', Math.max(x0, px - w / 2), y0, Y.label, fs); }
+  if (X.label) text('xlabel', px + pw + 16, py + ph - fs * STYLE.lineHeight / 2, X.label, fs);
+  yt.forEach((t, i) => {
+    line(`ytick${i}`, px - 6, sy(t.v), [[0, 0], [6, 0]]);
+    const tw = textWidth(t.text, small);
+    text(`yt${i}`, px - 12 - tw, sy(t.v) - small * STYLE.lineHeight / 2, t.text, small, STYLE.muted);
+  });
+  xt.forEach((t, i) => {
+    line(`xtick${i}`, sx(t.v), py + ph, [[0, 0], [0, 6]]);
+    const tw = textWidth(t.text, small);
+    text(`xt${i}`, sx(t.v) - tw / 2, py + ph + 10, t.text, small, STYLE.muted);
+  });
+
+  for (const [axis, ticks, lo, hi] of [['x', xt, xmin, xmax], ['y', yt, ymin, ymax]]) {
+    if (ticks.some(t => t.v < lo || t.v > hi)) warnings.push(`${pid}: chart "${el.id ?? 'no id'}": a ${axis} tick is outside the axis range`);
+  }
+  const labels = { start: [], end: [] };
+  series.forEach((s, i) => {
+    const color = strokeOf(s.color) ?? STYLE.ink;
+    if (s.points.some(([vx, vy]) => vx < xmin || vx > xmax || vy < ymin || vy > ymax)) {
+      warnings.push(`${pid}: chart "${el.id ?? 'no id'}": series "${s.label ?? i + 1}" has a point outside the axis range: widen the range`);
+    }
+    const P = s.points.map(([vx, vy]) => [sx(vx), sy(vy)]);
+    out.push({ ...common, id: `${id}.s${i}`, type: 'line', x: P[0][0], y: P[0][1],
+      points: P.map(([a, b]) => [a - P[0][0], b - P[0][1]]), strokeColor: color,
+      strokeWidth: s.strokeWidth ?? el.strokeWidth ?? 2, strokeStyle: s.strokeStyle ?? 'solid',
+      roundness: (s.curve ?? el.curve ?? true) ? { type: 2 } : null, groupIds: g });
+    if (s.markers ?? el.markers) P.forEach(([a, b], k) => out.push({ ...common, id: `${id}.s${i}.m${k}`, type: 'ellipse',
+      x: a - 5, y: b - 5, width: 10, height: 10, strokeColor: color, backgroundColor: color, strokeWidth: 1, groupIds: g }));
+    if (side === 'none' || !s.label) return;
+    const h = fs * STYLE.lineHeight, w = textWidth(s.label, fs);
+    const [ax, ay] = side === 'end' ? P[P.length - 1] : P[0];
+    labels[side === 'end' ? 'end' : 'start'].push({ i, text: s.label, color,
+      x: side === 'end' ? ax + 12 : px - yTickW - 16 - w, y: ay - h / 2, height: h });
+  });
+  for (const group of Object.values(labels)) {
+    unstack(group);
+    for (const l of group) text(`label${l.i}`, l.x, l.y, l.text, fs, l.color);
+  }
+  return { out, box };
+}
+
+// A horizontal bar chart: one bar per item, scaled to the largest value (or
+// `max`), with the label on the left and the value at the bar's end.
+function barChart(el, id, g, common, pid, warnings) {
+  const fs = el.fontSize ?? 17, barH = el.barHeight ?? 32, gap = el.gap ?? 18;
+  const x0 = el.x ?? 0, y0 = el.y ?? 0, W = el.width ?? 560;
+  const bars = (el.bars ?? []).filter(b => {
+    const ok = finite(b.value) && b.value >= 0;
+    if (!ok) warnings.push(`${pid}: chart "${el.id ?? 'no id'}": bar "${b.label ?? '?'}" needs a value of 0 or more: skipped`);
+    return ok;
+  });
+  if (!bars.length) {
+    warnings.push(`${pid}: chart "${el.id ?? 'no id'}" has no bars to draw`);
+    return { out: [], box: { x: x0, y: y0, w: W, h: 0 } };
+  }
+  const out = [];
+  let y = y0;
+  if (el.unit) { const t = textEl(`${id}.unit`, x0, y0, el.unit, 16, { color: STYLE.muted, groupIds: g }); out.push(t); y += t.height + 14; }
+  const shown = b => b.display ?? String(b.value);
+  const labelW = Math.max(...bars.map(b => textWidth(b.label ?? '', fs))) + 24;
+  const valueW = Math.max(...bars.map(b => textWidth(shown(b), fs))) + 12;
+  const max = el.max ?? Math.max(...bars.map(b => b.value));
+  if (bars.some(b => b.value > max)) warnings.push(`${pid}: chart "${el.id ?? 'no id'}": a bar is longer than max ${max}`);
+  const scale = max > 0 ? (W - labelW - valueW) / max : 0;
+  if (W - labelW - valueW < 120) warnings.push(`${pid}: chart "${el.id ?? 'no id'}" leaves bars only ${Math.round(W - labelW - valueW)} px: make it wider or the labels shorter`);
+  const th = fs * STYLE.lineHeight;
+  bars.forEach((b, i) => {
+    const by = y + i * (barH + gap), bw = Math.max(2, b.value * scale);
+    if (b.label) out.push(textEl(`${id}.l${i}`, x0, by + (barH - th) / 2, b.label, fs, { groupIds: g }));
+    const c = COLORS[b.color ?? el.color ?? 'blue'] ?? COLORS.blue;
+    out.push({ ...common, id: `${id}.b${i}`, type: 'rectangle', x: x0 + labelW, y: by, width: bw, height: barH,
+      backgroundColor: c[0], strokeColor: c[1], fillStyle: el.fillStyle ?? 'hachure', roundness: null, groupIds: g });
+    out.push(textEl(`${id}.v${i}`, x0 + labelW + bw + 10, by + (barH - th) / 2, shown(b), fs, { groupIds: g }));
+  });
+  return { out, box: { x: x0, y: y0, w: W, h: y - y0 + bars.length * (barH + gap) - gap } };
 }
 
 // Route an arrow between two boxes: side to side when they sit apart
@@ -377,7 +529,10 @@ export async function build(spec, opts = {}) {
     const pid = p.id ?? `p${i + 1}`;
     const span = p.span === 2 || p.span === 'full' ? 2 : 1;
     const w = span === 2 ? innerW : colW;
-    const areaW = w - 2 * PS.pad;
+    // A panel without a frame is a bare drawing: no card, so no padding either.
+    const framed = (p.frame ?? spec.frame) !== false;
+    const pad = framed ? PS.pad : 0;
+    const areaW = w - 2 * pad;
     const boxes = {};
     const raw = (p.elements ?? []).flatMap(el => expand(el, pid, boxes, warnings));
     planSpread(raw.filter(el => (el.type === 'arrow' || el.type === 'line') && el._spec), pid, boxes);
@@ -393,7 +548,7 @@ export async function build(spec, opts = {}) {
     for (const [el, name] of [[heading, 'heading'], [takeaway, 'takeaway']]) {
       if (wordTooWide(el)) warnings.push(`${pid}: the ${name} has a word wider than the panel: shorten it`);
     }
-    panels.push({ pid, span, w, areaW, prepared, heading, takeaway, drawn, spec: p, skel });
+    panels.push({ pid, span, w, areaW, pad, framed, prepared, heading, takeaway, drawn, spec: p, skel });
   }
 
   // Rows: a full-width panel takes a row; half panels pair up in order.
@@ -404,8 +559,8 @@ export async function build(spec, opts = {}) {
     else rows.push([p]);
   }
   const headH = p => p.heading ? p.heading.height + PS.headingGap : 0;
-  const natural = p => PS.pad + headH(p) + Math.max(0, p.drawn.y + p.drawn.h)
-    + (p.takeaway ? PS.takeawayGap + p.takeaway.height : 0) + PS.pad;
+  const natural = p => p.pad + headH(p) + Math.max(0, p.drawn.y + p.drawn.h)
+    + (p.takeaway ? PS.takeawayGap + p.takeaway.height : 0) + p.pad;
 
   const report = [];
   const heights = rows.map(row => Math.max(...row.map(p => Math.max(natural(p), p.spec.minHeight ?? 0))));
@@ -427,13 +582,13 @@ export async function build(spec, opts = {}) {
     const h = heights[ri];
     row.forEach((p, j) => {
       const px = P.margin + j * (colW + P.gap), py = y;
-      const ax = px + PS.pad, ay = py + PS.pad + headH(p);
-      elements.push({ id: `${p.pid}.card`, type: 'rectangle', x: px, y: py, width: p.w, height: h,
+      const ax = px + p.pad, ay = py + p.pad + headH(p);
+      if (p.framed) elements.push({ id: `${p.pid}.card`, type: 'rectangle', x: px, y: py, width: p.w, height: h,
         strokeColor: p.spec.strokeColor ?? STYLE.panelStroke, backgroundColor: p.spec.backgroundColor ?? '#ffffff',
         fillStyle: 'solid', strokeWidth: 2, roughness: 1, roundness: { type: 3 } });
-      if (p.heading) elements.push({ ...p.heading, x: px + PS.pad, y: py + PS.pad });
+      if (p.heading) elements.push({ ...p.heading, x: px + p.pad, y: py + p.pad });
       for (const el of p.prepared) elements.push({ ...el, x: el.x + ax, y: el.y + ay });
-      if (p.takeaway) elements.push({ ...p.takeaway, x: px + PS.pad, y: ay + Math.max(0, p.drawn.y + p.drawn.h) + PS.takeawayGap });
+      if (p.takeaway) elements.push({ ...p.takeaway, x: px + p.pad, y: ay + Math.max(0, p.drawn.y + p.drawn.h) + PS.takeawayGap });
       lintPanel(p, warnings);
       report.push(`${p.pid}: drawing area ${Math.round(p.areaW)} wide, drawing uses ` +
         `${Math.round(p.drawn.x + p.drawn.w)}×${Math.round(p.drawn.y + p.drawn.h)}; panel ${Math.round(p.w)}×${Math.round(h)}`);
@@ -446,13 +601,23 @@ export async function build(spec, opts = {}) {
     elements.push(footerEl); y = footerEl.y + footerEl.height;
   }
   const pageH = Math.max(targetH, y + P.margin - (spec.footer ? 0 : P.gap));
+  // "fit" trims the width to what is drawn, with the page margin on the right.
+  let outW = pageW;
+  if (formatName === 'fit') {
+    const right = Math.max(0, ...(await prepareScene(elements)).filter(e => !e.isDeleted).map(e => {
+      const b = bbox(e);
+      // A wrapped text's box is as wide as it was allowed to be; measure its ink.
+      return e.type === 'text' ? e.x + Math.max(...String(e.text).split('\n').map(l => textWidth(l, e.fontSize))) : b.x + b.w;
+    }));
+    outW = Math.min(pageW, Math.ceil(right + P.margin));
+  }
   // An invisible page-sized rectangle fixes the export bounds to the page.
-  elements.unshift({ id: 'page.bounds', type: 'rectangle', x: 0, y: 0, width: pageW, height: pageH,
+  elements.unshift({ id: 'page.bounds', type: 'rectangle', x: 0, y: 0, width: outW, height: pageH,
     strokeColor: 'transparent', backgroundColor: 'transparent', fillStyle: 'solid', strokeWidth: 1, roughness: 0, locked: true });
 
   const finalElements = await prepareScene(elements);
   const missingGlyphs = lintGlyphs(finalElements, warnings);
-  return { elements: finalElements, warnings, report, size: [pageW, Math.round(pageH)], missingGlyphs };
+  return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs };
 }
 
 // Characters Excalifont lacks (arrows, check marks, emoji, CJK) render in a
