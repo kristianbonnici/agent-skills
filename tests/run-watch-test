@@ -269,9 +269,9 @@ try:
     assert len(tn) == 1 and "network connection" in tn[0] and not lines_for(out, "hang", "T"), text
     # two calls started together, or a stuck call beside another (finished) call: no kill offered
     u = lines_for(out, "hang", "U")
-    assert len(u) == 2 and all("another call started within a minute" in line and "stop with" not in line for line in u), text
+    assert len(u) == 2 and all("another call started within a minute" in line and "stop it with" not in line for line in u), text
     x = lines_for(out, "hang", "X")
-    assert len(x) == 1 and "another call started within a minute" in x[0] and "stop with" not in x[0], text
+    assert len(x) == 1 and "another call started within a minute" in x[0] and "stop it with" not in x[0], text
     b = lines_for(out, "hang", "B")
     assert len(b) == 1 and str(procs["B"].pid) in b[0] and "cat > /dev/null" in b[0], text
     # an approval wait: a shell call with no process; a call moved to the background on its timeout;
@@ -318,6 +318,10 @@ try:
     assert any(line.startswith("disk: 15.0 GB free, below 20 GB") for line in out3), out3
     assert any(line.startswith(f"sampler: the usage sampler (pid {sampler.pid})") for line in out3), out3
     assert not lines_for(out3, "hang", "B"), out3
+    # after three runs, A's process still has its first sample (older than the 3-second window) in the state
+    kept = [v for k, v in json.load(open(os.path.join(run_dir, "run-watch.state.json")))["samples"].items()
+            if k.startswith(f"{procs['A'].pid}@")]
+    assert kept and kept[0][-1][0] - kept[0][0][0] >= 3, kept
 
     # no watch.json: a note, and the machine checks still run; a usage error
     os.remove(os.path.join(run_dir, "watch.json"))

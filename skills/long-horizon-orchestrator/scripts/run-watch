@@ -24,7 +24,8 @@ Each line starts with a word saying what it is:
                    processes (those started with the call, and what they started) used no CPU
                    over those 6 minutes, are idle now (no CPU or GPU in ps's last-minute average
                    and a 2-second sample), started nothing and wrote nothing, and hold no network
-                   connection; it names the call, its process IDs and the kill that stops them
+                   connection; it names the call, its process IDs and the kill that stops it once
+                   the orchestrator has read the command and found it isn't a wait the task chose
                    (no kill when another shell call started within a minute of it)
   idle <task>      the same call idle now, with nothing written or started for 6 minutes, but not
                    shown idle all that time (a hang needs under half a second of CPU since a sample
@@ -138,12 +139,13 @@ def run(cmd: list[str], timeout: float = 10) -> str:
 
 
 def run_ok(cmd: list[str], timeout: float = 10, ok=(0,)) -> str | None:
-    """Like run, but None when the command couldn't run, timed out or failed."""
+    """Like run, but None when the command couldn't run, timed out, failed or said anything on
+    stderr (lsof exits 1 both for "nothing found" and for an error; only the error says so)."""
     try:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=dict(os.environ, LC_ALL="C"))
     except (OSError, subprocess.SubprocessError):
         return None
-    return done.stdout if done.returncode in ok else None
+    return done.stdout if done.returncode in ok and not done.stderr.strip() else None
 
 
 def short(text: str, n: int = 90) -> str:
@@ -725,8 +727,10 @@ def main(argv: list[str]) -> int:
                              "(ps -p <pid> -o command=) before you stop it, then tell the task")
             else:
                 top = [pid for pid in alive if procs[pid]["ppid"] not in alive]
-                lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min; "
-                             f"stop with: kill {' '.join(map(str, top))} (check each with ps -p <pid> -o command= first), then tell the task")
+                lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min. Idle isn't proof "
+                             "it is stuck: read the command and the task's last message, and leave a wait it chose (an explicit sleep, "
+                             f"a wait on a server it started); otherwise stop it with: kill {' '.join(map(str, top))} "
+                             "(check each with ps -p <pid> -o command= first), then tell the task")
             hung_or_waiting = True
         if f["quiet"] and not hung_or_waiting:
             busy = sum(recent_cpu(pid) for pid in tp) >= BUSY_SHARE or any(gpu_moved(pid) for pid in tp)
@@ -864,7 +868,10 @@ def main(argv: list[str]) -> int:
             continue
         k = key(pid, p)
         old = [s for s in samples.get(k, []) if t_now - s[0] <= KEEP_SAMPLES_S]
-        keep[k] = (old + [[round(t_now, 1), round(p["cpu"], 2)]])[-8:]
+        # the newest few, and the newest at least as old as each window, however often this runs
+        anchors = [max((s for s in old if t_now - s[0] >= w), default=None, key=lambda s: s[0]) for w in (hang_s, hog_s)]
+        kept = sorted({tuple(s) for s in old[-6:] + [a for a in anchors if a]})
+        keep[k] = [list(s) for s in kept] + [[round(t_now, 1), round(p["cpu"], 2)]]
     state.update({"last_run": iso(t0), "samples": keep, "sessions": sessions,
                   "blind": sorted(blind_told), "told": told, "idle": idle_now,
                   "hogs": sorted(hogs_told)})
