@@ -1,5 +1,12 @@
 # long-horizon-orchestrator changelog
 
+## 3.5.0 (2026-11-06)
+
+- **A stopped review whose must-fixes are all fixed gets one fresh look** (owner, 2026-11-06): when every must-fix is fixed with tests and only the last fixes are unreviewed, the orchestrator sends one follow-up in which the cross reviewer looks at the whole diff; a must-fix in it that changes logic keeps the task `ready`. Before, the one path out of a stopped review needed an open must-fix whose fix removes code, so this, now the common case, waited for the owner: 8 of 9 deep-reviewed tasks in one run and 10 of 22 tasks in another stopped this way. Given the look outside the text, three merged clean and four stopped on new, real defects.
+- **A stopped review whose dispute sits in one part merges the rest** (owner, 2026-11-06): the task puts the disputed code back to the integration branch's behavior, keeps it with its findings on a branch of its own for the report's "Not finished", and merges the rest after one fresh look by the cross reviewer; any must-fix on what's left stops it. An earlier run did this outside the text six times, landing about 40 fixes that would otherwise have waited a day for the owner.
+- The existing path for a fix that removes code joins these two in one short section, and a task gets at most one such follow-up.
+- **Tests a task commits bind port 0** (owner, 2026-11-06): the common file says so, and that a task's own ports are for servers it starts by hand. A test bound to its task's fixed port made four parallel tasks' checks fail once it reached the integration branch, until a follow-up moved it to a free port.
+
 ## 3.4.0 (2026-11-03)
 
 - **The orchestrator may decide a review's one open fix.** When a task's review stops with one must-fix open, its finding names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach, the orchestrator may send that fix in one follow-up, with one fresh look by the cross reviewer at the whole diff; a must-fix in that look that changes logic stops it, and the report names the decision. Before, this skill said to keep such a task unmerged while the review gate said the orchestrator decides. Two tasks needed this in one evening's run, and both merged clean.

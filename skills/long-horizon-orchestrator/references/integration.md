@@ -28,9 +28,13 @@ A task may report more than once: after review fixes, a rebase or a follow-up. A
 
 ## A review that didn't converge
 
-A task whose review gate stopped with a must-fix open, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known defect.
+A task whose review gate stopped, because its rounds stopped converging or in the extra look at a conflict resolution, reports `ready` with "review didn't converge" and the open findings. Don't send it back to the merge gate as it is, and never do the gate yourself: its change has a known defect or unreviewed fixes. You may send it one follow-up, at most once per task, in the first case that fits, and name the decision in the report:
 
-When one must-fix is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach, you may decide that fix. Send one follow-up with it: the task makes the fix, gets one fresh look at the whole diff from the cross reviewer, fixes what that look finds as the review gate says, and goes to the merge gate. A must-fix in that look that changes logic stops it. Name the decision in the report.
+- **One fix that removes code:** one must-fix is open, it names a fix that removes the disputed code instead of tuning it, and the task doesn't doubt its approach. The task makes that fix.
+- **Only the last fixes unreviewed:** every must-fix is fixed with tests, and only the last fixes haven't been reviewed.
+- **The dispute sits in one part:** the open findings all sit in code the task can name. The task puts that code back to the integration branch's behavior and keeps it, with the findings, on a branch of its own, which goes under "Not finished" in the report; dependents that need it wait.
+
+Then the task gets one fresh look at the whole diff from the cross reviewer, fixes nits and must-fixes that don't change logic as the review gate says, and goes to the merge gate. A must-fix in that look that changes logic stops it; after a split, any must-fix on what's left does.
 
 Otherwise, or when that look stops it, keep it `ready`, park its dependents, and list it under "Not finished" in the report with the open findings, whether the task thought the approach itself is wrong, and your recommendation.
 

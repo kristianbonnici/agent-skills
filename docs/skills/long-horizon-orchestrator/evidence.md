@@ -4,7 +4,7 @@ The skill states its rules without their reasons, to keep the model's context fo
 
 Last checked: new work 2026-10-31; sources 2026-10-31.
 
-## Our own runs (2026-10-04 to 2026-10-31)
+## Our own runs (2026-10-04 to 2026-11-06)
 
 The skill grew from its overnight runs; the review gate's [study](../review-gate/evidence.md) covers 263
 handoffs from 21 of them. The incidents below each changed a rule. The per-run details stay in the owner's
@@ -32,6 +32,15 @@ private records.
 - **OpenCode's free limit** (2026-10-29): it stopped both free models for the whole computer six minutes in,
   and again 33 minutes after it came back; one task waited out both and was parked unfinished. → *the same
   models on the OpenCode Go plan as their backup, and whole tasks starting there.*
+- **Stopped reviews became the common case** (2026-11-03 and -06): the review gate's stop rule stopped 10
+  of 22 tasks in one run and 8 of 9 deep-reviewed tasks in another, each with its must-fixes fixed and only the
+  last fixes unreviewed; the one path out fitted two of the eighteen. Worked outside the text, one
+  fresh look by the cross reviewer at the whole diff merged three clean and stopped four on new, real logic
+  defects, and putting the disputed part back to the integration branch's behavior merged the rest six
+  times, about 40 fixes. → *one follow-up per stopped task: the removal fix, the fresh look, or the split.*
+- **A committed test on a fixed port** (2026-11-06): one task's end-to-end test bound the port its brief gave
+  it; once merged, every parallel worktree's checks ran it, and four tasks hit "Address already in use" until
+  a follow-up moved it to a free port. → *tests a task commits bind port 0.*
 
 ## Outside sources
 
