@@ -272,7 +272,10 @@ function lineChart(el, id, g, common, pid, warnings) {
   const pts = series.flatMap(s => s.points);
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const xmin = X.min ?? Math.min(...xs), xmax = X.max ?? Math.max(...xs);
-  const ymin = Y.min ?? Math.min(0, ...ys), ymax = Y.max ?? Math.max(...ys);
+  // The y axis takes in 0 by default; data that is all one value still gets a range.
+  const ymin = Y.min ?? Math.min(0, ...ys);
+  let ymax = Y.max ?? Math.max(0, ...ys);
+  if (Y.max === undefined && ymax === ymin) ymax = ymin + 1;
   if (!(xmax > xmin) || !(ymax > ymin)) {
     warnings.push(`${pid}: chart "${el.id ?? 'no id'}": an axis has no range (min must be below max)`);
     return { out: [], box };
@@ -336,8 +339,11 @@ function lineChart(el, id, g, common, pid, warnings) {
     if (side === 'none' || !s.label) return;
     const h = fs * STYLE.lineHeight, w = textWidth(s.label, fs);
     const [ax, ay] = side === 'end' ? P[P.length - 1] : P[0];
+    // A start label sits left of the axis when its series starts on it, else
+    // just left of its first point.
+    const startX = ax > px + 1 ? ax - 12 - w : px - yTickW - 16 - w;
     labels[side === 'end' ? 'end' : 'start'].push({ i, text: s.label, color,
-      x: side === 'end' ? ax + 12 : px - yTickW - 16 - w, y: ay - h / 2, height: h });
+      x: side === 'end' ? ax + 12 : startX, y: ay - h / 2, height: h });
   });
   for (const group of Object.values(labels)) {
     unstack(group);
@@ -372,10 +378,11 @@ function barChart(el, id, g, common, pid, warnings) {
   if (W - labelW - valueW < 120) warnings.push(`${pid}: chart "${el.id ?? 'no id'}" leaves bars only ${Math.round(W - labelW - valueW)} px: make it wider or the labels shorter`);
   const th = fs * STYLE.lineHeight;
   bars.forEach((b, i) => {
-    const by = y + i * (barH + gap), bw = Math.max(2, b.value * scale);
+    // A zero gets no bar; a value too small to see at this scale still shows as a sliver.
+    const by = y + i * (barH + gap), bw = b.value > 0 ? Math.max(2, b.value * scale) : 0;
     if (b.label) out.push(textEl(`${id}.l${i}`, x0, by + (barH - th) / 2, b.label, fs, { groupIds: g }));
     const c = COLORS[b.color ?? el.color ?? 'blue'] ?? COLORS.blue;
-    out.push({ ...common, id: `${id}.b${i}`, type: 'rectangle', x: x0 + labelW, y: by, width: bw, height: barH,
+    if (bw > 0) out.push({ ...common, id: `${id}.b${i}`, type: 'rectangle', x: x0 + labelW, y: by, width: bw, height: barH,
       backgroundColor: c[0], strokeColor: c[1], fillStyle: el.fillStyle ?? 'hachure', roundness: null, groupIds: g });
     out.push(textEl(`${id}.v${i}`, x0 + labelW + bw + 10, by + (barH - th) / 2, shown(b), fs, { groupIds: g }));
   });

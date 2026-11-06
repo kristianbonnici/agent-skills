@@ -252,6 +252,25 @@ a, b = els["c.br.b0"]["width"], els["c.br.b1"]["width"]
 assert abs(a - 2 * b) < 0.5, f"a bar of 10 should be twice one of 5: {a} and {b}"
 assert els["c.cv"]["roundness"] == {"type": 2}, "curve: true should make a round line"
 PY
+# Zero data still draws, a start label sits by its series' first point, and a zero bar has no bar.
+cat >"$work/edges.json" <<'JSON'
+{ "title": "", "format": "fit", "frame": false, "panels": [ { "id": "e", "span": 2, "elements": [
+  { "type": "chart", "id": "z", "x": 0, "y": 0, "width": 600, "height": 300,
+    "xAxis": { "min": 0, "max": 10 }, "series": [ { "label": "flat", "points": [[0, 0], [10, 0]] }, { "label": "late", "points": [[5, 0], [10, 0]] } ] },
+  { "type": "chart", "kind": "bar", "id": "b", "x": 700, "y": 0, "width": 500,
+    "bars": [ { "label": "none", "value": 0 }, { "label": "all", "value": 10 } ] }
+] } ] }
+JSON
+node "$build" "$work/edges.json" >"$work/edges.out" || { cat "$work/edges.out"; fail "zero data should build cleanly"; }
+python3 -I - "$work/edges.excalidraw" <<'PY'
+import json, sys
+els = {e["id"]: e for e in json.load(open(sys.argv[1]))["elements"]}
+assert "e.z.s0" in els and "e.z.s1" in els, "an all-zero series should still be drawn"
+late, label = els["e.z.s1"], els["e.z.label1"]
+assert 0 < late["x"] - (label["x"] + label["width"]) < 20, "a start label should sit just left of its series' first point"
+assert "e.b.b0" not in els and "e.b.b1" in els, "a zero bar should draw no bar"
+PY
+
 cat >"$work/badchart.json" <<'JSON'
 { "title": "Bad chart", "format": "auto", "panels": [ { "id": "k", "span": 2, "elements": [
   { "type": "chart", "id": "out", "x": 0, "y": 0, "width": 600, "height": 300,
