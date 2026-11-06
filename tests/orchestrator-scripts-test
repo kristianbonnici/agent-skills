@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer and prune-runs.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs and run-watch.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -2535,5 +2535,8 @@ fresh = subprocess.run([sys.executable, "-I", script], capture_output=True, text
                        env=dict(os.environ, XDG_STATE_HOME=os.path.join(outside, "no-state")))
 assert fresh.returncode == 0 and "nothing to prune" in fresh.stdout, fresh.stdout
 EOF
+
+# run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority
+nice -n 10 "$script_dir/run-watch-test" >/dev/null
 
 echo "orchestrator scripts: ok"

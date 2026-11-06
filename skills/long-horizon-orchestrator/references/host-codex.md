@@ -17,7 +17,7 @@ Codex subagents share your working directory. Parallel writing tasks would colli
 git worktree add "<repo parent>/<repo>-worktrees/<task branch>" -b <task branch> <integration branch, or under "leave on branch" the predecessor's branch for a stacked task>
 ```
 
-Put that path in the brief's constraints: "Work only in `<path>`; run every command there."
+Put that path in the brief's constraints: "Work only in `<path>`; run every command there." Add the task to `watch.json` with that worktree and `"harness": "codex"` (SKILL.md, "Launch the ready tasks"); `run-watch` finds its rollout in `~/.codex/sessions` by the worktree.
 
 You created these worktrees, so you remove them. Once a merge is verified, call `close_agent` on its subagent, then remove the worktree and branch as [integration.md](integration.md) describes.
 
@@ -49,7 +49,7 @@ A Codex orchestrator should keep its own turn going instead of ending it and hop
    `/goal Every task in the ledger at <path> is merged, ready, blocked, failed, stopped or parked, the ledger is up to date, and the final report has been posted in the chat.`
    If you can't run `/goal` yourself, put the exact line in the contract message for the user to send along with their approval.
 2. **Wait in a loop.** Call `wait_agent` on all running task IDs with the longest allowed timeout. Each return means at least one task reached a final status: handle it as described in "On every wake", launch anything it unblocked, then wait again on the remaining tasks.
-3. **On a timeout,** do the whole "On every wake" step (the tasks, the computer, the usage windows, the ledger), then wait again. A timeout is not a failure, and it is your heartbeat: keep `wait_agent`'s timeout at 15 minutes or less while tasks run.
+3. **On a timeout,** do the whole "On every wake" step, starting with `scripts/run-watch <run directory>` (the tasks, the computer, the usage windows, the ledger), then wait again. A timeout is not a failure, and it is your heartbeat: keep `wait_agent`'s timeout at 15 minutes or less while tasks run.
 
 Codex also delivers a final-status notification for completed agents. Verify on first use whether that notification starts a new turn for an idle orchestrator. Until it is confirmed, rely on the `wait_agent` loop under your own goal.
 

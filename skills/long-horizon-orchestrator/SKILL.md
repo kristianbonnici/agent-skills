@@ -2,7 +2,7 @@
 name: long-horizon-orchestrator
 description: Run a set of long-running agent tasks to completion while the user is away. Launch each task as its own agent (T3 threads on any provider, Claude Code background subagents, or Codex subagents). Get woken automatically when a task finishes or blocks, launch dependent tasks once their prerequisites are merged, and have finished work reviewed, checked and merged into the branch the run started from. End with a plain-language report of what was built, open decisions and next steps. Use whenever the user wants several tasks run in parallel or overnight, asks you to launch, coordinate, chain or babysit agents or follow-up tasks, says "launch everything and merge it", or wants work to continue while they sleep or step away, even if they never say "orchestrate". If no task list exists yet, plan one first and get a single approval.
 metadata:
-  version: 3.6.0
+  version: 3.7.0
 ---
 
 # Long-Horizon Orchestrator
@@ -104,6 +104,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
 - Snapshot the user's own state into the run directory before the warm-up changes anything (it may turn off screen lock or Stage Manager), and set up the leases for shared resources ([references/machine.md](references/machine.md#5-the-users-own-things)).
 - Keep the computer awake from now until the finish ([references/machine.md](references/machine.md#4-keeping-the-computer-awake)), and record how.
 - Start the usage sampler in the background, detached from your shell, and record its process ID ([references/machine.md](references/machine.md#9-the-usage-sampler)): `nohup <skill folder>/scripts/usage-sampler <run directory>/usage >/dev/null 2>&1 & echo $!` in one shell call (the next call is a new shell), then confirm it runs with `ps -p <pid>`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
+- Write `<run directory>/watch.json`, which `scripts/run-watch` reads on every wake: `{"started": "<now, ISO 8601>", "repo": "<integration checkout>", "integration_branch": "<branch>", "keep_awake_pid": <pid>, "sampler_pid": <pid>, "tasks": {}}`. Keep it in step with the ledger: launches add tasks, and a task that stops running gets its `status`.
 - Run the warm-up while the user is still there ([references/machine.md](references/machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile. It must not hold up the run: before you post the admin block, set up a wake about 10 minutes later, as your host reference's "Warm-up wake" says, and record it in the ledger. If the user answers first, delete it and go on. If it fires, check again what the warm-up can read without them, record what is missing, delete it, finish the rest of Prepare (the common file), and launch.
 - Write the common file that every brief points to, with the rules all tasks share ([references/task-brief.md](references/task-brief.md#one-common-file-for-every-brief)).
 
@@ -112,7 +113,7 @@ A message from the user during the run amends the contract. Quote it in the ledg
 Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready` because of that policy, not for a review that didn't converge or found no reviewer; for a prerequisite split into milestones, the milestone it needs), and then the next reserve task:
 1. Write its brief from [references/task-brief.md](references/task-brief.md), and save it in the run directory.
 2. Launch it as the host reference describes.
-3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level.
+3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level. Add it to `<run directory>/watch.json` too: `"<task ID>": {"worktree", "harness" ("claude-code", "codex" or the provider's name), "session" or "session_log" when the host reference says to, "thread" (its thread or agent ID), "branch", "launched", "status": "running"}`. Set its `status` there (`ready`, `merged`, `paused`, …) whenever it stops running, so `run-watch` stops judging it.
 
 Launch a whole wave together, then set up the backup wake-up the host reference calls for (for example the heartbeat in T3), and confirm it is scheduled: in T3, `list_scheduled_tasks` shows it enabled, with its next run within the interval.
 
@@ -130,6 +131,14 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
 
 1. **Re-read the ledger.** Your context may have been summarized since the last wake.
 2. **Find out what changed and verify it at the source.**
+   - Run `<skill folder>/scripts/run-watch <run directory>` first (a few seconds; files and processes only) and act on each line it prints. Nothing printed means nothing to act on.
+     - `hang`: a running task's tool call with no result for over 6 minutes whose processes used no CPU and wrote nothing meanwhile. Stop what hangs by the process IDs it names (check each with `ps -p <pid> -o command=` first), and tell the task what hung and how to avoid it.
+     - `approval`: a shell call with no process running for it, which is an approval prompt (or a hang before the command started). Clear it as the next bullet says.
+     - `quiet`: a running task whose session log, worktree and run folder haven't changed for 20 minutes. Read its thread: it may be waiting on reviewers, stuck, or done without reporting.
+     - `hog`: a process started since the run began, not the run's, above 80% of a core for 10 minutes (such as a system service a task's tests set off). Don't stop it. Find what drives it, tell the tasks, and note it.
+     - `disk`, `swap`, `dialog`, `keep-awake`, `sampler`: free disk falling 10 GB in 5 minutes or below 20 GB, swap above 20 GB, a password dialog, a stopped keep-awake or sampler. Act as step 4 says.
+     - `commit`, `merged`, `report`: the exact times of a task's commits, merges and report-backs. Take the ledger's times from these, never from memory.
+     - `blind`, `note`: it reads Claude Code and Codex session logs; for tasks on other harnesses it sees only processes and files, so keep reading their threads.
    - Use `git log` of the integration branch and `git merge-base --is-ancestor <task head> <integration branch>`.
    - Check the task's thread or agent status and read its last message, and whether it waits on an approval prompt (in T3, `pendingRequestCount` from `t3_thread_read`): a running task with a pending request and no child process running is stuck on one, so interrupt the turn and tell it how to finish without that command.
    - A report says what the task believes; git says what happened.
@@ -143,7 +152,7 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
      - otherwise, mark it failed and keep its worktree for the user.
 
      Record each nudge and relaunch in the ledger.
-4. **Check the computer** ([references/machine.md](references/machine.md#7-during-the-run)):
+4. **Check the computer** ([references/machine.md](references/machine.md#7-during-the-run)). `run-watch` already looked for a password dialog, the disk, swap, the keep-awake and the sampler; act on what it printed, and check the rest:
    - Compare the user's settings with the start snapshot. Restore at once, key by key, what a test build changed, and tell the task that did it.
    - A password or keychain dialog on the screen (on macOS, `pgrep -x SecurityAgent` finds one) means a task ran something that asks for one. Nobody will answer it: find the command, stop it by its process ID, and tell the task.
    - Check free disk space, the keep-awake, the usage sampler (restart it on the same folder if it died) and that the heartbeat is still scheduled, and look for leftover processes: a paused or merged task's test build, watcher or computer-use service still running ([references/machine.md](references/machine.md#8-leftover-processes)).

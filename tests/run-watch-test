@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""Checks the long-horizon-orchestrator's run-watch with real processes and made-up session logs:
+the two hangs it exists for (a sleeping child at 0% CPU, a blocked stdin read), an approval wait, a
+call the harness moved to the background, a Codex task and a stuck non-shell call are flagged; the
+benign long calls (a reviewer wait, a reviewer's CLI, a lease-queued build, CPU and GPU benchmarks,
+a sleep loop on a background job, a call whose job writes files, a deliberate background server, a
+task that isn't running) are not. Also: quiet tasks, a blind harness (once), a hog that isn't the
+run's (once, and never the run's own busy process), the disk, swap, a password dialog, a stopped
+keep-awake and sampler, exact commit, merge and report-back times (once), a missing watch.json, a
+usage error, and that it writes nothing in the run folder but its state file. Thresholds are
+shrunk through its environment variables, and CPU use is made up by a stand-in ps (no core is
+burned), so the whole check takes about ten seconds."""
+
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+
+here = os.path.dirname(os.path.abspath(__file__))
+script = os.path.join(here, "..", "skills", "long-horizon-orchestrator", "scripts", "run-watch")
+work = os.path.realpath(tempfile.mkdtemp(prefix="run-watch-test."))
+started = []
+
+
+def spawn(cmd, cwd, **kw):
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, **kw)
+    started.append(p)
+    return p
+
+
+def stamp(t):
+    return datetime.fromtimestamp(t, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def claude_log(worktree, session, entries):
+    folder = os.path.join(work, "claude", "projects", "".join(c if c.isalnum() else "-" for c in worktree))
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, session + ".jsonl")
+    with open(path, "w") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+    return path
+
+
+def use(cid, name, t, **inp):
+    return {"type": "assistant", "timestamp": stamp(t),
+            "message": {"content": [{"type": "tool_use", "id": cid, "name": name, "input": inp}]}}
+
+
+def result(cid, t, text="ok"):
+    return {"type": "user", "timestamp": stamp(t),
+            "message": {"content": [{"type": "tool_result", "tool_use_id": cid, "content": text}]}}
+
+
+def git(*args, cwd):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args], cwd=cwd,
+                   check=True, capture_output=True)
+
+
+def watch(env, *extra):
+    done = subprocess.run([sys.executable, "-I", script, run_dir, *extra], capture_output=True, text=True, env=env, timeout=120)
+    assert done.returncode == 0, done.stderr
+    return done.stdout.splitlines()
+
+
+def lines_for(lines, word, task):
+    return [line for line in lines if line.startswith(f"{word} {task}")]
+
+
+try:
+    t_launch = time.time() - 30
+    run_dir = os.path.join(work, "run")
+    os.makedirs(os.path.join(run_dir, "usage"))
+    bin_dir = os.path.join(work, "bin")
+    os.makedirs(bin_dir)
+    elsewhere = os.path.join(work, "elsewhere")
+    os.makedirs(elsewhere)
+    for name in ("codex", "lease"):                         # a reviewer's CLI and a queued lease
+        path = os.path.join(bin_dir, name)
+        open(path, "w").write("#!/bin/sh\nsleep 600\n")
+        os.chmod(path, 0o755)
+    os.symlink("/bin/sleep", os.path.join(bin_dir, "SecurityAgent"))   # a copy of a system binary won't run
+    gpu_pids = os.path.join(work, "gpu-pids")
+    ioreg = os.path.join(bin_dir, "fake-ioreg")
+    open(ioreg, "w").write(
+        "#!/bin/sh\n# GPU time that keeps rising, for each pid listed in the file\n"
+        f"for pid in $(cat {gpu_pids} 2>/dev/null); do\n"
+        "  n=$(python3 -c 'import time; print(time.time_ns())')\n"
+        "  printf '+-o AGXDeviceUserClient\\n  {\\n    \"IOUserClientCreator\" = \"pid %s, bench\"\\n"
+        "    \"AppUsage\" = ({\"API\"=\"Metal\",\"accumulatedGPUTime\"=%s})\\n  }\\n' \"$pid\" \"$n\"\n"
+        "done\n")
+    os.chmod(ioreg, 0o755)
+    # CPU use is made up, so no core is burned: the real ps, with the CPU time of each pid listed in
+    # the file set to its share of a core since it started.
+    cpu_shares = os.path.join(work, "cpu-shares")
+    fake_ps = os.path.join(bin_dir, "fake-ps")
+    open(fake_ps, "w").write(
+        f"#!{sys.executable}\n"
+        "import subprocess, sys, time\n"
+        f"shares = dict(l.split() for l in open({cpu_shares!r}) if l.strip())\n"
+        "out = subprocess.run(['/bin/ps'] + sys.argv[1:], capture_output=True, text=True).stdout\n"
+        "for line in out.splitlines():\n"
+        "    f = line.split(None, 9)\n"
+        "    if 'time=' in ' '.join(sys.argv) and len(f) >= 9 and f[0] in shares:\n"
+        "        share = float(shares[f[0]])\n"
+        "        age = time.time() - time.mktime(time.strptime(' '.join(f[4:9]), '%a %b %d %H:%M:%S %Y'))\n"
+        "        cpu = share * age\n"
+        "        f[2], f[3] = f'{share * 100:.1f}', f'{int(cpu // 60)}:{cpu % 60:05.2f}'\n"
+        "        line = ' '.join(f)\n"
+        "    print(line)\n")
+    os.chmod(fake_ps, 0o755)
+
+    # The integration checkout and task A's worktree, with a commit merged into main.
+    repo = os.path.join(work, "repo")
+    os.makedirs(repo)
+    git("init", "-q", "-b", "main", cwd=repo)
+    open(os.path.join(repo, "f"), "w").write("1\n")
+    git("add", "f", cwd=repo)
+    git("commit", "-q", "-m", "start", cwd=repo)
+    wt = {t: os.path.join(work, "wt", t) for t in "ABCDEFGHIJKLMNQRSV"}
+    git("worktree", "add", "-q", "-b", "task/a", wt["A"], cwd=repo)
+    for t, path in wt.items():
+        os.makedirs(path, exist_ok=True)
+        os.makedirs(os.path.join(run_dir, t), exist_ok=True)
+    open(os.path.join(wt["A"], "f"), "w").write("2\n")
+    git("commit", "-q", "-am", "the change", cwd=wt["A"])
+    git("merge", "-q", "--ff-only", "task/a", cwd=repo)
+
+    # Processes, each started by a "harness" working in the task's worktree.
+    t_call = time.time() - 1
+    procs = {
+        "A": spawn(["sh", "-c", "sleep 600"], wt["A"]),                                 # a sleeping child
+        "B": spawn(["cat"], wt["B"], stdin=subprocess.PIPE),                           # a blocked stdin read
+        "D": spawn([os.path.join(bin_dir, "codex"), "exec", "review"], wt["D"]),        # a reviewer's CLI
+        "E": spawn([os.path.join(bin_dir, "lease"), "acquire", "cpu", "--owner", "E"], wt["E"]),
+        "F": spawn(["sleep", "600"], wt["F"]),                                        # a CPU benchmark (made-up CPU)
+        "G": spawn(["sleep", "600"], wt["G"]),                                        # a GPU benchmark
+        "H": spawn(["sh", "-c", "sleep 600 & bg=$!; while kill -0 $bg; do sleep 0.5; done"], wt["H"]),
+        "I": spawn(["sleep", "600"], wt["I"]),
+        "K": spawn(["sleep", "600"], wt["K"]),                                        # moved to the background
+        "L": spawn(["sleep", "600"], wt["L"]),                                        # a deliberate server
+        "M": spawn(["sh", "-c", "sleep 600"], wt["M"]),                                # Codex
+        "V": spawn(["sleep", "600"], wt["V"]),                                        # a task that isn't running
+    }
+    writer = spawn(["sh", "-c", f"while true; do date >> {os.path.join(run_dir, 'I', 'build.log')}; sleep 0.5; done"], elsewhere)
+    open(gpu_pids, "w").write(str(procs["G"].pid))
+    hog = spawn(["sleep", "600"], elsewhere)                                          # not the run's (made-up CPU)
+    open(cpu_shares, "w").write(f"{procs['F'].pid} 1.0\n{hog.pid} 2.0\n")
+    dialog = spawn([os.path.join(bin_dir, "SecurityAgent"), "600"], elsewhere)
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    sampler = spawn(["sh", "-c", "sleep 600; :", "usage-sampler"], elsewhere)   # sh stays, with the name
+
+    tasks = {}
+    for t in wt:
+        tasks[t] = {"worktree": wt[t], "harness": "claude-code", "session": f"00000000-0000-4000-8000-0000000000{ord(t):02x}",
+                    "branch": f"task/{t.lower()}", "launched": stamp(t_launch), "status": "running", "thread": f"thread-{t}"}
+    tasks["N"].update(harness="opencode")
+    tasks["M"].update(harness="codex")
+    del tasks["M"]["session"]
+    tasks["V"].update(status="ready")
+    bash = lambda cid, cmd, **kw: use(cid, "Bash", t_call, command=cmd, **kw)
+    logs = {
+        "A": [bash("a1", "sleep 600")],
+        "B": [bash("b1", "cat > /dev/null")],
+        "C": [use("c1", "mcp__t3-code__t3_thread_wait", t_call, threadId="reviewer")],
+        "D": [bash("d1", "codex exec review")],
+        "E": [bash("e1", "lease acquire cpu --owner E && swift build")],
+        "F": [bash("f1", "python3 bench.py")],
+        "G": [bash("g1", "python3 gpu-bench.py")],
+        "H": [bash("h1", "until ! kill -0 $bg; do sleep 5; done")],
+        "I": [bash("i1", "sleep 600 # waits on a build that writes its log")],
+        "J": [bash("j1", "rm -rf \"$DIR/$name\"")],
+        "K": [bash("k1", "eval frames"), result("k1", t_call + 1, "Command running in background with ID: kk1. Output is "
+                                                f"being written to: {work}/claude-tmp/kk1.output. You will be notified.")],
+        "L": [bash("l1", "server", run_in_background=True), result("l1", t_call + 1, "Command running in background with ID: ll1. "
+                                                                    "Output is being written to: /nowhere/ll1.output.")],
+        "Q": [bash("q1", "ls"), result("q1", t_call)],
+        "R": [use("r1", "mcp__t3-code__t3_thread_send", t_call, message="[long-horizon-orchestrator] run=x task=R status=merged\nbranch=task/r"),
+              result("r1", t_call)],
+        "S": [use("s1", "mcp__cua-driver__click", t_call, x=1)],
+        "V": [bash("v1", "sleep 600")],
+    }
+    for t, entries in logs.items():
+        claude_log(wt[t], tasks[t]["session"], entries)
+    day = time.strftime("%Y/%m/%d", time.localtime())
+    codex_dir = os.path.join(work, "codex", "sessions", day)
+    os.makedirs(codex_dir)
+    with open(os.path.join(codex_dir, "rollout-review.jsonl"), "w") as f:    # a `codex exec` reviewer there first
+        f.write(json.dumps({"timestamp": stamp(t_launch - 10), "type": "session_meta",
+                            "payload": {"cwd": wt["M"], "originator": "codex_exec", "timestamp": stamp(t_launch - 10)}}) + "\n")
+    with open(os.path.join(codex_dir, "rollout-task.jsonl"), "w") as f:
+        f.write(json.dumps({"timestamp": stamp(t_launch), "type": "session_meta",
+                            "payload": {"cwd": wt["M"], "originator": "T3 Code", "timestamp": stamp(t_launch)}}) + "\n")
+        f.write(json.dumps({"timestamp": stamp(t_call), "type": "response_item",
+                            "payload": {"type": "function_call", "name": "exec_command", "call_id": "m1",
+                                        "arguments": json.dumps({"cmd": "sleep 600"})}}) + "\n")
+    # Q: nothing changed for an hour, and nothing of its own runs.
+    old = time.time() - 3600
+    for path in (wt["Q"], os.path.join(run_dir, "Q"), os.path.dirname(claude_log(wt["Q"], tasks["Q"]["session"], logs["Q"]))):
+        for root, dirs, files in os.walk(path):
+            for name in files + dirs:
+                os.utime(os.path.join(root, name), (old, old))
+        os.utime(path, (old, old))
+
+    with open(os.path.join(run_dir, "watch.json"), "w") as f:
+        json.dump({"started": stamp(t_launch - 60), "repo": repo, "integration_branch": "main",
+                   "keep_awake_pid": dead.pid, "sampler_pid": sampler.pid, "tasks": tasks}, f)
+    now = time.time()
+    with open(os.path.join(run_dir, "usage", "machine.jsonl"), "w") as f:
+        for dt, free in ((-400, 151.0), (-120, 150.0), (-60, 138.0)):
+            f.write(json.dumps({"t": datetime.fromtimestamp(now + dt).astimezone().isoformat(), "disk_free_gb": free}) + "\n")
+
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=os.path.join(work, "claude"), CODEX_HOME=os.path.join(work, "codex"),
+               RUN_WATCH_HANG_MINUTES="0.05", RUN_WATCH_QUIET_MINUTES="0.5", RUN_WATCH_HOG_MINUTES="0.05",
+               RUN_WATCH_SAMPLE_SECONDS="0.5", RUN_WATCH_IOREG=ioreg, RUN_WATCH_PS=fake_ps, RUN_WATCH_DISK_FREE_GB="138", RUN_WATCH_SWAP_GB="25")
+    before = sorted(os.listdir(run_dir))
+    time.sleep(4)                                           # past the 3-second "6 minutes"
+    out = watch(env)
+    text = "\n".join(out)
+
+    # the two hangs, with their process IDs and the kill that stops them
+    a = lines_for(out, "hang", "A")
+    assert len(a) == 1 and str(procs["A"].pid) in a[0] and f"kill {procs['A'].pid}" in a[0] and "sleep 600" in a[0], text
+    b = lines_for(out, "hang", "B")
+    assert len(b) == 1 and str(procs["B"].pid) in b[0] and "cat > /dev/null" in b[0], text
+    # an approval wait: a shell call with no process; a call moved to the background on its timeout;
+    # a Codex task's command; a stuck non-shell call
+    assert len(lines_for(out, "approval", "J")) == 1, text
+    assert len(lines_for(out, "hang", "K")) == 1 and str(procs["K"].pid) in lines_for(out, "hang", "K")[0], text
+    assert len(lines_for(out, "hang", "M")) == 1 and str(procs["M"].pid) in lines_for(out, "hang", "M")[0], text
+    assert len(lines_for(out, "hang", "S")) == 1 and "mcp__cua-driver__click" in lines_for(out, "hang", "S")[0], text
+    # the benign long calls: reviewer waits, a lease queue, CPU and GPU benchmarks, a sleep loop, a
+    # job writing its log, a deliberate background server, a task that isn't running
+    for t in "CDEFGHILRV":
+        assert not [line for line in out if line.split(":")[0].split(" ")[:2] in (["hang", t], ["approval", t], ["quiet", t])], (t, text)
+    # quiet, blind once, hog once (and never the run's own busy benchmark)
+    assert len(lines_for(out, "quiet", "Q")) == 1, text
+    assert len(lines_for(out, "blind", "N")) == 1, text
+    assert [line for line in out if line.startswith(f"hog {hog.pid} ")], text
+    assert not [line for line in out if line.startswith(f"hog {procs['F'].pid} ")], text
+    # the machine
+    assert any(line.startswith("disk: free disk fell 12.0 GB") for line in out), text
+    assert any(line.startswith("swap: 25.0 GB") for line in out), text
+    assert any(line.startswith("dialog:") and str(dialog.pid) in line for line in out), text
+    assert any(line.startswith(f"keep-awake: caffeinate pid {dead.pid}") for line in out), text
+    assert not any(line.startswith("sampler:") for line in out), text
+    # exact times, once
+    head = subprocess.run(["git", "-C", wt["A"], "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    assert any(line.startswith("commit A ") and head[:10] in line and "the change" in line for line in out), text
+    assert any(line.startswith("merged A ") and head[:10] in line and "into main" in line for line in out), text
+    assert any(line.startswith("report R ") and "status=merged" in line for line in out), text
+    # it writes only its state file
+    assert sorted(os.listdir(run_dir)) == sorted(before + ["run-watch.state.json"]), os.listdir(run_dir)
+
+    # The second run: hangs are said again; what was told once (blind, hog, a fall, times) isn't.
+    out2 = watch(env)
+    text2 = "\n".join(out2)
+    assert len(lines_for(out2, "hang", "A")) == 1 and len(lines_for(out2, "hang", "B")) == 1, text2
+    for word in ("blind", f"hog {hog.pid} ", "commit", "merged", "report", "disk: free disk fell"):
+        assert not [line for line in out2 if line.startswith(word)], (word, text2)
+
+    # the sampler stops: its line; a stdin read that ended: no hang
+    os.killpg(sampler.pid, signal.SIGTERM)
+    procs["B"].stdin.close()
+    procs["B"].wait()
+    out3 = watch(dict(env, RUN_WATCH_DISK_FREE_GB="15"))
+    assert any(line.startswith("disk: 15.0 GB free, below 20 GB") for line in out3), out3
+    assert any(line.startswith(f"sampler: the usage sampler (pid {sampler.pid})") for line in out3), out3
+    assert not lines_for(out3, "hang", "B"), out3
+
+    # no watch.json: a note, and the machine checks still run; a usage error
+    os.remove(os.path.join(run_dir, "watch.json"))
+    out4 = watch(env)
+    assert out4[0].startswith("note: no readable") and any(line.startswith("swap:") for line in out4), out4
+    bad = subprocess.run([sys.executable, "-I", script], capture_output=True, text=True)
+    assert bad.returncode == 2 and "Usage" in bad.stderr, bad.stderr
+    bad = subprocess.run([sys.executable, "-I", script, os.path.join(work, "missing")], capture_output=True, text=True)
+    assert bad.returncode == 2, bad.stderr
+finally:
+    for p in started:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            p.wait(timeout=5)
+        except Exception:
+            pass
+    shutil.rmtree(work, ignore_errors=True)
+
+print("run-watch: ok")

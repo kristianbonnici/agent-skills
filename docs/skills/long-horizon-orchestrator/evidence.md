@@ -49,6 +49,17 @@ private records.
   one diff when it was done; rounds kept finding issues across the whole diff, and a stop held back the whole
   feature, the undisputed parts too, so the owner woke to a placeholder instead of a basic working app. →
   *tasks over about 800 lines merge in milestones, a thin working version first.*
+- **Hangs inside running tasks** (2026-11-06): a task's shell call hung for about 5 minutes on a stray
+  command reading stdin, and another's evaluation sat at 0% CPU in a text-recognition request for about 8;
+  both were found only because the orchestrator read the task's session log for a call with no result and its
+  process tree, which the skill didn't say to do. A system service pinned a core from early in the night and
+  stalled three tasks' tests; four heartbeats missed it, and a task's report named it about an hour later.
+  Ledger times written from memory were later corrected three times. Of 17 task calls that ran 5 minutes or
+  more, only one or two were stalls: the rest were reviewer waits, lease-queued builds, GPU benchmarks, a
+  deliberate stress test and sleep loops on background jobs, all of which used CPU or GPU, started processes
+  or wrote files. 24 of the run's 28 heartbeats found nothing to act on. → *`scripts/run-watch` first on every
+  wake: a call is a hang only when its processes are idle, start nothing and write nothing; exact times from
+  git and the logs.*
 
 ## Outside sources
 
@@ -188,6 +199,15 @@ private records.
   merges, where the task that loses rebases, re-validates and tries again; rules that don't depend on the
   agent noticing them.* At our scale a fast-forward is cheap; at theirs, a global lock on merges was given
   up for testing after the merge.
+
+- **DeepSeek, [dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)**
+  (MIT, research code), `docs/006-deployment.md`, "Hourly check": an hourly schedule, kept outside the
+  service it watches, runs a deterministic `status` command; "Exit 0: do nothing and say nothing", and a
+  model acts only on a failing exit. The article that introduced it describes a model-driven watchdog judging
+  progress and drift; the shipped prototype's docs describe none.
+
+  → *a script that prints nothing when all is well, run by the existing heartbeat, rather than a second
+  model judging the tasks.*
 
 ## Where the evidence argues against us
 

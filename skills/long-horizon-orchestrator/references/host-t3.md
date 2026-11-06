@@ -48,6 +48,7 @@ t3_thread_launch({
 - **A top-level thread per task.** T3 makes new top-level threads only when the user asks for them; the contract says each task runs in one, and the user's approval is that request.
 - **`runtimeMode`.** The task must run commands, commit and merge without approval prompts, so use `full-access` unless the contract says otherwise.
 - **Record what actually launched.** Call `t3_thread_configure` with the task's `threadId` and no `modelSelection`, and record the provider, model and reasoning option it returns. Take the launch time from the thread's `createdAt` in `t3_thread_list`, not from your own estimate.
+- **Add it to `watch.json`** (SKILL.md, "Launch the ready tasks"): `worktree` and `branch` from `t3_thread_read` (`thread.worktreePath`, `thread.branch`), `harness` from the provider (`claudeAgent` is `claude-code`, `codex` is `codex`, any other its own name), `thread` the `threadId`, `launched` the `createdAt`. Leave `session` out: T3's thread data doesn't carry the provider's session, but T3 starts a Claude Code task's `claude` in its worktree with `--session-id=<id>` (and `--resume=<the same id>` after a restart), which names its log, `~/.claude/projects/<worktree path, every character but letters and digits as "-">/<id>.jsonl`; `run-watch` reads it from the process and remembers it. A Codex task's log is the rollout in `~/.codex/sessions` whose first line names the worktree; `run-watch` finds that too.
 - **The brief is the only message.** Don't queue a `/goal` behind it, on any provider ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)). A Claude Code task that ends its turn while its builds or reviewers run is woken when they finish.
 
 ## Report-back: how you get woken
@@ -79,7 +80,7 @@ schedule_task({
   schedule: {type: "interval", everyMs: 900000},
   bindToCurrentThread: true,
   clientRequestId: "<run>-heartbeat",
-  prompt: "Heartbeat for long-horizon-orchestrator run <run>. Read the ledger at <path>; it names the skill's folder, and if you no longer have the skill's text, read its SKILL.md. For each task marked running, read its thread with t3_thread_read: a pendingRequestCount above 0 with no child process running is an approval prompt to clear. Act on anything that finished, blocked, waits on approval or went idle without reporting, as the skill's 'On every wake' step says. If nothing changed, reply with one line."
+  prompt: "Heartbeat for long-horizon-orchestrator run <run>. Read the ledger at <path>; it names the skill's folder, and if you no longer have the skill's text, read its SKILL.md. Run <skill folder>/scripts/run-watch <run directory> first and act on what it prints. For each task marked running, read its thread with t3_thread_read: a pendingRequestCount above 0 with no child process running is an approval prompt to clear. Act on anything that finished, blocked, waits on approval or went idle without reporting, as the skill's 'On every wake' step says. If nothing changed, reply with one line."
 })
 ```
 
