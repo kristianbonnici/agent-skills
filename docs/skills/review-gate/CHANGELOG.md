@@ -7,6 +7,7 @@ Major because a real defect no longer always holds back a merge: the gate now me
 - **The stop rule counts blockers over two rounds.** Up to five rounds; the gate stops only when two rounds in a row find no fewer blockers than the round before, the approach itself is in dispute, or round 5 still finds a blocker. A blocker that comes back "not fixed" counts in its round, and one that comes back narrower is progress while the count falls. Before, any finding found again stopped the gate, one round as high as the last did too, and rounds 4 and 5 needed a falling count.
 - The reviewer brief offers both tags with their definitions and asks for each defect's fix, and a fix of either kind that changed logic is re-reviewed.
 - **Reading older records:** the Review table now has Blockers, Follow-ups and Unique defects columns, and bold marks blockers. A 2.x Review section's "Must-fix" is Blockers and Follow-ups together, and its "Unique must-fix" is Unique defects.
+- **Review (standard, by 2.3.0), 2 rounds:** Codex GPT-6.1 Terra found 2 must-fixes here in round 1, both in the line between the tags: a test failing only on rare input fitted both, and a large slowdown on a common path fitted neither. Fixed: failing builds and tests are blockers however rare, and any serious common-path defect neither list names is a blocker. Round 2 (on the orchestrator's fixes) found nothing more here. Claude Haiku 5.5 (trial) found nothing in this skill. Terra's note that the release tags were missing was declined: they are made after the merge.
 
 ## 2.3.0 (2026-11-06)
 
