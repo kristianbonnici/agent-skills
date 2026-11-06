@@ -76,7 +76,7 @@ A conflict resolution after the review that changed logic gets one more look by 
 
 Up to five rounds, re-review as above. A blocker that comes back as "not fixed" counts as a blocker of its round; one that comes back narrower (the fix settled most of it, a smaller case still fails) is progress while the count falls. Stop, and don't merge, only when:
 
-- the blocker count doesn't fall over two rounds: two rounds in a row each find as many blockers as the round before them, or more (4, 4, 2 goes on; 4, 4, 4 stops at round 3);
+- the blocker count doesn't fall over two rounds: two rounds in a row each find at least one blocker, and as many as the round before them or more (4, 4, 2 goes on; 4, 4, 4 stops at round 3; a round with no blocker never counts toward a stop);
 - the approach itself is in dispute: a finding says the design is wrong, not a detail of it, and no fix inside the approach settles it;
 - round 5 still finds a blocker.
 
