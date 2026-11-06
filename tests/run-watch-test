@@ -327,6 +327,16 @@ try:
     os.remove(os.path.join(run_dir, "watch.json"))
     out4 = watch(env)
     assert out4[0].startswith("note: no readable") and any(line.startswith("swap:") for line in out4), out4
+    # runs far more often than the window (here 30 s) keep the first sample until one is that old
+    state_path = os.path.join(run_dir, "run-watch.state.json")
+    def a_samples():
+        return next(v for k, v in json.load(open(state_path))["samples"].items() if k.startswith(f"{procs['A'].pid}@"))
+    often = dict(env, RUN_WATCH_HANG_MINUTES="0.5", RUN_WATCH_HOG_MINUTES="0.5")
+    watch(often)
+    first = a_samples()[0]
+    for _ in range(8):
+        watch(often)
+    assert a_samples()[0] == first and len(a_samples()) <= 9, a_samples()
     bad = subprocess.run([sys.executable, "-I", script], capture_output=True, text=True)
     assert bad.returncode == 2 and "Usage" in bad.stderr, bad.stderr
     bad = subprocess.run([sys.executable, "-I", script, os.path.join(work, "missing")], capture_output=True, text=True)

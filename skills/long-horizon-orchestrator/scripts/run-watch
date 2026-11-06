@@ -868,8 +868,10 @@ def main(argv: list[str]) -> int:
             continue
         k = key(pid, p)
         old = [s for s in samples.get(k, []) if t_now - s[0] <= KEEP_SAMPLES_S]
-        # the newest few, and the newest at least as old as each window, however often this runs
-        anchors = [max((s for s in old if t_now - s[0] >= w), default=None, key=lambda s: s[0]) for w in (hang_s, hog_s)]
+        # the newest few, and for each window the newest sample at least that old, or until one is,
+        # the oldest (so it can grow that old however often this runs)
+        anchors = [max((s for s in old if t_now - s[0] >= w), default=old[0] if old else None, key=lambda s: s[0])
+                   for w in (hang_s, hog_s)]
         kept = sorted({tuple(s) for s in old[-6:] + [a for a in anchors if a]})
         keep[k] = [list(s) for s in kept] + [[round(t_now, 1), round(p["cpu"], 2)]]
     state.update({"last_run": iso(t0), "samples": keep, "sessions": sessions,
