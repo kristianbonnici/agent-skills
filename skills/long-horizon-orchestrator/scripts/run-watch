@@ -25,8 +25,9 @@ Each line starts with a word saying what it is:
                    over those 6 minutes, are idle now (no CPU or GPU in ps's last-minute average
                    and a 2-second sample), started nothing and wrote nothing, and hold no network
                    connection; it names the call, its process IDs and the kill that stops it once
-                   the orchestrator has read the command and found it isn't a wait the task chose
-                   (no kill when another shell call started within a minute of it)
+                   the orchestrator can name what it waits on that won't answer (lsof, sample), and
+                   otherwise says to tell the task (no kill when another shell call started within
+                   a minute of it)
   idle <task>      the same call idle now, with nothing written or started for 6 minutes, but not
                    shown idle all that time (a hang needs under half a second of CPU since a sample
                    6 minutes old, or in the process's whole life), or holding a network connection,
@@ -728,9 +729,10 @@ def main(argv: list[str]) -> int:
             else:
                 top = [pid for pid in alive if procs[pid]["ppid"] not in alive]
                 lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min. Idle isn't proof "
-                             "it is stuck: read the command and the task's last message, and leave a wait it chose (an explicit sleep, "
-                             f"a wait on a server it started); otherwise stop it with: kill {' '.join(map(str, top))} "
-                             "(check each with ps -p <pid> -o command= first), then tell the task")
+                             "it is stuck: stop it only when you can name what it waits on that won't answer (lsof -p <pid> -d 0,1,2: "
+                             "a pipe or terminal nobody writes; sample <pid> 1: a stack parked in a framework wait), with: kill "
+                             f"{' '.join(map(str, top))} (check each with ps -p <pid> -o command= first), then tell the task; "
+                             "otherwise tell the task what looks stuck and let it decide")
             hung_or_waiting = True
         if f["quiet"] and not hung_or_waiting:
             busy = sum(recent_cpu(pid) for pid in tp) >= BUSY_SHARE or any(gpu_moved(pid) for pid in tp)

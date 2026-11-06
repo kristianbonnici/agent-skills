@@ -269,9 +269,9 @@ try:
     assert len(tn) == 1 and "network connection" in tn[0] and not lines_for(out, "hang", "T"), text
     # two calls started together, or a stuck call beside another (finished) call: no kill offered
     u = lines_for(out, "hang", "U")
-    assert len(u) == 2 and all("another call started within a minute" in line and "stop it with" not in line for line in u), text
+    assert len(u) == 2 and all("another call started within a minute" in line and "kill" not in line for line in u), text
     x = lines_for(out, "hang", "X")
-    assert len(x) == 1 and "another call started within a minute" in x[0] and "stop it with" not in x[0], text
+    assert len(x) == 1 and "another call started within a minute" in x[0] and "kill" not in x[0], text
     b = lines_for(out, "hang", "B")
     assert len(b) == 1 and str(procs["B"].pid) in b[0] and "cat > /dev/null" in b[0], text
     # an approval wait: a shell call with no process; a call moved to the background on its timeout;
