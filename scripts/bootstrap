@@ -105,7 +105,8 @@ is_retired_link() {
 # a link, broken or not, to a skills/<same name> folder? It is kept and reported, never removed.
 looks_retired() {
   [ -L "$1" ] || return 1
-  case "$(readlink "$1")" in */skills/"$(basename -- "$2")"|*/skills/"$(basename -- "$2")"/) return 0 ;; esac
+  retired_to=$(readlink "$1" | sed 's:/*$::')
+  case "$retired_to" in skills/"$(basename -- "$2")"|*/skills/"$(basename -- "$2")") return 0 ;; esac
   return 1
 }
 
