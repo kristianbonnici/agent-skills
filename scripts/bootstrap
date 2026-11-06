@@ -96,14 +96,16 @@ adapter_one() {
   done
 }
 
-# Is $1 a link an earlier version installed for the retired source $2? It is when it still points
-# at $2, or when it is broken and points at a skills/<same name> folder (a checkout since moved).
+# Is $1 the link this checkout installed for the retired source $2? Only an exact match is: that is
+# the one link known to be ours, so the only one removed.
 is_retired_link() {
+  [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]
+}
+# Does $1 look like the retired skill installed from somewhere else (another or a moved checkout):
+# a link, broken or not, to a skills/<same name> folder? It is kept and reported, never removed.
+looks_retired() {
   [ -L "$1" ] || return 1
-  retired_to=$(readlink "$1")
-  [ "$retired_to" = "$2" ] && return 0
-  [ ! -e "$1" ] || return 1
-  case "${retired_to%/}" in */skills/"$(basename -- "$2")") return 0 ;; esac
+  case "$(readlink "$1")" in */skills/"$(basename -- "$2")"|*/skills/"$(basename -- "$2")"/) return 0 ;; esac
   return 1
 }
 
@@ -115,6 +117,8 @@ retire_one() {
   if is_retired_link "$retire_target" "$retire_source"; then
     run rm "$retire_target"
     [ "$dry_run" -eq 1 ] || echo "REMOVED retired link $retire_target"
+  elif looks_retired "$retire_target" "$retire_source"; then
+    echo "KEEP $retire_target -> $(readlink "$retire_target"): the retired skill from another checkout? If so, remove it by hand" >&2
   elif [ -e "$retire_target" ] || [ -L "$retire_target" ]; then
     echo "KEEP $retire_target: not the retired link this repository installed" >&2
   fi

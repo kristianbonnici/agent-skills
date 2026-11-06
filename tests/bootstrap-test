@@ -20,7 +20,7 @@ export AGENT_SKILLS_NO_UPDATE_CHECK=1
 # this repository's old links are retired; a path someone else put there is kept.
 mkdir -p "$test_home/.claude/skills" "$test_home/.agents/skills" "$test_home/.codex/skills"
 ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
-# This one was installed from a checkout that has since moved: broken, and still a skills/ folder.
+# This one looks like the old skill from another or a moved checkout: kept and reported, never removed.
 ln -s "$test_home/old-checkout/skills/sketch-infographic/" "$test_home/.agents/skills/sketch-infographic"
 ln -s "$test_home/elsewhere/sketch-infographic" "$test_home/.codex/skills/sketch-infographic"
 HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-retired.out" 2>&1 || true
@@ -33,13 +33,16 @@ if grep -q "REMOVED" "$test_home/dry.out"; then echo "a dry run says it removed 
 HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/bootstrap.out" 2>&1
 HOME="$test_home" "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 test ! -L "$test_home/.claude/skills/sketch-infographic"
-test ! -L "$test_home/.agents/skills/sketch-infographic"
+test -L "$test_home/.agents/skills/sketch-infographic"
+grep -q "KEEP $test_home/.agents/skills/sketch-infographic -> .*another checkout" "$test_home/bootstrap.out"
 test "$(readlink "$test_home/.codex/skills/sketch-infographic")" = "$test_home/elsewhere/sketch-infographic"
 grep -q "KEEP $test_home/.codex/skills/sketch-infographic" "$test_home/bootstrap.out"
 HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-retired.out" 2>&1 || true
 grep -q "PASS retired $test_home/.claude/skills/sketch-infographic not installed" "$test_home/doctor-retired.out"
 HOME="$test_home" "$repo_root/scripts/doctor" --host codex >"$test_home/doctor-retired.out" 2>&1 || true
 grep -q "PASS retired $test_home/.codex/skills/sketch-infographic holds something else; kept" "$test_home/doctor-retired.out"
+grep -q "WARN $test_home/.agents/skills/sketch-infographic -> .* looks like the retired skill" "$test_home/doctor-retired.out"
+rm "$test_home/.agents/skills/sketch-infographic"
 rm "$test_home/.codex/skills/sketch-infographic"
 
 test -L "$test_home/.config/opencode/skills/product-design"

@@ -38,14 +38,16 @@ check_link() {
   fi
 }
 
-# Is $1 a link an earlier version installed for the retired source $2? It is when it still points
-# at $2, or when it is broken and points at a skills/<same name> folder (a checkout since moved).
+# Is $1 the link this checkout installed for the retired source $2? Only an exact match is: that is
+# the one link known to be ours, so the only one removed.
 is_retired_link() {
+  [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]
+}
+# Does $1 look like the retired skill installed from somewhere else (another or a moved checkout):
+# a link, broken or not, to a skills/<same name> folder? It is kept and reported, never removed.
+looks_retired() {
   [ -L "$1" ] || return 1
-  retired_to=$(readlink "$1")
-  [ "$retired_to" = "$2" ] && return 0
-  [ ! -e "$1" ] || return 1
-  case "${retired_to%/}" in */skills/"$(basename -- "$2")") return 0 ;; esac
+  case "$(readlink "$1")" in */skills/"$(basename -- "$2")"|*/skills/"$(basename -- "$2")"/) return 0 ;; esac
   return 1
 }
 
@@ -59,6 +61,8 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
     retired)
       if is_retired_link "$target_path" "$source_path"; then
         fail "$target_path is a retired link still installed: run scripts/bootstrap"
+      elif looks_retired "$target_path" "$source_path"; then
+        echo "WARN $target_path -> $(readlink "$target_path") looks like the retired skill from another checkout: remove it by hand if so"
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
         pass "retired $target_path holds something else; kept"
       else
