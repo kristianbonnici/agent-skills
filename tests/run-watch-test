@@ -132,7 +132,7 @@ try:
     open(os.path.join(repo, "f"), "w").write("1\n")
     git("add", "f", cwd=repo)
     git("commit", "-q", "-m", "start", cwd=repo)
-    wt = {t: os.path.join(work, "wt", t) for t in "ABCDEFGHIJKLMNOPQRSTUV"}
+    wt = {t: os.path.join(work, "wt", t) for t in "ABCDEFGHIJKLMNOPQRSTUVWX"}
     git("worktree", "add", "-q", "-b", "task/a", wt["A"], cwd=repo)
     for t, path in wt.items():
         os.makedirs(path, exist_ok=True)
@@ -161,11 +161,13 @@ try:
         "T": spawn([sys.executable, "-c", "import socket, time; s = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen(); "
                     "c = socket.create_connection(s.getsockname()); a, _ = s.accept(); time.sleep(600)"], wt["T"]),
         "U": spawn(["sleep", "600"], wt["U"]),                                        # two calls started together
+        "W": spawn(["sleep", "600"], wt["W"]),                                        # 6 s of work, then a wait
+        "X": spawn(["sleep", "600"], wt["X"]),                                        # stuck, beside a finished call
     }
     writer = spawn(["sh", "-c", f"while true; do date >> {os.path.join(run_dir, 'I', 'build.log')}; sleep 0.5; done"], elsewhere)
     open(gpu_pids, "w").write(str(procs["G"].pid))
     hog = spawn(["sleep", "600"], elsewhere)                                          # not the run's (made-up CPU)
-    open(cpu_shares, "w").write(f"{procs['F'].pid} 1.0\n{hog.pid} 2.0\n{procs['P'].pid} fixed:30\n")
+    open(cpu_shares, "w").write(f"{procs['F'].pid} 1.0\n{hog.pid} 2.0\n{procs['P'].pid} fixed:30\n{procs['W'].pid} fixed:6\n")
     dialog = spawn([os.path.join(bin_dir, "SecurityAgent"), "600"], elsewhere)
     dead = subprocess.Popen(["true"])
     dead.wait()
@@ -204,6 +206,8 @@ try:
         "P": [bash("p1", "python3 eval.py")],
         "T": [bash("t1", "curl -O https://slow.example/model.bin")],
         "U": [bash("u1", "sleep 600"), bash("u2", "sleep 600 # in parallel")],
+        "W": [bash("w1", "python3 fetch.py")],
+        "X": [bash("x1", "sleep 600"), use("x2", "Bash", t_call + 1, command="server &"), result("x2", t_call + 2)],
     }
     for t, entries in logs.items():
         claude_log(wt[t], tasks[t]["session"], entries)
@@ -258,12 +262,16 @@ try:
     assert len(o) == 1 and held and f"kill {held[0]}" in o[0] and f"kill {procs['O'].pid}" not in o[0], (held, text)
     # idle now but busy earlier, or holding a network connection: a look, not a kill
     p = lines_for(out, "idle", "P")
-    assert len(p) == 1 and "used CPU earlier" in p[0] and "kill" not in p[0] and not lines_for(out, "hang", "P"), text
+    assert len(p) == 1 and "isn't shown to have used no CPU" in p[0] and "kill" not in p[0] and not lines_for(out, "hang", "P"), text
+    w = lines_for(out, "idle", "W")                         # 6 s of CPU earlier: not shown idle, though its average is low
+    assert len(w) == 1 and "kill" not in w[0] and not lines_for(out, "hang", "W"), text
     tn = lines_for(out, "idle", "T")
     assert len(tn) == 1 and "network connection" in tn[0] and not lines_for(out, "hang", "T"), text
-    # two calls started together share their processes: both named, no kill offered
+    # two calls started together, or a stuck call beside another (finished) call: no kill offered
     u = lines_for(out, "hang", "U")
-    assert len(u) == 2 and all("share these processes" in line and "stop with" not in line for line in u), text
+    assert len(u) == 2 and all("another call started within a minute" in line and "stop with" not in line for line in u), text
+    x = lines_for(out, "hang", "X")
+    assert len(x) == 1 and "another call started within a minute" in x[0] and "stop with" not in x[0], text
     b = lines_for(out, "hang", "B")
     assert len(b) == 1 and str(procs["B"].pid) in b[0] and "cat > /dev/null" in b[0], text
     # an approval wait: a shell call with no process; a call moved to the background on its timeout;

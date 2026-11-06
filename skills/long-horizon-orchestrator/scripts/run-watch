@@ -25,10 +25,12 @@ Each line starts with a word saying what it is:
                    over those 6 minutes, are idle now (no CPU or GPU in ps's last-minute average
                    and a 2-second sample), started nothing and wrote nothing, and hold no network
                    connection; it names the call, its process IDs and the kill that stops them
-                   (no kill when calls that started together share the processes)
-  idle <task>      the same call idle now, with nothing written or started for 6 minutes, but it
-                   used CPU earlier in that time or holds a network connection: look, don't stop it
-                   yet; the next wake says hang if it stays idle
+                   (no kill when another shell call started within a minute of it)
+  idle <task>      the same call idle now, with nothing written or started for 6 minutes, but not
+                   shown idle all that time (a hang needs under half a second of CPU since a sample
+                   6 minutes old, or in the process's whole life), or holding a network connection,
+                   or lsof couldn't tell: look, don't stop it yet; a later wake says hang if it
+                   stays idle, and after 20 minutes idle it says so, still without a kill
   approval <task>  a running task's shell call open over 6 minutes with no process for it: an
                    approval prompt, or a hang before the command started
   quiet <task>     a running task whose session log, worktree and run folder haven't changed for
@@ -90,6 +92,7 @@ HOG_MIN = float(os.environ.get("RUN_WATCH_HOG_MINUTES", 10))
 HOG_SHARE = 0.8              # of one core
 IDLE_SHARE = 0.02            # a call's processes below 2% of a core count as using no CPU
 BUSY_SHARE = 0.05            # a task's processes at 5% of a core or more are working
+PROOF_CPU_S = 0.5            # CPU seconds under which a process counts as having done nothing
 CALL_START_S = float(os.environ.get("RUN_WATCH_CALL_START_SECONDS", 60))  # a call's own processes start this soon
 SAMPLE_S = float(os.environ.get("RUN_WATCH_SAMPLE_SECONDS", 2))
 DISK_DROP_GB, DISK_DROP_MIN, DISK_LOW_GB, SWAP_GB = 10, 5, 20, 20
@@ -132,6 +135,15 @@ def run(cmd: list[str], timeout: float = 10) -> str:
                               env=dict(os.environ, LC_ALL="C")).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def run_ok(cmd: list[str], timeout: float = 10, ok=(0,)) -> str | None:
+    """Like run, but None when the command couldn't run, timed out or failed."""
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=dict(os.environ, LC_ALL="C"))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode in ok else None
 
 
 def short(text: str, n: int = 90) -> str:
@@ -330,13 +342,13 @@ def find_codex_log(task: dict, launched: float, remembered: str | None):
     return min(found)[1] if found else None
 
 
-def claude_calls(path: str) -> tuple[dict, list]:
-    """Open calls (id -> call) and report-backs in a Claude Code log."""
-    calls, reports, backgrounded, notified = {}, [], {}, set()
+def claude_calls(path: str) -> tuple[dict, list, list]:
+    """Open calls (id -> call), report-backs, and when every shell call started, in a Claude Code log."""
+    calls, reports, backgrounded, notified, starts = {}, [], {}, set(), []
     try:
         f = open(path, errors="replace")
     except OSError:
-        return {}, []
+        return {}, [], []
     with f:
         for line in f:
             if '"tool_' not in line and "task-notification" not in line:
@@ -361,6 +373,8 @@ def claude_calls(path: str) -> tuple[dict, list]:
                     calls[c.get("id")] = {"start": t, "tool": c.get("name", ""), "text": str(text),
                                           "shell": c.get("name") in CLAUDE_SHELL,
                                           "bg": bool(inp.get("run_in_background"))}
+                    if c.get("name") in CLAUDE_SHELL:
+                        starts.append((c.get("id"), t))
                     blob = json.dumps(inp)
                     if REPORT in blob:
                         m = re.search(r"status=(\w+)", blob)
@@ -380,15 +394,15 @@ def claude_calls(path: str) -> tuple[dict, list]:
     for cid, call in backgrounded.items():
         if cid not in notified:
             calls[cid] = call
-    return calls, reports
+    return calls, reports, starts
 
 
-def codex_calls(path: str) -> tuple[dict, list]:
-    calls, reports = {}, []
+def codex_calls(path: str) -> tuple[dict, list, list]:
+    calls, reports, starts = {}, [], []
     try:
         f = open(path, errors="replace")
     except OSError:
-        return {}, []
+        return {}, [], []
     with f:
         for line in f:
             if "call" not in line:
@@ -405,12 +419,14 @@ def codex_calls(path: str) -> tuple[dict, list]:
                 cmd = re.search(r'"(?:cmd|command)"\s*:\s*("(?:[^"\\]|\\.)*"|\[[^\]]*\])', str(text))
                 calls[p.get("call_id")] = {"start": t, "tool": name, "text": cmd.group(1) if cmd else str(text),
                                            "shell": name in CODEX_SHELL, "bg": False}
+                if name in CODEX_SHELL:
+                    starts.append((p.get("call_id"), t))
                 if REPORT in str(text):
                     m = re.search(r"status=(\w+)", str(text))
                     reports.append((p.get("call_id"), t, m.group(1) if m else "?"))
             elif kind.endswith("_output"):
                 calls.pop(p.get("call_id"), None)
-    return calls, reports
+    return calls, reports, starts
 
 
 # ---------------------------------------------------------------- files
@@ -553,16 +569,17 @@ def main(argv: list[str]) -> int:
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
                          "it sees only the task's processes and files, so read its thread for stuck calls")
             blind_told.add(tid)
-        calls, reports, logs = {}, [], []
+        calls, reports, logs, starts = {}, [], [], []
         if log:
             logs = [log]
             sub = os.path.join(os.path.splitext(log)[0], "subagents")
             if kind == "claude" and os.path.isdir(sub) and "/subagents/" not in log:
                 logs += [os.path.join(sub, n) for n in os.listdir(sub) if n.endswith(".jsonl")]
             for path in logs:
-                c, r = (claude_calls if kind == "claude" else codex_calls)(path)
+                c, r, st = (claude_calls if kind == "claude" else codex_calls)(path)
                 calls.update(c)
                 reports += r
+                starts += st
         reports_by_task[tid] = reports
         if kind == "codex" and log:
             # T3 starts a `codex app-server` per thread; its commands are its descendants, whatever
@@ -580,7 +597,7 @@ def main(argv: list[str]) -> int:
         log_time = max((os.path.getmtime(p) for p in logs if os.path.exists(p)), default=0.0)
         wrote = changed_within(watched, HANG_MIN * 60, skip=[log])
         quiet = not wrote and now() - log_time > QUIET_MIN * 60 and not changed_within(watched, QUIET_MIN * 60, skip=[log])
-        findings[tid] = {"calls": calls, "wrote": wrote, "quiet": quiet, "log": log_time, "kind": kind}
+        findings[tid] = {"calls": calls, "starts": starts, "wrote": wrote, "quiet": quiet, "log": log_time, "kind": kind}
 
     # Calls old enough to judge, and whether a second look at the CPU is needed.
     t_now = now()
@@ -622,18 +639,22 @@ def main(argv: list[str]) -> int:
         return exe(procs[pid]) == "lease" or bool(re.search(r"/lease\s+(acquire|run)\b", procs[pid]["args"]))
 
     def idle_all_window(pid: int) -> bool:
-        """Whether the process used (almost) no CPU over the whole hang window: from an earlier
-        sample at least that old, else from all it used since it started."""
+        """Whether the process is shown to have used no CPU over the whole hang window: under half
+        a second since an earlier sample at least that old, or in its whole life. An average says
+        nothing about when the work was done, so it is never used here."""
         p = procs[pid]
-        share = rate_since(samples.get(key(pid, p), []), p["cpu"], t_now, hang_s)
-        if share is None:
-            share = p["cpu"] / max(1.0, t_now - p["start"] - 1)
-        return share < IDLE_SHARE
+        old = [s for s in samples.get(key(pid, p), []) if t_now - s[0] >= hang_s]
+        if old and p["cpu"] - old[-1][1] < PROOF_CPU_S:
+            return True
+        return p["cpu"] < PROOF_CPU_S
 
-    def on_network(pids) -> bool:
-        out = run(["lsof", "-a", "-nP", "-iTCP", "-sTCP:ESTABLISHED", "-p", ",".join(map(str, pids))], timeout=15)
-        return len(out.splitlines()) > 1
+    def on_network(pids):
+        """True or False, or None when lsof couldn't tell."""
+        out = run_ok(["lsof", "-a", "-nP", "-iTCP", "-sTCP:ESTABLISHED", "-p", ",".join(map(str, pids))], timeout=15, ok=(0, 1))
+        return None if out is None else len(out.splitlines()) > 1
 
+    idle_seen = state.get("idle", {})
+    idle_now = {}
     for tid, f in findings.items() if cwd else []:
         tp = task_procs.get(tid, set())
         hung_or_waiting = False
@@ -678,17 +699,30 @@ def main(argv: list[str]) -> int:
             for pid in alive:
                 claimed[pid] = claimed.get(pid, 0) + 1
         for c, alive, mins in judged:
+            cid = next(k for k, v in f["calls"].items() if v is c)
             names = short(", ".join(exe(procs[p]) for p in alive), 60)
             head = (f"{c['tool']} call open {mins:.0f} min (since {hm(c['start'])}): {short(c['text'])}; "
                     f"pids {' '.join(map(str, alive))} ({names})")
             network = on_network(alive)
-            if network or not all(idle_all_window(pid) for pid in alive):
-                why = "it holds a network connection" if network else "it used CPU earlier in that time"
-                lines.append(f"idle {tid}: {head}: idle now and nothing written or started for {HANG_MIN:g} min, but {why}: "
-                             "look at the call and its thread; don't stop it yet (a later wake says hang if it stays idle)")
-            elif any(claimed[pid] > 1 for pid in alive):
-                lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min, but calls that started "
-                             "together share these processes: find which is stuck (ps -p <pid> -o command=) before you stop it, then tell the task")
+            # Another shell call that started within a minute of this one may own some of these processes.
+            near = [k for k, t in f["starts"] if k != cid and abs(t - c["start"]) <= CALL_START_S]
+            if network is not False or not all(idle_all_window(pid) for pid in alive):
+                why = ("it holds a network connection" if network else "lsof couldn't tell whether it holds a network connection"
+                       if network is None else "it isn't shown to have used no CPU all that time")
+                since = idle_seen.get(f"{tid}:{cid}", t_now)
+                idle_now[f"{tid}:{cid}"] = since
+                lasting = (t_now - since) / 60
+                if lasting >= QUIET_MIN:
+                    tail = (f"still idle on every wake for {lasting:.0f} min: probably stuck; look at it now and decide with the task "
+                            "(no kill is offered: it may be waiting on something that answers)")
+                else:
+                    tail = "look at the call and its thread; don't stop it yet (a later wake says hang if it stays idle)"
+                lines.append(f"idle {tid}: {head}: idle now and nothing written or started for {HANG_MIN:g} min "
+                             f"(first seen idle {hm(since)}), but {why}: {tail}")
+            elif near or any(claimed[pid] > 1 for pid in alive):
+                lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min, but another call "
+                             "started within a minute of it, so some of these processes may be that call's: find which is stuck "
+                             "(ps -p <pid> -o command=) before you stop it, then tell the task")
             else:
                 top = [pid for pid in alive if procs[pid]["ppid"] not in alive]
                 lines.append(f"hang {tid}: {head}: no CPU, no new process and nothing written for {HANG_MIN:g} min; "
@@ -832,7 +866,7 @@ def main(argv: list[str]) -> int:
         old = [s for s in samples.get(k, []) if t_now - s[0] <= KEEP_SAMPLES_S]
         keep[k] = (old + [[round(t_now, 1), round(p["cpu"], 2)]])[-8:]
     state.update({"last_run": iso(t0), "samples": keep, "sessions": sessions,
-                  "blind": sorted(blind_told), "told": told,
+                  "blind": sorted(blind_told), "told": told, "idle": idle_now,
                   "hogs": sorted(hogs_told)})
     for line in lines:
         print(line)
