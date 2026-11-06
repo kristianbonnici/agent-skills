@@ -44,7 +44,7 @@ grep -q "PASS retired $test_home/.codex/skills/sketch-infographic holds somethin
 grep -q "WARN $test_home/.agents/skills/sketch-infographic -> .* looks like the retired skill" "$test_home/doctor-retired.out"
 rm "$test_home/.agents/skills/sketch-infographic"
 # A relative link, or one with extra slashes, to the old skill is recognised the same way.
-for odd in "skills/sketch-infographic" "$test_home/other/skills/sketch-infographic//"; do
+for odd in "skills/sketch-infographic" "$test_home/other/skills/sketch-infographic//" "$test_home/other/skills//sketch-infographic" "./skills/./sketch-infographic"; do
   ln -s "$odd" "$test_home/.agents/skills/sketch-infographic"
   HOME="$test_home" "$repo_root/scripts/doctor" --host codex >"$test_home/doctor-odd.out" 2>&1 || true
   grep -q "WARN $test_home/.agents/skills/sketch-infographic -> .* looks like the retired skill" "$test_home/doctor-odd.out"
