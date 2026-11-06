@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Build a excalidraw-drawing page from a page spec (JSON).
+// Build an excalidraw-drawing page or diagram from a spec (JSON).
 //
 //   node build.mjs page.json [--out-dir DIR] [--scale N] [--lint-only]
 //
