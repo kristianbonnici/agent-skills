@@ -50,7 +50,8 @@ so builds and downloads a task put in its scratchpad stay. This form finds the f
 given: each path's own (exactly that path, since another worktree's or task's name may begin with it),
 and for a task's folder in a run under the root, its scratch/ folder's and every folder's inside that
 (a session a task started in its scratch), unless another folder or watch.json task of the run could
-own that name too (a task S4-scratch beside S4): an ambiguous folder stays. Without --apply it lists them with their sizes; with it, it removes them,
+own that name too (a task S4-scratch beside S4): an ambiguous folder stays, and so does one whose
+name another existing folder encodes to (/a/task-b and /a/task/b share one); it says which. Without --apply it lists them with their sizes; with it, it removes them,
 each folder by folder without following a link. It refuses the home folder, the folder it runs in, a
 folder above either, a repository's main checkout (a .git folder), and a
 run folder or the root itself; with --apply, a call naming a task folder that holds KEEP removes
@@ -455,7 +456,32 @@ def claude_name(path):
     return name if len(name) <= CLAUDE_NAME_LIMIT else f"{name[:CLAUDE_NAME_LIMIT]}-{claude_hash(path)}"
 
 
-def harness_temp_folders(root, paths):
+def encoded_owners(name):
+    """The existing folders whose path Claude Code would encode to name (never through a link): two paths
+    such as /a/task-b and /a/task/b share one name. A cut name can't be searched, so none."""
+    if len(name) > CLAUDE_NAME_LIMIT:
+        return []
+    found = []
+
+    def walk(folder, prefix):
+        try:
+            children = list(os.scandir(folder))
+        except OSError:
+            return
+        for child in children:
+            if not child.is_dir(follow_symlinks=False):
+                continue
+            encoded = prefix + "-" + re.sub(r"[^A-Za-z0-9]", "-", child.name)
+            if encoded == name:
+                found.append(child.path)
+            elif name.startswith(encoded + "-"):
+                walk(child.path, encoded)
+
+    walk(os.sep, "")
+    return found
+
+
+def harness_temp_folders(root, paths, refused=None):
     """[(folder, size)] of Claude Code's temp folders for the paths: each path's own, and for a task's
     folder in a run under the root, those of its scratch/ and the folders inside it too (a session a
     task started there). Never a sibling's whose name begins the same, such as task S4-fix's for S4: a
@@ -487,8 +513,17 @@ def harness_temp_folders(root, paths):
             continue
         under_scratch = not unknown and any(entry.name == s or entry.name.startswith(s + "-") for s in scratch) \
             and not any(entry.name == o or entry.name.startswith(o + "-") for o in others)
-        if entry.name in exact or under_scratch:
-            found.append((entry.path, tree_size(entry.path)))
+        if not (entry.name in exact or under_scratch):
+            continue
+        mine = {os.path.realpath(p) for p in paths}
+        scratches = {os.path.join(m, "scratch") for m in mine}
+        other = [o for o in encoded_owners(entry.name) if os.path.realpath(o) not in mine
+                 and not any(os.path.realpath(o) == sc or os.path.realpath(o).startswith(sc + os.sep) for sc in scratches)]
+        if other:   # another existing folder could own this name: it stays
+            if refused is not None:
+                refused.append((entry.path, other[0]))
+            continue
+        found.append((entry.path, tree_size(entry.path)))
     return found
 
 
@@ -521,7 +556,10 @@ def prune_harness_temp(root, paths, apply):
         print(f"{', '.join(kept)} holds KEEP; its harness temp folders, and those of the other paths given, left alone")
         return 0
     temp = claude_temp_root()
-    found = harness_temp_folders(root, paths)
+    ambiguous = []
+    found = harness_temp_folders(root, paths, ambiguous)
+    for folder, owner in ambiguous:
+        print(f"left {folder}: {owner} could own that name too")
     if not found:
         print(f"No harness temp folders for {', '.join(paths)} in {temp}")
         return 0

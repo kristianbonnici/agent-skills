@@ -74,9 +74,11 @@ private records.
   one task's evaluation libraries, model copies and builds in its session scratchpad; the owner saw free disk
   fall from 189.5 to 125.7 GB over the runs. Codex, OpenCode and Antigravity were checked: they keep session
   logs and state in their own folders (Codex's logs for that day about 0.1 GB), not a folder per worktree.
+  Later that night a merged task that followed the new rule still left 6.6 GB there: two of its reviewers,
+  run in its worktree, had built the code into their own session scratchpads (3.3 GB each).
   → *the cleanup removes a task's harness temp folders, the finish lists what is left and the report's size
-  line counts it, briefs say the harness's scratchpad isn't scratch, and run-watch's disk line names the
-  folder that grows.*
+  line counts it, briefs say the harness's scratchpad isn't scratch and reviewers build into the task's
+  scratch or not at all, and run-watch's disk line names the folder that grows.*
 
 ## Outside sources
 
