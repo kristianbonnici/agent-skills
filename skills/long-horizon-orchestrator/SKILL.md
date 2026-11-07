@@ -172,7 +172,7 @@ When no task is running, paused or able to start (every task is merged, `ready`,
    - the integration branch log;
    - nothing was pushed;
    - the integration checkout is clean;
-   - every merged task's worktree, branch, `scratch/` folder and harness temp folders are removed, and its entry and its helper threads tidied (`scripts/prune-runs --harness-temp` with every task's worktree and run folder lists what is left; remove a merged task's with `--apply`);
+   - every merged task's worktree, branch, `scratch/` folder and harness temp folders are removed, and its entry and its helper threads tidied (`scripts/prune-runs --harness-temp` with every task's worktree and `<run directory>/<task ID>` lists what is left; remove a merged task's with `--apply`);
    - for each unfinished task with a worktree, save its patch using only steps 1–3 in [integration.md](references/integration.md#a-task-the-user-stopped) without changing its status, keep its worktree and patch, and put `KEEP` in its run folder; in T3 settle its thread and helpers without touching these;
    - the run directory's size (`scripts/prune-runs --size <run directory>`, whose second line counts the tasks' harness temp folders still left), for the report's closing line.
 3. Compare the user's state with the snapshot: restore what the run changed, remove what it left, and note anything you couldn't for the report's "Side effects" ([references/machine.md](references/machine.md#5-the-users-own-things)). If another run is still active, leave the steps you share with it to whichever finishes last, as agreed, and tell it you have finished; if it hasn't answered all run, do them yourself, as [references/routing.md](references/routing.md#running-beside-another-orchestrator) says.

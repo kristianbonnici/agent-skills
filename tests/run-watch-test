@@ -250,6 +250,11 @@ try:
         with open(os.path.join(a_temp, "s1", "scratchpad", name), "wb") as f:
             f.write(b"x" * (mb << 20))
     fill("model.bin", 6)
+    # a session task A started in its scratch folder: sized too
+    a_scratch = os.path.join(work, "tmp", f"claude-{os.getuid()}", "".join(c if c.isalnum() else "-" for c in os.path.join(run_dir, "A", "scratch", "e2e")))
+    os.makedirs(os.path.join(a_scratch, "s2", "scratchpad"))
+    with open(os.path.join(a_scratch, "s2", "scratchpad", "lib.bin"), "wb") as f:
+        f.write(b"x" * (1 << 20))
     before = sorted(os.listdir(run_dir))
     # A's busy server, started by a later call: not A's stuck call's, so its CPU hides nothing.
     time.sleep(5)                                           # past the 4-second "minute" a call's processes start in
@@ -330,6 +335,8 @@ try:
     out3 = watch(dict(env, RUN_WATCH_DISK_FREE_GB="15"))
     assert any(line.startswith("disk: 15.0 GB free, below 20 GB") and f"grew most: {a_temp} +3 MB since" in line
                and "now 9 MB" in line for line in out3), out3
+    sized = json.load(open(os.path.join(run_dir, "run-watch.state.json")))["folders"]
+    assert sized.get(a_scratch, [0, 0])[1] >= 1024, sized
     assert any(line.startswith(f"sampler: the usage sampler (pid {sampler.pid})") for line in out3), out3
     assert not lines_for(out3, "hang", "B"), out3
     # after three runs, A's process still has its first sample (older than the 3-second window) in the state
