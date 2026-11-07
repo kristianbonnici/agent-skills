@@ -2591,6 +2591,7 @@ fresh = subprocess.run([sys.executable, "-I", script], capture_output=True, text
                        env=dict(os.environ, XDG_STATE_HOME=os.path.join(outside, "no-state")))
 assert fresh.returncode == 0 and "nothing to prune" in fresh.stdout, fresh.stdout
 
+import json
 # --harness-temp: Claude Code's temp folders of a worktree (exactly its own, a cut long name with its hash)
 # and of a task's folder with those inside it; a dry run first; never another worktree's whose name begins
 # the same, another task's, the home folder's, or through a link; refusals.
@@ -2647,6 +2648,16 @@ kept = trun("--harness-temp", "/fake/worktrees/proj/task-e", os.path.join(root, 
 assert kept.returncode == 0 and "holds KEEP" in kept.stdout, kept.stdout
 assert os.path.isdir(os.path.join(temp, enc(os.path.join(root, "recent", "E")))) and os.path.isdir(os.path.join(temp, enc("/fake/worktrees/proj/task-e")))
 assert "in 2 harness temp folders (a dry run" in trun("--harness-temp", "/fake/worktrees/proj/task-e", os.path.join(root, "recent", "E")).stdout
+# a sibling task S-scratch (a folder, or only a task in watch.json) owns names like S/scratch's: they stay
+os.makedirs(os.path.join(root, "amb", "S-scratch"))
+open(os.path.join(root, "amb.md"), "w").write("# r\nStatus: running\n")
+json.dump({"tasks": {"S": {}, "T-scratch": {}}}, open(os.path.join(root, "amb", "watch.json"), "w"))
+for n in ("S/scratch", "S/scratch/z", "T/scratch", "T/scratch/z"):
+    tmp_put(enc(os.path.join(root, "amb", n)))
+tmp_put(enc(os.path.join(root, "amb", "S")))
+amb = trun("--harness-temp", os.path.join(root, "amb", "S"), os.path.join(root, "amb", "T"), "--apply")
+assert amb.returncode == 0 and "1.0 MB in 1 harness temp folders removed" in amb.stdout, amb.stdout
+assert all(os.path.isdir(os.path.join(temp, enc(os.path.join(root, "amb", n)))) for n in ("S/scratch", "S/scratch/z", "T/scratch", "T/scratch/z"))
 checkout = os.path.join(outside, "checkout")
 os.makedirs(os.path.join(checkout, ".git"))
 for bad in (os.path.expanduser("~"), "/", "relative/path", root, os.path.join(root, "recent"), os.path.dirname(root),
@@ -2654,7 +2665,6 @@ for bad in (os.path.expanduser("~"), "/", "relative/path", root, os.path.join(ro
     assert trun("--harness-temp", bad).returncode == 64, bad
 assert trun("--harness-temp", wt, "--size", os.path.join(root, "recent")).returncode == 64
 # --size names what is left of the run's tasks' temp folders (the worktrees and task folders watch.json names)
-import json
 json.dump({"tasks": {"C": {"worktree": "/fake/worktrees/proj/task-c"}}}, open(os.path.join(root, "recent", "watch.json"), "w"))
 tmp_put(enc("/fake/worktrees/proj/task-c"), 2)
 tmp_put(enc(os.path.join(root, "recent", "C", "scratch", "x")))

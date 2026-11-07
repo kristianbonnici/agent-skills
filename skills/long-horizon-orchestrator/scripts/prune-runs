@@ -49,7 +49,8 @@ with a folder per session in it (scratchpad/, tasks/). It outlives the worktree 
 so builds and downloads a task put in its scratchpad stay. This form finds the folders of the paths
 given: each path's own (exactly that path, since another worktree's or task's name may begin with it),
 and for a task's folder in a run under the root, its scratch/ folder's and every folder's inside that
-(a session a task started in its scratch). Without --apply it lists them with their sizes; with it, it removes them,
+(a session a task started in its scratch), unless another folder or watch.json task of the run could
+own that name too (a task S4-scratch beside S4): an ambiguous folder stays. Without --apply it lists them with their sizes; with it, it removes them,
 each folder by folder without following a link. It refuses the home folder, the folder it runs in, a
 folder above either, a repository's main checkout (a .git folder), and a
 run folder or the root itself; with --apply, a call naming a task folder that holds KEEP removes
@@ -458,33 +459,35 @@ def harness_temp_folders(root, paths):
     """[(folder, size)] of Claude Code's temp folders for the paths: each path's own, and for a task's
     folder in a run under the root, those of its scratch/ and the folders inside it too (a session a
     task started there). Never a sibling's whose name begins the same, such as task S4-fix's for S4: a
-    folder inside scratch/ is taken only when no other folder in the run could own its name too (a
-    task S4-scratch-x beside S4), so an ambiguous one stays."""
+    folder for scratch/ or inside it is taken only when no other folder or watch.json task of the run
+    could own its name too (a task S4-scratch beside S4), and none when the run can't be listed."""
     temp = claude_temp_root()
     try:
         entries = sorted(os.scandir(temp), key=lambda e: e.name)
     except OSError:
         return []
-    exact, scratch, others = set(), [], set()
+    exact, scratch, others, unknown = set(), [], set(), False
     for path in paths:
         inside_root = root is not None and os.path.realpath(path).startswith(root + os.sep)
         for form in {os.path.abspath(path), os.path.realpath(path)}:   # the session may have named either
             exact.add(claude_name(form))
-            if inside_root:
-                exact.add(claude_name(os.path.join(form, "scratch")))
-                scratch.append(re.sub(r"[^A-Za-z0-9]", "-", os.path.join(form, "scratch")) + "-")
-                run, task = os.path.split(form.rstrip(os.sep))
-                try:   # the run's other folders, whose sessions' names may begin the same
-                    others |= {re.sub(r"[^A-Za-z0-9]", "-", os.path.join(run, n)) for n in os.listdir(run) if n != task}
-                except OSError:
-                    pass
+            if not inside_root:
+                continue
+            scratch.append(re.sub(r"[^A-Za-z0-9]", "-", os.path.join(form, "scratch")))
+            run, task = os.path.split(form.rstrip(os.sep))
+            try:   # the run's other folders and tasks, whose sessions' names may begin the same
+                names = set(os.listdir(run)) | set(run_task_ids(run))
+            except OSError:
+                unknown = True   # no inventory: nothing under scratch/ is taken
+                continue
+            others |= {re.sub(r"[^A-Za-z0-9]", "-", os.path.join(run, n)) for n in names if n != task}
     found = []
     for entry in entries:
         if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
             continue
-        nested = any(entry.name.startswith(s) for s in scratch) and \
-            not any(entry.name == o or entry.name.startswith(o + "-") for o in others)
-        if entry.name in exact or nested:
+        under_scratch = not unknown and any(entry.name == s or entry.name.startswith(s + "-") for s in scratch) \
+            and not any(entry.name == o or entry.name.startswith(o + "-") for o in others)
+        if entry.name in exact or under_scratch:
             found.append((entry.path, tree_size(entry.path)))
     return found
 
@@ -539,6 +542,16 @@ def prune_harness_temp(root, paths, apply):
     for error in failed:
         print(f"couldn't remove {error}", file=sys.stderr)
     return 1 if failed else 0
+
+
+def run_task_ids(run):
+    """The task IDs the run's watch.json names (none when it can't be read)."""
+    try:
+        with open(os.path.join(run, "watch.json"), encoding="utf-8") as f:
+            tasks = (json.load(f) or {}).get("tasks") or {}
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [str(t) for t in tasks] if isinstance(tasks, dict) else []
 
 
 def run_tasks_paths(run):
