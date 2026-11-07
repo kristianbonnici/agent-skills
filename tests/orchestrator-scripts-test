@@ -2636,6 +2636,12 @@ assert all(os.path.isdir(os.path.join(temp, n)) for n in kept_names), os.listdir
 assert os.path.islink(os.path.join(temp, enc("/fake/worktrees/proj/task-l"))) and os.path.exists(os.path.join(outside, "keep-me.bin"))
 again = trun("--harness-temp", wt)
 assert again.returncode == 0 and "No harness temp folders" in again.stdout, again.stdout
+tmp_put(enc(os.path.join(root, "recent", "E")))               # recent/E holds KEEP: listed, never removed
+tmp_put(enc("/fake/worktrees/proj/task-e"))
+kept = trun("--harness-temp", "/fake/worktrees/proj/task-e", os.path.join(root, "recent", "E"), "--apply")
+assert kept.returncode == 0 and "holds KEEP" in kept.stdout, kept.stdout
+assert os.path.isdir(os.path.join(temp, enc(os.path.join(root, "recent", "E")))) and os.path.isdir(os.path.join(temp, enc("/fake/worktrees/proj/task-e")))
+assert "in 2 harness temp folders (a dry run" in trun("--harness-temp", "/fake/worktrees/proj/task-e", os.path.join(root, "recent", "E")).stdout
 checkout = os.path.join(outside, "checkout")
 os.makedirs(os.path.join(checkout, ".git"))
 for bad in (os.path.expanduser("~"), "/", "relative/path", root, os.path.join(root, "recent"), os.path.dirname(root),

@@ -328,11 +328,14 @@ def growing_folder(state: dict, tasks: dict, run_dir: str, t_now: float) -> str:
         if task.get("status", "running") != "running":
             continue
         own = os.path.join(run_dir, tid)
-        paths += [claude_temp(task["worktree"]), claude_temp(own), task["worktree"], own]
+        forms = {f(x) for x in (task["worktree"], own) for f in (os.path.abspath, os.path.realpath)}
+        paths += [claude_temp(x) for x in sorted(forms)] + [task["worktree"], own]   # the session named either form
     if not paths:
         return ""
     sizes, cut = folder_sizes(list(dict.fromkeys(paths)), DISK_SIZE_BUDGET_S)
-    before = state.get("folders", {})
+    before = state.get("folders") if isinstance(state.get("folders"), dict) else {}
+    before = {p: v for p, v in before.items() if isinstance(v, list) and len(v) == 2
+              and all(isinstance(x, (int, float)) for x in v)}
     state["folders"] = {**{p: v for p, v in before.items() if p in paths}, **{p: [round(t_now), kb] for p, kb in sizes.items()}}
     if not sizes:
         return "; no task folder could be sized in time" if cut else ""

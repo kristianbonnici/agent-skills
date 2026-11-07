@@ -52,7 +52,8 @@ and for a task's folder in a run under the root, its scratch/ folder's and every
 (a session a task started in its scratch). Without --apply it lists them with their sizes; with it, it removes them,
 each folder by folder without following a link. It refuses the home folder, the folder it runs in, a
 folder above either, a repository's main checkout (a .git folder), and a
-run folder or the root itself. Codex, OpenCode and Antigravity keep their sessions' logs and state
+run folder or the root itself; with --apply, a call naming a task folder that holds KEEP removes
+nothing. Codex, OpenCode and Antigravity keep their sessions' logs and state
 in their own folders, not a folder per working folder, so this form leaves them alone. Use it only
 once the task and everything it started have stopped.
 
@@ -502,6 +503,11 @@ def prune_harness_temp(root, paths, apply):
         why = refused_path(root, path)
         if why:
             usage_error(f"--harness-temp: {path} {why}")
+    kept = [p for p in paths if root is not None and os.path.realpath(p).startswith(root + os.sep)
+            and os.path.lexists(os.path.join(os.path.realpath(p), "KEEP"))]
+    if kept and apply:   # an unmerged task's: its worktree, given beside it, is kept with it
+        print(f"{', '.join(kept)} holds KEEP; its harness temp folders, and those of the other paths given, left alone")
+        return 0
     temp = claude_temp_root()
     found = harness_temp_folders(root, paths)
     if not found:
