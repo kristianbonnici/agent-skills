@@ -339,10 +339,11 @@ class Leases:
             except OSError:
                 current = None
             if current != SWIFT_WRAPPER or not os.access(wrapper, os.X_OK):
-                with open(wrapper + ".new", "w") as f:
+                fresh = f"{wrapper}.{os.getpid()}.new"   # two runs starting at once each write their own
+                with open(fresh, "w") as f:
                     f.write(SWIFT_WRAPPER)
-                os.chmod(wrapper + ".new", 0o755)
-                os.replace(wrapper + ".new", wrapper)
+                os.chmod(fresh, 0o755)
+                os.replace(fresh, wrapper)
         except OSError as error:
             print(f"lease: no swift wrapper ({error}); swift runs uncapped", file=sys.stderr)
             env["PATH"] = os.pathsep.join(path)

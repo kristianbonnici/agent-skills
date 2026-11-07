@@ -47,9 +47,9 @@ working folder a session ran in, ${CLAUDE_CODE_TMPDIR:-/tmp}/claude-<uid>/<the f
 character but letters and digits as "-"; a name over 200 characters is cut there and given a hash>/,
 with a folder per session in it (scratchpad/, tasks/). It outlives the worktree and is never cleaned,
 so builds and downloads a task put in its scratchpad stay. This form finds the folders of the paths
-given: a worktree's own (exactly that path, since another worktree's name may begin with it), and for
-a task's folder in a run under the root, that folder's and every folder's inside it (a session a task
-started in its scratch). Without --apply it lists them with their sizes; with it, it removes them,
+given: each path's own (exactly that path, since another worktree's or task's name may begin with it),
+and for a task's folder in a run under the root, its scratch/ folder's and every folder's inside that
+(a session a task started in its scratch). Without --apply it lists them with their sizes; with it, it removes them,
 each folder by folder without following a link. It refuses the home folder, the folder it runs in, a
 folder above either, a repository's main checkout (a .git folder), and a
 run folder or the root itself. Codex, OpenCode and Antigravity keep their sessions' logs and state
@@ -432,33 +432,50 @@ def claude_temp_root():
     return os.path.join(os.path.realpath(base), f"claude-{os.getuid()}")
 
 
+def claude_hash(text):
+    """Claude Code's hash for a cut name: a 32-bit string hash over UTF-16 units, its absolute value in base 36."""
+    h = 0
+    data = text.encode("utf-16-le", "surrogatepass")
+    for i in range(0, len(data), 2):
+        h = (h * 31 + int.from_bytes(data[i:i + 2], "little")) & 0xFFFFFFFF
+    n, digits = abs(h - (1 << 32) if h >= 1 << 31 else h), ""
+    while True:
+        n, d = divmod(n, 36)
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"[d] + digits
+        if not n:
+            return digits
+
+
 def claude_name(path):
-    return re.sub(r"[^A-Za-z0-9]", "-", path)
+    """The name of Claude Code's folder for sessions in path: every character but letters and digits as
+    "-", and over 200 characters, the first 200 and the path's hash."""
+    name = re.sub(r"[^A-Za-z0-9]", "-", path)
+    return name if len(name) <= CLAUDE_NAME_LIMIT else f"{name[:CLAUDE_NAME_LIMIT]}-{claude_hash(path)}"
 
 
 def harness_temp_folders(root, paths):
-    """[(folder, size)] of Claude Code's temp folders for the paths: a path outside the root exactly
-    (its own name, or its cut name and hash), one inside the root with the folders inside it too."""
+    """[(folder, size)] of Claude Code's temp folders for the paths: each path's own, and for a task's
+    folder in a run under the root, those of its scratch/ and the folders inside it too (a session a
+    task started there). Never a sibling's whose name begins the same, such as task S4-fix's for S4."""
     temp = claude_temp_root()
     try:
         entries = sorted(os.scandir(temp), key=lambda e: e.name)
     except OSError:
         return []
-    wanted = []
+    exact, scratch = set(), []
     for path in paths:
         inside_root = root is not None and os.path.realpath(path).startswith(root + os.sep)
         for form in {os.path.abspath(path), os.path.realpath(path)}:   # the session may have named either
-            wanted.append((claude_name(form), inside_root))
+            exact.add(claude_name(form))
+            if inside_root:
+                exact.add(claude_name(os.path.join(form, "scratch")))
+                scratch.append(re.sub(r"[^A-Za-z0-9]", "-", os.path.join(form, "scratch")) + "-")
     found = []
     for entry in entries:
         if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
             continue
-        for name, inside_root in wanted:
-            cut = len(name) > CLAUDE_NAME_LIMIT
-            if (entry.name == name and not cut) or (cut and entry.name.startswith(name[:CLAUDE_NAME_LIMIT] + "-")) \
-                    or (inside_root and entry.name.startswith(name + "-")):
-                found.append((entry.path, tree_size(entry.path)))
-                break
+        if entry.name in exact or any(entry.name.startswith(s) for s in scratch):
+            found.append((entry.path, tree_size(entry.path)))
     return found
 
 

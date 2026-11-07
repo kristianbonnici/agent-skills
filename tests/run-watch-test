@@ -242,7 +242,7 @@ try:
     env = dict(os.environ, CLAUDE_CONFIG_DIR=os.path.join(work, "claude"), CODEX_HOME=os.path.join(work, "codex"),
                RUN_WATCH_HANG_MINUTES="0.05", RUN_WATCH_QUIET_MINUTES="0.5", RUN_WATCH_HOG_MINUTES="0.05",
                RUN_WATCH_SAMPLE_SECONDS="0.5", RUN_WATCH_CALL_START_SECONDS="4", RUN_WATCH_IOREG=ioreg, RUN_WATCH_PS=fake_ps, RUN_WATCH_DISK_FREE_GB="138", RUN_WATCH_SWAP_GB="25",
-               CLAUDE_CODE_TMPDIR=os.path.join(work, "tmp"), RUN_WATCH_GROWTH_MB="2")
+               CLAUDE_CODE_TMPDIR=os.path.join(work, "tmp"), RUN_WATCH_GROWTH_MB="2", RUN_WATCH_RESIZE_SECONDS="0")
     # task A's Claude Code temp folder, where a session's scratchpad fills up (the disk line names it)
     a_temp = os.path.join(work, "tmp", f"claude-{os.getuid()}", "".join(c if c.isalnum() else "-" for c in wt["A"]))
     os.makedirs(os.path.join(a_temp, "s1", "scratchpad"))

@@ -2607,17 +2607,30 @@ def trun(*args):
 wt = "/fake/worktrees/proj/task-a"
 longwt = "/fake/worktrees/" + "x" * 240
 task = os.path.join(root, "recent", "B")
-gone_names = [enc(wt), enc(longwt)[:200] + "-1k2j3h", enc(task), enc(task + "/scratch/e2e")]
-kept_names = [enc(wt + "-and-more"), enc(os.path.join(root, "recent", "B2")), enc(os.path.expanduser("~")), enc(longwt + "y")[:200]]
+def java_hash36(text):                                       # Claude Code's: (h << 5) - h + unit, 32-bit, abs, base 36
+    h = 0
+    for ch in text:
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    n, out = abs(h - (1 << 32) if h >= 1 << 31 else h), ""
+    while True:
+        n, d = divmod(n, 36)
+        out = "0123456789abcdefghijklmnopqrstuvwxyz"[d] + out
+        if not n:
+            return out
+assert java_hash36("hello") == "1n1e4y"
+gone_names = [enc(wt), enc(longwt)[:200] + "-" + java_hash36(longwt), enc(task), enc(task + "/scratch"), enc(task + "/scratch/e2e")]
+kept_names = [enc(wt + "-and-more"), enc(os.path.join(root, "recent", "B2")), enc(os.path.join(root, "recent", "B-fix")),
+              enc(os.path.join(root, "recent", "B-fix", "scratch", "x")), enc(os.path.expanduser("~")),
+              enc(longwt)[:200] + "-" + java_hash36(longwt + "y")]
 for name in gone_names + kept_names:
     tmp_put(name)
 os.symlink(outside, os.path.join(temp, enc("/fake/worktrees/proj/task-l")))
 dry = trun("--harness-temp", wt, longwt, task, "/fake/worktrees/proj/task-l")
-assert dry.returncode == 0 and "a dry run" in dry.stdout and "in 4 harness temp folders" in dry.stdout, dry.stdout
+assert dry.returncode == 0 and "a dry run" in dry.stdout and "in 5 harness temp folders" in dry.stdout, dry.stdout
 assert all(f"would remove {os.path.join(temp, n)} (1.0 MB)" in dry.stdout for n in gone_names), dry.stdout
 assert all(os.path.isdir(os.path.join(temp, n)) for n in gone_names), "a dry run removed something"
 done = trun("--harness-temp", wt, longwt, task, "/fake/worktrees/proj/task-l", "--apply")
-assert done.returncode == 0 and "4.0 MB in 4 harness temp folders removed" in done.stdout, done.stdout
+assert done.returncode == 0 and "5.0 MB in 5 harness temp folders removed" in done.stdout, done.stdout
 assert not any(os.path.lexists(os.path.join(temp, n)) for n in gone_names), os.listdir(temp)
 assert all(os.path.isdir(os.path.join(temp, n)) for n in kept_names), os.listdir(temp)
 assert os.path.islink(os.path.join(temp, enc("/fake/worktrees/proj/task-l"))) and os.path.exists(os.path.join(outside, "keep-me.bin"))

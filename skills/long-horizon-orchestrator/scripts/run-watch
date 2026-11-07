@@ -45,7 +45,8 @@ Each line starts with a word saying what it is:
   disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB, naming the running
                    tasks' folder (worktree, task folder, or the Claude Code temp folder of either)
                    that grew most since a disk line last sized them, else the largest, sized with du
-                   in 20 seconds at most; swap above 20 GB
+                   in 20 seconds at most (while disk only stays low, every 10 minutes at most); swap
+                   above 20 GB
   dialog           a password dialog (SecurityAgent) is up
   keep-awake / sampler   the recorded keep-awake or usage sampler isn't running
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
@@ -81,7 +82,7 @@ run (CPU samples for the hog check, the disk's recent readings and folder sizes,
 printed), and adds the time lines to <run directory>/times.log. It exits 0 (2 for a
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
-RUN_WATCH_SWAP_GB, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
+RUN_WATCH_SWAP_GB, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
 inputs, and CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code.
 """
 
@@ -107,6 +108,7 @@ DISK_DROP_GB, DISK_DROP_MIN, DISK_LOW_GB, SWAP_GB = 10, 5, 20, 20
 DISK_SIZE_BUDGET_S = float(os.environ.get("RUN_WATCH_DISK_BUDGET_SECONDS", 20))  # for sizing folders on a disk line
 GROWTH_KB = 1024 * float(os.environ.get("RUN_WATCH_GROWTH_MB", 1024))  # grew this much since last sized: growing
 TIMES_LOG = "times.log"
+RESIZE_S = float(os.environ.get("RUN_WATCH_RESIZE_SECONDS", 600))  # while free disk only stays low, the folders are sized again at most this often
 KEEP_SAMPLES_S = 2 * 3600
 
 WAIT_TOOL = re.compile(r"(^|__)(t3_thread_wait|t3_background_wait|delegate_task|task_status|wait_agent|"
@@ -283,7 +285,19 @@ def claude_project(worktree: str) -> str:
 def claude_temp(folder: str) -> str:
     """Claude Code's temp folder for sessions in a folder (prune-runs --harness-temp removes it)."""
     base = os.path.realpath(os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp")
-    return os.path.join(base, f"claude-{os.getuid()}", re.sub(r"[^A-Za-z0-9]", "-", folder))
+    name = re.sub(r"[^A-Za-z0-9]", "-", folder)
+    if len(name) > 200:   # cut there, with Claude Code's 32-bit string hash in base 36
+        h, units = 0, folder.encode("utf-16-le", "surrogatepass")
+        for i in range(0, len(units), 2):
+            h = (h * 31 + int.from_bytes(units[i:i + 2], "little")) & 0xFFFFFFFF
+        n, digits = abs(h - (1 << 32) if h >= 1 << 31 else h), ""
+        while True:
+            n, d = divmod(n, 36)
+            digits = "0123456789abcdefghijklmnopqrstuvwxyz"[d] + digits
+            if not n:
+                break
+        name = f"{name[:200]}-{digits}"
+    return os.path.join(base, f"claude-{os.getuid()}", name)
 
 
 def folder_sizes(paths: list[str], seconds: float) -> tuple[dict, bool]:
@@ -861,7 +875,8 @@ def main(argv: list[str]) -> int:
         state["disk_told"] = tb
     if free < DISK_LOW_GB:
         lines.append(f"disk: {free:.1f} GB free, below {DISK_LOW_GB} GB: pause what fills it and clear the run's scratch")
-    if worst or free < DISK_LOW_GB:
+    if worst or (free < DISK_LOW_GB and t_now - state.get("folders_sized", 0) >= RESIZE_S):
+        state["folders_sized"] = round(t_now)
         where = growing_folder(state, tasks, run_dir, t_now)
         for n in range(len(lines) - 1, -1, -1):
             if lines[n].startswith("disk:"):
