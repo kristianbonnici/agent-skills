@@ -350,6 +350,18 @@ try:
                and "now 9 MB" in line for line in out3), out3
     sized = json.load(open(os.path.join(run_dir, "run-watch.state.json")))["folders"]
     assert sized.get(a_scratch, [0, 0])[1] >= 1024, sized
+    # while disk only stays low, the folders aren't sized again within 10 minutes (the real interval)
+    low = dict(env, RUN_WATCH_DISK_FREE_GB="15")
+    del low["RUN_WATCH_RESIZE_SECONDS"]
+    again = [l for l in watch(low) if l.startswith("disk:")]
+    assert again and not any("grew most" in l or "largest" in l for l in again), again
+    # a malformed folder record in the state is ignored, not a crash
+    state_path = os.path.join(run_dir, "run-watch.state.json")
+    for bad in ("x", {"p": [1]}, None):
+        st = json.load(open(state_path))
+        st["folders"], st["folders_sized"] = bad, 0
+        json.dump(st, open(state_path, "w"))
+        assert any(l.startswith("disk:") and "tasks' folders" in l or "grew most" in l for l in watch(low))
     assert any(line.startswith(f"sampler: the usage sampler (pid {sampler.pid})") for line in out3), out3
     assert not lines_for(out3, "hang", "B"), out3
     # after three runs, A's process still has its first sample (older than the 3-second window) in the state

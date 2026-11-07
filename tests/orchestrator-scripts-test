@@ -2618,6 +2618,9 @@ def java_hash36(text):                                       # Claude Code's: (h
         if not n:
             return out
 assert java_hash36("hello") == "1n1e4y"
+# the script's own, against values Claude Code 2.1.319's function gives (non-ASCII, a character outside the BMP)
+ph = __import__("runpy").run_path(script, run_name="prune")["claude_hash"]
+assert ph("hello") == "1n1e4y" and ph("a") == "2p" and ph("/tmp/\u00e9\U0001f600") == "ep2mm3"
 gone_names = [enc(wt), enc(longwt)[:200] + "-" + java_hash36(longwt), enc(task), enc(task + "/scratch"), enc(task + "/scratch/e2e")]
 os.makedirs(os.path.join(root, "recent", "B-scratch-fix"), exist_ok=True)   # a sibling whose name begins like B's scratch
 kept_names = [enc(wt + "-and-more"), enc(os.path.join(root, "recent", "B2")), enc(os.path.join(root, "recent", "B-fix")),
