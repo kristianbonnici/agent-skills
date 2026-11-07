@@ -1,6 +1,6 @@
 # Page spec
 
-`page.json` describes one page. `scripts/build.mjs` turns it into `page.excalidraw` and `page.png`.
+`page.json` describes one page. `scripts/build.mjs` turns it into `page.excalidraw` and `page.png` (inside an Obsidian vault, `<title>.excalidraw.md` and `<title>.excalidraw.png`: see Build options).
 
 ```json
 {
@@ -115,7 +115,16 @@ The title is 56 px, the subtitle 21, headings 24 and takeaways 17, set by the bu
 ## Build options
 
 ```bash
-node scripts/build.mjs page.json [--out-dir DIR] [--scale 2] [--lint-only]
+node scripts/build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 2] [--lint-only] [--obsidian | --no-obsidian] [--force]
 ```
 
-`--scale` sets the PNG's pixel density (1 to 4, default 2: a 3000 px wide image). `--lint-only` checks without writing files. Exit codes: 0 clean, 3 built with warnings, 1 error, 2 usage.
+`--scale` sets the PNG's pixel density (1 to 4, default 2: a 3000 px wide image). `--lint-only` checks without writing files. `--name` names the outputs (default: the spec's file name, or in an Obsidian vault its title). Exit codes: 0 clean, 3 built with warnings, 1 error, 2 usage.
+
+| Output folder | Writes |
+|---|---|
+| anywhere else | `<name>.png` and `<name>.excalidraw` |
+| inside an Obsidian vault (`.obsidian` in it or above it), or with `--obsidian` | `<name>.excalidraw.png` and `<name>.excalidraw.md`, the Excalidraw plugin's files, with the JSON uncompressed |
+
+`--no-obsidian` writes the plain pair inside a vault too. If the drawing on disk has been saved in an editor since it was built (its `source` is no longer `excalidraw-drawing`), the build stops with exit 1 rather than replace those edits; `--force` replaces it anyway.
+
+Wrapped text (headings, takeaways, any `text` with a `width`) is saved 2% and 2 px wider than its widest line, within the width it was wrapped to, so an editor that measures the font a fraction wider doesn't break a line again.

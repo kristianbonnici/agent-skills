@@ -2,8 +2,10 @@
 # excalidraw-drawing: every pattern in references/patterns.md, every diagram in
 # references/diagrams.md and the example page build with no warnings, the outputs are a valid
 # .excalidraw scene and a PNG, the checks catch what they claim to (a label too long for its box,
-# text crossing another element, an element outside its panel, a character Excalifont lacks), and
-# charts put every point where its numbers say.
+# text crossing another element, an element outside its panel, a character Excalifont lacks),
+# charts put every point where its numbers say, wrapped text keeps room to spare, a build into an
+# Obsidian vault writes the Excalidraw plugin's files, a hand-edited drawing is never replaced
+# unasked, and drawing.mjs keeps a drawing byte for byte while it edits and previews it.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -294,5 +296,123 @@ set +e; node "$build" "$work/badchart.json" --lint-only >"$work/badchart.out" 2>
 for expect in 'series "s" has a point outside the axis range' 'a y tick is outside the axis range' 'needs two or more' 'chart "empty" has no series' 'bar "n" needs a value of 0 or more'; do
   grep -q -- "$expect" "$work/badchart.out" || { cat "$work/badchart.out"; fail "missing warning: $expect"; }
 done
+
+# 11. Wrapped text keeps a little room within its box, and a centred one is centred in it.
+cat >"$work/wrap.json" <<'JSON'
+{ "title": "Wrap", "format": "auto", "panels": [ { "id": "w", "heading": "Almost all of it is one script", "elements": [
+  { "type": "text", "id": "plain", "x": 0, "y": 0, "fontSize": 24, "text": "Almost all of it is one script" },
+  { "type": "text", "id": "mid", "x": 300, "y": 60, "width": 400, "align": "center", "text": "short centred" },
+  { "type": "text", "id": "tight", "x": 0, "y": 120, "width": 200, "text": "a wrapped text that needs several lines here" }
+] } ] }
+JSON
+node "$build" "$work/wrap.json" >"$work/wrap.out" || { cat "$work/wrap.out"; fail "the wrap page doesn't build cleanly"; }
+python3 -I - "$work/wrap.excalidraw" <<'PY'
+import json, sys
+els = {e["id"]: e for e in json.load(open(sys.argv[1]))["elements"]}
+head, plain, mid, tight = els["w.heading"], els["w.plain"], els["w.mid"], els["w.tight"]
+# A plain text is sized to its words, so its width is the heading's widest line.
+assert head["autoResize"] is False and "\n" not in head["text"]
+assert plain["width"] * 1.015 < head["width"] <= 639, f"the heading has no room to spare: {head['width']} for a {plain['width']} line"
+assert tight["width"] <= 200 + 0.01, f"a wrapped text grew past its box: {tight['width']}"
+# The panel's drawing area starts at x 72 on the page, so x 300 in it is 372.
+centre = mid["x"] + mid["width"] / 2
+assert abs(centre - 372) < 0.5 and mid["width"] < 200, f"a centred text should sit on x 300 of its panel: centre {centre}, width {mid['width']}"
+PY
+
+# 12. Inside an Obsidian vault: the plugin's .excalidraw.md and .excalidraw.png, named after the title.
+mkdir -p "$work/vault/.obsidian" "$work/vault/Drawings" "$work/specs"
+cp "$skill/assets/example.json" "$work/specs/page.json"
+node "$build" "$work/specs/page.json" --out-dir "$work/vault/Drawings" >"$work/vault.out" || { cat "$work/vault.out"; fail "the example doesn't build into a vault"; }
+grep -q "^Obsidian vault " "$work/vault.out" || { cat "$work/vault.out"; fail "the build didn't say it found the vault"; }
+python3 -I - "$skill/assets/example.json" "$work/vault/Drawings" "$work/example.excalidraw" <<'PY'
+import json, os, re, sys
+title = json.load(open(sys.argv[1]))["title"]
+files = sorted(os.listdir(sys.argv[2]))
+assert files == [f"{title}.excalidraw.md", f"{title}.excalidraw.png"], f"unexpected files in the vault: {files}"
+md = open(os.path.join(sys.argv[2], files[0])).read()
+assert md.startswith("---\n\nexcalidraw-plugin: parsed\ntags: [excalidraw]\n\n---\n"), "no plugin front matter"
+assert md.endswith("\n```\n%%"), "the drawing block isn't closed as the plugin closes it"
+head, rest = md.split("\n%%\n## Drawing\n```json\n")
+scene = json.loads(rest[:-len("\n```\n%%")])
+assert scene["source"] == "excalidraw-drawing" and "\n\t\"type\": \"excalidraw\"" in rest, "JSON should be the build's, tab-indented"
+els = scene["elements"]
+texts = {e["id"]: e for e in els if e["type"] == "text" and not e.get("isDeleted")}
+section = head.split("## Text Elements\n", 1)[1] + "\n"
+# The plugin's own pattern for list entries.
+entries = {m.group(2): m.group(1).lstrip() for m in re.finditer(r"([\s\S]*?)\s\^(.{8})[\n]+", section)}
+assert set(entries) == set(texts), f"the Text Elements list and the texts differ: {set(entries) ^ set(texts)}"
+for i, e in texts.items():
+    assert entries[i] == e.get("originalText", e["text"]), f"listed words differ for {i}"
+ids = {e["id"] for e in els}
+for e in els:
+    assert not e.get("containerId") or e["containerId"] in ids, "a label lost its container"
+    for b in e.get("boundElements") or []:
+        assert b["id"] in ids, f"{e['id']} is bound to a missing {b['id']}"
+plain = json.load(open(sys.argv[3]))["elements"]
+assert len(plain) == len(els), "the vault drawing has a different number of elements"
+PY
+# The same spec builds to the same ids, so a rebuild changes only what changed.
+cp "$work/vault/Drawings/"*.md "$work/first.md"
+node "$build" "$work/specs/page.json" --out-dir "$work/vault/Drawings" >/dev/null
+python3 -I -c 'import re, sys; ids = lambda f: re.findall(r"\^(.{8})\n", open(f).read()); sys.exit(ids(sys.argv[1]) != ids(sys.argv[2]))' "$work/first.md" "$work/vault/Drawings/"*.md || fail "a rebuild gave the texts new ids"
+# --no-obsidian writes the plain pair, and --name names it.
+mkdir "$work/vault/Plain"
+node "$build" "$work/specs/page.json" --out-dir "$work/vault/Plain" --no-obsidian --name "Plain one" >/dev/null || fail "--no-obsidian doesn't build"
+[ "$(ls "$work/vault/Plain" | tr '\n' ' ')" = "Plain one.excalidraw Plain one.png " ] || { ls "$work/vault/Plain"; fail "--no-obsidian --name should write Plain one.excalidraw and .png"; }
+expect_exit 2 "$work/specs/page.json" --obsidian --no-obsidian
+expect_exit 2 "$work/specs/page.json" --name "a/b"
+expect_exit 2 "$work/specs/page.json" --no-obsidan
+
+# 13. A drawing saved in an editor since the build is never replaced unasked.
+for target in "$work/vault/Drawings/"*.md "$work/vault/Plain/Plain one.excalidraw"; do
+  python3 -I -c 'import sys; p = sys.argv[1]; s = open(p).read(); open(p, "w").write(s.replace("\"source\": \"excalidraw-drawing\"", "\"source\": \"https://excalidraw.com\"", 1))' "$target"
+  before=$(cksum "$target")
+  case "$target" in *.md) extra=(--out-dir "$work/vault/Drawings") ;; *) extra=(--out-dir "$work/vault/Plain" --no-obsidian --name "Plain one") ;; esac
+  set +e; node "$build" "$work/specs/page.json" "${extra[@]}" >"$work/guard.out" 2>&1; status=$?; set -e
+  [ "$status" -eq 1 ] && grep -q "saved in an editor since it was built" "$work/guard.out" || { cat "$work/guard.out"; fail "an edited $target should stop the build, got $status"; }
+  [ "$before" = "$(cksum "$target")" ] || fail "the build changed an edited $target"
+  node "$build" "$work/specs/page.json" "${extra[@]}" --force >/dev/null || fail "--force should replace an edited $target"
+  grep -q '"source": "excalidraw-drawing"' "$target" || fail "--force didn't replace $target"
+done
+
+# 14. drawing.mjs keeps a file byte for byte, and keeps an edit's texts in step.
+drawing="$skill/scripts/drawing.mjs"
+md=$(ls "$work/vault/Drawings/"*.md)
+cp "$md" "$work/edit.excalidraw.md"
+cp "$work/example.excalidraw" "$work/edit.excalidraw"
+cat >"$work/edit.mjs" <<JS
+import fs from 'fs';
+import { readDrawing, writeDrawing, newId, indexAfter } from '$drawing';
+const fail = m => { console.error(m); process.exit(1); };
+for (const f of ['$work/edit.excalidraw.md', '$work/edit.excalidraw']) {
+  const raw = fs.readFileSync(f, 'utf8');
+  writeDrawing(readDrawing(f));
+  if (fs.readFileSync(f, 'utf8') !== raw) fail(\`an unchanged \${f} was rewritten differently\`);
+}
+const d = readDrawing('$work/edit.excalidraw.md');
+const els = d.scene.elements;
+const t = els.find(e => e.type === 'text' && !e.containerId && e.autoResize !== false);
+const version = t.version;
+t.text = 'Changed words';
+const added = { ...structuredClone(t), id: 'my.long.text.id', text: 'Added words', originalText: 'Added words', index: indexAfter(els.at(-1).index), seed: 7 };
+delete added.rawText;
+els.push(added);
+writeDrawing(d);
+const md = fs.readFileSync('$work/edit.excalidraw.md', 'utf8');
+const again = readDrawing('$work/edit.excalidraw.md').scene.elements;
+const changed = again.find(e => e.id === t.id), made = again.find(e => e.text === 'Added words');
+if (changed.originalText !== 'Changed words' || changed.version !== version + 1) fail('a changed text kept its old originalText or version');
+if (!md.includes(\`\nChanged words ^\${t.id}\n\`)) fail('the Text Elements list kept the old words');
+if (!made || made.id.length !== 8 || !md.includes(\`\nAdded words ^\${made.id}\n\`)) fail('an added text has no 8-character id in the list');
+if (newId().length !== 8) fail('newId should give 8 characters');
+JS
+node "$work/edit.mjs" || fail "drawing.mjs didn't keep the file or the edit"
+node "$drawing" render "$work/edit.excalidraw.md" "$work/preview.png" >"$work/render.out" || { cat "$work/render.out"; fail "a preview doesn't render"; }
+python3 -I -c 'import sys; sys.exit(open(sys.argv[1], "rb").read(8) != b"\x89PNG\r\n\x1a\n")' "$work/preview.png" || fail "the preview isn't a PNG"
+printf -- '---\n\nexcalidraw-plugin: parsed\n\n---\n%%%%\n## Drawing\n```compressed-json\nN4Ig\n```\n%%%%' >"$work/packed.excalidraw.md"
+set +e; node "$drawing" render "$work/packed.excalidraw.md" "$work/packed.png" >"$work/packed.out" 2>&1; status=$?; set -e
+[ "$status" -eq 1 ] && grep -q "Compress Excalidraw JSON in Markdown" "$work/packed.out" || { cat "$work/packed.out"; fail "a compressed drawing should be refused with the setting to change, got $status"; }
+set +e; node "$drawing" render "$work/edit.excalidraw.md" >/dev/null 2>&1; status=$?; set -e
+[ "$status" -eq 2 ] || fail "render without an output should be a usage error, got $status"
 
 echo "excalidraw-drawing: ok"

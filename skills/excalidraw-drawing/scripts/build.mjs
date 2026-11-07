@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // Build an excalidraw-drawing page or diagram from a spec (JSON).
 //
-//   node build.mjs page.json [--out-dir DIR] [--scale N] [--lint-only]
+//   node build.mjs page.json [--out-dir DIR] [--name NAME] [--scale N] [--lint-only]
+//                            [--obsidian | --no-obsidian] [--force]
 //
 // Writes <name>.excalidraw (editable in Excalidraw) and <name>.png next to the
 // spec, and prints a report: the size of every panel's drawing area, and
 // warnings for anything that overflows, overlaps or got resized. Exit code 0
 // with no warnings, 1 on an error, 3 when the page built but has warnings.
+// Inside an Obsidian vault it writes the Excalidraw plugin's files instead:
+// <title>.excalidraw.md and <title>.excalidraw.png. It never replaces a drawing
+// that an editor has saved since it was built, unless given --force.
 //
 // Rendering is the pinned mcp-excalidraw-server runtime's offline renderer
 // (Excalidraw's own exporter under jsdom), so the PNG matches what the
@@ -15,13 +19,10 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { SOURCE, findVault, runtimePackage as pkg, runtimeRoot, savedByEditor, toMarkdown } from './drawing.mjs';
 
 // ---------- runtime ----------
 
-const here = path.dirname(fs.realpathSync(fileURLToPath(import.meta.url)));
-const runtimeRoot = process.env.EXCALIDRAW_DRAWING_RUNTIME
-  || path.resolve(here, '../../../runtime/excalidraw');
-const pkg = path.join(runtimeRoot, 'node_modules/mcp-excalidraw-server');
 if (!fs.existsSync(pkg)) {
   console.error(`The Excalidraw runtime is not installed at ${runtimeRoot}.\n` +
     `Run: npm ci --ignore-scripts --prefix ${runtimeRoot}`);
@@ -98,6 +99,30 @@ function textEl(id, x, y, text, size, opts = {}) {
   if (opts.groupIds) el.groupIds = opts.groupIds;
   if (opts.align === 'center') el.x = x - width / 2;
   return el;
+}
+
+// Excalidraw shrinks a wrapped text to its widest line and keeps its x. That
+// loses two things: a centred text then starts where its box did, and an
+// editor that measures the font a fraction wider wraps the widest line again
+// (Obsidian's Excalidraw plugin measured a 24 px heading 0.5 px wider than this
+// renderer and broke it in two). So after Excalidraw has prepared them, wrapped
+// texts go back into the boxes they were wrapped to: 2% and 2 px wider than
+// their widest line, never wider than the box, and aligned in it.
+async function prepare(skeleton) {
+  const boxes = new Map(skeleton.filter(e => e.type === 'text' && e.autoResize === false)
+    .map(e => [e.id, { x: e.x, width: e.width }]));
+  const out = await prepareScene(skeleton);
+  for (const el of out) {
+    const box = boxes.get(el.id);
+    if (!box || el.type !== 'text') continue;
+    const ink = Math.max(...String(el.text).split('\n').map(l => textWidth(l, el.fontSize)));
+    // A word too long to wrap: Excalidraw widened the text to fit it, and the build warns.
+    if (ink > box.width) continue;
+    el.width = Math.min(box.width, ink * 1.02 + 2);
+    const spare = box.width - el.width;
+    el.x = box.x + (el.textAlign === 'center' ? spare / 2 : el.textAlign === 'right' ? spare : 0);
+  }
+  return out;
 }
 
 // ---------- element expansion (panel-local coordinates) ----------
@@ -551,7 +576,7 @@ export async function build(spec, opts = {}) {
     planSpread(raw.filter(el => (el.type === 'arrow' || el.type === 'line') && el._spec), pid, boxes);
     const skel = raw.map(el => (el.type === 'arrow' || el.type === 'line') && el._spec
       ? finishLinear(el, pid, boxes, warnings) : el).filter(Boolean);
-    const prepared = skel.length ? await prepareScene(skel) : [];
+    const prepared = skel.length ? await prepare(skel) : [];
     // The heading is optional: Excalidraw drops an empty text, so none is drawn.
     const heading = String(p.heading ?? '').trim() ? textEl(`${pid}.heading`, 0, 0, p.heading, PS.heading, { width: areaW }) : null;
     const takeaway = p.takeaway
@@ -617,10 +642,12 @@ export async function build(spec, opts = {}) {
   // "fit" trims the width to what is drawn, with the page margin on the right.
   let outW = pageW;
   if (formatName === 'fit') {
-    const right = Math.max(0, ...(await prepareScene(elements)).filter(e => !e.isDeleted).map(e => {
+    const right = Math.max(0, ...(await prepare(elements)).filter(e => !e.isDeleted).map(e => {
       const b = bbox(e);
-      // A wrapped text's box is as wide as it was allowed to be; measure its ink.
-      return e.type === 'text' ? e.x + Math.max(...String(e.text).split('\n').map(l => textWidth(l, e.fontSize))) : b.x + b.w;
+      if (e.type !== 'text') return b.x + b.w;
+      // A wrapped text's box is a little wider than its lines; measure its ink.
+      const ink = Math.max(...String(e.text).split('\n').map(l => textWidth(l, e.fontSize)));
+      return e.x + (e.textAlign === 'center' ? (e.width + ink) / 2 : e.textAlign === 'right' ? e.width : ink);
     }));
     outW = Math.min(pageW, Math.ceil(right + P.margin));
   }
@@ -628,7 +655,7 @@ export async function build(spec, opts = {}) {
   elements.unshift({ id: 'page.bounds', type: 'rectangle', x: 0, y: 0, width: outW, height: pageH,
     strokeColor: 'transparent', backgroundColor: 'transparent', fillStyle: 'solid', strokeWidth: 1, roughness: 0, locked: true });
 
-  const finalElements = await prepareScene(elements);
+  const finalElements = await prepare(elements);
   const missingGlyphs = lintGlyphs(finalElements, warnings);
   return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs };
 }
@@ -753,9 +780,14 @@ const shortId = (el, p) => `"${String(el.id).replace(`${p.pid}.`, '')}"`;
 
 // ---------- CLI ----------
 
+// A title as an Obsidian note name: without the characters Obsidian refuses in
+// file names and links, and not a hidden file.
+const noteName = t => String(t ?? '').replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim()
+  .replace(/^\.+/, '').slice(0, 120).trim();
+
 async function main() {
   const args = process.argv.slice(2);
-  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--scale 1-4] [--lint-only]';
+  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 1-4] [--lint-only] [--obsidian | --no-obsidian] [--force]';
   const flag = (name, def) => {
     const i = args.indexOf(name);
     if (i < 0) return def;
@@ -763,11 +795,16 @@ async function main() {
     if (value === undefined || value.startsWith('--')) { console.error(`${name} needs a value\n${usage}`); process.exit(2); }
     return value;
   };
-  const lintOnly = args.includes('--lint-only'); if (lintOnly) args.splice(args.indexOf('--lint-only'), 1);
-  const outDir = flag('--out-dir', null), scale = Number(flag('--scale', 2));
+  const has = name => { const i = args.indexOf(name); if (i >= 0) args.splice(i, 1); return i >= 0; };
+  const lintOnly = has('--lint-only'), force = has('--force'), obsidianOn = has('--obsidian'), obsidianOff = has('--no-obsidian');
+  const outDir = flag('--out-dir', null), scale = Number(flag('--scale', 2)), name = flag('--name', null);
   const input = args[0];
-  if (!input) { console.error(usage); process.exit(2); }
+  if (!input || args.length > 1) { console.error(usage); process.exit(2); }
   if (!(scale >= 1 && scale <= 4)) { console.error(`--scale must be a number from 1 to 4\n${usage}`); process.exit(2); }
+  if (obsidianOn && obsidianOff) { console.error(`--obsidian and --no-obsidian can't both be given\n${usage}`); process.exit(2); }
+  if (name !== null && (!name.trim() || /[\\/]/.test(name))) {
+    console.error(`--name is a file name without a folder or extension, such as "Release plan"\n${usage}`); process.exit(2);
+  }
   if (outDir && !fs.statSync(outDir, { throwIfNoEntry: false })?.isDirectory()) {
     console.error(`--out-dir ${outDir} is not a folder`); process.exit(2);
   }
@@ -779,11 +816,32 @@ async function main() {
   try { built = await build(spec); }
   catch (e) { console.error(`Could not build ${input}: ${e.message}`); process.exit(1); }
   const { elements, warnings, report, size, missingGlyphs } = built;
-  const stem = path.join(outDir ?? path.dirname(path.resolve(input)), path.basename(input).replace(/\.json$/i, ''));
+  // Inside an Obsidian vault the outputs are the Excalidraw plugin's own: a
+  // plain .excalidraw opens there only in compatibility mode, and the plugin's
+  // auto-export writes <name>.excalidraw.png, which would leave a second PNG
+  // going stale. A note is named after the page's title, not "page".
+  const dir = outDir ?? path.dirname(path.resolve(input));
+  const found = obsidianOff ? null : findVault(dir);
+  const vault = found ?? (obsidianOn ? dir : null);
+  const base = name ?? ((vault && noteName(spec.title)) || path.basename(input).replace(/\.json$/i, ''));
+  const stem = path.join(dir, base);
+  const [pngFile, drawingFile] = vault ? [`${stem}.excalidraw.png`, `${stem}.excalidraw.md`] : [`${stem}.png`, `${stem}.excalidraw`];
   console.log(`page ${size[0]}×${size[1]}`);
+  if (vault) {
+    console.log(`${found ? `Obsidian vault ${found}` : '--obsidian'}: writing the Excalidraw plugin's .excalidraw.md and .excalidraw.png`);
+    if (found && !path.relative(found, path.resolve(input)).startsWith('..')) {
+      console.log(`note: the spec ${input} is inside the vault, where it syncs with the notes: keep it in a folder outside and pass --out-dir`);
+    }
+  }
   for (const r of report) console.log(r);
   if (!lintOnly) {
-    const scene = { type: 'excalidraw', version: 2, source: 'excalidraw-drawing',
+    // Hand edits made since the last build live only in that file: never replace them unasked.
+    if (!force && savedByEditor(drawingFile)) {
+      console.error(`${drawingFile} has been saved in an editor since it was built, so building again would ` +
+        `replace those edits. Change that file instead (references/editing.md), or pass --force to replace it.`);
+      process.exit(1);
+    }
+    const scene = { type: 'excalidraw', version: 2, source: SOURCE,
       elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };
     // Render first: if it fails, neither file is touched, so the PNG and the
     // .excalidraw on disk never come from different builds.
@@ -794,8 +852,8 @@ async function main() {
     // The PNG and the .excalidraw file must always come from one build. Write
     // both beside their targets, move the earlier pair aside, move the new one
     // in; if any step fails, put the earlier pair back as it was.
-    const outputs = [[`${stem}.png`, Buffer.from(png.data, 'base64')],
-      [`${stem}.excalidraw`, JSON.stringify(scene, null, 1)]];
+    const outputs = [[pngFile, Buffer.from(png.data, 'base64')],
+      [drawingFile, vault ? toMarkdown(scene) : JSON.stringify(scene, null, 1)]];
     const tmp = `.${process.pid}.tmp`, bak = `.${process.pid}.bak`;
     const setAside = [], placed = [];
     try {
@@ -813,7 +871,7 @@ async function main() {
       process.exit(1);
     }
     for (const w of png.warnings) warnings.push(`renderer: ${w}`);
-    console.log(`wrote ${stem}.excalidraw\nwrote ${stem}.png (${png.width}×${png.height})`);
+    console.log(`wrote ${drawingFile}\nwrote ${pngFile} (${png.width}×${png.height})`);
   }
   if (warnings.length) {
     console.log(`\n${warnings.length} warning(s):`);

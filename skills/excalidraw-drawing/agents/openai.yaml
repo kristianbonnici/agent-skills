@@ -1,6 +1,6 @@
 interface:
   display_name: "Excalidraw Drawing"
-  short_description: "Hand-drawn infographic pages, charts and diagrams in Excalidraw's style, as PNG and .excalidraw"
+  short_description: "Hand-drawn infographic pages, charts and diagrams in Excalidraw's style, as PNG and .excalidraw or Obsidian's .excalidraw.md, and changes to existing drawings"
   default_prompt: "Use $excalidraw-drawing to draw this as a hand-drawn infographic page or diagram: plan it, build it, fix every warning, and check the picture."
 
 policy:

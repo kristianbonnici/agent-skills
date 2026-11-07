@@ -1,8 +1,8 @@
 ---
 name: excalidraw-drawing
-description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), or a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table - delivered as a PNG to post and an .excalidraw file to edit by hand. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", or a picture like an example image they share.
+description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), or a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md) - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 2.0.0
+  version: 3.0.0
 ---
 
 # Excalidraw Drawing
@@ -12,7 +12,7 @@ You make one of two things, both in Excalidraw's hand-drawn style:
 - **A page** that explains one source: a title, a grid of panels that each make one point with a small diagram and a sentence or two, and a footer naming the source.
 - **A diagram**: one chart or picture, such as a line chart, a flowchart or a sequence diagram, from the user's data, description or example image.
 
-Either way you write a JSON spec; `scripts/build.mjs` lays it out, draws it with Excalidraw's own renderer, checks it, and writes a PNG and an editable `.excalidraw` file.
+Either way you write a JSON spec; `scripts/build.mjs` lays it out, draws it with Excalidraw's own renderer, checks it, and writes a PNG and an editable `.excalidraw` file. A drawing someone has since edited by hand you change in place instead (step 5).
 
 The drawing is the easy part. The picture is only worth posting if everything on it is true to the source, in fewer words than the source took.
 
@@ -59,6 +59,8 @@ node scripts/build.mjs <folder>/page.json
 
 It prints each panel's drawing-area width (draw within it; height grows to fit) and writes `page.png` and `page.excalidraw` next to the spec. If the runtime is missing it says how to install it.
 
+**For an Obsidian vault** (a folder with `.obsidian` in it or above it), keep `page.json` in a folder of your own outside the vault, and build with `--out-dir <folder in the vault>`. The build sees the vault and writes the Excalidraw plugin's own files there, named after the title: `<title>.excalidraw.md`, which the plugin opens as a drawing (a plain `.excalidraw` opens only in compatibility mode), and `<title>.excalidraw.png`, the file the plugin's auto-export keeps up to date. `--name` gives another name; `--no-obsidian` writes the plain pair.
+
 ## 3. Check it, then fix it
 
 - **Fix every warning.** Exit code 3 means it built with warnings: the content is taller than the page (it says how many pixels to cut), something reaches outside its panel, overlaps something else, has an arrow running through its text, has an arrow too short to read as one, made a box grow because its label didn't fit, puts a chart point outside its axes, or uses a character Excalifont lacks (arrows such as →, check marks, emoji), which renders in a system font. Draw arrows and ticks as elements instead.
@@ -68,6 +70,10 @@ It prints each panel's drawing-area width (draw within it; height grows to fit) 
 
 ## 4. Deliver
 
-Give the user the PNG and the `.excalidraw` path, and the plan's one-line summary. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits, and that after hand edits that file, not `page.json`, is the picture: building again overwrites it.
+Give the user the PNG and the drawing's path, and the plan's one-line summary. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits (an `.excalidraw.md` opens in Obsidian), and that after hand edits that file, not `page.json`, is the picture: you can carry on from their edits, and the build won't replace a drawing saved in an editor since.
 
 Recreating someone else's published page or diagram is fine as a private study or test; don't offer one for posting. Their layout, wording and branding are theirs.
+
+## 5. Change an existing drawing
+
+When the user has edited a drawing, or asks for a change to one they have, change that file; never build it again from a spec. Follow [references/editing.md](references/editing.md): in Obsidian, have them close the drawing's tab first; read the file, since their edits are only there; make the change with a short script that uses `scripts/drawing.mjs`, which keeps the file's format; render a preview outside the vault with `node scripts/drawing.mjs render <drawing> <preview.png>` and check it as in step 3; then tell them what changed and, in Obsidian, ask them to reopen the drawing and save it once.
