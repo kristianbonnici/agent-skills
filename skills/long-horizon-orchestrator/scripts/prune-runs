@@ -511,9 +511,14 @@ def harness_temp_folders(root, paths, refused=None):
     for entry in entries:
         if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
             continue
-        under_scratch = not unknown and any(entry.name == s or entry.name.startswith(s + "-") for s in scratch) \
-            and not any(entry.name == o or entry.name.startswith(o + "-") for o in others)
-        if not (entry.name in exact or under_scratch):
+        in_scratch = any(entry.name == s or entry.name.startswith(s + "-") for s in scratch)
+        sibling = next((o for o in others if entry.name == o or entry.name.startswith(o + "-")), None)
+        if in_scratch and entry.name not in exact and (unknown or sibling):   # kept, and counted by --size
+            if refused is not None:
+                refused.append((entry.path, "the run's tasks can't be read, so a task" if unknown else sibling,
+                                tree_size(entry.path)))
+            continue
+        if not (entry.name in exact or in_scratch):
             continue
         mine = {os.path.realpath(p) for p in paths}
         scratches = {os.path.join(m, "scratch") for m in mine}
@@ -590,9 +595,12 @@ def run_task_ids(run):
         return []
     try:
         with open(path, encoding="utf-8") as f:
-            tasks = (json.load(f) or {}).get("tasks", {})
-    except (ValueError, AttributeError) as error:
+            watch = json.load(f)
+    except ValueError as error:
         raise OSError(f"{path}: {error}")
+    if not isinstance(watch, dict):
+        raise OSError(f"{path}: not a run's watch.json")
+    tasks = watch.get("tasks", {})
     if not isinstance(tasks, dict):
         raise OSError(f"{path}: its tasks aren't an object")
     return [str(t) for t in tasks]

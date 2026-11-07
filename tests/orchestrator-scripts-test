@@ -2676,6 +2676,14 @@ open(os.path.join(root, "amb", "watch.json"), "w").write("{not json")
 tmp_put(enc(os.path.join(root, "amb", "U", "scratch", "z")))
 unk = trun("--harness-temp", os.path.join(root, "amb", "U"), "--apply")
 assert unk.returncode == 0 and os.path.isdir(os.path.join(temp, enc(os.path.join(root, "amb", "U", "scratch", "z")))), unk.stdout
+for bad in ("null", "[]", "false", '{"tasks": []}'):                  # valid JSON that isn't a run's watch.json
+    open(os.path.join(root, "amb", "watch.json"), "w").write(bad)
+    trun("--harness-temp", os.path.join(root, "amb", "U"), "--apply")
+    assert os.path.isdir(os.path.join(temp, enc(os.path.join(root, "amb", "U", "scratch", "z")))), bad
+# --size counts a temp folder kept because a sibling folder could own it
+json.dump({"tasks": {"S": {}}}, open(os.path.join(root, "amb", "watch.json"), "w"))
+amb_size = trun("--size", os.path.join(root, "amb"))
+assert "in 2 that another folder could own" in amb_size.stdout, amb_size.stdout
 # --size names what is left of the run's tasks' temp folders (the worktrees and task folders watch.json names)
 json.dump({"tasks": {"C": {"worktree": "/fake/worktrees/proj/task-c"}}}, open(os.path.join(root, "recent", "watch.json"), "w"))
 tmp_put(enc("/fake/worktrees/proj/task-c"), 2)
