@@ -326,6 +326,19 @@ try:
     for word in ("blind", f"hog {hog.pid} ", "commit", "merged", "report", "disk: free disk fell"):
         assert not [line for line in out2 if line.startswith(word)], (word, text2)
     assert open(os.path.join(run_dir, "times.log")).read().splitlines() == times   # nothing new to add
+    # times.log can't be written: a note, and the time is printed (and tried) again on the next wake
+    times_path = os.path.join(run_dir, "times.log")
+    os.rename(times_path, times_path + ".kept")
+    os.makedirs(times_path)
+    git("commit", "-q", "--allow-empty", "-m", "another change", cwd=wt["A"])
+    failed = watch(env)
+    assert [l for l in failed if l.startswith("commit A ") and "another change" in l], failed
+    assert [l for l in failed if l.startswith("note: couldn't add the times")], failed
+    os.rmdir(times_path)
+    os.rename(times_path + ".kept", times_path)
+    retried = watch(env)
+    assert [l for l in retried if l.startswith("commit A ") and "another change" in l], retried
+    assert "another change" in open(times_path).read().splitlines()[-1]
 
     # the sampler stops: its line; a stdin read that ended: no hang
     os.killpg(sampler.pid, signal.SIGTERM)

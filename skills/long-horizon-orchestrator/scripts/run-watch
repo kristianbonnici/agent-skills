@@ -925,7 +925,7 @@ def main(argv: list[str]) -> int:
 
     # Exact times for the ledger: commits, merges and report-backs not printed before.
     told = state.get("told", {})
-    timed: list[str] = []
+    timed: list[tuple[str, str, str]] = []
     for tid, task in tasks.items():
         seen = set(told.get(tid, []))
         launched = parse_time(task.get("launched")) or started
@@ -955,15 +955,17 @@ def main(argv: list[str]) -> int:
                 out.append((t, "r" + str(cid), f"report {tid} {iso(t)} status={status}"))
         for t, k, line in sorted(out):
             lines.append(line)
-            timed.append(line)
+            timed.append((tid, k, line))
             seen.add(k)
         told[tid] = sorted(seen)
     if timed:   # kept too, so a wake that skims its output loses none (the ledger takes its times from here)
         try:
             with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
-                fh.write("".join(line + "\n" for line in timed))
+                fh.write("".join(line + "\n" for _, _, line in timed))
         except OSError as e:
-            lines.append(f"note: couldn't add the times to {os.path.join(run_dir, TIMES_LOG)}: {e}")
+            lines.append(f"note: couldn't add the times to {os.path.join(run_dir, TIMES_LOG)}: {e}; they are printed again next time")
+            for tid, k, _ in timed:   # not told, so the next wake prints and adds them again
+                told[tid] = [x for x in told[tid] if x != k]
 
     # Keep samples of processes started since the run began, for the next run's comparisons.
     keep = {}
