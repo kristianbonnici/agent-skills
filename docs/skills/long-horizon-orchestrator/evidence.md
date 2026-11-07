@@ -4,7 +4,7 @@ The skill states its rules without their reasons, to keep the model's context fo
 
 Last checked: new work 2026-10-31; sources 2026-10-31.
 
-## Our own runs (2026-10-04 to 2026-11-06)
+## Our own runs (2026-10-04 to 2026-11-07)
 
 The skill grew from its overnight runs; the review gate's [study](../review-gate/evidence.md) covers 263
 handoffs from 21 of them. The incidents below each changed a rule. The per-run details stay in the owner's
@@ -59,7 +59,24 @@ private records.
   deliberate stress test and sleep loops on background jobs, all of which used CPU or GPU, started processes
   or wrote files. 24 of the run's 28 heartbeats found nothing to act on. → *`scripts/run-watch` first on every
   wake: a call is a hang only when its processes are idle, start nothing and write nothing; exact times from
-  git and the logs.*
+  git and the logs.* Later the same night ledger times written from memory still ran 5 to 12 minutes late,
+  because run-watch printed each time only once and a busy wake skimmed its output. → *the time lines also go
+  to the run's `times.log`.*
+- **Builds overloaded the owner's computer while they used it** (2026-11-06, evening): eight tasks, three
+  cpu-leased Swift builds at full parallelism, a 4 GB evaluation and busy test loops took the load average
+  to about 100 on 18 cores, and the harness was restarted twice; earlier the same run had reached 40 GB of
+  swap with model benchmarks beside builds. Starting leased commands at nice 10 and capping each build at 6
+  jobs (18 cores ÷ 3 slots) brought the load to about 20. → *`lease run cpu` lowers the priority and caps
+  the jobs itself, and an evening run gives a new cpu acquire one slot less while the owner is there.*
+- **Harness temp folders outlived the cleanup** (2026-11-07): after every merged task's worktree and
+  `scratch/` folder had been removed and the report had said every temporary folder was cleaned up, Claude
+  Code's per-working-folder temp folders still held 52.6 GB from the run's 24 task worktrees, 32.6 GB of it
+  one task's evaluation libraries, model copies and builds in its session scratchpad; the owner saw free disk
+  fall from 189.5 to 125.7 GB over the runs. Codex, OpenCode and Antigravity were checked: they keep session
+  logs and state in their own folders (Codex's logs for that day about 0.1 GB), not a folder per worktree.
+  → *the cleanup removes a task's harness temp folders, the finish lists what is left and the report's size
+  line counts it, briefs say the harness's scratchpad isn't scratch, and run-watch's disk line names the
+  folder that grows.*
 
 ## Outside sources
 

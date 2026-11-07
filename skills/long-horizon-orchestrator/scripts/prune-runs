@@ -8,6 +8,7 @@ what it keeps.
 Usage:
   prune-runs [--older-than <days>] [--apply]
   prune-runs --scratch <run folder>/<task ID>
+  prune-runs --harness-temp <worktree> [<run folder>/<task ID> ...] [--apply]
   prune-runs --size <run folder>
 
 The root is the folder of ledgers and run folders, always
@@ -41,7 +42,23 @@ root, and not report/, stopped/ or evidence/. A task folder holding KEEP, and a 
 inside scratch/, are left alone. It doesn't know whether the task merged: the orchestrator
 calls it only for a merged task whose processes have stopped. Use it only once the task and everything it started have stopped.
 
---size prints a run folder's size on disk, for the report's closing line.
+A task's harness temp folders (the third form): Claude Code keeps a temporary folder for each
+working folder a session ran in, ${CLAUDE_CODE_TMPDIR:-/tmp}/claude-<uid>/<the folder's path, every
+character but letters and digits as "-"; a name over 200 characters is cut there and given a hash>/,
+with a folder per session in it (scratchpad/, tasks/). It outlives the worktree and is never cleaned,
+so builds and downloads a task put in its scratchpad stay. This form finds the folders of the paths
+given: a worktree's own (exactly that path, since another worktree's name may begin with it), and for
+a task's folder in a run under the root, that folder's and every folder's inside it (a session a task
+started in its scratch). Without --apply it lists them with their sizes; with it, it removes them,
+each folder by folder without following a link. It refuses the home folder, the folder it runs in, a
+folder above either, a repository's main checkout (a .git folder), and a
+run folder or the root itself. Codex, OpenCode and Antigravity keep their sessions' logs and state
+in their own folders, not a folder per working folder, so this form leaves them alone. Use it only
+once the task and everything it started have stopped.
+
+--size prints a run folder's size on disk, for the report's closing line, and, on a second line, the
+harness temp folders still left for its tasks (the worktrees and task folders its watch.json names),
+when there are any.
 
 Every removal goes folder by folder from
 the root without following a link, so a folder swapped for a link meanwhile is refused, not
@@ -52,8 +69,10 @@ command or a folder that isn't a run's.
 """
 
 import argparse
+import json
 import math
 import os
+import re
 import stat
 import sys
 import time
@@ -404,6 +423,108 @@ def prune_scratch(root, task):
     return 0
 
 
+CLAUDE_NAME_LIMIT = 200   # Claude Code cuts a longer folder name there and adds a hash
+
+
+def claude_temp_root():
+    """Claude Code's temporary folder for this user: ${CLAUDE_CODE_TMPDIR:-/tmp}/claude-<uid>."""
+    base = os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp"
+    return os.path.join(os.path.realpath(base), f"claude-{os.getuid()}")
+
+
+def claude_name(path):
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+def harness_temp_folders(root, paths):
+    """[(folder, size)] of Claude Code's temp folders for the paths: a path outside the root exactly
+    (its own name, or its cut name and hash), one inside the root with the folders inside it too."""
+    temp = claude_temp_root()
+    try:
+        entries = sorted(os.scandir(temp), key=lambda e: e.name)
+    except OSError:
+        return []
+    wanted = []
+    for path in paths:
+        inside_root = root is not None and os.path.realpath(path).startswith(root + os.sep)
+        for form in {os.path.abspath(path), os.path.realpath(path)}:   # the session may have named either
+            wanted.append((claude_name(form), inside_root))
+    found = []
+    for entry in entries:
+        if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+            continue
+        for name, inside_root in wanted:
+            cut = len(name) > CLAUDE_NAME_LIMIT
+            if (entry.name == name and not cut) or (cut and entry.name.startswith(name[:CLAUDE_NAME_LIMIT] + "-")) \
+                    or (inside_root and entry.name.startswith(name + "-")):
+                found.append((entry.path, tree_size(entry.path)))
+                break
+    return found
+
+
+def refused_path(root, path):
+    """Why a path can't be given to --harness-temp, or None."""
+    if not os.path.isabs(path):
+        return "isn't an absolute path"
+    real = os.path.realpath(path)
+    home = os.path.realpath(os.path.expanduser("~"))
+    if real == os.sep or home == real or home.startswith(real.rstrip(os.sep) + os.sep):
+        return "is the home folder or a folder above it"
+    if root is not None and (real == root or os.path.dirname(real) == root or root.startswith(real + os.sep)):
+        return f"is {root}, a run folder in it, or a folder above it: name a task's folder"
+    here = os.path.realpath(os.getcwd())
+    if here == real or here.startswith(real.rstrip(os.sep) + os.sep):
+        return "is the folder this runs in, or a folder above it (its sessions may still be working)"
+    if os.path.isdir(os.path.join(real, ".git")):
+        return "is a repository's main checkout, not a task's worktree"
+    return None
+
+
+def prune_harness_temp(root, paths, apply):
+    for path in paths:
+        why = refused_path(root, path)
+        if why:
+            usage_error(f"--harness-temp: {path} {why}")
+    temp = claude_temp_root()
+    found = harness_temp_folders(root, paths)
+    if not found:
+        print(f"No harness temp folders for {', '.join(paths)} in {temp}")
+        return 0
+    failed, total = [], 0
+    for folder, size in found:
+        if not apply:
+            print(f"would remove {folder} ({human(size)})")
+            total += size
+            continue
+        error = delete(temp, folder)
+        if error:
+            failed.append(error)
+            continue
+        total += size
+        print(f"removed {folder} ({human(size)})")
+    print(f"Total: {human(total)} in {len(found) - len(failed)} harness temp folders "
+          + ("removed" if apply else "(a dry run: --apply removes them)"))
+    for error in failed:
+        print(f"couldn't remove {error}", file=sys.stderr)
+    return 1 if failed else 0
+
+
+def run_tasks_paths(run):
+    """The worktrees and task folders the run's watch.json names."""
+    try:
+        with open(os.path.join(run, "watch.json"), encoding="utf-8") as f:
+            tasks = (json.load(f) or {}).get("tasks") or {}
+    except (OSError, ValueError, AttributeError):
+        return []
+    paths = []
+    for tid, task in tasks.items() if isinstance(tasks, dict) else []:
+        if isinstance(task, dict) and isinstance(task.get("worktree"), str) and os.path.isabs(task["worktree"]):
+            paths.append(task["worktree"])
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", str(tid)):
+            paths.append(os.path.join(os.path.abspath(run), str(tid)))   # its real path is tried too
+    return paths
+
+
 def main():
     parser = argparse.ArgumentParser(prog="prune-runs", add_help=True,
                                      description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -411,15 +532,24 @@ def main():
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--scratch", metavar="TASK_FOLDER")
     parser.add_argument("--size", metavar="RUN_FOLDER")
+    parser.add_argument("--harness-temp", nargs="+", metavar="PATH")
     try:
         args = parser.parse_args()
     except SystemExit as exit_:
         sys.exit(0 if exit_.code == 0 else 64)
+    if sum(bool(x) for x in (args.scratch, args.size, args.harness_temp)) > 1:
+        usage_error("give one of --scratch, --harness-temp and --size")
     if args.size:
         if not os.path.isdir(args.size):
             usage_error(f"no such folder: {args.size}")
         print(human(tree_size(args.size)))
+        left = harness_temp_folders(safe_root(default_root()), run_tasks_paths(args.size))
+        if left:
+            print(f"plus {human(sum(s for _, s in left))} in {len(left)} harness temp folders of its tasks "
+                  f"(prune-runs --harness-temp lists them)")
         return 0
+    if args.harness_temp:
+        return prune_harness_temp(safe_root(default_root()), args.harness_temp, args.apply)
     if not math.isfinite(args.older_than) or args.older_than < 0:
         usage_error("--older-than takes days, 0 or more")
     root = safe_root(default_root())

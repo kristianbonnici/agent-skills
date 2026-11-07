@@ -536,7 +536,63 @@ EOF
   grep -q 'only be told on macOS' "$run4/linux.out"
   case $action in acquire) test "$status" -eq 2 ;; check) test "$status" -eq 64 ;; status) test "$status" -eq 0 ;; esac
 done
+
+# lease: a cpu with slots_while_owner_here gives a new acquire one slot less while the owner is at the
+# computer (input within owner_here_seconds, or an idle time that can't be read); a locked screen or an
+# owner away gives all of them; leases already held run on.
+run5="$work/run5"
+mkdir -p "$run5/bin"
+cp "$scripts/lease" "$run5/bin/lease"
+printf '%s\n' '{"cpu": {"slots": 2, "max_minutes": 15, "slots_while_owner_here": 1, "owner_here_seconds": 120}}' > "$run5/leases.json"
+lease5="$run5/bin/lease"
+acquire5() { status=0; "$lease5" acquire cpu --owner "$1" --wait-minutes 0.01 > "$run5/acquire.out" 2>&1 || status=$?; test "$status" -eq "$2"; }
+owner 5 unlocked
+acquire5 A 0
+acquire5 B 75
+grep -q 'the owner is at the computer (idle 5s), so 1 of 2 slots' "$run5/acquire.out"
+owner none unlocked
+acquire5 B 75
+owner 900 locked
+acquire5 B 0
+owner 5 unlocked
+acquire5 A 0                                             # a renewal of a held slot goes on
+"$lease5" release cpu --owner B >/dev/null
+owner 200 unlocked                                       # away longer than owner_here_seconds
+acquire5 B 0
+"$lease5" release cpu --owner A >/dev/null
+"$lease5" release cpu --owner B >/dev/null
+printf '%s\n' '{"cpu": {"slots": 2, "slots_while_owner_here": 0}}' > "$run5/leases.json"
+acquire5 A 2
 unset LEASE_IOREG
+
+# lease: "run cpu" starts its command at low priority with its parallel jobs capped at cores ÷ slots
+# (MAKEFLAGS, CARGO_BUILD_JOBS, CMAKE_BUILD_PARALLEL_LEVEL unless set, and a swift wrapper that adds
+# --jobs unless the command names it); "jobs" sets the cap; other resources run as they are.
+mkdir -p "$run5/fakebin"
+printf '%s\n' '#!/bin/sh' 'echo "swift $*"' > "$run5/fakebin/swift"
+chmod +x "$run5/fakebin/swift"
+printf '%s\n' '{"cpu": {"slots": 2, "max_minutes": 15}, "gpu": {"slots": 1}}' > "$run5/leases.json"
+PATH="$run5/fakebin:$PATH" LEASE_CORES=8 MAKEFLAGS= "$lease5" run cpu --owner A -- sh -c \
+  'echo "nice $(ps -o nice= -p $$) make [$MAKEFLAGS] cargo $CARGO_BUILD_JOBS cmake $CMAKE_BUILD_PARALLEL_LEVEL"; swift build -c release; swift test --jobs 2; swift run -j1 app; swift --version' \
+  > "$run5/cpu.out" 2>&1
+base=$(ps -o nice= -p $$ | tr -d ' ')                    # this test may itself run at low priority
+low=$(( base > 10 ? base : 10 ))
+grep -q "^nice *$low make \\[\\] cargo 4 cmake 4\$" "$run5/cpu.out"   # an empty MAKEFLAGS the command set stays
+grep -q '^swift build --jobs 4 -c release$' "$run5/cpu.out"
+grep -q '^swift test --jobs 2$' "$run5/cpu.out"
+grep -q '^swift run -j1 app$' "$run5/cpu.out"
+grep -q '^swift --version$' "$run5/cpu.out"
+env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" LEASE_CORES=8 "$lease5" run cpu --owner A -- "$lease5" run cpu --owner B -- sh -c \
+  'echo "nice $(ps -o nice= -p $$) make $MAKEFLAGS"; swift build' > "$run5/nested.out" 2>&1
+grep -q "^nice *$low make -j4\$" "$run5/nested.out"         # nested: not lower again, one wrapper
+grep -q '^swift build --jobs 4$' "$run5/nested.out"
+printf '%s\n' '{"cpu": {"slots": 2, "max_minutes": 15, "jobs": 3}, "gpu": {"slots": 1}}' > "$run5/leases.json"
+env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" LEASE_CORES=8 "$lease5" run cpu --owner A -- sh -c 'echo "make $MAKEFLAGS"; swift build' > "$run5/cpu.out" 2>&1
+grep -q '^make -j3$' "$run5/cpu.out"
+grep -q '^swift build --jobs 3$' "$run5/cpu.out"
+env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" "$lease5" run gpu --owner A -- sh -c 'echo "nice $(ps -o nice= -p $$) make [${MAKEFLAGS:-}]"; swift build' > "$run5/gpu.out" 2>&1
+grep -q "^nice *$base make \\[\\]\$" "$run5/gpu.out"
+grep -q '^swift build$' "$run5/gpu.out"
 
 # run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked
 # tasks shown dashed, no bar for a parked task; the run map from the same facts.
@@ -2534,6 +2590,52 @@ assert run("--root", outside).returncode == 64                 # no option point
 fresh = subprocess.run([sys.executable, "-I", script], capture_output=True, text=True,
                        env=dict(os.environ, XDG_STATE_HOME=os.path.join(outside, "no-state")))
 assert fresh.returncode == 0 and "nothing to prune" in fresh.stdout, fresh.stdout
+
+# --harness-temp: Claude Code's temp folders of a worktree (exactly its own, a cut long name with its hash)
+# and of a task's folder with those inside it; a dry run first; never another worktree's whose name begins
+# the same, another task's, the home folder's, or through a link; refusals.
+import re
+base = os.path.join(os.path.dirname(root), "tmpbase")
+temp = os.path.join(os.path.realpath(base), f"claude-{os.getuid()}")
+enc = lambda p: re.sub(r"[^A-Za-z0-9]", "-", os.path.normpath(p))   # as Claude Code names its cwd
+def tmp_put(name, mb=1):
+    os.makedirs(os.path.join(temp, name, "s1", "scratchpad"), exist_ok=True)
+    open(os.path.join(temp, name, "s1", "scratchpad", "big.bin"), "wb").write(b"x" * (mb << 20))
+def trun(*args):
+    return subprocess.run([sys.executable, "-I", script, *args], capture_output=True, text=True, timeout=60,
+                          env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), CLAUDE_CODE_TMPDIR=base))
+wt = "/fake/worktrees/proj/task-a"
+longwt = "/fake/worktrees/" + "x" * 240
+task = os.path.join(root, "recent", "B")
+gone_names = [enc(wt), enc(longwt)[:200] + "-1k2j3h", enc(task), enc(task + "/scratch/e2e")]
+kept_names = [enc(wt + "-and-more"), enc(os.path.join(root, "recent", "B2")), enc(os.path.expanduser("~")), enc(longwt + "y")[:200]]
+for name in gone_names + kept_names:
+    tmp_put(name)
+os.symlink(outside, os.path.join(temp, enc("/fake/worktrees/proj/task-l")))
+dry = trun("--harness-temp", wt, longwt, task, "/fake/worktrees/proj/task-l")
+assert dry.returncode == 0 and "a dry run" in dry.stdout and "in 4 harness temp folders" in dry.stdout, dry.stdout
+assert all(f"would remove {os.path.join(temp, n)} (1.0 MB)" in dry.stdout for n in gone_names), dry.stdout
+assert all(os.path.isdir(os.path.join(temp, n)) for n in gone_names), "a dry run removed something"
+done = trun("--harness-temp", wt, longwt, task, "/fake/worktrees/proj/task-l", "--apply")
+assert done.returncode == 0 and "4.0 MB in 4 harness temp folders removed" in done.stdout, done.stdout
+assert not any(os.path.lexists(os.path.join(temp, n)) for n in gone_names), os.listdir(temp)
+assert all(os.path.isdir(os.path.join(temp, n)) for n in kept_names), os.listdir(temp)
+assert os.path.islink(os.path.join(temp, enc("/fake/worktrees/proj/task-l"))) and os.path.exists(os.path.join(outside, "keep-me.bin"))
+again = trun("--harness-temp", wt)
+assert again.returncode == 0 and "No harness temp folders" in again.stdout, again.stdout
+checkout = os.path.join(outside, "checkout")
+os.makedirs(os.path.join(checkout, ".git"))
+for bad in (os.path.expanduser("~"), "/", "relative/path", root, os.path.join(root, "recent"), os.path.dirname(root),
+            os.getcwd(), os.path.dirname(os.getcwd()), checkout):
+    assert trun("--harness-temp", bad).returncode == 64, bad
+assert trun("--harness-temp", wt, "--size", os.path.join(root, "recent")).returncode == 64
+# --size names what is left of the run's tasks' temp folders (the worktrees and task folders watch.json names)
+import json
+json.dump({"tasks": {"C": {"worktree": "/fake/worktrees/proj/task-c"}}}, open(os.path.join(root, "recent", "watch.json"), "w"))
+tmp_put(enc("/fake/worktrees/proj/task-c"), 2)
+tmp_put(enc(os.path.join(root, "recent", "C", "scratch", "x")))
+size = trun("--size", os.path.join(root, "recent"))
+assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 3.0 MB in 2 harness temp folders of its tasks"), size.stdout
 EOF
 
 # run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority

@@ -33,6 +33,17 @@ then runs out by itself.
 Asking for --all again while holding fewer slots takes the missing ones, or waits for them like a
 first acquire; if the wait times out (75) the lease held so far stays as it was, not renewed.
 
+A cpu slot is a share of the cores, not the whole computer: "run cpu" starts the command at low
+priority (nice 10) and caps its parallel jobs at the cores divided by the slots (or the resource's
+"jobs"): MAKEFLAGS, CARGO_BUILD_JOBS and CMAKE_BUILD_PARALLEL_LEVEL when the command's environment
+doesn't set them, and a `swift` wrapper first on its PATH (in <lease folder>/locks/bin) that adds
+--jobs to swift build, test and run unless they name it. Call `swift` by name, not by its path, so the
+wrapper applies. $LEASE_CORES replaces the number of cores, for tests. With "slots_while_owner_here"
+(say one less than "slots"), a new acquire gets only that many slots in all while the owner is at the
+computer: the screen unlocked and input within "owner_here_seconds" (default 300), or an idle time that
+can't be read; leases already held run on. Elsewhere than macOS, without $LEASE_IOREG, it can't tell,
+so all the slots count.
+
 While others wait, a holder's turn lasts at most the resource's turn_minutes (default: its
 max_minutes), counted from when the first of them began waiting, or from the holder's first
 acquire if that is later. Renewing never stretches a turn: a renewal after it, or one that would
@@ -73,6 +84,7 @@ import math
 import os
 import plistlib
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -94,6 +106,23 @@ CHECK_USAGE = 64
 READ_TIMEOUT_SECONDS = 3
 STOP_GRACE_SECONDS = 5
 LEASE_END_MARGIN_SECONDS = 2   # "run" stops its command this long before the lease runs out
+CPU = "cpu"                    # "run cpu": low priority and a cap on parallel jobs
+CPU_NICE = 10
+DEFAULT_OWNER_HERE_SECONDS = 300
+SWIFT_WRAPPER = """#!/bin/sh
+# Written by lease: "lease run cpu" puts it first on the command's PATH, so swift build, test and run
+# use at most $LEASE_JOBS parallel jobs, unless the command names its own.
+real="${LEASE_REAL_SWIFT:-/usr/bin/swift}"
+case "$1" in
+  build|test|run)
+    for arg in "$@"; do
+      case "$arg" in --jobs|--jobs=*|-j|-j[0-9]*) exec "$real" "$@" ;; esac
+    done
+    sub="$1"; shift
+    exec "$real" "$sub" --jobs "${LEASE_JOBS:-1}" "$@" ;;
+esac
+exec "$real" "$@"
+"""
 
 
 class Unsupported(Exception):
@@ -250,16 +279,91 @@ class Leases:
         """The owner reader for a resource that needs the owner away, else None; raises Unsupported."""
         return Owner() if self.owner_away_seconds(resource) > 0 else None
 
+    def fewer_slots(self, resource: str) -> int | None:
+        """The resource's slots_while_owner_here, at most its slots, or None."""
+        value = self.config[resource].get("slots_while_owner_here")
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise SystemExit(f"lease: slots_while_owner_here of {resource} in leases.json must be a whole number, 1 or more")
+        return min(value, self.slots(resource))
+
+    def capacity(self, resource: str) -> tuple[int, str | None]:
+        """The slots a new acquire may fill now, and why fewer than all, when it is fewer."""
+        slots, fewer = self.slots(resource), self.fewer_slots(resource)
+        if fewer is None or fewer >= slots:
+            return slots, None
+        try:
+            reader = Owner()
+        except Unsupported:
+            return slots, None
+        if reader.locked() is True:
+            return slots, None
+        idle = reader.idle_seconds()
+        if idle is not None and idle >= self.seconds(resource, "owner_here_seconds", DEFAULT_OWNER_HERE_SECONDS):
+            return slots, None
+        why = "the idle time can't be read" if idle is None else f"idle {idle}s"
+        return fewer, f"the owner is at the computer ({why}), so {fewer} of {slots} slots"
+
+    def build_jobs(self, resource: str) -> int:
+        """The parallel jobs a "run cpu" command may use: the resource's jobs, else cores ÷ slots."""
+        value = self.config[resource].get("jobs")
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise SystemExit(f"lease: jobs of {resource} in leases.json must be a whole number, 1 or more")
+            return value
+        try:
+            cores = int(os.environ.get("LEASE_CORES") or os.cpu_count() or 1)
+        except ValueError:
+            cores = os.cpu_count() or 1
+        return max(1, cores // self.slots(resource))
+
+    def cpu_environment(self, resource: str) -> dict:
+        """The command's environment under "run cpu": job caps, and the swift wrapper first on PATH."""
+        jobs = str(self.build_jobs(resource))
+        env = dict(os.environ, LEASE_JOBS=jobs)
+        for name, value in (("MAKEFLAGS", f"-j{jobs}"), ("CARGO_BUILD_JOBS", jobs), ("CMAKE_BUILD_PARALLEL_LEVEL", jobs)):
+            env.setdefault(name, value)
+        wrappers = os.path.join(self.locks, "bin")
+        path = [p for p in env.get("PATH", os.defpath).split(os.pathsep) if p and os.path.abspath(p) != wrappers]
+        real = shutil.which("swift", path=os.pathsep.join(path))
+        if real is None:
+            env["PATH"] = os.pathsep.join(path)
+            return env
+        try:
+            os.makedirs(wrappers, exist_ok=True)
+            wrapper = os.path.join(wrappers, "swift")
+            try:
+                with open(wrapper) as f:
+                    current = f.read()
+            except OSError:
+                current = None
+            if current != SWIFT_WRAPPER or not os.access(wrapper, os.X_OK):
+                with open(wrapper + ".new", "w") as f:
+                    f.write(SWIFT_WRAPPER)
+                os.chmod(wrapper + ".new", 0o755)
+                os.replace(wrapper + ".new", wrapper)
+        except OSError as error:
+            print(f"lease: no swift wrapper ({error}); swift runs uncapped", file=sys.stderr)
+            env["PATH"] = os.pathsep.join(path)
+            return env
+        env["LEASE_REAL_SWIFT"] = real
+        env["PATH"] = os.pathsep.join([wrappers] + path)
+        return env
+
     def turn_end(self, state: dict, resource: str, owner: str, since: float) -> float | None:
         """When the holder's turn ends while others wait (epoch seconds), or None when nobody waits."""
         me = f"{resource}:{owner}"
         others = [w["since"] for k, w in state["waiting"].items() if w["resource"] == resource and k != me]
         return max(since, min(others)) + self.turn_minutes(resource) * 60 if others else None
 
-    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float, owner_away: bool = True):
+    def try_acquire(self, resource: str, owner: str, take_all: bool, minutes: float, owner_away: bool = True,
+                    capacity: int | None = None):
         """Returns ("held", minutes left), ("waiting", None), ("turn over", None), or ("ready", None) when
-        the lease would be taken but owner_away is False: read the owner's state, outside the lock."""
-        need = self.slots(resource) if take_all else 1
+        the lease would be taken but owner_away is False: read the owner's state, outside the lock.
+        capacity: the slots that may be filled now (default: all of them)."""
+        cap = capacity or self.slots(resource)
+        need = cap if take_all else 1
 
         def attempt(state, now):
             held = state["leases"].setdefault(resource, [])
@@ -280,7 +384,7 @@ class Leases:
                         # holds any and this owner is first in line, else wait, as a first acquire does.
                         waiting.setdefault(me, {"since": now, "resource": resource})["seen"] = now
                         queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
-                        if queue[0][1] != me or sum(l["slots"] for l in held if l is not lease) + need > self.slots(resource):
+                        if queue[0][1] != me or sum(l["slots"] for l in held if l is not lease) + need > cap:
                             return "waiting", None   # still waiting: what is held isn't renewed
                         lease["slots"] = need
                     lease["expires"] = expires
@@ -290,7 +394,7 @@ class Leases:
             queue = sorted((w["since"], k) for k, w in waiting.items() if w["resource"] == resource)
             if queue[0][1] != me:
                 return "waiting", None
-            if sum(l["slots"] for l in held) + need > self.slots(resource):
+            if sum(l["slots"] for l in held) + need > cap:
                 return "waiting", None
             if not owner_away:
                 return "ready", None
@@ -313,11 +417,12 @@ class Leases:
         deadline = time.time() + wait_minutes * 60
         announced = None
         while True:
-            result, left = self.try_acquire(resource, owner, take_all, minutes, away is None)
+            cap, fewer = self.capacity(resource)
+            result, left = self.try_acquire(resource, owner, take_all, minutes, away is None, cap)
             if result == "ready":
                 code, why = away.state(self.owner_away_seconds(resource))
                 result, left = ("waiting", (code, why)) if code else \
-                    self.try_acquire(resource, owner, take_all, minutes, True)
+                    self.try_acquire(resource, owner, take_all, minutes, True, cap)
             if result == "held":
                 self.log(f"acquire {resource} {owner} {left:.1f}m{' all' if take_all else ''}")
                 print(f"lease: {owner} holds {resource} for up to {round(left, 1):g} min")
@@ -328,15 +433,15 @@ class Leases:
                       f"is released. Stop using {resource}; acquire again to queue behind them.",
                       file=sys.stderr)
                 return TURN_OVER, None
-            code, why = left or (0, None)
+            code, why = left or (0, fewer)
             now = time.time()
             if now >= deadline:
                 self.locked(lambda state, _: state["waiting"].pop(f"{resource}:{owner}", None))
                 print(f"lease: gave up waiting for {resource} after {wait_minutes:g} min" + (f": {why}" if why else ""))
                 return TIMED_OUT, None
             if code != announced:
-                print(f"lease: waiting for {resource} " + (f"until the owner is away: {why}" if code else "..."),
-                      flush=True)
+                print(f"lease: waiting for {resource} " + (f"until the owner is away: {why}" if code else
+                                                          f"... ({why})" if why else "..."), flush=True)
                 announced = code
             time.sleep(max(0.2, min(POLL_SECONDS, deadline - now)))
 
@@ -499,6 +604,7 @@ def command(argv: list[str], usage: int) -> int:
         print("lease: --wait-minutes must be a number, zero or more", file=sys.stderr)
         return usage
     leases.slots(args.resource)
+    leases.fewer_slots(args.resource)
     leases.turn_minutes(args.resource)
     minutes = min(args.minutes, leases.max_minutes(args.resource))
     wait_minutes = args.wait_minutes if args.wait_minutes is not None else leases.wait_minutes(args.resource)
@@ -534,6 +640,8 @@ def command(argv: list[str], usage: int) -> int:
     process = watch = None
     need = leases.slots(args.resource) if args.take_all else 1
     prior = leases.holding(args.resource, args.owner)   # what the owner held before this run
+    # a cpu slot is a share of the cores: low priority, and parallel jobs capped at that share
+    env, nice = (leases.cpu_environment(args.resource), CPU_NICE) if args.resource == CPU else (None, 0)
 
     def end_command():
         leases.hold(args.resource, args.owner, need, 2 * STOP_GRACE_SECONDS + 5)   # held while it ends
@@ -553,7 +661,7 @@ def command(argv: list[str], usage: int) -> int:
             except OSError as error:
                 print(f"lease: no watcher for the command ({error}); going on without", file=sys.stderr)
             try:
-                process = start(command_args, watch)
+                process = start(command_args, watch, env, nice)
             except OSError as error:
                 print(f"lease: can't run {command_args[0]}: {error}", file=sys.stderr)
                 return 127
@@ -631,21 +739,30 @@ for sig, seconds in ([(signal.SIGTERM, wait)] if wait > 0 else []) + [(signal.SI
 """
 
 
-def start(argv: list[str], watch: Watch | None) -> subprocess.Popen:
-    """Starts the command in a session of its own. With a watcher, the child hands it the process group
-    (its own pid) before it runs the command, through a descriptor of the watcher's pipe."""
+def start(argv: list[str], watch: Watch | None, env: dict | None = None, nice: int = 0) -> subprocess.Popen:
+    """Starts the command in a session of its own, at least as nice as nice (env: its environment, else
+    this one). With a watcher, the child hands it the process group (its own pid) before it runs the
+    command, through a descriptor of the watcher's pipe."""
+    def lower_priority():
+        try:
+            os.nice(max(0, nice - os.nice(0)))
+        except OSError:
+            pass
+
     if watch is None:
-        return subprocess.Popen(argv, start_new_session=True)
+        return subprocess.Popen(argv, start_new_session=True, env=env, preexec_fn=lower_priority if nice else None)
     fd = watch.process.stdin.fileno()
 
     def hand_off():   # in the child, after its session began and before the command
+        if nice:
+            lower_priority()
         try:
             os.write(fd, f"pgid {os.getpid()}\n".encode())
         except OSError:
             pass
         os.close(fd)   # the command mustn't hold the pipe open, or its closing would never show
 
-    return subprocess.Popen(argv, start_new_session=True, pass_fds=(fd,), preexec_fn=hand_off)
+    return subprocess.Popen(argv, start_new_session=True, pass_fds=(fd,), preexec_fn=hand_off, env=env)
 
 
 class Watch:

@@ -241,7 +241,15 @@ try:
 
     env = dict(os.environ, CLAUDE_CONFIG_DIR=os.path.join(work, "claude"), CODEX_HOME=os.path.join(work, "codex"),
                RUN_WATCH_HANG_MINUTES="0.05", RUN_WATCH_QUIET_MINUTES="0.5", RUN_WATCH_HOG_MINUTES="0.05",
-               RUN_WATCH_SAMPLE_SECONDS="0.5", RUN_WATCH_CALL_START_SECONDS="4", RUN_WATCH_IOREG=ioreg, RUN_WATCH_PS=fake_ps, RUN_WATCH_DISK_FREE_GB="138", RUN_WATCH_SWAP_GB="25")
+               RUN_WATCH_SAMPLE_SECONDS="0.5", RUN_WATCH_CALL_START_SECONDS="4", RUN_WATCH_IOREG=ioreg, RUN_WATCH_PS=fake_ps, RUN_WATCH_DISK_FREE_GB="138", RUN_WATCH_SWAP_GB="25",
+               CLAUDE_CODE_TMPDIR=os.path.join(work, "tmp"), RUN_WATCH_GROWTH_MB="2")
+    # task A's Claude Code temp folder, where a session's scratchpad fills up (the disk line names it)
+    a_temp = os.path.join(work, "tmp", f"claude-{os.getuid()}", "".join(c if c.isalnum() else "-" for c in wt["A"]))
+    os.makedirs(os.path.join(a_temp, "s1", "scratchpad"))
+    def fill(name, mb):
+        with open(os.path.join(a_temp, "s1", "scratchpad", name), "wb") as f:
+            f.write(b"x" * (mb << 20))
+    fill("model.bin", 6)
     before = sorted(os.listdir(run_dir))
     # A's busy server, started by a later call: not A's stuck call's, so its CPU hides nothing.
     time.sleep(5)                                           # past the 4-second "minute" a call's processes start in
@@ -290,7 +298,8 @@ try:
     assert [line for line in out if line.startswith(f"hog {hog.pid} ")], text
     assert not [line for line in out if line.startswith(f"hog {procs['F'].pid} ")], text
     # the machine
-    assert any(line.startswith("disk: free disk fell 12.0 GB") for line in out), text
+    assert any(line.startswith("disk: free disk fell 12.0 GB") and f"largest of the tasks' folders: {a_temp} 6 MB" in line
+               for line in out), text
     assert any(line.startswith("swap: 25.0 GB") for line in out), text
     assert any(line.startswith("dialog:") and str(dialog.pid) in line for line in out), text
     assert any(line.startswith(f"keep-awake: caffeinate pid {dead.pid}") for line in out), text
@@ -300,8 +309,10 @@ try:
     assert any(line.startswith("commit A ") and head[:10] in line and "the change" in line for line in out), text
     assert any(line.startswith("merged A ") and head[:10] in line and "into main" in line for line in out), text
     assert any(line.startswith("report R ") and "status=merged" in line for line in out), text
-    # it writes only its state file
-    assert sorted(os.listdir(run_dir)) == sorted(before + ["run-watch.state.json"]), os.listdir(run_dir)
+    # it writes only its state file, and adds the time lines to times.log
+    assert sorted(os.listdir(run_dir)) == sorted(before + ["run-watch.state.json", "times.log"]), os.listdir(run_dir)
+    times = open(os.path.join(run_dir, "times.log")).read().splitlines()
+    assert times == [line for line in out if line.split(" ")[0] in ("commit", "merged", "report")] and len(times) >= 3, times
 
     # The second run: hangs are said again; what was told once (blind, hog, a fall, times) isn't.
     out2 = watch(env)
@@ -309,13 +320,16 @@ try:
     assert len(lines_for(out2, "hang", "A")) == 1 and len(lines_for(out2, "hang", "B")) == 1, text2
     for word in ("blind", f"hog {hog.pid} ", "commit", "merged", "report", "disk: free disk fell"):
         assert not [line for line in out2 if line.startswith(word)], (word, text2)
+    assert open(os.path.join(run_dir, "times.log")).read().splitlines() == times   # nothing new to add
 
     # the sampler stops: its line; a stdin read that ended: no hang
     os.killpg(sampler.pid, signal.SIGTERM)
     procs["B"].stdin.close()
     procs["B"].wait()
+    fill("build.bin", 3)                                   # the scratchpad grew by 3 MB since the last disk line
     out3 = watch(dict(env, RUN_WATCH_DISK_FREE_GB="15"))
-    assert any(line.startswith("disk: 15.0 GB free, below 20 GB") for line in out3), out3
+    assert any(line.startswith("disk: 15.0 GB free, below 20 GB") and f"grew most: {a_temp} +3 MB since" in line
+               and "now 9 MB" in line for line in out3), out3
     assert any(line.startswith(f"sampler: the usage sampler (pid {sampler.pid})") for line in out3), out3
     assert not lines_for(out3, "hang", "B"), out3
     # after three runs, A's process still has its first sample (older than the 3-second window) in the state

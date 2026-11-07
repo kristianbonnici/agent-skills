@@ -42,12 +42,16 @@ Each line starts with a word saying what it is:
                    processes and files
   hog <pid>        a process started since the run began, not the run's, above 80% of a core for
                    10 minutes
-  disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB; swap above 20 GB
+  disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB, naming the running
+                   tasks' folder (worktree, task folder, or the Claude Code temp folder of either)
+                   that grew most since a disk line last sized them, else the largest, sized with du
+                   in 20 seconds at most; swap above 20 GB
   dialog           a password dialog (SecurityAgent) is up
   keep-awake / sampler   the recorded keep-awake or usage sampler isn't running
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
                    worktree, of each merge of its branch into the integration branch, and of each
-                   report-back it sent, once each, for the ledger
+                   report-back it sent, once each, for the ledger; they are also added to
+                   <run directory>/times.log, so a wake that skimmed them loses none
   note             watch.json is missing or unreadable (the machine checks still ran)
 
 What it reads:
@@ -73,10 +77,12 @@ command line (a reviewer: codex, claude, opencode, gemini, agy, copilot), and a 
 starting processes (a sleep loop) or writes files.
 
 It writes only its state file, <run directory>/run-watch.state.json, to compare with its last
-run (CPU samples for the hog check, the disk's recent readings, the times it already printed). It exits 0 (2 for a
+run (CPU samples for the hog check, the disk's recent readings and folder sizes, the times it already
+printed), and adds the time lines to <run directory>/times.log. It exits 0 (2 for a
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
-RUN_WATCH_SWAP_GB and RUN_WATCH_DISK_FREE_GB change its thresholds and inputs.
+RUN_WATCH_SWAP_GB, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
+inputs, and CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code.
 """
 
 import json
@@ -98,6 +104,9 @@ PROOF_CPU_S = 0.5            # CPU seconds under which a process counts as havin
 CALL_START_S = float(os.environ.get("RUN_WATCH_CALL_START_SECONDS", 60))  # a call's own processes start this soon
 SAMPLE_S = float(os.environ.get("RUN_WATCH_SAMPLE_SECONDS", 2))
 DISK_DROP_GB, DISK_DROP_MIN, DISK_LOW_GB, SWAP_GB = 10, 5, 20, 20
+DISK_SIZE_BUDGET_S = float(os.environ.get("RUN_WATCH_DISK_BUDGET_SECONDS", 20))  # for sizing folders on a disk line
+GROWTH_KB = 1024 * float(os.environ.get("RUN_WATCH_GROWTH_MB", 1024))  # grew this much since last sized: growing
+TIMES_LOG = "times.log"
 KEEP_SAMPLES_S = 2 * 3600
 
 WAIT_TOOL = re.compile(r"(^|__)(t3_thread_wait|t3_background_wait|delegate_task|task_status|wait_agent|"
@@ -269,6 +278,60 @@ def codex_home() -> str:
 
 def claude_project(worktree: str) -> str:
     return os.path.join(claude_home(), "projects", re.sub(r"[^A-Za-z0-9]", "-", worktree))
+
+
+def claude_temp(folder: str) -> str:
+    """Claude Code's temp folder for sessions in a folder (prune-runs --harness-temp removes it)."""
+    base = os.path.realpath(os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp")
+    return os.path.join(base, f"claude-{os.getuid()}", re.sub(r"[^A-Za-z0-9]", "-", folder))
+
+
+def folder_sizes(paths: list[str], seconds: float) -> tuple[dict, bool]:
+    """{path: KB on disk} for the folders that exist, measured with du within seconds in all, and
+    whether time ran out before every folder was measured."""
+    sizes, end = {}, time.monotonic() + seconds
+    for path in paths:
+        if not os.path.isdir(path) or os.path.islink(path):
+            continue
+        left = end - time.monotonic()
+        if left <= 0:
+            return sizes, True
+        try:
+            out = subprocess.run(["du", "-sk", "-x", path], capture_output=True, text=True, timeout=left).stdout
+            sizes[path] = int(out.split()[0])
+        except subprocess.TimeoutExpired:
+            return sizes, True
+        except (OSError, ValueError, IndexError):
+            continue
+    return sizes, False
+
+
+def growing_folder(state: dict, tasks: dict, run_dir: str, t_now: float) -> str:
+    """Names the running tasks' folder that grew most since it was last sized (or the largest), for a
+    disk line: worktrees, task folders and their Claude Code temp folders."""
+    paths = []
+    for tid, task in tasks.items():
+        if task.get("status", "running") != "running":
+            continue
+        own = os.path.join(run_dir, tid)
+        paths += [claude_temp(task["worktree"]), claude_temp(own), task["worktree"], own]
+    if not paths:
+        return ""
+    sizes, cut = folder_sizes(list(dict.fromkeys(paths)), DISK_SIZE_BUDGET_S)
+    before = state.get("folders", {})
+    state["folders"] = {**{p: v for p, v in before.items() if p in paths}, **{p: [round(t_now), kb] for p, kb in sizes.items()}}
+    if not sizes:
+        return "; no task folder could be sized in time" if cut else ""
+    grew = [(kb - before[p][1], p, before[p][0]) for p, kb in sizes.items() if isinstance(before.get(p), list)]
+    tail = f" (sized {len(sizes)} of {len(set(paths))} in {DISK_SIZE_BUDGET_S:g}s)" if cut else ""
+    def amount(kb: float) -> str:
+        return f"{kb / 1024 ** 2:.1f} GB" if kb >= 1024 ** 2 else f"{kb / 1024:.0f} MB"
+
+    if grew and max(grew)[0] >= GROWTH_KB:
+        kb, p, since = max(grew)
+        return f"; grew most: {p} +{amount(kb)} since {hm(since)}, now {amount(sizes[p])}{tail}"
+    p = max(sizes, key=sizes.get)
+    return f"; largest of the tasks' folders: {p} {amount(sizes[p])}{tail}"
 
 
 def session_from_process(worktree: str, procs: dict, cwd: dict) -> str | None:
@@ -798,6 +861,12 @@ def main(argv: list[str]) -> int:
         state["disk_told"] = tb
     if free < DISK_LOW_GB:
         lines.append(f"disk: {free:.1f} GB free, below {DISK_LOW_GB} GB: pause what fills it and clear the run's scratch")
+    if worst or free < DISK_LOW_GB:
+        where = growing_folder(state, tasks, run_dir, t_now)
+        for n in range(len(lines) - 1, -1, -1):
+            if lines[n].startswith("disk:"):
+                lines[n] += where
+                break
     disk.append([t_now, round(free, 2)])
     state["disk"] = disk[-40:]
     if "RUN_WATCH_SWAP_GB" in os.environ:
@@ -831,6 +900,7 @@ def main(argv: list[str]) -> int:
 
     # Exact times for the ledger: commits, merges and report-backs not printed before.
     told = state.get("told", {})
+    timed: list[str] = []
     for tid, task in tasks.items():
         seen = set(told.get(tid, []))
         launched = parse_time(task.get("launched")) or started
@@ -860,8 +930,15 @@ def main(argv: list[str]) -> int:
                 out.append((t, "r" + str(cid), f"report {tid} {iso(t)} status={status}"))
         for t, k, line in sorted(out):
             lines.append(line)
+            timed.append(line)
             seen.add(k)
         told[tid] = sorted(seen)
+    if timed:   # kept too, so a wake that skims its output loses none (the ledger takes its times from here)
+        try:
+            with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
+                fh.write("".join(line + "\n" for line in timed))
+        except OSError as e:
+            lines.append(f"note: couldn't add the times to {os.path.join(run_dir, TIMES_LOG)}: {e}")
 
     # Keep samples of processes started since the run began, for the next run's comparisons.
     keep = {}
