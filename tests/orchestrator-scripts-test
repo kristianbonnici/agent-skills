@@ -2671,6 +2671,11 @@ tmp_put(enc(os.path.join(real_outside, "wt", "task-b")))
 same = trun("--harness-temp", os.path.join(real_outside, "wt", "task-b"), "--apply")
 assert same.returncode == 0 and f"{os.path.join(real_outside, 'wt', 'task', 'b')} could own that name too" in same.stdout, same.stdout
 assert os.path.isdir(os.path.join(temp, enc(os.path.join(real_outside, "wt", "task-b"))))
+# a watch.json that is there but can't be read: the run's tasks are unknown, so nothing under scratch/ goes
+open(os.path.join(root, "amb", "watch.json"), "w").write("{not json")
+tmp_put(enc(os.path.join(root, "amb", "U", "scratch", "z")))
+unk = trun("--harness-temp", os.path.join(root, "amb", "U"), "--apply")
+assert unk.returncode == 0 and os.path.isdir(os.path.join(temp, enc(os.path.join(root, "amb", "U", "scratch", "z")))), unk.stdout
 # --size names what is left of the run's tasks' temp folders (the worktrees and task folders watch.json names)
 json.dump({"tasks": {"C": {"worktree": "/fake/worktrees/proj/task-c"}}}, open(os.path.join(root, "recent", "watch.json"), "w"))
 tmp_put(enc("/fake/worktrees/proj/task-c"), 2)

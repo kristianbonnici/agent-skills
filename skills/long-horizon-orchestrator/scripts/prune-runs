@@ -521,7 +521,7 @@ def harness_temp_folders(root, paths, refused=None):
                  and not any(os.path.realpath(o) == sc or os.path.realpath(o).startswith(sc + os.sep) for sc in scratches)]
         if other:   # another existing folder could own this name: it stays
             if refused is not None:
-                refused.append((entry.path, other[0]))
+                refused.append((entry.path, other[0], tree_size(entry.path)))
             continue
         found.append((entry.path, tree_size(entry.path)))
     return found
@@ -558,7 +558,7 @@ def prune_harness_temp(root, paths, apply):
     temp = claude_temp_root()
     ambiguous = []
     found = harness_temp_folders(root, paths, ambiguous)
-    for folder, owner in ambiguous:
+    for folder, owner, _ in ambiguous:
         print(f"left {folder}: {owner} could own that name too")
     if not found:
         print(f"No harness temp folders for {', '.join(paths)} in {temp}")
@@ -583,13 +583,19 @@ def prune_harness_temp(root, paths, apply):
 
 
 def run_task_ids(run):
-    """The task IDs the run's watch.json names (none when it can't be read)."""
-    try:
-        with open(os.path.join(run, "watch.json"), encoding="utf-8") as f:
-            tasks = (json.load(f) or {}).get("tasks") or {}
-    except (OSError, ValueError, AttributeError):
+    """The task IDs the run's watch.json names: none when it has none, and OSError when it is there but
+    can't be read or isn't a run's (the inventory is unknown then)."""
+    path = os.path.join(run, "watch.json")
+    if not os.path.lexists(path):
         return []
-    return [str(t) for t in tasks] if isinstance(tasks, dict) else []
+    try:
+        with open(path, encoding="utf-8") as f:
+            tasks = (json.load(f) or {}).get("tasks", {})
+    except (ValueError, AttributeError) as error:
+        raise OSError(f"{path}: {error}")
+    if not isinstance(tasks, dict):
+        raise OSError(f"{path}: its tasks aren't an object")
+    return [str(t) for t in tasks]
 
 
 def run_tasks_paths(run):
@@ -626,10 +632,12 @@ def main():
         if not os.path.isdir(args.size):
             usage_error(f"no such folder: {args.size}")
         print(human(tree_size(args.size)))
-        left = harness_temp_folders(safe_root(default_root()), run_tasks_paths(args.size))
-        if left:
-            print(f"plus {human(sum(s for _, s in left))} in {len(left)} harness temp folders of its tasks "
-                  f"(prune-runs --harness-temp lists them)")
+        kept = []
+        left = harness_temp_folders(safe_root(default_root()), run_tasks_paths(args.size), kept)
+        if left or kept:
+            print(f"plus {human(sum(s for _, s in left) + sum(s for _, _, s in kept))} in {len(left) + len(kept)} "
+                  f"harness temp folders of its tasks (prune-runs --harness-temp lists them)"
+                  + (f", {human(sum(s for _, _, s in kept))} of it in {len(kept)} that another folder could own" if kept else ""))
         return 0
     if args.harness_temp:
         return prune_harness_temp(safe_root(default_root()), args.harness_temp, args.apply)
