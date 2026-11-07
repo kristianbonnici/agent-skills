@@ -2619,7 +2619,9 @@ def java_hash36(text):                                       # Claude Code's: (h
             return out
 assert java_hash36("hello") == "1n1e4y"
 gone_names = [enc(wt), enc(longwt)[:200] + "-" + java_hash36(longwt), enc(task), enc(task + "/scratch"), enc(task + "/scratch/e2e")]
+os.makedirs(os.path.join(root, "recent", "B-scratch-fix"), exist_ok=True)   # a sibling whose name begins like B's scratch
 kept_names = [enc(wt + "-and-more"), enc(os.path.join(root, "recent", "B2")), enc(os.path.join(root, "recent", "B-fix")),
+              enc(os.path.join(root, "recent", "B-scratch-fix")), enc(os.path.join(root, "recent", "B-scratch-fix", "x")),
               enc(os.path.join(root, "recent", "B-fix", "scratch", "x")), enc(os.path.expanduser("~")),
               enc(longwt)[:200] + "-" + java_hash36(longwt + "y")]
 for name in gone_names + kept_names:

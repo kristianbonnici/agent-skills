@@ -457,13 +457,15 @@ def claude_name(path):
 def harness_temp_folders(root, paths):
     """[(folder, size)] of Claude Code's temp folders for the paths: each path's own, and for a task's
     folder in a run under the root, those of its scratch/ and the folders inside it too (a session a
-    task started there). Never a sibling's whose name begins the same, such as task S4-fix's for S4."""
+    task started there). Never a sibling's whose name begins the same, such as task S4-fix's for S4: a
+    folder inside scratch/ is taken only when no other folder in the run could own its name too (a
+    task S4-scratch-x beside S4), so an ambiguous one stays."""
     temp = claude_temp_root()
     try:
         entries = sorted(os.scandir(temp), key=lambda e: e.name)
     except OSError:
         return []
-    exact, scratch = set(), []
+    exact, scratch, others = set(), [], set()
     for path in paths:
         inside_root = root is not None and os.path.realpath(path).startswith(root + os.sep)
         for form in {os.path.abspath(path), os.path.realpath(path)}:   # the session may have named either
@@ -471,11 +473,18 @@ def harness_temp_folders(root, paths):
             if inside_root:
                 exact.add(claude_name(os.path.join(form, "scratch")))
                 scratch.append(re.sub(r"[^A-Za-z0-9]", "-", os.path.join(form, "scratch")) + "-")
+                run, task = os.path.split(form.rstrip(os.sep))
+                try:   # the run's other folders, whose sessions' names may begin the same
+                    others |= {re.sub(r"[^A-Za-z0-9]", "-", os.path.join(run, n)) for n in os.listdir(run) if n != task}
+                except OSError:
+                    pass
     found = []
     for entry in entries:
         if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
             continue
-        if entry.name in exact or any(entry.name.startswith(s) for s in scratch):
+        nested = any(entry.name.startswith(s) for s in scratch) and \
+            not any(entry.name == o or entry.name.startswith(o + "-") for o in others)
+        if entry.name in exact or nested:
             found.append((entry.path, tree_size(entry.path)))
     return found
 
