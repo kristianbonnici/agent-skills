@@ -7,7 +7,8 @@ usage graphs (scripts/run-charts draws them). Costs no model quota and almost no
   providers.jsonl  every 5 min the subscriptions' windows as provider-usage --cached --go-live reads them:
                    the harnesses' own logs (current while their tasks run) and OpenCode Go's usage
                    endpoint (one web request, no tokens); every 60 min a live reading
-                   (provider-usage, no quota used; Antigravity and Copilot only read live);
+                   (provider-usage, no quota used; Antigravity, Copilot and Claude's Fable week,
+                   `weekly_fable`, only read live);
                    with it, the Claude API credits' estimated dollars left when the owner has a
                    credits file ({"left_usd": 142.5, "credits": [{"expires", "left_usd", "granted_usd", "spent_usd"}],
                    "spent_since_usd", "balance_at" (when the Console was read), "api_spend_since_usd"

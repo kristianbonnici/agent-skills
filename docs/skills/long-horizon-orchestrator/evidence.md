@@ -343,6 +343,38 @@ private records.
   → *a script that prints nothing when all is well, run by the existing heartbeat, rather than a second
   model judging the tasks.*
 
+- **Anthropic, Claude Fable 5.2's pages** (read 2026-11-10): the announcement,
+  [Claude Fable and Mythos 5.2](https://www.anthropic.com/claude-fable-and-mythos-5-2) (9 November 2026); the
+  [models overview](https://platform.claude.com/docs/en/about-claude/models/overview),
+  [pricing](https://platform.claude.com/docs/en/about-claude/pricing) and
+  [effort](https://platform.claude.com/docs/en/build-with-claude/effort) pages; and the help center's
+  [Claude Fable models on your plan](https://support.claude.com/en/articles/15424964-claude-fable-models-on-your-plan),
+  [launch offers](https://support.claude.com/en/articles/17506494-claude-fable-5-2-launch-offers) and
+  [usage and length limits](https://support.claude.com/en/articles/11647753-understanding-usage-and-length-limits):
+  - The ID is `claude-fable-5-2`. Fable 5.2 is "a step above Opus 5.5 in almost all the capabilities we
+    evaluated", yet the models page still says "start with Claude Opus 5.5 for most workloads. Use Claude
+    Fable 5.2 for demanding reasoning and long-horizon agentic work."
+  - API prices per million tokens: Fable 5.2 $8 input and $40 output, Opus 5.5 $4 and $20.
+  - Max, Ultra and premium Team or seat-based Enterprise seats "can use up to 50% of your weekly usage limits
+    on Fable models at no extra cost"; Fable models "draw from your plan's regular weekly usage limits and use
+    them faster than other Claude models", and "you can never use more than your weekly limit". Pro and
+    standard seats get Fable only through usage credits, apart from a launch week (to 16 November 2026). The
+    limit is weekly, works the same in Claude Code, and when it runs out you can "keep using Fable models with
+    usage credits, or switch to another Claude model".
+  - "Claude Fable 5.2 supports all five effort levels. The API default is `high`"; `xhigh` is for "your hardest
+    long-running coding and agentic work, where you've measured a gain", and `max` for "measuring the model's
+    ceiling". In Claude's apps and Claude Code the default is medium.
+  - Not stated anywhere: whether the Fable week resets with the all-models week (on one account they read the
+    same), whether Fable counts toward the 5-hour window at a heavier rate, and the share for each Max tier.
+    The pages also disagree on which plans have the separate limit (one names Max and Ultra only) and on Pro
+    during the launch.
+
+  → *Opus 5.5 stays the home model and Fable 5.2 is chosen per task, for the demanding ones only; never for
+  helpers or reviewers; high effort by default; the run gives Fable a budget of its own week and judges
+  capacity on both weeks; and a Fable task moves to Opus 5.5 on its own thread when the Fable week runs out,
+  since a weekly limit can't be waited out. The rule reads each week's own reset time and treats the 5-hour
+  window as for any Claude task, so it doesn't rest on what the pages leave unsaid.*
+
 ## Where the evidence argues against us
 
 - **Multi-agent work costs more and can hurt.** Google's study lost up to 70% on sequential planning and a

@@ -4,7 +4,10 @@ and the estimated dollars left of the owner's Claude API credits.
 
 Read-only. By default each provider is asked directly, through its own CLI and
 sign-in, so the numbers include use from other devices and apps:
-  - Claude: `claude -p /usage`, a local command that makes no model call;
+  - Claude: `claude -p /usage`, a local command that makes no model call. Its windows are
+    `five_hour`, `weekly` (all models) and one `weekly_<model>` for each model's own week it
+    shows, such as `weekly_fable` ("Current week (Fable)"); the logs --cached reads carry only the
+    first two;
   - Codex: the app server's `account/rateLimits/read` request;
   - Antigravity: `agy -p /usage` and `agy -p /credits`, which answer without an
     agent turn. Each model group gets its own windows, named

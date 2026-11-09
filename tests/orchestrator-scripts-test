@@ -1,6 +1,9 @@
 #!/bin/sh
 # Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs and run-watch.
 set -eu
+# Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
+# under test, which keep caps already set: start without them.
+unset MAKEFLAGS CARGO_BUILD_JOBS CMAKE_BUILD_PARALLEL_LEVEL LEASE_JOBS LEASE_REAL_SWIFT
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
@@ -978,6 +981,82 @@ assert "Sampling ended at 18:59; the figures stop there." in summary, summary
 labels = re.search(r"x-axis \[(.*)\]", mmd).group(1).split(", ")
 assert labels[-1] == '"18:59"' and "sampling ended at 18:59" in mmd, labels
 assert all(len(line.split(", ")) == len(labels) for line in re.findall(r"line \[(.*)\]", mmd)), mmd
+EOF
+# Claude's Fable week: provider-usage reads "Current week (Fable)" from /usage as weekly_fable beside the
+# all-models week, the sampler records it, and run-charts draws it as a limit of its own ("Fable weekly",
+# dashed): when it moved, and flat when a task's label names Fable; flat and unnamed, it is left out.
+mkdir -p "$work/usage-fable"
+CLAUDE_CONFIG_DIR="$work/usage-fable" python3 -I - "$scripts" "$work/usage-fable" "$work/facts-fable.json" <<'EOF'
+import json, os, runpy, subprocess, sys
+scripts, folder, facts_path = sys.argv[1:4]
+usage_text = ("You are currently using your subscription to power your Claude Code usage\n\n"
+              "Current session: 19% used · resets Nov 10 at 2:30am (Europe/Helsinki)\n"
+              "Current week (all models): 82% used · resets Nov 10 at 2am (Europe/Helsinki)\n"
+              "Current week (Fable): 4% used · resets Nov 10 at 2am (Europe/Helsinki)\n")
+pu = runpy.run_path(os.path.join(scripts, "provider-usage"), run_name="provider_usage")
+real_run = subprocess.run
+subprocess.run = lambda *a, **k: subprocess.CompletedProcess(a[0], 0, json.dumps({"result": usage_text}), "")
+try:
+    got = pu["claude_live"](1794261600.0)   # 2026-11-09 22:00 UTC
+finally:
+    subprocess.run = real_run
+w = got["windows"]
+assert set(w) == {"five_hour", "weekly", "weekly_fable"}, w
+assert w["weekly"]["used_percent"] == 82.0 and w["weekly_fable"]["used_percent"] == 4.0, w
+assert w["weekly_fable"]["resets_at"] == w["weekly"]["resets_at"] == "2026-11-10T00:00:00+00:00", w
+entry_of = runpy.run_path(os.path.join(scripts, "usage-sampler"), run_name="sampler_entry")["entry_of"]
+rows = []
+for t, week, fable in (("01:00:00", 80.0, 2.0), ("02:00:00", 81.0, 4.0), ("03:00:00", 82.0, 10.0)):
+    entry = entry_of({"providers": {"claude": {"plan": "max", "windows": {"weekly": {"used_percent": week, "resets_at": "2026-11-11T00:00:00+00:00"},
+                                                                          "weekly_fable": {"used_percent": fable, "resets_at": "2026-11-11T00:00:00+00:00"}},
+                                               "observed_at": "2026-11-09T" + t + "+02:00"}}}, "live")
+    assert entry["providers"]["claude"]["windows"]["weekly_fable"] == {"used": fable, "resets_at": "2026-11-11T00:00:00+00:00"}, entry
+    entry["t"] = "2026-11-09T" + t + "+02:00"
+    rows.append(json.dumps(entry))
+open(os.path.join(folder, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+facts = {"title": "Fable", "date": "Mon 9 Nov", "orchestrator": "Claude Code (T3) · Opus 5.5 (High)", "integration": {"branch": "main", "head": "abc"},
+         "run": {"start": "00:55", "end": "03:05", "level": "high", "worked_minutes": 5, "wakes": 2}, "usage": {"folder": folder},
+         "tasks": [{"id": "A", "name": "Design", "level": "high", "agent": "Claude Code · Opus 5.5", "status": "merged", "needs": [], "first_wave": True,
+                    "launched": "01:00", "ended": "03:00", "worked_minutes": 120}]}
+json.dump(facts, open(facts_path, "w"))
+charts = runpy.run_path(os.path.join(scripts, "run-charts"), run_name="charts")
+assert charts["window_name"]("weekly_fable") == "Fable weekly" and charts["window_name"]("gemini_4_argon_weekly") == "Gemini 4 Argon weekly"
+assert charts["window_kind"]("weekly_fable") == ("fable", "weekly") and charts["window_kind"]("five_hour") == ("", "five_hour")
+assert charts["facts_labels"]({"tasks": [{"agent": "Claude Code (API) · Fable 5.2"}, {"agent": "Claude Code · Fable 5.2"}]}) == "Claude Code · Fable 5.2"
+EOF
+"$scripts/run-charts" "$work/facts-fable.json" "$work/charts-fable" >/dev/null 2>&1
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+work = sys.argv[1]
+def claude(name):
+    page = open(os.path.join(work, name, "run-map.html")).read()
+    return next(p for p in json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]["providers"] if p["id"] == "claude")
+c = claude("charts-fable")
+assert c["long"]["label"] == "Weekly" and [s["label"] for s in c["more"]] == ["Fable weekly"], c
+assert [v for seg in c["more"][0]["segs"] for _, v in seg] == [98.0, 96.0, 90.0], c["more"]
+summary = open(os.path.join(work, "charts-fable", "summary.txt")).read()
+assert "Claude weekly 20% → 18% left, Fable weekly 98% → 90% left" in summary, summary
+rows = [json.loads(l) for l in open(os.path.join(work, "usage-fable", "providers.jsonl"))]
+for r in rows:
+    r["providers"]["claude"]["windows"]["weekly_fable"]["used"] = 4.0   # a Fable week that didn't move
+open(os.path.join(work, "usage-fable", "providers.jsonl"), "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+facts = json.load(open(os.path.join(work, "facts-fable.json")))
+json.dump(facts, open(os.path.join(work, "facts-fable-flat.json"), "w"))
+facts["tasks"][0]["agent"] = "Claude Code · Fable 5.2"
+json.dump(facts, open(os.path.join(work, "facts-fable-named.json"), "w"))
+EOF
+"$scripts/run-charts" "$work/facts-fable-flat.json" "$work/charts-fable-flat" >/dev/null 2>&1
+"$scripts/run-charts" "$work/facts-fable-named.json" "$work/charts-fable-named" >/dev/null 2>&1
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+work = sys.argv[1]
+def claude(name):
+    page = open(os.path.join(work, name, "run-map.html")).read()
+    return next(p for p in json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]["providers"] if p["id"] == "claude")
+assert "more" not in claude("charts-fable-flat"), claude("charts-fable-flat")     # flat, and no task on Fable
+named = claude("charts-fable-named")
+assert [s["label"] for s in named["more"]] == ["Fable weekly"] and [v for seg in named["more"][0]["segs"] for _, v in seg] == [96.0] * 3, named
+assert "Fable weekly 96% → 96% left" in open(os.path.join(work, "charts-fable-named", "summary.txt")).read()
 EOF
 if command -v node >/dev/null 2>&1; then
   python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \

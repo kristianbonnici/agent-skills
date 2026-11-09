@@ -1,5 +1,9 @@
 # review-gate changelog
 
+## 3.1.0 (2026-11-10)
+
+- **Claude Fable 5.2 never reviews,** by default or as a replacement (owner, 2026-11-10: Fable is for the more demanding tasks only, since it costs more and has a weekly limit of its own). A change Fable wrote counts as Opus's: its Claude reviewer is Sonnet 5.5, and "your own model in a fresh context" means Opus 5.5. Without it, the fallback for a paid reviewer stopped by a limit would have put a Fable task's review on Fable.
+
 ## 3.0.0 (2026-11-06)
 
 Major because a real defect no longer always holds back a merge: the gate now merges a change with some found defects listed, not fixed.

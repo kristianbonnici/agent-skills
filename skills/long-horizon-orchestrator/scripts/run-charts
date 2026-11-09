@@ -87,7 +87,8 @@ left (estimate; $114 expired at 02:00)"; "$158 → $160 left (estimate; $43 spen
 The usage panel sits under the timeline on the same time axis: each subscription's weekly window
 (Copilot's monthly one), for each subscription the run used (the harnesses the facts name, flat if it moved less than a percent, or
 any whose window moved), as the percent left, a smooth line falling from 100% as it is used,
-and a separate limit in use during the run (Antigravity's Gemini 4 Argon) as a dashed line, in its maker's colour
+and a separate limit in use during the run (Antigravity's Gemini 4 Argon, Claude's Fable week, `weekly_fable`, which also
+stays, flat, when a task or helper label the facts give names Fable) as a dashed line, in its maker's colour
 (assets/marks/marks.json), with window resets dotted (a reading of a window that has reset since it was
 read is no point: the line holds to the reset and goes on from the next reading taken after it); its 5-hour window is left out, and so are
 quota pauses, which the timeline hatches on the lanes they stopped; then, when the run used the Claude API
@@ -484,12 +485,26 @@ def local_time(value, zone=None):
     return moment.replace(tzinfo=None)
 
 
+def window_kind(key: str) -> tuple[str, str]:
+    """A window's (scope, span): "gemini_4_argon_weekly" and Claude's "weekly_fable" (a limit of its own
+    inside the plan's week, from "Current week (Fable)") are ("gemini_4_argon", "weekly") and ("fable",
+    "weekly"); the plan's own "weekly" is ("", "weekly"); a key with no span is (key, "")."""
+    for span in ("five_hour", "weekly", "monthly"):
+        if key == span:
+            return "", span
+        if key.endswith("_" + span):
+            return key[: -len(span) - 1], span
+        if key.startswith(span + "_"):
+            return key[len(span) + 1:], span
+    return key, ""
+
+
 def window_name(key: str) -> str:
     if key == "five_hour":
         return "5-hour"
     if key in ("weekly", "monthly"):
         return key.capitalize()
-    base, _, kind = re.sub(r"_(five_hour|weekly|monthly)$", r"|\1", key).partition("|")
+    base, kind = window_kind(key)
     base = re.sub(r"_models$", "", base)   # Antigravity's "gemini_models": every Gemini model, "Gemini"
     words = [w.upper() if w == "gpt" else w if w == "and" else w.capitalize() for w in base.split("_")]
     return " ".join(words) + " " + {"five_hour": "5-hour", "weekly": "weekly", "monthly": "monthly"}.get(kind, "")
@@ -507,6 +522,15 @@ def line_colour(entry: dict | None) -> str | None:
     return None
 
 
+def facts_labels(facts: dict) -> str:
+    """The facts' orchestrator, harness, task agent and helper labels, one per line, but those billed by the
+    API ("Claude Code (API) · Fable"), which draw on no subscription's limits."""
+    run = facts.get("run") or {}
+    labels = [facts.get("orchestrator"), facts.get("harness")] + [t.get("agent") for t in facts.get("tasks", [])]
+    labels += [h.get("label") for item in [run] + facts.get("tasks", []) for h in item.get("helpers") or []]
+    return "\n".join(str(label) for label in labels if label and not re.search(r"\bapi\b", str(label).split(" · ")[0], re.I))
+
+
 def subscriptions_used(facts: dict) -> set[str]:
     """The subscriptions the run used, from the harness in each label (the text before " · "): "OpenCode
     Go · DeepSeek" is OpenCode Go, plain "OpenCode · X" its free tier, a model's name is no plan, and Claude
@@ -521,12 +545,13 @@ def subscriptions_used(facts: dict) -> set[str]:
 
 
 def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | None, makers: list[dict], mark_of,
-               used: set[str] = frozenset()) -> dict | None:
+               used: set[str] = frozenset(), labels: str = "") -> dict | None:
     """The usage panel's data: minutes on the facts' own axis (as the map's times), the Mac's samples
     aggregated per minute (average and peak), each subscription's weekly or monthly windows as runs
     of points in percent left (its 5-hour window isn't drawn), and when sampling began and ended.
     span is the timeline's (start, end) in minutes, or None; mark_of(entry) gives a mark's file index;
-    used names the subscriptions that get a line even if they stayed flat."""
+    used names the subscriptions that get a line even if they stayed flat; labels is the facts' agent and
+    helper labels, which name the models whose separate limits get a line too."""
     machine = read_lines(folder / "machine.jsonl")
     reads = read_lines(folder / "providers.jsonl")
     stamps = [local_time(r["t"]) for r in machine + reads]
@@ -699,16 +724,22 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             """Whether the run used the window: it changed during the run, or reset."""
             return bool(slot["resets"]) or len({v for run in slot["segs"] for m, v in run if t0 <= m <= t1}) > 1
 
+        def named(key: str) -> bool:
+            """Whether the facts name the model a separate limit is for ("Fable" for Claude's weekly_fable)
+            in a label of a subscription the run used: its line stays, flat, like a named subscription's."""
+            scope = window_kind(key)[0].replace("_", " ")
+            return name in used and bool(scope) and re.search(rf"\b{re.escape(scope)}\b", labels, re.I) is not None
+
         # the weekly or monthly windows: the plan's own first (a key of just "weekly" or "monthly", else
         # the one read most often), then each separate limit (a model's own, as Antigravity's Gemini 4
-        # Argon) that the run used; a subscription the facts don't name and none of whose windows moved
-        # isn't shown at all (a named one stays, flat: a run can use less than a whole percent), and the
-        # 5-hour windows aren't drawn
-        longs = [k for k in info["windows"] if k.endswith(("weekly", "monthly"))]
+        # Argon or Claude's Fable week) that the run used or whose model the facts name; a subscription the
+        # facts don't name and none of whose windows moved isn't shown at all (a named one stays, flat: a
+        # run can use less than a whole percent), and the 5-hour windows aren't drawn
+        longs = [k for k in info["windows"] if window_kind(k)[1] in ("weekly", "monthly")]
         picked = {}
         if longs:
             main = next((k for k in longs if k in ("weekly", "monthly")), None) or max(longs, key=lambda k: len(info["windows"][k]))
-            more = [slot for slot in (slot_of(k) for k in longs if k != main) if moved(slot)]
+            more = [slot for slot in (slot_of(k) for k in longs if k != main) if moved(slot) or (slot["segs"] and named(slot["id"]))]
             first = slot_of(main)
             if not first["segs"]:   # only stale readings of it: nothing to draw, so the next window leads
                 first, more = (more[0], more[1:]) if more else (None, [])
@@ -1149,7 +1180,7 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         ends += [v for t in tasks if t["launched"] is not None and t["ended"] is not None for v in (t["launched"], t["ended"])]
         has_timeline = any(t["launched"] is not None and t["ended"] is not None for t in tasks)
         span_ = (min(ends), max(min(ends) + 1, *ends)) if ends and has_timeline else None
-        usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry), subscriptions_used(facts))
+        usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry), subscriptions_used(facts), facts_labels(facts))
         if usage:
             data["usage"] = usage
         else:

@@ -11,6 +11,8 @@ The home harness is the harness and model the orchestrator itself runs on:
 
 Route every task there by default. The user chose this harness for the run, its tools and installed skills are known to work, and it is usually the subscription the user sized for this kind of work.
 
+On Claude, the home model is Opus 5.5 (`claude-opus-5-5`), for you and for every task, even when the owner started your own thread on Fable 5.2: Fable is chosen task by task, for the few that need it ([Fable 5.2](#fable-52-the-demanding-tasks-only)).
+
 The one exception: if you yourself run on Antigravity or on one of OpenCode's free or Go models, don't treat it as the home harness for complex tasks. Route those to Claude Code or Codex (see "Fast helpers" below).
 
 Route a task elsewhere only when one of these applies, and only in the contract the user approves:
@@ -30,6 +32,7 @@ An under-powered agent on important work costs more than an over-powered one: wr
 | Very simple and fully specified (a mechanical edit, a rename, a lookup) | medium |
 | Any real task that is not trivially simple: the default | high |
 | A task where you see a real benefit from extra thinking (for example subtle correctness or security logic, a bug with an unknown cause, a design choice with no precedent in the project). Name the benefit in the contract | extra high |
+| Sparingly, a level above that on Claude: one of the more demanding tasks, where a wrong start costs hours. Name the reason in the contract | Fable 5.2 at high, not Opus 5.5 ([Fable 5.2](#fable-52-the-demanding-tasks-only)) |
 | Sparingly: large or many-sided work that clearly gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor). Name the gain in the contract | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
 | A fast helper's step or research lane, on Antigravity or OpenCode | high (see "Fast helpers" below) |
 | An advanced helper step on Gemini 4 Argon | high: `gemini-4-argon-high` (see "Advanced helper" below) |
@@ -37,11 +40,45 @@ An under-powered agent on important work costs more than an over-powered one: wr
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
 - **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` and `gpt-6.1-terra` default to low.
 - **In T3, the option names differ by provider:**
-  - Claude: `{"id": "effort", "value": "high" | "xhigh" | "ultracode"}`. Ultracode exists only on models that list it, such as Opus and Fable, not Sonnet.
+  - Claude: `{"id": "effort", "value": "high" | "xhigh"}`. Ultracode is an option of its own beside it, `{"id": "ultracode", "value": true}`, only on models that list it, such as Opus and Fable, not Sonnet. Claude's models default to medium in T3, so always pass the effort.
   - Codex: `{"id": "reasoningEffort", "value": "high" | "xhigh" | "ultra"}`.
 
   Use only values the capability catalog lists for that model.
 - **Capacity still applies.** Higher reasoning uses more of a subscription, and the multi-agent modes use a 5-hour window much faster than a single agent, because every sub-agent draws on the same window. Start a multi-agent task early in a window, not when the window is already well used, and expect it to pause for a reset on a long run. Don't step down to a level below what the work needs to save capacity.
+
+## Fable 5.2: the demanding tasks only
+
+Claude Fable 5.2 (`claude-fable-5-2`) is a step above Opus 5.5, and it costs about twice as much: twice Opus's price per token on the API, and on a subscription it uses up the week faster than other models, within a weekly limit of its own (owner, 2026-11-10: "it should not replace Opus 5.5 as the main driver because it is more expensive and will consume my credits faster. it should be used sparingly for more demanding tasks only"). So:
+
+- **Opus 5.5 stays the home model** for you and for tasks (section 1). Fable is never a default, for any kind of work.
+- **Chosen per task, in the contract, with its reason,** like a level above extra high: "Fable 5.2 at high, because <reason>". It is for the more demanding tasks only, where a wrong start costs hours:
+  - hard design or architecture work with no precedent in the project: a new subsystem's data model, a sync, concurrency or security design, a migration of data the owner keeps;
+  - a problem Opus 5.5 has already failed on: a bug whose cause two attempts didn't find, a task whose review stopped twice on the same design question (a relaunch, with the contract's or the owner's yes);
+  - subtle correctness logic whose defects are costly and hard to see in review, such as data loss across a sync or a crash recovery.
+
+  Not ordinary features, interface work, tests, docs, refactors, chores or research, nor anything a brief fully specifies: these stay on Opus 5.5. Expect one or two Fable tasks in a run, often none.
+- **Never for helpers, reviewers or trial reviewers** (the `review-gate` skill's tables never use it), nor for a fix-up agent or a follow-up task, which apply known fixes: those run on Opus 5.5 even when the task they continue ran on Fable.
+- **Not for your own thread, unless the owner set it.** Don't move yourself to Fable; if the owner started you on it, stay on it (never switch your own model during a run), and the tasks still default to Opus 5.5.
+- **Only on the Claude provider** (`claudeAgent`). Never through OpenCode's `opencode/claude-fable-5-2`, a paid model that bills per request. On the API instance it spends the credits about twice as fast as Opus, so the contract names it there too ([Claude API credits](#claude-api-credits-use-what-would-expire)).
+- **Only on a plan that includes it.** On plans where Fable isn't part of the usage limits it bills usage credits from the first token: the profile's Plans line says which, and a live `provider-usage` reading with `weekly_fable` is the sign it is included. Without that, no task runs on Fable.
+- **Effort:** high, set explicitly (T3 and Claude Code default Fable to medium). Extra high only with a benefit named in the contract, for the hardest long-running work. Never max, low or medium, and no Ultracode on Fable unless the owner asks for it: every sub-agent would draw on the same Fable week.
+
+### Its weekly limit
+
+`provider-usage` shows Claude's Fable week as `weekly_fable`, read from Claude Code's `/usage` ("Current week (Fable)") beside `weekly`, the week for all models. It is read live only: the harness logs that `--cached` and the sampler's 5-minute readings come from don't carry it, so the sampler records it with its hourly live readings, and a usage check for it runs `provider-usage` live.
+
+- **Fable work counts on both weeks.** It draws on the all-models week, faster than other models, and the Fable week is a cap inside that week, not extra room. Read each one's `resets_at` rather than assuming they reset together. Whether Fable counts toward the 5-hour window more heavily isn't published: judge a Fable task's 5-hour window as any Claude task's.
+- **Capacity is judged on both.** A Fable task fits only when the Fable week has room for it within the run's budget and the all-models week still has room for the rest of the run with it. Until the profile has a calibration for Fable, assume a Fable task-hour takes about twice an Opus task-hour of the all-models week.
+- **The contract gives Fable work a budget** in points of the Fable week: by default at most half of what is left, so the owner keeps the rest of their week, and less when the all-models week is short. Name the Fable tasks and their reasons, and record the budget, and the Fable week's reading at the start, in the ledger.
+- **Every wake's usage check watches it** while a Fable task runs: compare `weekly_fable` with its reading at the start plus the budget, and watch the pace as for a 5-hour window (section 3). When the budget will be passed before your next heartbeat at the current pace, treat it as passed.
+
+### When the Fable week runs out or passes its budget
+
+A weekly limit can't be waited out like a 5-hour window, and Opus 5.5 is on the same subscription, so the task moves model instead of pausing. This is the one model change "Quota pauses work; it never moves it" allows; everything else about that rule stands:
+
+1. **The Fable task continues on Opus 5.5, at the same effort, on its own thread.** In T3, once its turn has stopped (the Fable limit stops it; for the budget, `t3_thread_interrupt` its turn and wait until the thread is idle), set its thread's model between turns: `t3_thread_configure` with the task's `threadId` and a `modelSelection` of `claude-opus-5-5` with its effort ([host-t3.md](host-t3.md#when-a-window-runs-out)), never your own thread. Then send: "Your model is now Claude Opus 5.5, because the run's Fable budget is used up. Continue the brief from where you stopped." It keeps its whole conversation. Where a host can't set a running agent's model (a Claude Code subagent), save its uncommitted work as a patch and continue it with a continuation brief on Opus 5.5 in its worktree ([task-brief.md](task-brief.md#continuation-brief)).
+2. **The ledger records the switch:** the time, the task, the Fable week's reading against the budget, and why. Launch no more Fable work in this run, and the report names the move.
+3. **A Fable task stopped by the all-models week or the 5-hour window pauses** like any other task: Opus draws on the same windows, so moving wouldn't help.
 
 ## 2. Measure capacity as plan size times room left
 
@@ -54,7 +91,7 @@ Run `scripts/provider-usage` (in this skill's folder):
 It prints each provider's plan and the usage and reset time of its 5-hour and weekly windows. Record each snapshot in the ledger.
 
 The script asks each provider directly, so the numbers include use from other devices and apps (claude.ai, ChatGPT, Codex elsewhere):
-- **Claude:** Claude Code's own `/usage` command, run without a model call (`claude -p /usage`). It uses no quota and works even when the window is used up.
+- **Claude:** Claude Code's own `/usage` command, run without a model call (`claude -p /usage`). It uses no quota and works even when the window is used up. Its windows are `five_hour`, `weekly` (all models) and, on plans that include Fable, `weekly_fable`, Fable's own week inside it ([Fable 5.2](#its-weekly-limit)).
 - **Codex:** Codex's app server (`account/rateLimits/read`), with Codex's own sign-in.
 - **Antigravity:** the Antigravity CLI's own `/usage` command (`agy -p /usage`), which starts no agent turn and uses no quota. Antigravity splits its models into groups, and each group has its own windows:
   - `gemini_models_five_hour` and `gemini_models_weekly`: Gemini Flash and Pro, so the Flash helper;
@@ -137,7 +174,7 @@ Signs:
 - `provider-usage` shows its provider's window at or near 100%.
 
 Then:
-1. Leave it exactly as it is: its thread, worktree and uncommitted changes. Don't relaunch it, and don't hand it to another provider. The exceptions: a task on a free model ([below](#a-task-on-a-free-model)), and Claude work between the subscription and the owner's API credits as the contract allows ([Claude API credits](#claude-api-credits-use-what-would-expire)).
+1. Leave it exactly as it is: its thread, worktree and uncommitted changes. Don't relaunch it, and don't hand it to another provider. The exceptions: a task on a free model ([below](#a-task-on-a-free-model)), Claude work between the subscription and the owner's API credits as the contract allows ([Claude API credits](#claude-api-credits-use-what-would-expire)), and a Fable task stopped by the Fable week, which continues on Opus 5.5 ([Fable 5.2](#when-the-fable-week-runs-out-or-passes-its-budget)).
 2. Make sure the resume wake is scheduled, and mark the task `paused` in the ledger with its expected resume time.
 3. On the first wake after the reset, check whether the task is running again. If not, continue it on the same thread: "Your usage limit has reset. Continue the brief from where you stopped." This nudge doesn't count as the task's one nudge for silence.
 
@@ -165,7 +202,7 @@ You don't need a stand-in orchestrator on another provider for this, not even a 
 
 ### A weekly limit
 
-If a provider's weekly window runs out with work left:
+If a provider's weekly window runs out with work left (Claude's Fable week is different: its task continues on Opus 5.5, [Fable 5.2](#when-the-fable-week-runs-out-or-passes-its-budget)):
 - If it resets within a few hours, wait, as for a 5-hour window.
 - Otherwise, park the remaining tasks on that provider, finish the run and report. Whether to wait for the reset or to move the work is the user's decision.
 
@@ -359,7 +396,7 @@ The owner may edit it at any time, and their statements win over this reference.
 # Providers
 
 ## Plans
-- Claude: <plan, e.g. Max 20x> (detected <date>)
+- Claude: <plan, e.g. Max 20x> (detected <date>); Fable <included, up to <n>% of the week, in its own week `weekly_fable` | not included: usage credits only> (Anthropic's help pages, <date>)
 - Codex: <plan, e.g. ChatGPT Plus> (detected <date>)
 - Antigravity: <plan> with its own limits (owner, <date>); usage read by `agy -p /usage`, with Gemini 5-hour and weekly windows and a separate Argon weekly window
 - OpenCode: free models (owner, <date>), rate-limited model by model; OpenCode Go <plan and price>, Extra Usage off, as their backup (owner, <date>); the free tier's usage not readable
@@ -370,6 +407,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - Fast helpers inside tasks, for research, retrieval and simple steps: Antigravity's Gemini Flash at high; OpenCode's <models good enough> at high, on the free tier and then on Go; never task agents unless the user asks (owner, <date>)
 - Advanced helper inside tasks, for bounded harder sub-tasks: Gemini 4 Argon at high, within a weekly budget per run (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)
+- Claude's home model is Opus 5.5; Fable 5.2 only for the more demanding tasks, never the default, never for helpers or reviewers (owner, <date>)
 
 ## Machine: <computer>
 - Automatic screen lock: <off/on> (owner, <date>); Stage Manager off for computer-use runs (owner, <date>)
@@ -379,6 +417,7 @@ The owner may edit it at any time, and their statements win over this reference.
 ## Calibration (newest first)
 - codex/<plan> five_hour: ~<n>% per task-hour, <kind of task> (run <ledger name>)
 - claude/<plan> five_hour: ~<n>% per task-hour (run <ledger name>)
+- claude/<plan> weekly_fable: ~<n> points per Fable task-hour at <effort>, and ~<m> points of the all-models week (run <ledger name>)
 - antigravity/gemini_models: <n> Flash hand-offs took the 5-hour window from <a>% to <b>% (run <ledger name>)
 - antigravity/gemini_4_argon: <n> Argon hand-offs of <kind> took the week from <a>% to <b>% (run <ledger name>)
 - copilot/<plan> monthly: <n> hand-offs of <kind>, <tokens> input tokens, took <a> units (run <ledger name>)
@@ -390,16 +429,18 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
 ## 7. In the contract and the report
 
 - **In the contract:**
-  - Show the usage snapshot in plain words, for example "Claude Max 20x: 9% of the 5-hour window and 23% of the week used. Codex Plus: 23% and 16%. Antigravity Pro: Gemini 2% and 1%; Argon 1% of its week."
+  - Show the usage snapshot in plain words, for example "Claude Max 20x: 9% of the 5-hour window and 23% of the week used, 4% of its Fable week. Codex Plus: 23% and 16%. Antigravity Pro: Gemini 2% and 1%; Argon 1% of its week."
   - Give the expected consumption of the run, and whether it is likely to pause for a reset (and until when).
   - Name any other active run that shares the subscriptions.
   - Give the reason for each task routed away from the home harness.
   - Say which tasks may use the fast helpers, and for what.
   - Give the run's Argon budget, in points of its weekly window, and which tasks may use it.
+  - Name each task on Fable 5.2 with its reason, and give the run's Fable budget in points of the Fable week, or say that no task runs on Fable.
   - Say which whole tasks start on OpenCode Go, if any, and that helpers and reviews may draw on the plan too.
 - **In the report:**
   - Add one line on usage, before and after.
   - Name any task that paused for a reset, and for how long.
+  - Give Claude's Fable week before and after when a task ran on Fable, and name any Fable task that moved to Opus 5.5, when and why.
   - Name other runs that used the same subscriptions meanwhile, because their use is in the numbers.
   - Mention a helper that was rate-limited or ran out, and what the work switched to.
   - Say what used OpenCode Go (helpers, reviews, whole tasks), with its weekly and monthly windows before and after.

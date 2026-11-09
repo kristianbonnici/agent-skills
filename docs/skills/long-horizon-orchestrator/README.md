@@ -22,6 +22,8 @@ flowchart TD
   wake -->|dependents now unblocked| launch
   wake -->|"limit: paid window"| pause["Pause; resume on the same<br/>thread after the reset"]
   pause --> work
+  wake -->|"limit: Claude's Fable week or its budget"| opus["A Fable task goes on<br/>on Opus 5.5, same thread"]
+  opus --> work
   wake -->|"limit: free model"| move["Move on: OpenCode free ⇄ Go ⇄ Gemini,<br/>then Terra or Sonnet"]
   move --> work
   wake -->|all tasks done or parked| finish["Finish: final checks, restore the<br/>user's state, run map and report"]

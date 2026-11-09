@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 3.0.0
+  version: 3.1.0
 ---
 
 # Review Gate
@@ -27,6 +27,8 @@ Read the whole diff against its base. Judge by what it touches, not by its size.
 ## 2. Choose the reviewers
 
 Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.1 Terra) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, free ones at their high variant. Gemini doesn't review. A "free reviewer" below is one of those two models on either tier. No other OpenCode model reviews, apart from the trial below: `opencode/` paid models bill per request, and Go's larger models use up the plan in a few reviews.
+
+Claude Fable 5.2 never reviews, by default or as a replacement: it costs about twice Opus 5.5 and has a weekly limit of its own, kept for the demanding tasks the owner chose it for. A change Fable wrote counts as Opus's below: its Claude reviewer is Sonnet 5.5, and "your own model in a fresh context" means Opus 5.5.
 
 - **The cross reviewer** is the paid reviewer of another family: Codex's GPT-6.1 Terra for a change Claude wrote, Claude Sonnet 5.5 for a change any other family wrote.
 - **Codex is short** when your brief says so, or when a Codex reviewer fails on a usage limit. Then a Claude change's cross reviewer is the Claude model you aren't (Sonnet for Opus's change, Opus for Sonnet's), and a free reviewer joins to bring a second family back.
