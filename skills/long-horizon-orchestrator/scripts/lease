@@ -13,7 +13,8 @@ Usage:
   lease check <resource> --owner <task ID>
   lease status
 
-  --all       take every slot of the resource (for example the whole GPU for a timing run)
+  --all       take every slot of the resource (for example the whole GPU for a timing run); refused on
+              the cpu, which the run's tasks share by slots, unless its "all_ok" is true in leases.json
   --minutes   how long the lease lasts (default 20, at most the resource's max_minutes); acquiring
               again with the same owner renews it, and a forgotten lease frees itself when it expires
   --wait-minutes  how long to wait for a turn (default: the resource's wait_minutes, else 30)
@@ -287,6 +288,16 @@ class Leases:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise SystemExit(f"lease: slots_while_owner_here of {resource} in leases.json must be a whole number, 1 or more")
         return min(value, self.slots(resource))
+
+    def all_allowed(self, resource: str) -> bool:
+        """Whether --all may take every slot: never on the cpu, which the run's tasks share by slots,
+        unless leases.json sets its "all_ok" to true; always on any other resource."""
+        value = self.config[resource].get("all_ok")
+        if value is None:
+            return resource != CPU
+        if not isinstance(value, bool):
+            raise SystemExit(f"lease: all_ok of {resource} in leases.json must be true or false")
+        return value
 
     def capacity(self, resource: str) -> tuple[int, str | None]:
         """The slots a new acquire may fill now, and why fewer than all, when it is fewer."""
@@ -607,7 +618,11 @@ def command(argv: list[str], usage: int) -> int:
     leases.slots(args.resource)
     leases.fewer_slots(args.resource)
     leases.turn_minutes(args.resource)
-    minutes = min(args.minutes, leases.max_minutes(args.resource))
+    if args.take_all and args.action in ("acquire", "run") and not leases.all_allowed(args.resource):
+        print(f"lease: --all is refused on {args.resource}: the run's tasks share its slots, so one command"
+              f" takes one slot, a timing run too (\"all_ok\": true in leases.json allows it)", file=sys.stderr)
+        return usage
+    minutes =min(args.minutes, leases.max_minutes(args.resource))
     wait_minutes = args.wait_minutes if args.wait_minutes is not None else leases.wait_minutes(args.resource)
 
     if args.action == "release":

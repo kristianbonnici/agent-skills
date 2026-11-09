@@ -34,6 +34,7 @@ Omit `threadId`, so it renames your own thread. Keep the title short, such as `O
 ```text
 t3_thread_launch({
   title: "<task ID>: <short title>",
+  projectId: "<the integration checkout's T3 project, when your own thread is in another project>",
   workspaceStrategy: {type: "worktree", baseRef: "<integration branch; under 'leave on branch', a dependent's predecessor branch>", branch: "<task branch>", startFromOrigin: false},
   clientRequestId: "<run>-<task>-launch",
   modelSelection: {instanceId: "<provider>", model: "<model id>", options: [<reasoning option, see routing.md>]},
@@ -42,6 +43,7 @@ t3_thread_launch({
 })
 ```
 
+- **Launch in the repository's project.** Without `projectId`, a thread is made in your own thread's T3 project, and the worktree is cut from that project's folder. When your thread belongs to another project, such as one for a parent folder that isn't a git repository, every launch fails ("Failed to resolve the VCS driver"). So before the first launch, compare your thread's project (`thread.projectId` from `t3_thread_read` on your `parentThreadId`) with the integration checkout's: `t3_project_list` and the entry whose `workspaceRoot` is the checkout's path. If they differ, pass that entry's `id` as `projectId` in every launch, and record it in the ledger.
 - **Base on local commits.** With `startFromOrigin: false`, the worktree starts from local commits. Uncommitted changes are never copied, so commit anything the task needs first.
 - **Select the workspace in this call.** Never ask a task to create its own worktree from the shell: T3's thread binding would not follow it.
 - **Retries.** After an error or a lost response, call `t3_thread_launch` again with the same `clientRequestId`: it returns the thread already made instead of a second one. Keep the returned `threadId`.

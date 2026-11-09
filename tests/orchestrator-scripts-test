@@ -594,6 +594,30 @@ env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" "$lease5" run gpu --owner A -- sh -c
 grep -q "^nice *$base make \\[\\]\$" "$run5/gpu.out"
 grep -q '^swift build$' "$run5/gpu.out"
 
+# lease: --all is refused on the cpu (exit 2, naming the one-slot rule, nothing taken and nothing run),
+# for acquire and run alike; "all_ok": true allows it; --all on other resources works as before; an
+# all_ok that isn't true or false is refused.
+printf '%s\n' '{"cpu": {"slots": 3, "max_minutes": 15}, "gpu": {"slots": 2, "max_minutes": 15}}' > "$run5/leases.json"
+status=0; "$lease5" acquire cpu --owner A --all > "$run5/all.out" 2>&1 || status=$?
+test "$status" -eq 2
+grep -q 'lease: --all is refused on cpu: .*one slot, a timing run too' "$run5/all.out"
+status=0; "$lease5" run cpu --owner A --all -- touch "$run5/all-ran" > "$run5/all.out" 2>&1 || status=$?
+test "$status" -eq 2
+test ! -e "$run5/all-ran"
+"$lease5" status | python3 -I -c 'import json, sys; assert not json.load(sys.stdin)["leases"].get("cpu"), "cpu taken"'
+"$lease5" acquire cpu --owner A >/dev/null                # one slot is fine
+"$lease5" release cpu --owner A >/dev/null
+"$lease5" acquire gpu --owner A --all >/dev/null          # the whole GPU for a timing run
+"$lease5" status | python3 -I -c 'import json, sys; assert json.load(sys.stdin)["leases"]["gpu"][0]["slots"] == 2'
+"$lease5" release gpu --owner A >/dev/null
+"$lease5" run gpu --owner A --all -- true
+printf '%s\n' '{"cpu": {"slots": 3, "max_minutes": 15, "all_ok": true}}' > "$run5/leases.json"
+"$lease5" run cpu --owner A --all -- true
+printf '%s\n' '{"cpu": {"slots": 3, "all_ok": "yes"}}' > "$run5/leases.json"
+status=0; "$lease5" acquire cpu --owner A --all > "$run5/all.out" 2>&1 || status=$?
+test "$status" -ne 0
+grep -q 'all_ok of cpu in leases.json must be true or false' "$run5/all.out"
+
 # run-charts: every edge styled once, merged tasks only reach the branch, stopped and parked
 # tasks shown dashed, no bar for a parked task; the run map from the same facts.
 mkdir -p "$work/pictures"
