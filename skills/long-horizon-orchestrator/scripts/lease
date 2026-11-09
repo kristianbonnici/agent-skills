@@ -622,7 +622,7 @@ def command(argv: list[str], usage: int) -> int:
         print(f"lease: --all is refused on {args.resource}: the run's tasks share its slots, so one command"
               f" takes one slot, a timing run too (\"all_ok\": true in leases.json allows it)", file=sys.stderr)
         return usage
-    minutes =min(args.minutes, leases.max_minutes(args.resource))
+    minutes = min(args.minutes, leases.max_minutes(args.resource))
     wait_minutes = args.wait_minutes if args.wait_minutes is not None else leases.wait_minutes(args.resource)
 
     if args.action == "release":

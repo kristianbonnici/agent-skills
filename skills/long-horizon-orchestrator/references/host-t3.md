@@ -161,13 +161,13 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 - **A task stopped on quota:** leave its thread, queue and worktree alone. Schedule the resume wake. On the first wake after the reset, read the thread with `t3_thread_list`. If it isn't running again, send `t3_thread_send` in mode `"auto"`: "Your usage limit has reset. Continue the brief from where you stopped." The agent keeps its whole conversation, so it carries on where it was.
 - **Your own window is nearly used up:** schedule the resume wake, update the ledger, and end your turn.
-- **A Fable task whose Fable week ran out or passed the run's budget** continues on Opus 5.5 on its own thread ([routing.md](routing.md#when-the-fable-week-runs-out-or-passes-its-budget)). For the budget, stop its turn first with `t3_thread_interrupt` on its thread; the Fable limit stops it by itself. Once `t3_thread_read` shows it idle, set its model, then send the continue message in mode `"auto"`:
+- **A Fable task whose Fable week ran out or passed the run's budget** continues on Opus 5.5 on its own thread ([routing.md](routing.md#when-the-fable-week-runs-out-or-passes-its-budget)). For the budget, stop its turn first with `t3_thread_interrupt` on its thread; the Fable limit stops it by itself. Once `t3_thread_read` shows it idle, update the ledger and set its model as the last call of your wake, since a switch of your own thread ends the calling turn and one of another thread isn't known not to:
 
   ```text
   t3_thread_configure({threadId: "<the task's thread>", modelSelection: {instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{id: "effort", value: "<its effort>"}]}})
   ```
 
-  Read it back with `t3_thread_configure` and the `threadId` alone before you send, and after the task's next turn starts, check its run's `model` in `t3_thread_read`; if it still ran on Fable, interrupt, set it again and resend. Record the switch in the ledger. The warning below is about your own thread, which you never switch.
+  On the next wake (the heartbeat brings it), read it back with `t3_thread_configure` and the `threadId` alone, then send the continue message in mode `"auto"`; after the task's next turn starts, check its run's `model` in `t3_thread_read`; if it still ran on Fable, interrupt, set it again and resend. Record the switch in the ledger. The warning below is about your own thread, which you never switch.
 - **Never call `t3_thread_configure` with a `modelSelection` on your own thread during a run** (a call without one only reads). In the first real run a switch went wrong in three ways:
   - the call ended the calling turn on the spot, so nothing after it ran, and T3 recorded the turn as failed;
   - the first switch didn't stick: the next heartbeat ran on the old model again;
