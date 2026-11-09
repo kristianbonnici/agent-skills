@@ -167,7 +167,7 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
   t3_thread_configure({threadId: "<the task's thread>", modelSelection: {instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{id: "effort", value: "<its effort>"}]}})
   ```
 
-  On the next wake (the heartbeat brings it), read it back with `t3_thread_configure` and the `threadId` alone, then send the continue message in mode `"auto"`; after the task's next turn starts, check its run's `model` in `t3_thread_read`; if it still ran on Fable, interrupt, set it again and resend. Record the switch in the ledger. The warning below is about your own thread, which you never switch.
+  On the next wake (the heartbeat brings it), read it back with `t3_thread_configure` and the `threadId` alone, and send the continue message in mode `"auto"` only once it shows Opus 5.5. If it still shows Fable, set it again as the last call of that wake and read it back on the next one. After the task's next turn starts, check its run's `model` in `t3_thread_read`; if it still ran on Fable, interrupt it and start again from the read-back. Record the switch in the ledger. The warning below is about your own thread, which you never switch.
 - **Never call `t3_thread_configure` with a `modelSelection` on your own thread during a run** (a call without one only reads). In the first real run a switch went wrong in three ways:
   - the call ended the calling turn on the spot, so nothing after it ran, and T3 recorded the turn as failed;
   - the first switch didn't stick: the next heartbeat ran on the old model again;
