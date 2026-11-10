@@ -82,9 +82,11 @@ schedule_task({
   schedule: {type: "interval", everyMs: 900000},
   bindToCurrentThread: true,
   clientRequestId: "<run>-heartbeat",
-  prompt: "Heartbeat for long-horizon-orchestrator run <run>. Read the ledger at <path>; it names the skill's folder, and if you no longer have the skill's text, read its SKILL.md. Run <skill folder>/scripts/run-watch <run directory> first and act on what it prints. For each task marked running, read its thread with t3_thread_read: a pendingRequestCount above 0 with no child process running is an approval prompt to clear. Act on anything that finished, blocked, waits on approval or went idle without reporting, as the skill's 'On every wake' step says. If nothing changed, reply with one line."
+  prompt: "Heartbeat for long-horizon-orchestrator run <run>. Run <skill folder>/scripts/heartbeat <run directory> first, in one call. If it says 'nothing to act on', reply with its first line and end the turn: read nothing else. Otherwise read the ledger at <path> (it names the skill's folder; if you no longer have the skill's text, read its SKILL.md) and act on each line it printed, as the skill's 'On every wake' step says, reading with t3_thread_read only the threads of tasks it names, and of tasks it calls blind: a pendingRequestCount above 0 with no child process running is an approval prompt to clear."
 })
 ```
+
+- **An idle wake is one call.** `scripts/heartbeat` runs `run-watch`, reads the integration branch, the computer and the usage sampler's last readings (live when a running task's `model` in `watch.json` names Fable), and adds its line to the ledger. On 2026-11-10 an orchestrator on Fable re-read its large context five to twelve times a wake (`run-watch`, git, usage, a ledger note, ten thread reads) and used about a point of the Fable week every 15 to 20 minutes with no task on Fable; one call ended that. `run-watch` already flags an approval prompt (`approval`) and a silent task (`quiet`) for Claude Code and Codex tasks, so a thread read is needed only for a task it names, or one on another harness (`blind`).
 
 - **Interval:** 15 minutes or less while tasks run, so an approval prompt or a dead task waits at most that long (the skill's principles). While nothing runs, waiting only for a reset, it may be longer.
 - **Record it:** keep the returned ID in the ledger, and delete the heartbeat with `delete_scheduled_task` when the run finishes.

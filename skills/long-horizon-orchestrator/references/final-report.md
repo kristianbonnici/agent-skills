@@ -6,8 +6,8 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 - Post the report in the chat as your final message, every time the run ends: all tasks merged, some blocked or parked, or stopped early. Post it again, whole and updated, when the outcome changes later, for example after the user's own check lets a blocked task merge. Save a copy in the run directory, but a saved file is not a report the user has received.
 - Use plain language. Describe each new thing by what the user can now do, and where to find it. Leave out file names, function names, test counts, commit IDs and review mechanics unless the user needs them to act.
-- Gather open decisions from every task's handoff and from your decisions log. Remove duplicates, and phrase each one as a question with one sentence of context.
-- Recommend an answer to each open decision, and to each next step where there is a real choice (whether to do it, when, or how). Base it on what the run learned, such as the tasks' findings, their recommendations and the checks, and give the reason in one sentence. When you have no good basis, say so and name what would settle it. Label it as a recommendation: the decision stays the user's, and nothing was built on it. Never present something a task chose on its own as settled.
+- Gather what needs the user into one list, "What needs you": the open decisions from every task's handoff and your decisions log, and the next steps the tasks recommended or you noticed. Each item comes once: a step that carries out a decision is that decision's recommended answer ("yes, as one small task after a few days of use"), never a second item. Phrase a decision as a question with one sentence of context and a step as what to do, and put them in the order you would take them, the first one first.
+- Recommend an answer to each item where there is a real choice (whether to do it, when, or how). Base it on what the run learned, such as the tasks' findings, their recommendations and the checks, and give the reason in one sentence. When you have no good basis, say so and name what would settle it. Label it as a recommendation: the decision stays the user's, and nothing was built on it. Never present something a task chose on its own as settled.
 - Be honest about anything that didn't finish, was blocked or wasn't verified, such as untested operating systems or a skipped check. One line each is enough.
 - Offer the technical detail rather than including it. Each task's full handoff is in its thread and the run directory, and the ledger holds the rest. Never link to `/tmp`.
 - A report posted while tasks still run begins with "Interim report:" and names what is still running. The final report is the run's last act: nothing new starts after it without the user's go-ahead.
@@ -23,7 +23,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 **1. <Plain name> (Task A)**
 <Two or three sentences in everyday language: what you can now do, and where to find it.>
-<If it changed something you can see: its pictures, each on its own line. In T3, `![<caption>](<absolute path>)`; elsewhere, `<caption>: <absolute path>`.>
+<If it changed something you can see: its pictures, each on its own line. In T3, `![<caption>](<absolute path>)`; elsewhere, `<caption>: <absolute path>`. If it made options for you to choose between, every sheet of them, numbered as the task numbered them, with its recommendation as one line under them.>
 
 **2. ...**
 
@@ -51,18 +51,16 @@ The reader is returning after hours away, and probably after several tasks' wort
 ## Side effects on your computer
 <Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed and restored, services reinstalled, files left or removed (test builds' sandbox containers, which need your password to delete, are safe to remove), disk space used and freed (with what pruning older runs freed at the start, when the contract asked for it), and anything the run couldn't restore.>
 
-## Open decisions
+## What needs you
 
-1. **<Short label>.** <One sentence of context.> <The question?>
-   **Recommended:** <the option you would pick>, because <one sentence, from what the run found>. <Or: "No recommendation: <what would settle it>.">
+1. **<Short label>.** <One sentence of context.> <The question?, or the step to take.>
+   **Recommended:** <the option you would pick, or whether and when to take the step>, because <one sentence, from what the run found>. <Or: "No recommendation: <what would settle it>.">
 2. ...
+
+<Optional: **Defaults I took. Say if you disagree:** then numbered items in the same form.>
 
 ## Skill changes proposed
 <Only when the skill-evolution step proposed any, at most three, in its form: "**<ID>. <skill>: <short title>.** <what happened and what it cost> <the change> (<where>; <bump>)." with "**Recommended:**" on the next line. End with: "Say which to apply ("apply L-K7QM") or skip; nothing changes until you do.">
-
-## Suggested next steps
-<Follow-ups the tasks recommended, or that you noticed, the one you recommend most first.>
-- <The step.> **Recommended:** <whether to do it, when, or how, such as "do this before the release", "fold it into <other step>", or "skip it unless <condition>">, because <one short reason>. <Leave the recommendation out when there is no real choice.>
 
 <One closing line: checks passed on <OS>, <other OSes> untested; branches, worktrees and merged tasks' scratch and harness temp folders cleaned up (or what was kept, and how to restore; an unmerged task's folder holds `KEEP` until the user deletes it); ledger at <path>, run directory <size> (`prune-runs --size`, with what its second line counts of harness temp folders still left); run map at <path>/run-map.html, to open in a browser; detailed technical notes available on request. By how the offer went: offered with its tour, add "The report waits in the notch to listen to, with a tour of the run: press Tour."; offered without it, add "The report waits in the notch to listen to."; and either way without its tour, with OrbOS's walkthrough tool, add "Ask me to walk you through the run for a tour in the notch (its steps are in <run directory>/report/tour.json)." Not offered: nothing. Add this clause after report-offer has offered the saved copy, so the card's Full Text lacks only it.>
 
@@ -77,6 +75,7 @@ A task that changes something you can see leaves one to three pictures of it wit
 - Use them as they are. Don't open them to check them: each task took them from its own build with sample content, and looking costs your context. Open one only when its caption is missing or unclear.
 - They stay in the run directory. Never copy them into a repository, and never link to `/tmp`.
 - A task with nothing visible to show leaves none.
+- A task that made options for the user to choose between (icons, designs, names, layouts) shows every one, numbered, on its sheets, and the report shows all of those sheets: a recommendation is a line of text, never a filter on what is shown. Twice the owner's pick was on no shortlist.
 
 ## The run's facts
 
@@ -93,6 +92,8 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 - **Helpers and waits:** the tasks' `helpers` report lines, and your ledger's events. For the map, add each helper's outcome (`status`) and whether it reviewed or researched (`role`).
 - **Summaries and pictures:** a task's one-line `summary` is the plainest form of its "What was built" sentence; its `pictures` come from its handoff (each `src` absolute, or relative to the facts file), and the run's tour shows those in the run directory ([below](#pictures-in-the-tour)).
 - **Commits:** a merged task's `commits` are the ones the ledger lists for it. With them, `scripts/report-offer` finds the task's key change for the tour. To choose it yourself, give the task a `key_change` instead ([below](#offer-it-to-listen-to-with-its-tour)).
+- **Rounds:** when the run went on after its report, the ledger's rounds as `"rounds": [{"n", "title", "cause", "start", "end", "base", "head"}]`; a task belongs to the round it launched in (or give its `"round"`), and with `--repo <integration checkout>` run-charts finds each task's `built_on` (the earlier rounds' tasks whose lines its merged commits changed most, from git blame) from the tasks' `commits`.
+- **The Mac asleep:** `run-watch`'s `slept` lines (also in `times.log`) as `"asleep": [{"start", "end", "reason"}]`.
 - **Usage:** the folder `scripts/usage-sampler` wrote ([machine.md](machine.md#9-the-usage-sampler)), as `"usage": {"folder": "<run directory>/usage"}`. Leave it out when the run had no sampler.
 - **Makers:** each card's mark comes from the model's name (`assets/marks/marks.json` knows about 40 makers and harnesses). When the name doesn't say who made the model, add the maker as the host's model ID names it (`"maker": "moonshotai"` for `openrouter/moonshotai/…`); a maker without a mark gets a letter.
 
@@ -100,7 +101,7 @@ Put these facts into a JSON file in the run directory, and run `scripts/run-char
 
 ## Run map
 
-In T3, the report's picture of the run is the run map, drawn with `html_render` right above the report. It replaces the two Mermaid charts there. The orchestrator and its tasks are a tree of cards on a canvas the user can pan, zoom and rearrange. Each card shows the model's maker, the model and its level, the status, the one-line summary and the times. Each task's sub-agents fold out under it, and lines show what launched and what waited for what. Under the canvas, the timeline gives each agent a lane, marked with its model's maker: its turns as solid pieces and the gaps between them dimmed, the orchestrator's waits hatched, coloured lines from the orchestrator's lane where it launched each task and where the task reported back, crosses where a task stopped, a relaunch in the lane of the attempt it replaced, and a quota pause hatched in red over the lanes it stopped, never across the whole plot, since other tasks may have worked on. Hovering any piece says what it was and lights up that task in the tree. With usage samples, a panel under the timeline shows the subscriptions' windows and the Mac's load on the same time axis ([Usage graphs](#usage-graphs)).
+In T3, the report's picture of the run is the run map, drawn with `html_render` right above the report. It replaces the two Mermaid charts there. The orchestrator and its tasks are a tree of cards on a canvas the user can pan, zoom and rearrange. Each card shows the model's maker, the model and its level, the status, the one-line summary and the times. Each task's sub-agents fold out under it, and lines show what launched and what waited for what. Under the canvas, the timeline gives each agent a lane, marked with its model's maker: its turns as solid pieces and the gaps between them dimmed, the orchestrator's waits hatched, coloured lines from the orchestrator's lane where it launched each task and where the task reported back, crosses where a task stopped, a relaunch in the lane of the attempt it replaced, and a quota pause hatched in red over the lanes it stopped, never across the whole plot, since other tasks may have worked on. Hovering any piece says what it was and lights up that task in the tree. With usage samples, a panel under the timeline shows the subscriptions' windows and the Mac's load on the same time axis ([Usage graphs](#usage-graphs)). A run that went on in rounds draws each round as a band under the one before: a card with what started it, when and the commit it started from, its tasks, and a pill with the commit it ended on, from which the next round hangs; a task's chip names the earlier tasks it built on (their lines show on hover) and a later round it merged in. Both time axes draw every stretch of 45 minutes or more with no turn as a narrow cut, with its length under "//" on the axis and the times on hover, and round names under the axis. A stretch the Mac slept is shaded "Mac asleep" on both, and its dark-wake samples are left out of the panel.
 
 1. `run-charts` writes three files beside the charts: `run-map.html` (the map on its own, for a browser), `run-map.svg` (the same page, carried as an image) and `run-map-t3.html`, a short page of a few thousand characters that loads the other two, the marks and the pictures by path. It prints the height to give `html_render`.
 2. Read `run-map-t3.html` and pass it unchanged to `html_preview` once. Its console should say `run map ready` and nothing should have failed.
@@ -265,12 +266,12 @@ When the user has OrbOS, its MCP server (`read-aloud --mcp`) gives you `offer_re
 
 It writes the arguments beside the report, prints what they hold, and then offers the reading with its tour itself, once. Every field is already within the tools' limits, and words OrbOS would refuse, such as a sentence asking for a code, are left out.
 
-- **The reading** (kind `report`): the outcome first, then what was built, what isn't finished, the open decisions by name, and what to check. It is plain speech of about two minutes, with no code, paths or IDs, and it ends by naming **Tour**. The whole report is its original, under **Full Text**.
+- **The reading** (kind `report`): the outcome first, then what was built, what isn't finished, what needs the user (the first items by name, in order), and what to check. It is plain speech of about two minutes, with no code, paths or IDs, and it ends by naming **Tour**. The whole report is its original, under **Full Text**.
 - **The tour:**
   - an opening note;
   - per task, a note of what it built, in two sentences, and how many pictures it left;
   - per task, its key change as a file step, its own pictures, and a picture its commits put in the repository;
-  - a closing note with the open decisions.
+  - a closing note with what needs the user.
 
   At most 50 steps and about 8 pictures (one from each task in turn), never the same file twice. The key change is the largest block one of the task's own commits added, in the file the task changed most: source first, then docs, then examples and experiments, then tests. Only a merged task's commits on the integration branch count, and the lines are found where they are at its head. A task's `key_change` (`{"path": …, "lines": [first, last], "say": "<what the change does, never the code>"}`) overrides it. Without a `say`, the step only says the marked lines are the largest block the task added, so give one for the tasks that matter most.
 

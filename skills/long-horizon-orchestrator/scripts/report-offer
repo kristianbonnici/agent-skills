@@ -27,7 +27,7 @@ Writes into the output folder (the report's folder unless given):
 
 The tour: an opening note, then per task a note (what it built, in two sentences) and, with
 --repo, a file step at its key change and a picture step for a picture its commits put in the
-repository; a closing note with the open decisions. At most 50 steps and about 8 pictures.
+repository; a closing note with what needs the user. At most 50 steps and about 8 pictures.
 
 Then it offers the reading with its tour itself, as a short MCP client of OrbOS's bundled command
 (`read-aloud --harness <name> --mcp --pictures <run folder>`, the user's own OrbOS), so that the
@@ -39,7 +39,8 @@ answer to the handshake), so offer reading.json with your own offer_reading; exi
 went out but its answer didn't come within --timeout, so it may wait already: don't offer again.
 
 The report is the one the skill's template describes ("## What was built" with "**1. Name
-(Task A)**" items, "## Open decisions" with numbered "**Label.**" items, and so on).
+(Task A)**" items, "## What needs you" with numbered "**Label.**" items (decisions and next steps in
+one list, in the order to take them; older reports' "## Open decisions" is read the same way), and so on).
 
 Facts it reads, besides run-charts' (`run-charts --help`), all optional:
   a task's "commits": ["dd8d3157", ...]   its merged commits; with --repo, the key change is the
@@ -324,21 +325,25 @@ def said_item(item: dict) -> str:
     return ended(label)
 
 
-def decisions_said(decisions: list[dict], limit: int) -> str:
-    """The open decisions: those that need the user, each in a sentence; the defaults taken counted."""
+def decisions_said(decisions: list[dict], limit: int, merged: bool = False) -> str:
+    """The open decisions: those that need the user, each in a sentence; the defaults taken counted.
+    merged: the report's one "What needs you" list (decisions and next steps, in the order to take them)."""
     defaults = [d for d in decisions if "default" in d.get("group", "")]
     needed = [d for d in decisions if d not in defaults]
     out = []
-    if needed:
+    if needed and merged:
+        out.append(capitalized(f"{count(len(needed), 'thing')} for you, in the order I'd take them."))
+    elif needed:
         out.append(capitalized(f"{count(len(needed), 'open decision')} for you" if not defaults
                                else f"{count(len(needed), 'decision')} need{'s' if len(needed) == 1 else ''} you") + ".")
+    if needed:
         out += [said_item(d) for d in needed[:limit]]
         if len(needed) > limit:
             out.append(capitalized(f"{count(len(needed) - limit, 'more')} in the report."))
     if defaults:
         out.append(capitalized(f"{count(len(defaults), 'more', 'more') if needed else count(len(defaults), 'decision')} "
                                f"{'are defaults' if len(defaults) != 1 else 'is a default'} I took; say if you disagree."))
-    out.append("The report recommends an answer to each.")
+    out.append("The report recommends what to do with each." if merged else "The report recommends an answer to each.")
     return " ".join(x for x in out if x)
 
 
@@ -386,6 +391,13 @@ def report_sections(markdown: str) -> dict[str, str]:
         else:
             found[current].append(line)
     return {k: "\n".join(v).strip() for k, v in found.items()}
+
+
+def needs_you(parts: dict[str, str]) -> tuple[str, bool]:
+    """The report's list of what needs the user: "What needs you" (decisions and next steps in one list),
+    or, in older reports, "Open decisions"; and whether it is the merged list."""
+    merged = section(parts, "what needs you")
+    return (merged, True) if merged else (section(parts, "open decisions"), False)
 
 
 def section(parts: dict[str, str], *names: str) -> str:
@@ -521,7 +533,8 @@ def reading(facts: dict, markdown: str, budget: int = WORDS, ask_for_tour: bool 
     built = task_lookup(facts, built_items(section(parts, "what was built")))
     unfinished = listed(section(parts, "not finished"))
     checking = listed(section(parts, "worth checking"))
-    decisions = listed(section(parts, "open decisions"))
+    needs, merged = needs_you(parts)
+    decisions = listed(needs)
 
     def item_sentences(entry: dict, n: int) -> str:
         said = sentences(speakable(entry["item"].get("text", "")))[:n]
@@ -540,7 +553,7 @@ def reading(facts: dict, markdown: str, budget: int = WORDS, ask_for_tour: bool 
         if unfinished:
             paragraphs.append("Not finished: " + ended(names(unfinished, limit)))
         if decisions:
-            paragraphs.append(decisions_said(decisions, min(limit, 3)))
+            paragraphs.append(decisions_said(decisions, min(limit, 3), merged))
         if checking and with_checks:
             paragraphs.append(capitalized(f"{count(len(checking), 'thing')} worth checking yourself, in the report."))
         paragraphs.append("The whole report is in the chat, and it's under Full Text here."
@@ -798,7 +811,8 @@ def tour(facts: dict, markdown: str, repo: Path | None, pictures: Path | None = 
     parts = report_sections(markdown)
     intro = sentences(speakable(prose(parts.get("", "").splitlines())))
     built = task_lookup(facts, built_items(section(parts, "what was built")))
-    decisions = listed(section(parts, "open decisions"))
+    needs, merged = needs_you(parts)
+    decisions = listed(needs)
     unfinished = listed(section(parts, "not finished"))
     title = speakable(facts.get("title") or "") or "the run"
 
@@ -858,8 +872,10 @@ def tour(facts: dict, markdown: str, repo: Path | None, pictures: Path | None = 
         closing.append("Not finished: " + names(unfinished, 3) + ".")
     needed = [d for d in decisions if "default" not in d.get("group", "")]
     if decisions:
-        closing.append(decisions_said(decisions, 3))
-    caption = (capitalized(f"{count(len(needed), 'decision')} need{'s' if len(needed) == 1 else ''} you; "
+        closing.append(decisions_said(decisions, 3, merged))
+    caption = (capitalized(f"{count(len(needed), 'thing')} for you, in the order I'd take them; "
+                           "the report recommends what to do with each.") if needed and merged
+               else capitalized(f"{count(len(needed), 'decision')} need{'s' if len(needed) == 1 else ''} you; "
                            "the report recommends an answer to each.") if needed
                else "Only defaults I took; say if you disagree." if decisions else "Nothing needs your decision.")
     final = note("What needs you", caption, " ".join(closing) or caption)

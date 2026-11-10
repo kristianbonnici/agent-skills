@@ -58,6 +58,18 @@ Only for the run map, all optional:
 
   a task's, a helper's or the run's "maker": "moonshotai"  # when the model's name doesn't say it
 
+  "rounds": [{"n": 2, "title": "Follow-up", "cause": "You came back: ...", "start": "11:52", "end": "17:27",
+              "base": "cabf9bf", "head": "14d41b3", "head_note": ""}],
+                                                   # a run that went on after its report: each round a band
+                                                   # under the one before, hanging from the commit it started on
+  a task's "round": 2                              # else the round it launched in
+           "built_on": [["A", 120], ...]            # earlier rounds' tasks whose lines it changed, with how
+                                                   # many; found from git blame with --repo (its "commits")
+           "elsewhere": "agent-skills"             # a task that worked in another repository
+  "asleep": [{"start": "09:03", "end": "11:40", "reason": "Software Sleep"}]
+                                                   # where the Mac slept (run-watch's slept lines): shaded on
+                                                   # the timeline and usage panel, its samples left out
+
   "usage": {"folder": "<run directory>/usage"}     # the folder scripts/usage-sampler wrote (absolute, or
                                                    # relative to the facts file): machine.jsonl and
                                                    # providers.jsonl. Adds a usage panel under the timeline, usage.mmd and
@@ -68,7 +80,9 @@ task running then. Each card's mark is its model's maker, found from "maker" or 
 else, for a model named only "default" or "auto", its harness's, else a letter: assets/marks/marks.json.
 
 Usage:
-  run-charts <facts.json> <output folder> [--render] [--puppeteer-config <file>]
+  run-charts <facts.json> <output folder> [--render] [--puppeteer-config <file>] [--repo <integration checkout>]
+
+Both time axes draw a stretch of 45 minutes or more with no task or orchestrator turn as a narrow cut.
 
 run-map-t3.html is the page to paste into html_render in T3: a few thousand characters, because
 it only loads run-map.svg (the whole map, carried as an image that html_render inlines) and the
@@ -301,6 +315,7 @@ def times_of(facts: dict) -> list[str]:
     times += [t[k] for t in facts["tasks"] if t.get("launched") and t.get("ended") for k in ("launched", "ended")]
     run = facts.get("run") or {}
     times += [run[k] for k in ("start", "end") if run.get(k)]
+    times += [item[k] for key in ("rounds", "asleep") for item in facts.get(key) or [] for k in ("start", "end") if item.get(k)]
     return times
 
 
@@ -545,13 +560,14 @@ def subscriptions_used(facts: dict) -> set[str]:
 
 
 def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | None, makers: list[dict], mark_of,
-               used: set[str] = frozenset(), labels: str = "") -> dict | None:
+               used: set[str] = frozenset(), labels: str = "", asleep: list[tuple] = ()) -> dict | None:
     """The usage panel's data: minutes on the facts' own axis (as the map's times), the Mac's samples
     aggregated per minute (average and peak), each subscription's weekly or monthly windows as runs
     of points in percent left (its 5-hour window isn't drawn), and when sampling began and ended.
     span is the timeline's (start, end) in minutes, or None; mark_of(entry) gives a mark's file index;
     used names the subscriptions that get a line even if they stayed flat; labels is the facts' agent and
-    helper labels, which name the models whose separate limits get a line too."""
+    helper labels, which name the models whose separate limits get a line too; asleep lists the stretches
+    the Mac slept, whose samples (taken in dark wakes) are left out."""
     machine = read_lines(folder / "machine.jsonl")
     reads = read_lines(folder / "providers.jsonl")
     stamps = [local_time(r["t"]) for r in machine + reads]
@@ -570,6 +586,11 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             return (moment - first.replace(hour=0, minute=0, second=0)).total_seconds() / 60
         return moment.hour * 60 + moment.minute + moment.second / 60 if moment.date() == day else None
 
+    def awake(m) -> bool:
+        return m is None or not any(a < m < b for a, b in asleep)
+
+    machine = [r for r in machine if awake(minute(local_time(r["t"])))]
+    reads = [r for r in reads if awake(minute(local_time(r["t"])))]
     seen = [m for m in (minute(s) for s in stamps) if m is not None]
     if not seen:
         return None
@@ -692,6 +713,16 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
                     continue
                 same = runs and over == group[1] and (reset_at == group[0] or (
                     reset_at is not None and group[0] is not None and abs(reset_at - group[0]) <= 5))  # a reset time corrected by a minute
+                # an unstarted window (no use since its last reset) reports its reset a whole window from each
+                # reading, so its reset time moves on with the clock: the same window, one flat line, no reset
+                unstarted = (runs and not same and over == group[1] and reset_at is not None and group[0] is not None
+                             and used == runs[-1][-1][1] and reset_at > group[0]
+                             and abs((reset_at - group[0]) - (m - previous)) <= 5)
+                if unstarted and m - previous <= longest:
+                    runs[-1].append([round(m, 2), used])
+                    previous = m
+                    group, prior = (reset_at, over), reset_at
+                    continue
                 if same and m - previous <= longest:
                     runs[-1].append([round(m, 2), used])
                     previous = m
@@ -1056,6 +1087,46 @@ fetch(%(page)s).then(r => r.text()).then(svg => {
 """
 
 
+def git(repo: str, *args: str) -> str | None:
+    found = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    return found.stdout if found.returncode == 0 else None
+
+
+def built_on(facts: dict, repo: str) -> dict[str, list[list]]:
+    """For each task, the other tasks whose lines its merged commits changed, with how many lines, most
+    first: each commit's changed and removed lines (git diff -U0 against its parent) blamed in that parent,
+    and each blamed commit matched to the task whose "commits" name it."""
+    commits_of: dict[str, list[str]] = {}
+    for t in facts["tasks"]:
+        commits_of[t["id"]] = [found.strip() for c in t.get("commits") or []
+                               if isinstance(c, str) and (found := git(repo, "rev-parse", "--verify", "--quiet", c + "^{commit}"))]
+    owner = {sha: tid for tid, shas in commits_of.items() for sha in shas}
+    out: dict[str, list[list]] = {}
+    for t in facts["tasks"]:
+        counts: dict[str, int] = {}
+        for sha in commits_of[t["id"]]:
+            diff = git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", sha + "^", sha)
+            path = None
+            for line in (diff or "").splitlines():
+                if line.startswith("--- "):
+                    path = line[6:] if line.startswith("--- a/") else None
+                    continue
+                hunk = re.match(r"@@ -(\d+)(?:,(\d+))? ", line)
+                if not hunk or not path:
+                    continue
+                start, size = int(hunk.group(1)), int(hunk.group(2) or 1)
+                if size == 0:
+                    continue
+                blame = git(repo, "blame", "--porcelain", "-L", f"{start},+{size}", sha + "^", "--", path) or ""
+                for header in re.finditer(r"^([0-9a-f]{40}) \d+ \d+", blame, re.M):
+                    who = owner.get(header.group(1))
+                    if who and who != t["id"]:
+                        counts[who] = counts.get(who, 0) + 1
+        if counts:
+            out[t["id"]] = [[k, v] for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return out
+
+
 def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
     """The run map's data, with every time in minutes from the start of the run's first day, and
     the files it draws (marks, pictures) by index: once as the standalone page loads them, once as
@@ -1141,6 +1212,27 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             named = [t["id"] for t in timed(facts["tasks"]) if minute(t["launched"]) < end and minute(t["ended"]) > start]
         pauses.append({"start": start, "end": end, "reason": p.get("reason", ""), "which": p.get("which", ""), "tasks": named})
 
+    asleep = [{"start": minute(z["start"]), "end": minute(z["end"]), "reason": z.get("reason", "")} for z in facts.get("asleep") or []]
+
+    def when(a, b) -> str:
+        if not (a and b):
+            return ""
+        if clock.dated:
+            x, y = datetime.strptime(a, clock.format), datetime.strptime(b, clock.format)
+            return x.strftime("%a %H:%M") + "–" + (y.strftime("%H:%M") if y.date() == x.date() else y.strftime("%a %H:%M"))
+        return f"{a}–{b}"
+
+    rounds = []
+    for n, rd in enumerate(facts.get("rounds") or [], 1):
+        rounds.append({"n": int(rd.get("n") or n), "title": rd.get("title", ""), "cause": rd.get("cause", ""),
+                       "when": when(rd.get("start"), rd.get("end")), "start": minute(rd.get("start")), "end": minute(rd.get("end")),
+                       "base": rd.get("base", ""), "head": rd.get("head", ""), "headNote": rd.get("head_note", "")})
+
+    def round_at(m) -> int | None:
+        started = [rd["n"] for rd in rounds if rd["start"] is not None and m is not None and m >= rd["start"] - 15]
+        return max(started) if started else (rounds[0]["n"] if rounds else None)
+
+    round_of = {t["id"]: int(t["round"]) if is_number(t.get("round")) else round_at(minute(t.get("launched"))) for t in facts["tasks"]}
     tasks = []
     for t in facts["tasks"]:
         launched, ended = minute(t.get("launched")), minute(t.get("ended"))
@@ -1165,12 +1257,30 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             "helpers": helpers(t.get("helpers")),
             **who(t.get("agent") or facts.get("harness"), t.get("level"), t.get("level_label"), t.get("maker")),
         })
+        if rounds:
+            mine = round_of[t["id"]]
+            tasks[-1]["round"] = mine
+            if t.get("elsewhere"):
+                tasks[-1]["elsewhere"] = t["elsewhere"]
+            end = next((rd["end"] for rd in rounds if rd["n"] == mine), None)
+            if t.get("status", "merged") == "merged" and ended is not None and end is not None and ended > end + 5:
+                tasks[-1]["later"] = round_at(ended)
+            # what it built on: earlier rounds' tasks whose lines it changed most (not those it waited for)
+            picks = [[u, int(c)] for u, c in t.get("built_on") or []
+                     if (round_of.get(u) or 99) < (mine or 0) and u not in (t.get("needs") or []) and is_number(c) and c >= 15]
+            if picks:
+                tasks[-1]["built"] = picks[:3]
+    for rd in rounds:   # the commit each round ended on, and what merged in it
+        merged = sum(1 for t in tasks if t.get("round") == rd["n"] and t["status"] == "merged")
+        if not rd["headNote"]:
+            last = rd is rounds[-1]
+            rd["headNote"] = f"{'where the run ended' if last else 'end of round ' + str(rd['n'])} · {merged} merged"
     orch = {"name": "Orchestrator", "summary": run.get("summary", ""), "status": "done",
             "start": minute(run.get("start")), "end": minute(run.get("end")), "worked": run.get("worked_minutes"),
             "wakes": run.get("wakes"), "turns": turns(run), "helpers": helpers(run.get("helpers")),
             **who(facts.get("orchestrator"), run.get("level"), maker=run.get("maker"))}
     data = {"title": facts.get("title", ""), "date": facts.get("date", ""), "integration": facts.get("integration", {}),
-            "orch": orch, "pauses": pauses, "tasks": tasks, "files": inline,
+            "orch": orch, "pauses": pauses, "tasks": tasks, "files": inline, "rounds": rounds, "asleep": asleep,
             "turns_missing": any(not t.get("turns") for t in timed(facts["tasks"]))}
     folder = (facts.get("usage") or {}).get("folder")
     if folder:
@@ -1180,7 +1290,8 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         ends += [v for t in tasks if t["launched"] is not None and t["ended"] is not None for v in (t["launched"], t["ended"])]
         has_timeline = any(t["launched"] is not None and t["ended"] is not None for t in tasks)
         span_ = (min(ends), max(min(ends) + 1, *ends)) if ends and has_timeline else None
-        usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry), subscriptions_used(facts), facts_labels(facts))
+        usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry), subscriptions_used(facts), facts_labels(facts),
+                           [(z["start"], z["end"]) for z in asleep])
         if usage:
             data["usage"] = usage
         else:
@@ -1203,6 +1314,7 @@ def run_map(facts: dict, data: dict, paths: list[str], folder: Path) -> tuple[in
     extra = 0
     if data.get("usage"):  # the usage panel: its subscriptions band, the Mac's three and its frame
         extra = 140 + (190 if data["usage"]["providers"] else 0) + (110 if data["usage"].get("api") else 0) + (250 if data["usage"]["mac"] else 0)
+    extra += 560 if data.get("rounds") else 0   # the taller canvas a run in rounds gets
     return len(stub), 900 + 46 * lanes + extra  # the canvas, then a lane per agent; generous: html_render shrinks the frame to the page
 
 
@@ -1262,9 +1374,13 @@ def check_facts(facts) -> None:
         for picture in objects(owner, t.get("pictures"), "pictures"):
             if not isinstance(picture.get("src"), str):
                 raise SystemExit(f'run-charts: a picture of {owner} needs a "src"')
-    for n, p in enumerate(objects("the run", facts.get("pauses"), "pauses"), 1):
-        for key in ("start", "end"):
-            check_time(p.get(key), f"pause {n}'s {key}")
+        built = t.get("built_on") or []
+        if not isinstance(built, list) or not all(isinstance(b, list) and len(b) == 2 and isinstance(b[0], str) and is_number(b[1]) for b in built):
+            raise SystemExit(f'run-charts: {owner}\'s "built_on" must be a list of [task ID, lines] pairs')
+    for key, what in (("pauses", "pause"), ("asleep", "sleep"), ("rounds", "round")):
+        for n, p in enumerate(objects("the run", facts.get(key), key), 1):
+            for k in ("start", "end"):
+                check_time(p.get(k), f"{what} {n}'s {k}")
     run = facts.get("run")
     if run is not None:
         if not isinstance(run, dict):
@@ -1291,6 +1407,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("output")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--puppeteer-config")
+    parser.add_argument("--repo", help="the integration checkout: with rounds, each task's built_on is found from git blame")
     args = parser.parse_args(argv)
     try:
         facts = json.loads(Path(args.facts).read_text())
@@ -1304,6 +1421,11 @@ def main(argv: list[str]) -> int:
         for ref in (t.get("needs") or []) + [t.get("took_place_of"), t.get("replaces")]:
             if ref and ref not in ids:
                 raise SystemExit(f"run-charts: task {t['id']} refers to unknown task {ref}")
+    if args.repo and facts.get("rounds"):
+        found = built_on(facts, args.repo)
+        for t in facts["tasks"]:
+            if "built_on" not in t and found.get(t["id"]):
+                t["built_on"] = found[t["id"]]
     folder = Path(args.output)
     folder.mkdir(parents=True, exist_ok=True)
     data, _, paths = map_data(facts, Path(args.facts).resolve().parent)

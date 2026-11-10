@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""A whole idle heartbeat in one call: run-watch, the integration branch, the Mac and usage, with one
+line added to the ledger. An idle wake is then this one tool call and a one-line reply, instead of five
+to twelve calls that each re-read the orchestrator's large context.
+
+Usage: heartbeat <run directory> [--live] [--no-ledger]
+
+It reads <run directory>/watch.json, as run-watch does, and prints:
+
+  heartbeat HH:MM: nothing to act on. <the summary>     when run-watch flagged nothing and no task
+                                                         committed, merged or reported since last time
+  heartbeat HH:MM: act on the lines below. <the summary>
+  <run-watch's lines, each as it printed it>             otherwise
+
+The summary: the running tasks, the integration branch's head and how many tracked files are changed
+in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
+sampler run, and each subscription's windows used. A window to act on is a line of its own and makes the
+wake not idle: a 5-hour window past 85%, any window at 95% or more, and any window at or past its mark in
+watch.json's "usage_marks" ({"claude.weekly": 34, "claude.weekly_fable": 21}: the readings at which the
+run's Claude and Fable budgets are used, which the orchestrator keeps up to date, also after a reset). Usage comes from the sampler's last readings
+(<run directory>/usage/providers.jsonl, no new process); with --live, or when a running task's
+"model" in watch.json names Fable (whose weekly window is read live only), from a live
+provider-usage call (about 20 seconds, no model tokens). Without readings either way it says so.
+
+It appends "- HH:MM heartbeat: <the summary>" to the ledger (<run directory>.md) unless
+--no-ledger. It exits 0, or 2 for a usage error. For tests, HEARTBEAT_RUN_WATCH and
+HEARTBEAT_PROVIDER_USAGE replace the two scripts it runs.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+EVENT = re.compile(r"^(commit|merged|report|slept) ")
+
+
+def run(cmd, timeout=60):
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return done.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def near_limits(providers: dict, key_used: str, marks: dict) -> list[str]:
+    """Windows to act on: a 5-hour window past 85%, any window at 95% or more, and any window at or past
+    the mark watch.json's "usage_marks" sets for it ("claude.weekly": the reading at which the run's
+    Claude budget is used)."""
+    out = []
+    for name, p in sorted(providers.items()):
+        windows = p.get("windows") if isinstance(p, dict) else None
+        for key, w in sorted(windows.items()) if isinstance(windows, dict) else []:
+            used = w.get(key_used) if isinstance(w, dict) else None
+            if not isinstance(used, (int, float)):
+                continue
+            mark = marks.get(f"{name}.{key}")
+            if isinstance(mark, (int, float)) and used >= mark:
+                out.append(f"usage: {name} {key} at {used:g}%, at or past the run's mark of {mark:g}%: its budget is used")
+            elif used >= 95 or (key == "five_hour" and used >= 85):
+                out.append(f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it")
+    return out
+
+
+def windows_line(providers: dict, key_used: str) -> str:
+    parts = []
+    for name, p in sorted(providers.items()):
+        if not isinstance(p, dict) or not isinstance(p.get("windows"), dict):
+            continue
+        shown = []
+        for key, w in sorted(p["windows"].items()):
+            if isinstance(w, dict) and isinstance(w.get(key_used), (int, float)):
+                shown.append(f"{key} {w[key_used]:g}%")
+        if shown:
+            parts.append(f"{name} " + ", ".join(shown))
+        elif name == "claude_api" and isinstance(p.get("left_usd"), (int, float)):
+            parts.append(f"Claude API credits ${p['left_usd']:.0f} left (estimate)")
+    return "; ".join(parts)
+
+
+def usage(run_dir: str, live: bool, marks: dict) -> tuple[str, list[str]]:
+    if live:
+        out = run([os.environ.get("HEARTBEAT_PROVIDER_USAGE", os.path.join(HERE, "provider-usage"))], timeout=120)
+        try:
+            providers = json.loads(out).get("providers") or {}
+            line = windows_line(providers, "used_percent")
+            return (("live: " + line) if line else "usage: no live reading"), near_limits(providers, "used_percent", marks)
+        except (ValueError, AttributeError):
+            return "usage: the live reading failed", ["usage: the live reading failed: read provider-usage yourself"]
+    path = os.path.join(run_dir, "usage", "providers.jsonl")
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, os.path.getsize(path) - 300_000))
+            rows = fh.read().decode(errors="replace").splitlines()
+    except OSError:
+        return "usage: no sampler readings", []
+    latest: dict = {}
+    when = ""
+    for row in rows:
+        try:
+            record = json.loads(row)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and isinstance(record.get("providers"), dict):
+            latest.update(record["providers"])
+            when = str(record.get("t", ""))[11:16]
+    line = windows_line(latest, "used")
+    return ((f"sampled {when}: " + line) if line else "usage: no sampler readings"), near_limits(latest, "used", marks)
+
+
+def main(argv):
+    args = [a for a in argv if not a.startswith("--")]
+    flags = {a for a in argv if a.startswith("--")}
+    if len(args) != 1 or not os.path.isdir(args[0]) or flags - {"--live", "--no-ledger"}:
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    run_dir = os.path.abspath(args[0])
+    try:
+        watch = json.load(open(os.path.join(run_dir, "watch.json")))
+        watch = watch if isinstance(watch, dict) else {}
+    except (OSError, ValueError):
+        watch = {}
+    tasks = watch.get("tasks") if isinstance(watch.get("tasks"), dict) else {}
+    running = sorted(t for t, v in tasks.items() if isinstance(v, dict) and v.get("status", "running") == "running")
+    fable = any(re.search(r"fable", str(tasks[t].get("model", "")), re.I) for t in running)
+
+    watch_lines = [l for l in run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir], timeout=180).splitlines() if l.strip()]
+    flagged = [l for l in watch_lines if not EVENT.match(l)]
+    events = {}
+    for l in watch_lines:
+        if EVENT.match(l):
+            word, who = l.split()[:2]
+            events.setdefault(word, []).append(who)
+
+    repo, branch = watch.get("repo"), watch.get("integration_branch")
+    head = dirty = None
+    if repo and branch and os.path.isdir(repo):
+        head = run(["git", "-C", repo, "log", "-1", "--format=%h %s", branch]).strip()[:70]
+        dirty = len([l for l in run(["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"]).splitlines() if l.strip()])
+    free = shutil.disk_usage("/System/Volumes/Data" if os.path.isdir("/System/Volumes/Data") else "/").free / 1024 ** 3
+    swap = re.search(r"used = ([\d.]+)([MG])", run(["sysctl", "-n", "vm.swapusage"]))
+    swap_gb = (float(swap.group(1)) / (1024 if swap.group(2) == "M" else 1)) if swap else None
+    load = os.getloadavg()[0]
+    ps = run(["ps", "-axo", "pid=,comm="])
+    dialogs = len([l for l in ps.splitlines() if l.strip().endswith("SecurityAgent")])
+    alive = []
+    for name in ("keep_awake_pid", "sampler_pid"):
+        pid = watch.get(name)
+        if isinstance(pid, int):
+            alive.append(f"{name.split('_pid')[0].replace('_', '-')} {'up' if run(['ps', '-p', str(pid), '-o', 'pid=']).strip() else 'DOWN'}")
+
+    now = time.strftime("%H:%M")
+    bits = [f"running {', '.join(running) or 'none'}"]
+    if events:
+        bits.append("; ".join(f"{word} {' '.join(who)}" for word, who in sorted(events.items())))
+    if head:
+        bits.append(f"{branch} {head}" + (f", {dirty} tracked files changed in the checkout" if dirty else ""))
+    bits.append(f"disk {free:.0f} GB free, swap {swap_gb:.1f} GB, load {load:.1f}" if swap_gb is not None else f"disk {free:.0f} GB free, load {load:.1f}")
+    if dialogs:
+        bits.append(f"{dialogs} password dialog(s)")
+    if alive:
+        bits.append(", ".join(alive))
+    marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
+    usage_line, limits = usage(run_dir, "--live" in flags or fable, marks)
+    bits.append(usage_line)
+    summary = ". ".join(bits) + "."
+    flagged += limits
+    watch_lines += limits
+    if dialogs and not any(l.startswith("dialog") for l in flagged):
+        flagged.append("dialog")
+    idle = not flagged and not events
+    print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
+    for l in watch_lines:
+        if not idle:
+            print(l)
+    if "--no-ledger" not in flags:
+        ledger = run_dir.rstrip("/") + ".md"
+        if os.path.isfile(ledger):
+            try:
+                with open(ledger, "a", encoding="utf-8") as fh:
+                    note = f" Flags: {len(flagged)}." if flagged else ""
+                    fh.write(f"- {now} heartbeat: {summary}{note}\n")
+            except OSError as e:
+                print(f"note: couldn't add to the ledger: {e}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

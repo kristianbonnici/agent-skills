@@ -5,6 +5,16 @@
 - **Merge (default):** each task fast-forwards the integration branch itself once the review and full checks pass. Tasks that finish around the same time race safely: fast-forward-only either succeeds or fails cleanly, and a task that loses rebases, re-validates and tries again.
 - **Leave on branch:** each task stops with a reviewed, validated, rebased branch and reports `ready`. Nothing touches the integration branch. A dependent task is based on its predecessor's branch, forming a stack. Say so in the contract and the report, because the user then has to merge in order.
 
+### Many tasks merging at once
+
+With more than about four tasks merging into one branch, every merge sends the others back to rebase, and a full check after each rebase makes them queue for build slots: on 2026-11-10 three tasks ran the full check on the same base while five waited, one on its second, about 30 to 45 minutes and the matching usage each. So the common file carries from the start ([task-brief.md](task-brief.md#common-file-template)):
+
+- **A clean rebase needs only a re-check.** Once the full check has passed on a head of the task's, a later rebase that applies cleanly needs only a build, its focused tests and the tests of any file both sides changed; then it merges at once. A rebase with conflicts, or one that changes code the task calls, needs the full check again. Every later merge that night went through without another queue.
+- **Timing limits under load** fail at random, a different test each run: the task runs the failing ones once more alone, and merges with both outputs under "Couldn't check" when they pass or differ; one that fails alone, twice, is real.
+- **The full check runs once at the finish,** on the integration branch (SKILL.md, "Finish"), and what it finds goes to the task that owns it or to a follow-up task.
+
+If fast-forwards still race after that (a task fails its fast-forward twice running), declare a one-slot `merge` lease ([machine.md](machine.md#6-shared-resources-and-disk)): a task takes it after its review and its GPU, VM or screen checks, for its last rebase, the re-check and the fast-forward only, and never waits on another lease while it holds it.
+
 ### A narrow, measured miss
 
 Work merges only when every check passes. There is one exception, and you decide it, never the task: a task that meets its main goal with a broad, measured improvement, but misses one named check narrowly, for a reason it understands. The task reports `ready` with the numbers, and you may let it merge when all of these hold:
@@ -90,7 +100,7 @@ Then clean up:
    - Only then delete with `git branch -D`.
    - Record the old commit in the ledger and the final report as the way to restore it: `git branch <name> <sha>`.
 4. **Tidy the host's task list:** settle the task's T3 thread, or close the subagent in Codex. See the host reference.
-5. **Remove its scratch folder:** `<skill folder>/scripts/prune-runs --scratch <run directory>/<task ID>`, which deletes `<run directory>/<task ID>/scratch/` (builds, downloads, other projects' source, intermediate renders) and nothing else, and says how much it freed. It refuses a folder outside a run, and leaves a git worktree inside alone. The task's notes, evidence and pictures stay. If it can't remove something (a read-only folder, a worktree inside), record what in the ledger and the report's "Side effects", and go on.
+5. **Remove its scratch folder:** `<skill folder>/scripts/prune-runs --scratch <run directory>/<task ID>`, which deletes `<run directory>/<task ID>/scratch/` (builds, downloads, other projects' source, intermediate renders) and nothing else, and says how much it freed. It refuses a folder outside a run; inside, it removes a clean git worktree first (`git worktree remove`; its commits stay on their branch) and doesn't look into a SwiftPM build's dependency clones, a cache or a submodule, and it refuses only for `KEEP`, an `evidence/` folder, a worktree with uncommitted changes, or a clone with commits on no remote and not in the integration branch. The task's notes, evidence and pictures stay. If it refuses or can't remove something, record what in the ledger and the report's "Side effects", and go on.
 6. **Remove its harness temp folders:** `<skill folder>/scripts/prune-runs --harness-temp <worktree path> <run directory>/<task ID> --apply` removes the temporary folders Claude Code kept for sessions in the worktree and in the task's run folder, scratchpads and background-task output included, which outlive both ([machine.md](machine.md#6-shared-resources-and-disk)). Run it after the worktree is gone, and note what it freed.
 
 Cleanup is for merged work only, and a split's kept branch stays. A blocked, failed, parked, stopped or ready-but-not-merged task keeps its worktree, branch and scratch folder, because they hold the unmerged work or what it needs to go on. At the finish, put an empty `KEEP` file in each such task's folder in the run directory, so `prune-runs` leaves that folder whole in later runs too. Name them in the final report.

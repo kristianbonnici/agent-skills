@@ -250,6 +250,37 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 @media (max-width: 560px) { .tl { --tl-label: 104px; --tl-lane: 40px; padding: 12px 12px 10px; } .tl-name { font-size: 12.5px; gap: 5px; } .tl-name .id { display: none; }
   .tl-model { padding-left: 13px; font-size: 11px; } .tl-model .eff { display: none; } }
 @media (max-width: 560px) { :root { --cv-h: 520px; } .rm-legend { margin-left: 0; } }
+
+/* rounds: a run that goes on after its report */
+:root { --rm-built: #8b5cf6; }
+.rm.rounds { --cv-h: 1180px; }
+.card.round { padding: 14px 16px 12px; border-color: color-mix(in srgb, var(--rm-info) 40%, var(--rm-border));
+  background: color-mix(in srgb, var(--rm-info) 5%, var(--rm-card)); }
+.r-top { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--rm-muted); }
+.r-num { font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--rm-info); }
+.r-title { font-size: 18px; font-weight: 650; letter-spacing: -.01em; margin-top: 2px; }
+.r-cause { margin: 6px 0 0; font-size: 13.5px; color: var(--rm-muted); }
+.card.mainpill { border-radius: 999px; padding: 8px 14px; display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap;
+  border-color: color-mix(in srgb, var(--rm-ok) 45%, var(--rm-border)); }
+.mp-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rm-ok); flex: 0 0 auto; }
+.mp-b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.mp-m { color: var(--rm-muted); overflow: hidden; text-overflow: ellipsis; }
+.band { fill: color-mix(in srgb, var(--rm-fg) 2.6%, transparent); stroke: color-mix(in srgb, var(--rm-fg) 9%, transparent); stroke-width: 1; }
+.edge.merge { stroke: var(--rm-ok); stroke-width: 1.6; opacity: .6; }
+.edge.built { stroke: var(--rm-built); stroke-width: 2; stroke-dasharray: 6 5; opacity: .9; }
+.rm.focus .edge.built.hl { opacity: 1; }
+.chip.built { color: var(--rm-built); background: color-mix(in srgb, var(--rm-built) 11%, transparent); }
+.chip.later { color: var(--rm-muted); background: var(--rm-soft); }
+/* breaks: the quiet stretches, drawn short on the time axes */
+.brk-col { fill: var(--rm-card); }
+.brk-slash { stroke: var(--rm-muted); stroke-width: 1.5; stroke-linecap: round; }
+.brk-lab { fill: var(--rm-muted); font-size: 10.5px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.brk-hit { fill: transparent; }
+.brk-line { stroke: var(--rm-muted); stroke-width: 1; opacity: .55; }
+.tl-round { pointer-events: auto; fill: var(--rm-muted); font-size: 10.5px; font-weight: 650; letter-spacing: .05em; text-anchor: middle; text-transform: uppercase; }
+.asleep { fill: color-mix(in srgb, var(--rm-info) 10%, transparent); }
+.asleep-lab { fill: var(--rm-muted); font-size: 10.5px; font-style: italic; }
+.us-jump { fill: none; stroke: var(--c); stroke-width: 1.3; stroke-dasharray: 1.5 3.5; stroke-linecap: round; opacity: .7; }
 </style>
 </head>
 <body>
@@ -288,7 +319,7 @@ tasks.forEach(t => {
   t.pre = [...t.need, ...(t.place && byId[t.place] ? [t.place] : [])];
   if (t.replaces && !byId[t.replaces]) t.replaces = null;
 });
-const W = { orch: 340, task: 300, helper: 244 };
+const W = { orch: 340, task: 300, helper: 244, round: 420, main: 360 };
 const IND = 28, SPINE = 14, PORT = 284, HGAP = 26, VGAP = 78, SGAP = 12, SIDE = 44, ANCHOR = 26;
 const ORCH = Object.assign({ name: "Orchestrator", status: "done" }, F.orch || {}, { id: "ORCH", kind: "orch", collapsed: false });
 const nodes = [ORCH, ...tasks];
@@ -340,9 +371,9 @@ function control(label, on, fn) { const b = el("button", "rm-toggle"); b.type = 
 const cv = el("div", "cv"), world = el("div", "world"); cv.append(world); root.append(cv);
 const svgNS = "http://www.w3.org/2000/svg";
 const P = (tag, attrs) => { const e = document.createElementNS(svgNS, tag); Object.entries(attrs || {}).forEach(([k, v]) => e.setAttribute(k, v)); return e; };
-const edges = P("svg", { class: "edges" }), gPaths = P("g"), gDots = P("g");
+const edges = P("svg", { class: "edges" }), gPaths = P("g"), gDots = P("g"), gBands = P("g");
 const defs = P("defs"); defs.innerHTML = `<marker id="ahg" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 z" fill="var(--rm-muted)"/></marker>`;
-edges.append(defs, gPaths, gDots); world.append(edges);
+edges.append(defs, gBands, gPaths, gDots); world.append(edges);
 const tools = el("div", "cv-tools"); cv.append(tools);
 cv.append(el("div", "cv-hint", "Drag to pan · drag a card to move it · ⌘-scroll or pinch to zoom"));
 const peekBox = el("div", "peek"); peekBox.hidden = true; cv.append(peekBox);
@@ -370,6 +401,9 @@ function card(n) {
     else if (worked(n) < 1) foot.append(el("span", null, `${clock(n.launched)} · stopped at once`));
     else foot.append(el("span", "strong", dur(worked(n))), el("span", null, `· ${clock(n.launched)}–${clock(n.ended)}`));
     if (n.need && n.need.length) foot.append(el("span", "chip need", "needs " + n.need.join(" · ")));
+    if (n.built && n.built.length) { const b = el("span", "chip built", "built on " + n.built.map(x => x[0]).join(" · ")); b.title = n.built.map(([id, lines]) => `changed ${lines} lines ${id} wrote`).join("\n"); foot.append(b); }
+    if (n.later) foot.append(el("span", "chip later", `merged in round ${n.later}`));
+    if (n.elsewhere) foot.append(el("span", "chip later", `in ${n.elsewhere}`));
     if (n.place) foot.append(el("span", "chip place", `took ${n.place}'s place`));
     if (n.qa) foot.append(el("span", "chip note", `tested ${I.branch || "the branch"}`));
     if (n.paused) foot.append(el("span", "chip pause", "‖ " + n.paused));
@@ -397,8 +431,100 @@ function card(n) {
 }
 cards.forEach(card);
 
+// rounds: when a run goes on after its report (the owner's follow-ups), each round is a band of its
+// own under the one before, starting from the commit the round before ended on
+const ROUNDS = (F.rounds || []).map(r => Object.assign({}, r, { id: "R" + r.n, kind: "round", helpers: [], tasks: [] }));
+if (ROUNDS.length) root.classList.add("rounds");
+const BANDPAD = 26, MAINGAP = 44;
+let builtFocus = null;
+if (ROUNDS.length) {
+  const roundOf = t => ROUNDS.find(R => R.n === t.round) || ROUNDS[0];
+  tasks.forEach(t => { const R = roundOf(t); R.tasks.push(t); t.R = R; });
+  tasks.forEach(t => { t.preIn = t.pre.filter(id => byId[id].R === t.R); t.preOut = t.pre.filter(id => byId[id].R !== t.R); });
+  ROUNDS.forEach(R => {
+    const lvl = {}, lvR = (t, seen = new Set()) => { if (lvl[t.id] != null) return lvl[t.id]; if (seen.has(t.id)) return 1; seen.add(t.id);
+      return lvl[t.id] = t.replaces ? lvR(byId[t.replaces], seen) : t.preIn.length ? 1 + Math.max(...t.preIn.map(id => lvR(byId[id], seen))) : 1; };
+    R.rows = [[], []]; R.tasks.forEach(t => { if (!t.replaces) (R.rows[lvR(t)] = R.rows[lvR(t)] || []).push(t); });
+    for (let k = 1; k < R.rows.length; k++) R.rows[k] = R.rows[k] || [];
+    // tasks that others in the round waited for go first, in the order whose lines are shortest
+    const inRound = new Set(R.tasks.map(t => t.id)), linked = t => t.preIn.length || R.tasks.some(o => o.preIn.includes(t.id));
+    const block = R.rows[1].filter(linked), rest = R.rows[1].filter(t => !linked(t));
+    const cost = order => { [...order, ...rest].forEach((t, i) => t.bx = i * (W.task + HGAP)); for (let k = 2; k < R.rows.length; k++) placeRow(R.rows[k], 0);
+      return R.tasks.reduce((c, t) => c + t.preIn.reduce((s, id) => s + Math.abs(byId[id].bx + PORT - (t.bx + W.task / 2)), 0), 0); };
+    let best = block, bestCost = Infinity, tried = 0;
+    const permute = (arr, l) => { if (tried > 40000) return; if (l === arr.length) { tried++; const c = cost(arr); if (c < bestCost) { bestCost = c; best = [...arr]; } return; }
+      for (let i = l; i < arr.length; i++) { [arr[l], arr[i]] = [arr[i], arr[l]]; permute(arr, l + 1); [arr[l], arr[i]] = [arr[i], arr[l]]; } };
+    if (block.length > 1 && block.length <= 8) permute([...block], 0);
+    R.rows[1] = [...best, ...rest];
+    R.leaves = R.tasks.filter(t => t.status === "merged" && !t.elsewhere && !t.later && !R.tasks.some(o => o.preIn.includes(t.id) || o.replaces === t.id));
+    // the round's card: what started it, when, and the commit it started from
+    const c = el("div", "card round"); c.style.width = W.round + "px"; c._node = R;
+    const top = el("div", "r-top"); top.append(el("span", "r-num", "Round " + R.n), el("span", null, R.when || "")); c.append(top, el("div", "r-title", R.title || ""));
+    if (R.cause) c.append(el("p", "r-cause", R.cause));
+    const foot = el("div", "c-foot"); foot.append(el("span", "strong", `${R.tasks.length} task${R.tasks.length === 1 ? "" : "s"}`));
+    if (R.base) foot.append(el("span", null, `· from ${I.branch || "main"} ${R.base}`));
+    c.append(foot); R.card = c; world.append(c); cards.push(R);
+    // and the commit it ended on, which the next round starts from
+    if (R.head) { const M = { id: "M" + R.n, kind: "main", helpers: [], round: R }; R.main = M;
+      const m = el("div", "card mainpill"); m.style.width = W.main + "px"; m._node = M;
+      m.append(el("span", "mp-dot"), el("span", "mp-b", `${I.branch || "main"} ${R.head}`), el("span", "mp-m", R.headNote || ""));
+      M.card = m; world.append(m); cards.push(M); }
+  });
+}
+function layoutRounds(top) {
+  let y = top + VGAP;
+  ROUNDS.forEach(R => {
+    R.bx = -W.round / 2; R.by = y;
+    let bottom = y + R.h;
+    if (R.rows[1].length) {
+      const n = R.rows[1].length, wd = n * W.task + (n - 1) * HGAP;
+      R.rows[1].forEach((t, i) => { t.bx = -wd / 2 + i * (W.task + HGAP); t.by = bottom + VGAP; });
+      bottom = Math.max(...R.rows[1].map(stackUnder));
+      for (let k = 2; k < R.rows.length; k++) { if (!R.rows[k].length) continue; placeRow(R.rows[k], bottom + VGAP); bottom = Math.max(...R.rows[k].map(stackUnder)); }
+    }
+    if (R.main) { R.main.bx = -W.main / 2; R.main.by = bottom + BANDPAD + MAINGAP; y = R.main.by + R.main.h + MAINGAP + BANDPAD; } else y = bottom + VGAP + BANDPAD;
+  });
+  const x0 = Math.min(...tasks.map(t => t.bx), ...ROUNDS.map(R => R.bx)) - BANDPAD;
+  tasks.forEach(t => { t.bx -= x0; t.helpers.forEach(h => h.bx = t.bx + IND); });
+  ROUNDS.forEach(R => { R.bx -= x0; if (R.main) R.main.bx -= x0; });
+  ORCH.bx = -x0 - W.orch / 2;
+}
+function drawRoundEdges() {
+  const mid = n => n.ax + W[n.kind] / 2, foot = n => n.ay + n.h;
+  const ox = mid(ORCH), oy = foot(ORCH);
+  ROUNDS.forEach((R, i) => {
+    // the band behind the round's cards
+    const kids = R.tasks.filter(t => t.shown).flatMap(t => [t, ...t.helpers.filter(h => h.shown)]);
+    const x0 = Math.min(R.ax, ...kids.map(n => n.ax)) - BANDPAD, x1 = Math.max(R.ax + W.round, ...kids.map(n => n.ax + W[n.kind])) + BANDPAD;
+    const y0 = R.ay - BANDPAD, y1 = Math.max(foot(R), ...kids.map(foot)) + BANDPAD;
+    put("band:" + R.n, gBands, "rect", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, rx: 22 }, cls("band"));
+    // into the round: from the orchestrator, or from the commit the round before ended on
+    const from = i === 0 ? [ox, oy] : ROUNDS[i - 1].main ? [mid(ROUNDS[i - 1].main), foot(ROUNDS[i - 1].main)] : null;
+    if (from) put("into:" + R.n, gPaths, "path", { d: route(from[0], from[1], mid(R), R.ay, R.ay - 20) }, cls("edge spawn"));
+    if (from) put("dot:into:" + R.n, gDots, "circle", { cx: from[0], cy: from[1], r: 4.5 }, cls("dotn"));
+    // the round's first tasks, launched from its card
+    const rx = mid(R), ry = foot(R);
+    R.rows[1].forEach(t => { if (!t.replaces) put("spawn:" + t.id, gPaths, "path", { d: route(rx, ry, t.ax + W.task / 2, t.ay, t.ay - VGAP / 2) }, cls("edge spawn")); });
+    if (R.rows[1].length) put("dot:round:" + R.n, gDots, "circle", { cx: rx, cy: ry, r: 4.5 }, cls("dotn"));
+    // what each task waited for, in its round or an earlier one
+    R.tasks.forEach(t => {
+      const row = R.rows.findIndex(r => r.includes(t)), peers = (R.rows[row] || []).slice().sort((a, b) => a.ax - b.ax), j = peers.indexOf(t);
+      const busY = t.ay - VGAP / 2 + (j - (peers.length - 1) / 2) * 9 + (row === 1 ? 14 : 0);
+      t.pre.forEach(id => { const p = byId[id], kind = t.need.includes(id) ? "need" : "place";
+        put(`${kind}:${id}>${t.id}`, gPaths, "path", { d: route(p.ax + PORT, p.ay + p.h, t.ax + W.task / 2, t.ay, busY) }, link("edge " + kind, id, t.id)); });
+    });
+    // what merged in the round flows into the commit it ended on
+    if (R.main) R.leaves.forEach(t => put("merge:" + t.id, gPaths, "path", { d: route(t.ax + W.task / 2, foot(t), mid(R.main), R.main.ay, R.main.ay - 20) }, link("edge merge", t.id, R.main.id)));
+  });
+  tasks.forEach(t => { if (deps[t.id]) put("dot:" + t.id, gDots, "circle", { cx: t.ax + PORT, cy: t.ay + t.h, r: 4.5 }, cls("dotn need")); });
+  // what a task built on in earlier rounds: the tasks whose lines it changed most, for the card in focus
+  const f = builtFocus && byId[builtFocus];
+  if (f && f.shown) (f.built || []).forEach(([id], k) => { const p = byId[id]; if (!p || !p.shown) return;
+    put(`built:${id}>${f.id}`, gPaths, "path", { d: route(p.ax + 20, p.ay + p.h, f.ax + 20 + k * 7, f.ay, f.ay - 18 - k * 7) }, link("edge built", id, f.id)); });
+}
+
 // placing the cards: a base layout, plus whatever the reader dragged each card by
-const visible = n => n.kind === "orch" || (n.kind === "task" ? !ORCH.collapsed : n.parentNode.open && visible(n.parentNode));
+const visible = n => n.kind === "orch" || (["task", "round", "main"].includes(n.kind) ? !ORCH.collapsed : n.parentNode.open && visible(n.parentNode));
 let bounds = { x0: 0, y0: 0, x1: 1, y1: 1 };
 function stackUnder(t) {
   let bottom = t.by + t.h;
@@ -408,7 +534,7 @@ function stackUnder(t) {
 function placeRow(row, y) {
   // each card under the ports of what it waited for; a relaunch just right of the attempt it replaced
   const c = {};
-  row.forEach(t => { if (!t.replaces) c[t.id] = t.pre.length ? t.pre.reduce((s, id) => s + byId[id].bx + PORT, 0) / t.pre.length : 0; });
+  row.forEach(t => { const pp = t.preIn || t.pre; if (!t.replaces) c[t.id] = pp.length ? pp.reduce((s, id) => s + byId[id].bx + PORT, 0) / pp.length : 0; });
   row.forEach(t => { if (t.replaces) { const [r, k] = rootOf(t); c[t.id] = (c[r.id] || 0) + k * 0.001; } });
   const want = row.map(t => ({ t, c: c[t.id] })).sort((a, b) => a.c - b.c);
   let right = -Infinity;
@@ -454,7 +580,8 @@ function layout(instant) {
   ORCH.by = 0;
   let top = ORCH.h;
   if (ORCH.open) { let y = 0; ORCH.helpers.forEach(h => { h.by = y; y += h.h + SGAP; }); top = Math.max(top, y - SGAP); }
-  if (!ORCH.collapsed && rows[1].length) {
+  if (ROUNDS.length && !ORCH.collapsed) layoutRounds(top);
+  else if (!ORCH.collapsed && rows[1].length) {
     rows[1].forEach((t, i) => { t.bx = i * (W.task + HGAP); t.by = top + VGAP; });
     let bottom = Math.max(...rows[1].map(stackUnder));
     for (let k = 2; k < rows.length; k++) { if (!rows[k].length) continue; placeRow(rows[k], bottom + VGAP); bottom = Math.max(...rows[k].map(stackUnder)); }
@@ -526,7 +653,8 @@ const cls = c => e => e.setAttribute("class", c);
 const link = (c, from, to) => e => { e.setAttribute("class", c); e.dataset.from = from; e.dataset.to = to; };
 function drawEdges() {
   used = new Set();
-  if (!ORCH.collapsed && rows[1].length) {
+  if (ROUNDS.length && !ORCH.collapsed) drawRoundEdges();
+  else if (!ORCH.collapsed && rows[1].length) {
     const ox = ORCH.ax + W.orch / 2, oy = ORCH.ay + ORCH.h;
     rows[1].forEach(t => { if (!t.replaces) put("spawn:" + t.id, gPaths, "path", { d: route(ox, oy, t.ax + W.task / 2, t.ay, t.ay - VGAP / 2) }, cls("edge spawn")); });
     put("dot:orch", gDots, "circle", { cx: ox, cy: oy, r: 4.5 }, cls("dotn"));
@@ -673,11 +801,13 @@ function openGallery(n, i) {
 // hovering a task lights up what it waited for and what waited for it, in the tree and the timeline
 let timelineFocus = null;
 function focusOn(id) {
+  if (ROUNDS.length) { builtFocus = id && byId[id] ? id : null; drawEdges(); }
   root.classList.toggle("focus", !!id && !drag);
   root.querySelectorAll(".hl,.hl-self,.hl-kid").forEach(e => e.classList.remove("hl", "hl-self", "hl-kid"));
   if (timelineFocus) timelineFocus(null);
   if (!id || drag) return;
   const rel = new Set([id]);
+  (byId[id] && byId[id].built || []).forEach(([u]) => rel.add(u));
   tasks.forEach(t => [...t.pre, ...(t.replaces ? [t.replaces] : [])].forEach(p => { if (p === id) rel.add(t.id); if (t.id === id) rel.add(p); }));
   nodes.forEach(n => { n.card.classList.toggle("hl", rel.has(n.id) && n.id !== id); n.card.classList.toggle("hl-self", n.id === id);
     n.helpers.forEach(h => h.card.classList.toggle("hl-kid", n.id === id)); });
@@ -690,10 +820,72 @@ if (tasks.some(t => t.pre.length)) control("Dependencies", true, v => root.class
 const legend = el("div", "rm-legend"), key = (colour, style, text) => `<span><i style="border-color:${colour};border-top-style:${style}"></i>${text}</span>`;
 legend.innerHTML = key("var(--rm-line)", "solid", "launched") + (tasks.some(t => t.need.length) ? key("var(--rm-warn)", "solid", "needed its code") : "")
   + (tasks.some(t => t.place) ? key("var(--rm-muted)", "dotted", "took its place") : "") + (tasks.some(t => t.replaces) ? key("var(--rm-muted)", "dashed", "relaunched as") : "");
+if (ROUNDS.length) legend.innerHTML += key("var(--rm-ok)", "solid", "merged into main") + key("var(--rm-built)", "dashed", "built on (hover a card)");
 controls.append(legend);
 
 // the timeline: a lane per agent, its turns and the waits between them, the launches and
 // report-backs as lines from the orchestrator's lane
+// the run's quiet stretches (no task or orchestrator turn for BREAK_MIN minutes or more) are drawn
+// as a narrow break on both time axes, so the pause between two rounds doesn't take half the width
+const BREAK_MIN = 45, BREAK_W = 9, ISLAND = 15;
+const QUIET = (() => {
+  const iv = [ORCH, ...tasks].flatMap(n => (n.turns || []).length ? n.turns : n.kind === "task" && n.launched != null && n.ended != null ? [[n.launched, n.ended]] : [])
+    .map(([a, b]) => [a, Math.max(a, b)]).sort((p, q) => p[0] - q[0]);
+  const act = []; iv.forEach(([a, b]) => { const l = act[act.length - 1]; if (l && a <= l[1] + 1) l[1] = Math.max(l[1], b); else act.push([a, b]); });
+  const gaps = []; for (let i = 0; i + 1 < act.length; i++) if (act[i + 1][0] - act[i][1] >= BREAK_MIN) gaps.push({ a: act[i][1], b: act[i + 1][0], islands: [] });
+  const out = []; gaps.forEach(g => { const l = out[out.length - 1]; if (l && g.a - l.b <= ISLAND) { l.islands.push([l.b, g.a]); l.b = g.b; } else out.push(g); });
+  return out;
+})();
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], DAY0 = Math.max(0, DAYS.indexOf(String(F.date || "").slice(0, 3)));
+const dayOf = m => DAYS[(DAY0 + Math.floor(m / 1440)) % 7];
+function brokenScale(t0, t1, x0, x1) {
+  const br = QUIET.filter(g => g.b > t0 && g.a < t1).map(g => Object.assign({}, g, { a: Math.max(g.a, t0), b: Math.min(g.b, t1) }));
+  const active = Math.max(1, t1 - t0 - br.reduce((s, g) => s + g.b - g.a, 0));
+  const k = Math.max(0.0001, (x1 - x0 - br.length * BREAK_W) / active);
+  const X = t => { let x = x0, prev = t0; for (const g of br) { if (t <= g.a) break; if (t < g.b) return x + (g.a - prev) * k + BREAK_W * (t - g.a) / (g.b - g.a); x += (g.a - prev) * k + BREAK_W; prev = g.b; } return x + (t - prev) * k; };
+  const T = x => { let cx = x0, prev = t0; for (const g of br) { const xa = cx + (g.a - prev) * k; if (x <= xa) return prev + (x - cx) / k; if (x < xa + BREAK_W) return g.a + (x - xa) / BREAK_W * (g.b - g.a); cx = xa + BREAK_W; prev = g.b; } return prev + (x - cx) / k; };
+  const segs = []; let s0 = t0; br.forEach(g => { segs.push([s0, g.a]); s0 = g.b; }); segs.push([s0, t1]);
+  const step = [5, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1440].find(v => v * k >= 54) || 1440;
+  const ticks = [];
+  segs.forEach(([a, b], i) => { let first = true;
+    for (let m = Math.ceil(a / step) * step; m <= b; m += step) {
+      const x = X(m); if ((i > 0 && x - X(a) < 36) || (i < segs.length - 1 && X(b) - x < 36)) continue;
+      const newDay = first && Math.floor(m / 1440) > 0 && (i === 0 ? false : Math.floor(m / 1440) !== Math.floor(segs[i - 1][1] / 1440));
+      ticks.push({ m, x, text: (newDay ? dayOf(m) + " " : "") + clock(m) }); first = false; } });
+  return { X, T, br, segs, k, ticks };
+}
+function drawBreaks(svg, S, top, bottom, axisY) {
+  // a cut: a hairline-thin column with a double line through the chart, "//" on the axis and how long the pause was
+  const g = P("g", { class: "brk" }); svg.append(g);
+  S.br.forEach(b => {
+    const xa = S.X(b.a), xb = S.X(b.b), cx = (xa + xb) / 2;
+    g.append(P("rect", { class: "brk-col", x: xa, y: top - 1, width: Math.max(0, xb - xa), height: bottom - top + 2 }));
+    [-1.5, 1.5].forEach(d => g.append(P("line", { class: "brk-line", x1: cx + d, x2: cx + d, y1: top, y2: bottom })));
+    g.append(P("rect", { class: "brk-col", x: cx - 6, y: axisY - 6, width: 12, height: 12 }));
+    [-2.5, 2.5].forEach(d => g.append(P("path", { class: "brk-slash", d: `M${cx + d - 2.5} ${axisY + 5}L${cx + d + 2.5} ${axisY - 5}` })));
+    const t = P("text", { class: "brk-lab", x: cx, y: axisY + 18 }); t.textContent = dur(b.b - b.a); g.append(t);
+    const hit = P("rect", { class: "brk-hit", x: cx - 8, y: top, width: 16, height: axisY + 22 - top });
+    const tt = P("title"); tt.textContent = `${dur(b.b - b.a)} between rounds, drawn short: no task or orchestrator turn from ${dayOf(b.a)} ${clock(b.a)} to ${dayOf(b.b)} ${clock(b.b)}`
+      + (b.islands.length ? ` (but for ${b.islands.length === 1 ? "a short turn" : b.islands.length + " short turns"} at ${b.islands.map(([p]) => clock(p)).join(", ")})` : "");
+    hit.append(tt); g.append(hit);
+  });
+}
+function roundLabels(svg, S, y) {
+  // each round's name under its stretch of the axis, shortened to what fits: "Round 2 · Follow-up", "Round 2", "R2"
+  (F.rounds || []).forEach(r => { const i = S.segs.findIndex(([a, b]) => r.start <= b); if (i < 0) return; const [a, b] = S.segs[i];
+    const room = S.X(b) - S.X(a) - 12, t = P("text", { class: "tl-round", x: (S.X(a) + S.X(b)) / 2, y }); svg.append(t);
+    const full = `Round ${r.n} · ${r.title}`, fits = [full, `Round ${r.n}`, `R${r.n}`].find(v => { t.textContent = v; return t.getComputedTextLength() <= room; });
+    if (!fits) { t.remove(); return; }
+    t.textContent = fits; if (fits !== full) { const tt = P("title"); tt.textContent = full; t.append(tt); } });
+}
+function drawAsleep(svg, S, top, bottom) {
+  // where the Mac slept (pmset's log, by run-watch): shaded, since tasks crawled through dark wakes then
+  (F.asleep || []).forEach(z => { const xa = S.X(Math.max(z.start, S.segs[0][0])), xb = S.X(Math.min(z.end, S.segs[S.segs.length - 1][1]));
+    if (xb - xa < 1) return;
+    const r = P("rect", { class: "asleep", x: xa, y: top, width: xb - xa, height: bottom - top }), tt = P("title");
+    tt.textContent = `Mac asleep ${clock(z.start)}–${clock(z.end)}${z.reason ? " (" + z.reason + ")" : ""}`; r.append(tt); svg.append(r);
+    if (xb - xa > 70) { const t = P("text", { class: "asleep-lab", x: xa + 5, y: top + 12 }); t.textContent = "Mac asleep"; svg.append(t); } });
+}
 let timeAxis = null;  // the timeline's span in minutes: the usage panel under it shares it
 (() => {
   const orchTimed = ORCH.start != null && ORCH.end != null;
@@ -758,13 +950,14 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     + (orchTimed ? sw("repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-muted) 50%, transparent) 0 1.5px, color-mix(in srgb, var(--rm-muted) 10%, var(--rm-card)) 1.5px 4px); outline: 1px solid color-mix(in srgb, var(--rm-muted) 35%, transparent); outline-offset: -1px", "Waiting on tasks") : "")
     + (orchTimed ? `<span>${ICON.hand}Handoff</span>` : "")
     + ((F.pauses || []).length ? sw("repeating-linear-gradient(135deg, color-mix(in srgb, var(--rm-bad) 45%, transparent) 0 1.5px, color-mix(in srgb, var(--rm-bad) 8%, transparent) 1.5px 4px)", "Paused") : "")
+    + ((F.asleep || []).length ? sw("color-mix(in srgb, var(--rm-info) 18%, var(--rm-card))", "Mac asleep") : "")
     + (tasks.some(t => t.replaces) ? `<span style="color:var(--rm-muted)">${ICON.retry}Relaunched</span>` : "")
     + (anyTask(t => ["blocked", "failed", "stopped", "replaced"].includes(t.status)) ? `<span>${ICON.x}Stopped</span>` : "");
   foot.append(legend); T.append(foot);
   if (F.turns_missing) T.append(el("div", "tl-note", "Some tasks have no per-turn times: their lanes run from launch to merge in one fainter bar."));
 
   // drawing, at the plot's width
-  const BAR = 14, AX = 28, PADL = 14, PADR = 14, R = 6;
+  const BAR = 14, AX = 48, PADL = 14, PADR = 14, R = 6;
   const ns = (tag, attrs, parent) => { const e = P(tag, attrs); if (parent) parent.append(e); return e; };
   let X = t => 0, LH = 44, conns = [], tips = [];
   const what = { work: "Working", idle: "Between turns", wait: "Waiting on tasks", untimed: "Launch to merge" };
@@ -792,19 +985,19 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     const w = plot.clientWidth; if (w < 60) return;
     LH = parseFloat(getComputedStyle(T).getPropertyValue("--tl-lane")) || 44;
     const H = lanes.length * LH, base = H + 4;
-    X = t => PADL + (t - t0) / (t1 - t0) * (w - PADL - PADR);
+    const TSC = brokenScale(t0, t1, PADL, w - PADR); X = TSC.X;
     svg.setAttribute("width", w); svg.setAttribute("height", H + AX); svg.setAttribute("viewBox", `0 0 ${w} ${H + AX}`);
     svg.replaceChildren(); tips = []; conns = [];
     const defs = ns("defs", {}, svg);
     defs.innerHTML = `<pattern id="rm-tl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tl-hatch-bg" width="5" height="5"/><line class="tl-hatch-ln" x1="0" y1="0" x2="0" y2="5"/></pattern>`
       + `<pattern id="rm-tl-hatch-bad" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect class="tl-bad-bg" width="5" height="5"/><line class="tl-bad-ln" x1="0" y1="0" x2="0" y2="5"/></pattern>`;
     // the clock: gridlines, the baseline and its times
-    const step = ticksFor(w - PADL - PADR), back = ns("g", {}, svg);
-    for (let m = Math.ceil(t0 / step) * step; m <= t1; m += step) {
-      const x = X(m); ns("line", { class: "tl-grid", x1: x, x2: x, y1: 0, y2: base }, back);
-      if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: base + 17 }, back).textContent = clock(m);
-    }
-    ns("line", { class: "tl-base", x1: PADL - 4, x2: w - PADR + 4, y1: base, y2: base }, back);
+    const back = ns("g", {}, svg);
+    TSC.ticks.forEach(({ x, text }) => { ns("line", { class: "tl-grid", x1: x, x2: x, y1: 0, y2: base }, back);
+      if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: base + 17 }, back).textContent = text; });
+    TSC.segs.forEach(([a, b], i) => ns("line", { class: "tl-base", x1: i ? X(a) + 1 : PADL - 4, x2: i < TSC.segs.length - 1 ? X(b) - 1 : w - PADR + 4, y1: base, y2: base }, back));
+    roundLabels(back, TSC, base + 38);
+    drawAsleep(back, TSC, 0, base);
     // the lanes; a quota pause is hatched only over the lanes it stopped, since others may have worked on
     const gLanes = ns("g");
     const gConn = ns("g"), gDots = ns("g");
@@ -875,6 +1068,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       const dot = addTip(ns("circle", { class: "tl-dot", cx: c.x, cy: yb, r: c.r }, gDots), c.tip); dot.style.setProperty("--c", c.l.colour); dot.dataset.lane = c.l.id;
     });
     svg.append(gConn, gLanes, gDots);
+    drawBreaks(svg, TSC, 0, base - 1, base);
   }
 
   // the outcome, the span and how much ran at once
@@ -991,7 +1185,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   if (mac && (mac.cpu || mac.gpu)) bands.push({ id: "busy", sec: "This Mac", h: 80 });
   if (mac && mac.mem) bands.push({ id: "mem", h: 62, sec: bands.some(b => b.id === "busy") ? "" : "This Mac" });
   if (mac && mac.disk) bands.push({ id: "disk", h: 56, sec: bands.some(b => b.id === "busy" || b.id === "mem") ? "" : "This Mac" });
-  const SEC = 20, GAP = 9, AX = 28;
+  const SEC = 20, GAP = 9, AX = 48;
   let y = 0;
   bands.forEach((b, i) => { if (b.sec) y += SEC; b.y = y; y += b.h + GAP; });
   const H = y - GAP;
@@ -1058,7 +1252,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   // drawing, at the plot's width
   const PADL = 14, PADR = 14, TOP = 6, BOT = 4;
   const ns = (tag, attrs, parent) => { const e = P(tag, attrs); if (parent) parent.append(e); return e; };
-  let X = t => t, hover = [], gHover = null, cross = null, lastX = null;
+  let USC = null, X = t => t, hover = [], gHover = null, cross = null, lastX = null;
   const Yof = (b, lo, hi) => v => b.y + b.h - BOT - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (b.h - TOP - BOT);
   const f1 = v => v.toFixed(1);
   const curve = pts => {  // a smooth line that never overshoots its points (monotone cubic)
@@ -1080,7 +1274,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const tickStep = w => { const per = (t1 - t0) / Math.max(1, w / 74); return [5, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1440].find(s => s >= per) || 1440; };
   // a Mac series as runs of (x, y) points, one per minute (several minutes to a point when the plot is narrow)
   function runs(arr, y, w) {
-    const per = (w - PADL - PADR) / (t1 - t0), k = per >= 0.7 ? 1 : Math.ceil(0.9 / per), out = [];
+    const per = (USC ? USC.k : (w - PADL - PADR) / (t1 - t0)), k = per >= 0.7 ? 1 : Math.ceil(0.9 / per), out = [];
     let cur = [];
     for (let i = 0; i < arr.length; i += k) {
       const grp = arr.slice(i, i + k).filter(num);
@@ -1091,7 +1285,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     return out;
   }
   const peakRuns = (arr, y, w, take) => {
-    const per = (w - PADL - PADR) / (t1 - t0), k = per >= 0.7 ? 1 : Math.ceil(0.9 / per), out = []; let cur = [];
+    const per = (USC ? USC.k : (w - PADL - PADR) / (t1 - t0)), k = per >= 0.7 ? 1 : Math.ceil(0.9 / per), out = []; let cur = [];
     for (let i = 0; i < arr.length; i += k) {
       const grp = arr.slice(i, i + k).filter(num);
       if (!grp.length) { if (cur.length) out.push(cur); cur = []; continue; }
@@ -1111,7 +1305,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 
   function draw() {
     const w = plot.clientWidth; if (w < 60) return;
-    X = t => PADL + (t - t0) / (t1 - t0) * (w - PADL - PADR);
+    USC = brokenScale(t0, t1, PADL, w - PADR); X = USC.X;
     svg.setAttribute("width", w); svg.setAttribute("height", H + AX); svg.setAttribute("viewBox", `0 0 ${w} ${H + AX}`);
     svg.replaceChildren(); hover = [];
     const defs = ns("defs", {}, svg);
@@ -1122,13 +1316,14 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       return `url(#${id})`;
     };
     const back = ns("g", {}, svg);
-    bands.forEach(b => ns("rect", { class: "us-band", x: PADL - 4, y: b.y, width: w - PADL - PADR + 8, height: b.h, rx: 7 }, back));
-    const step = tickStep(w - PADL - PADR);
-    for (let m = Math.ceil(t0 / step) * step; m <= t1; m += step) {
-      const x = X(m); ns("line", { class: "tl-grid", x1: x, x2: x, y1: 0, y2: H }, back);
-      if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: H + 17 }, back).textContent = clock(m);
-    }
-    ns("line", { class: "tl-base", x1: PADL - 4, x2: w - PADR + 4, y1: H + 4, y2: H + 4 }, back);
+    bands.forEach(b => USC.segs.forEach(([a, c], i) => { const xa = i ? X(a) + 1 : PADL - 4, xc = i < USC.segs.length - 1 ? X(c) - 1 : w - PADR + 4;
+      ns("rect", { class: "us-band", x: xa, y: b.y, width: Math.max(1, xc - xa), height: b.h, rx: 7 }, back); }));
+    USC.ticks.forEach(({ x, text }) => { ns("line", { class: "tl-grid", x1: x, x2: x, y1: 0, y2: H }, back);
+      if (x > 14 && x < w - 14) ns("text", { class: "tl-tick", x, y: H + 17 }, back).textContent = text; });
+    roundLabels(back, USC, H + 38);
+    drawAsleep(back, USC, 0, H);
+    USC.segs.forEach(([a, c], i) => ns("line", { class: "tl-base", x1: i ? X(a) + 1 : PADL - 4, x2: i < USC.segs.length - 1 ? X(c) - 1 : w - PADR + 4, y1: H + 4, y2: H + 4 }, back));
+    drawBreaks(svg, USC, 0, H + 3, H + 4);  // under the lines, so the jump across a pause shows
     const lines = ns("g", { "clip-path": "url(#rm-us-clip)" }, svg), over = ns("g", {}, svg);
     const yt = (x, yy, text, cls) => ns("text", { class: "us-yt" + (cls ? " " + cls : ""), x, y: yy }, over).textContent = text;
 
@@ -1144,6 +1339,8 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
             if (pts.length < 2) { ns("circle", { class: "us-dot1", cx: pts[0][0], cy: pts[0][1], r: si ? 2 : 2.6 }, g); return; }
             ns("path", { class: "us-line" + (si ? " more" : ""), d: curve(pts) }, g);
           });
+          slot.segs.forEach((seg, i) => { const nx = slot.segs[i + 1]; if (!nx) return; const a = seg[seg.length - 1], c = nx[0];   // across a break: where it was, where it is after
+            if (USC.br.some(q => q.a >= a[0] - 2 && q.b <= c[0] + 2)) ns("path", { class: "us-jump", d: `M${f1(X(a[0]))} ${f1(Y(a[1]))}L${f1(X(c[0]))} ${f1(Y(c[1]))}` }, g); });
           slot.resets.forEach(r => ns("line", { class: "us-reset", x1: X(r), x2: X(r), y1: b.y + 2, y2: b.y + b.h - 2 }, g));
         });
         hover.push({ kind: "sub", p, y: Y, colour, g });
@@ -1280,7 +1477,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     requestAnimationFrame(() => tip.classList.add("on"));
   }
   function hide() { lastX = null; if (gHover) gHover.style.display = "none"; tip.classList.remove("on"); tip.hidden = true; }
-  const minuteAt = e => { const r = plot.getBoundingClientRect(); return t0 + (e.clientX - r.left - PADL) / (plot.clientWidth - PADL - PADR) * (t1 - t0); };
+  const minuteAt = e => { const r = plot.getBoundingClientRect(); return USC ? USC.T(e.clientX - r.left) : t0 + (e.clientX - r.left - PADL) / (plot.clientWidth - PADL - PADR) * (t1 - t0); };
   plot.addEventListener("pointermove", e => { const m = minuteAt(e); if (m < t0 - 1 || m > t1 + 1) hide(); else show(m); });
   plot.addEventListener("pointerdown", e => { if (e.pointerType !== "mouse") show(minuteAt(e)); });
   plot.addEventListener("pointerleave", hide);
@@ -1303,7 +1500,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 chooseOrder();
 rows = rows.map(r => withRelaunches(r || []));
 if (/open/.test(location.hash)) nodes.forEach(n => { if (n.helpers.length) toggleKids(n, true); });
-layout(true); /fit/.test(location.hash) ? fit() : home();
+layout(true); ROUNDS.length || /fit/.test(location.hash) ? fit() : home();
 const at = /at=([A-Za-z0-9_-]+)/.exec(location.hash); if (at && byId[at[1]]) zoomTo(byId[at[1]], 0.72);
 let lastW = cv.clientWidth;
 new ResizeObserver(() => { if (Math.abs(cv.clientWidth - lastW) > 2) { lastW = cv.clientWidth; layout(true); home(); } }).observe(cv);

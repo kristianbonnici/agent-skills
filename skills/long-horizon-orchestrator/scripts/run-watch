@@ -48,6 +48,12 @@ Each line starts with a word saying what it is:
                    in 20 seconds at most (while disk only stays low, every 10 minutes at most); swap
                    above 20 GB
   dialog           a password dialog (SecurityAgent) is up
+  vm <pid>         (every wake) a virtual machine process started since the run began (Virtualization.framework's
+                   VirtualMachine service, as Lume, Tart, UTM and cua sb use, QEMU, vfkit, krunkit, Docker's), with
+                   its memory: the finish stops each one the run started
+  slept <from> <to> (<reason>)   (once each) where the Mac slept since the run began, from pmset's log: a
+                   sleep something asked for passes caffeinate -i, and tasks then run only in dark wakes;
+                   also added to times.log. "slept <from> -" says this wake is itself a dark wake
   keep-awake / sampler   the recorded keep-awake or usage sampler isn't running
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
                    worktree, of each merge of its branch into the integration branch, and of each
@@ -82,7 +88,7 @@ run (CPU samples for the hog check, the disk's recent readings and folder sizes,
 printed), and adds the time lines to <run directory>/times.log. It exits 0 (2 for a
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
-RUN_WATCH_SWAP_GB, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
+RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
 inputs, and CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code.
 """
 
@@ -119,6 +125,8 @@ CODEX_SHELL = {"shell", "shell_command", "exec_command", "exec", "local_shell", 
 AGENT_CLIS = {"codex", "claude", "opencode", "gemini", "agy", "copilot", "cursor-agent", "ccs"}
 REPORT = "[long-horizon-orchestrator]"
 DIALOG = "SecurityAgent"
+# virtual machine processes: Virtualization.framework (Lume, Tart, UTM, cua sb), QEMU, vfkit and krunkit (Podman)
+VM_EXE = re.compile(r"(Virtualization\.VirtualMachine|^qemu-system|^vfkit$|^krunkit$|com\.docker\.virtualization)")
 
 
 def now() -> float:
@@ -922,6 +930,53 @@ def main(argv: list[str]) -> int:
     elif os.path.exists(machine) and t_now - os.path.getmtime(machine) > 180:
         lines.append(f"sampler: the usage sampler's last sample is {(t_now - os.path.getmtime(machine)) / 60:.0f} min old: "
                      "start it again on the same folder and record its pid")
+
+    # Virtual machines started since the run began (L-FPUP): they run under a daemon, so their command
+    # lines name neither the run nor a worktree, and nothing else would see one left running.
+    vms = []
+    for pid, p in sorted(procs.items()):
+        if p["start"] < started or not VM_EXE.search(exe(p)):
+            continue
+        rss = run([os.environ.get("RUN_WATCH_PS", "ps"), "-o", "rss=", "-p", str(pid)]).strip()
+        gb = f"{int(rss) / 1024 ** 2:.1f} GB" if rss.isdigit() else "memory unknown"
+        vms.append(f"vm {pid} {short(exe(p), 50)}: {gb}, started {hm(p['start'])}, since the run began: note which task uses it, "
+                   "and stop it at the finish once none does (lume stop, cua sb stop, docker stop, by its name)")
+    lines.extend(vms)
+
+    # Where the Mac slept (L-KXSC): caffeinate -i stops only idle sleep, so a sleep something asked for
+    # (an automation, the Sleep menu) passes it, and tasks then run only in dark wakes of a few minutes.
+    slept_told = set(state.get("slept", []))
+    pmset = os.environ.get("RUN_WATCH_PMSET")
+    log = run([pmset, "-g", "log"] if pmset else ["pmset", "-g", "log"], timeout=20) if pmset or sys.platform == "darwin" else ""
+    spans, open_span = [], None
+    for m in re.finditer(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}) (Sleep|Wake|DarkWake)\s*\t(.*)$", log, re.M):
+        try:
+            t = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S %z").timestamp()
+        except ValueError:
+            continue
+        if m.group(2) == "Sleep" and open_span is None:
+            why = re.search(r"due to '([^']*)'", m.group(3))
+            open_span = (t, why.group(1) if why else "")
+        elif m.group(2) == "Wake" and open_span is not None:
+            spans.append((open_span[0], t, open_span[1]))
+            open_span = None
+    slept_lines = []
+    for a, b, why in spans:
+        if b > started and b - a >= 60 and str(round(a)) not in slept_told:
+            slept_told.add(str(round(a)))
+            slept_lines.append(f"slept {iso(max(a, started))} {iso(b)} ({why or 'reason not logged'}): {(b - max(a, started)) / 60:.0f} min; tasks ran "
+                               "only in dark wakes then: tell the tasks whose timings it skews, and put it in the facts' \"asleep\"")
+    lines.extend(slept_lines)
+    if slept_lines:   # kept with the times, for the report's facts
+        try:
+            with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
+                fh.write("".join(line.split(":", 1)[0] + "\n" for line in slept_lines))
+        except OSError:
+            pass
+    if open_span is not None and open_span[0] > started - 86400:
+        lines.append(f"slept {iso(max(open_span[0], started))} - ({open_span[1] or 'reason not logged'}): the Mac is asleep and this is a "
+                     "dark wake; nothing runs for long until it wakes (a sleep something asked for passes caffeinate -i)")
+    state["slept"] = sorted(slept_told)[-50:]
 
     # Exact times for the ledger: commits, merges and report-backs not printed before.
     told = state.get("told", {})

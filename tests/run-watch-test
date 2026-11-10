@@ -387,6 +387,45 @@ try:
     assert bad.returncode == 2 and "Usage" in bad.stderr, bad.stderr
     bad = subprocess.run([sys.executable, "-I", script, os.path.join(work, "missing")], capture_output=True, text=True)
     assert bad.returncode == 2, bad.stderr
+
+    # A virtual machine started since the run began is named on every wake; a sleep from pmset's log once,
+    # into times.log too; a sleep with no full wake after it says this wake is a dark wake.
+    vm_run = os.path.join(work, "vm-run")
+    os.makedirs(vm_run)
+    json.dump({"started": stamp(time.time() - 3 * 3600), "tasks": {}}, open(os.path.join(vm_run, "watch.json"), "w"))
+    # a stand-in VM: a program named like QEMU (a copy of /bin/sleep is stopped by macOS, so it is built)
+    qemu = os.path.join(bin_dir, "qemu-system-aarch64")
+    has_cc = shutil.which("cc") is not None
+    if has_cc:
+        open(qemu + ".c", "w").write("#include <unistd.h>\nint main(void) { sleep(60); return 0; }\n")
+        has_cc = subprocess.run(["cc", "-o", qemu, qemu + ".c"], capture_output=True).returncode == 0
+    if has_cc:
+        spawn([qemu], work)
+        time.sleep(0.5)
+    def pm(t):
+        return datetime.fromtimestamp(t).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    t_sleep = time.time() - 2 * 3600
+    pmset = os.path.join(bin_dir, "fake-pmset")
+    log_lines = [f"{pm(t_sleep)} Sleep               \tEntering Sleep state due to 'Software Sleep pid=419':TCPKeepAlive=active",
+                 f"{pm(t_sleep + 900)} DarkWake            \tDarkWake from Deep Idle [CDNP] : due to rtc",
+                 f"{pm(t_sleep + 960)} Sleep               \tEntering Sleep state due to 'Maintenance Sleep'",
+                 f"{pm(t_sleep + 900)} Wake Requests       \t[process=powerd request=UserWake]",
+                 f"{pm(t_sleep + 5400)} Wake                \tWake from Normal Sleep [CDNVA] : due to UserActivity"]
+    open(os.path.join(work, "pmset.log"), "w").write("\n".join(log_lines) + "\n")
+    open(pmset, "w").write(f"#!/bin/sh\ncat {os.path.join(work, 'pmset.log')}\n")
+    os.chmod(pmset, 0o755)
+    vm_env = dict(env, RUN_WATCH_PMSET=pmset)
+    first = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
+    assert not has_cc or any(l.startswith("vm ") and "qemu-system-aarc" in l and "GB" in l for l in first), first
+    slept = [l for l in first if l.startswith("slept ")]
+    assert len(slept) == 1 and "(Software Sleep pid=419): 90 min" in slept[0], first
+    assert open(os.path.join(vm_run, "times.log")).read().startswith("slept "), "times.log"
+    again = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
+    assert (not has_cc or any(l.startswith("vm ") for l in again)) and not any(l.startswith("slept ") for l in again), again
+    with open(os.path.join(work, "pmset.log"), "a") as f:
+        f.write(f"{pm(time.time() - 600)} Sleep               \tEntering Sleep state due to 'Clamshell Sleep'\n")
+    dark = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
+    assert any(l.startswith("slept ") and " - (Clamshell Sleep)" in l and "dark wake" in l for l in dark), dark
 finally:
     for p in started:
         try:

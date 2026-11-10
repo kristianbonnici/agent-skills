@@ -38,8 +38,13 @@ recordings, renders and screenshots that aren't in pictures/, archives, binaries
 
 A merged task's scratch (the second form): removes <task folder>/scratch, where the briefs put
 what can be made again. The task folder must be a folder (not a link) in a run folder under the
-root, and not report/, stopped/ or evidence/. A task folder holding KEEP, and a git worktree
-inside scratch/, are left alone. It doesn't know whether the task merged: the orchestrator
+root, and not report/, stopped/ or evidence/. A task folder holding KEEP is left alone, and so is
+a scratch/ holding KEEP, an evidence/ folder, a git worktree with uncommitted changes, a clone with
+commits on no remote and not in the run's integration branch (watch.json's repo and
+integration_branch), or a clone other worktrees were made from. A clean worktree in it is removed
+first with git worktree remove (its commits stay on their branch); SwiftPM's dependency clones
+(a build folder's checkouts/ and repositories/), caches (CACHEDIR.TAG) and submodules aren't looked
+into. It doesn't know whether the task merged: the orchestrator
 calls it only for a merged task whose processes have stopped. Use it only once the task and everything it started have stopped.
 
 A task's harness temp folders (the third form): Claude Code keeps a temporary folder for each
@@ -77,6 +82,7 @@ import math
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 
@@ -413,10 +419,15 @@ def prune_scratch(root, task):
     if os.path.islink(scratch) or not os.path.isdir(scratch):
         print(f"{os.path.basename(real)}: no scratch folder, nothing to remove")
         return 0
-    if is_worktree(scratch) or holds_protected(scratch):
-        print(f"{os.path.basename(real)}: scratch holds a git worktree, a clone one was made from, KEEP or "
-              f"evidence/; left alone", file=sys.stderr)
+    problems, worktrees = scratch_check(scratch, run)
+    if problems:
+        print(f"{os.path.basename(real)}: scratch left alone: " + "; ".join(problems), file=sys.stderr)
         return 1
+    for wt, common in worktrees:   # clean worktrees hold no work: their commits stay on their branches
+        done = subprocess.run(["git", "--git-dir", common, "worktree", "remove", "--force", wt], capture_output=True, text=True)
+        if done.returncode != 0 and os.path.lexists(wt):
+            print(f"{os.path.basename(real)}: couldn't remove the worktree {wt}: {done.stderr.strip()}; scratch left alone", file=sys.stderr)
+            return 1
     size = tree_size(scratch)
     error = delete(root, scratch)
     if error:
@@ -424,6 +435,74 @@ def prune_scratch(root, task):
         return 1
     print(f"{os.path.basename(real)}: removed scratch, {human(size)}")
     return 0
+
+
+def git_out(args, cwd):
+    done = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return done.stdout if done.returncode == 0 else None
+
+
+def integration_of(run):
+    """The run's integration checkout and branch, from its watch.json, or (None, None)."""
+    try:
+        with open(os.path.join(run, "watch.json"), encoding="utf-8") as f:
+            watch = json.load(f)
+        return watch.get("repo"), watch.get("integration_branch")
+    except (OSError, ValueError, AttributeError):
+        return None, None
+
+
+def scratch_check(scratch, run):
+    """What stops a scratch folder's removal, and the git worktrees in it to remove first.
+
+    Refused: KEEP, an evidence/ folder, a git worktree with uncommitted changes, a clone with commits on no
+    remote and not in the run's integration branch, or a clone other worktrees were made from. Not looked
+    into: a SwiftPM build folder's checkouts/ and repositories/ (dependency clones, a reviewer's
+    --scratch-path build), a cache (CACHEDIR.TAG, as uv's), and a submodule inside a clone."""
+    problems, worktrees = [], []
+    repo, branch = integration_of(run)
+    if os.path.lexists(os.path.join(scratch, ".git")) and not os.path.isdir(os.path.join(scratch, ".git")):
+        return ["scratch is itself a git worktree"], []
+    for top, dirs, files in os.walk(scratch, followlinks=False):
+        rel = os.path.relpath(top, scratch)
+        if "KEEP" in files or "KEEP" in dirs:
+            problems.append(f"{rel}/KEEP")
+        if EVIDENCE in dirs:
+            problems.append(f"{os.path.join(rel, EVIDENCE)}/")
+        if "CACHEDIR.TAG" in files:
+            dirs[:] = []
+            continue
+        if top != scratch and ".git" in files:   # a linked worktree, or a submodule of a clone
+            common = git_out(["rev-parse", "--path-format=absolute", "--git-common-dir"], top)
+            gitfile = open(os.path.join(top, ".git"), errors="replace").read()
+            if "/modules/" in gitfile:
+                dirs[:] = []
+                continue
+            if common is None:
+                problems.append(f"{rel} is a git worktree whose repository can't be read")
+                dirs[:] = []
+                continue
+            if git_out(["status", "--porcelain"], top):
+                problems.append(f"the worktree {rel} has uncommitted changes")
+            else:
+                worktrees.append((top, common.strip()))
+            dirs[:] = []
+            continue
+        if top != scratch and ".git" in dirs:     # a clone
+            if has_linked_worktrees(top):
+                problems.append(f"{rel} is a clone other worktrees were made from")
+            else:
+                own = (git_out(["rev-list", "--all", "--not", "--remotes"], top) or "").split()
+                if own and repo and branch:
+                    own = [c for c in own if subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", c, branch],
+                                                            capture_output=True).returncode != 0]
+                if own:
+                    problems.append(f"{rel} is a clone with {len(own)} commit(s) on no remote and not in the integration branch")
+            dirs[:] = []
+            continue
+        if "workspace-state.json" in files or os.path.basename(top) == ".build":   # SwiftPM's dependency clones
+            dirs[:] = [d for d in dirs if d not in ("checkouts", "repositories")]
+    return problems, worktrees
 
 
 CLAUDE_NAME_LIMIT = 200   # Claude Code cuts a longer folder name there and adds a hash

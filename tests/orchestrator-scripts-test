@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs and run-watch.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch and heartbeat. RUN_MAP_CHROME names the browser for the page checks.
 set -eu
 # Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
 # under test, which keep caps already set: start without them.
@@ -1058,6 +1058,82 @@ named = claude("charts-fable-named")
 assert [s["label"] for s in named["more"]] == ["Fable weekly"] and [v for seg in named["more"][0]["segs"] for _, v in seg] == [96.0] * 3, named
 assert "Fable weekly 96% → 96% left" in open(os.path.join(work, "charts-fable-named", "summary.txt")).read()
 EOF
+# An unstarted window (Antigravity's, never used in the run) reports its reset a week from each reading,
+# so its reset time moves on with the clock: one flat line with no reset marks, not a dot per reading.
+mkdir -p "$work/usage-idle"
+python3 -I - "$scripts" "$work/usage-idle" "$work/facts-idle.json" <<'EOF'
+import json, os, runpy, sys
+from datetime import datetime, timedelta, timezone
+scripts, folder, facts_path = sys.argv[1:4]
+zone = timezone(timedelta(hours=2))
+rows = []
+for hour in range(23, 29):   # 23:00 to 04:00 the next day
+    at = datetime(2026, 11, 6, 0, 0, tzinfo=zone) + timedelta(hours=hour)
+    windows = {"gemini_models_weekly": {"used": 0.0, "resets_at": (at + timedelta(days=7)).isoformat()},
+               "gemini_models_five_hour": {"used": 0.0, "resets_at": (at + timedelta(hours=5)).isoformat()}}
+    rows.append(json.dumps({"t": at.isoformat(), "source": "live", "providers": {
+        "antigravity": {"plan": "pro", "observed_at": at.isoformat(), "windows": windows}}}))
+open(os.path.join(folder, "providers.jsonl"), "w").write("\n".join(rows) + "\n")
+facts = {"title": "Idle", "date": "Fri 6 Nov", "orchestrator": "Claude Code (T3) · Opus 5.5 (High)", "integration": {"branch": "main", "head": "abc"},
+         "run": {"start": "2026-11-06 23:00", "end": "2026-11-07 04:00", "level": "high", "worked_minutes": 5, "wakes": 2}, "usage": {"folder": folder},
+         "tasks": [{"id": "A", "name": "Research", "level": "high", "agent": "Claude Code · Opus 5.5", "status": "merged", "needs": [], "first_wave": True,
+                    "helpers": [{"label": "Antigravity · Gemini 3.8 Flash (High)", "did": "research ×1"}],
+                    "launched": "2026-11-06 23:05", "ended": "2026-11-07 03:55", "worked_minutes": 120}]}
+json.dump(facts, open(facts_path, "w"))
+EOF
+"$scripts/run-charts" "$work/facts-idle.json" "$work/charts-idle" >/dev/null 2>&1
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+page = open(os.path.join(sys.argv[1], "charts-idle", "run-map.html")).read()
+providers = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))["usage"]["providers"]
+idle = next(p for p in providers if p["id"] == "antigravity")["long"]
+assert len(idle["segs"]) == 1 and len(idle["segs"][0]) == 6 and idle["resets"] == [], idle
+EOF
+# A run in rounds: each round's card, the commit it ended on, a later round's task built on an earlier
+# one's lines (git blame through --repo), and a stretch the Mac slept, whose dark-wake samples are left out.
+rounds_repo="$work/rounds-repo"
+git init -q "$rounds_repo"
+python3 -I - "$rounds_repo" "$work/usage-rounds" "$work/facts-rounds.json" <<'EOF'
+import json, os, subprocess, sys
+repo, folder, facts_path = sys.argv[1:4]
+def commit(text, message):
+    open(os.path.join(repo, "notes.txt"), "w").write(text)
+    subprocess.run(["git", "-C", repo, "add", "notes.txt"], check=True)
+    subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", message], check=True)
+    return subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+base = commit("start\n", "base")
+a = commit("".join(f"line {i} by A\n" for i in range(30)), "A")
+b = commit("".join(f"line {i} by B\n" for i in range(20)) + "".join(f"line {i} by A\n" for i in range(20, 30)), "B")
+os.makedirs(folder)
+rows = [json.dumps({"t": f"2026-11-07T{h}:00+02:00", "cpu": cpu, "mem_used_gb": 20, "mem_total_gb": 64, "disk_free_gb": 100})
+        for h, cpu in (("01:00", 30), ("01:30", 40), ("02:00", 99), ("02:30", 99), ("05:00", 20), ("05:30", 25))]
+open(os.path.join(folder, "machine.jsonl"), "w").write("\n".join(rows) + "\n")
+facts = {"title": "Rounds", "date": "Sat 7 Nov", "orchestrator": "Claude Code (T3) · Opus 5.5 (High)", "integration": {"branch": "main", "head": b[:7]},
+         "run": {"start": "00:50", "end": "06:00", "level": "high", "worked_minutes": 20, "wakes": 6, "turns": [["00:50", "01:00"], ["04:50", "05:00"]]},
+         "usage": {"folder": folder},
+         "rounds": [{"n": 1, "title": "Overnight build", "cause": "Your go", "start": "00:50", "end": "02:00", "base": base[:7], "head": a[:7]},
+                    {"n": 2, "title": "Follow-up", "cause": "You came back", "start": "04:50", "end": "06:00", "base": a[:7], "head": b[:7]}],
+         "asleep": [{"start": "01:45", "end": "02:45", "reason": "Software Sleep"}],
+         "tasks": [{"id": "A", "name": "First", "level": "high", "status": "merged", "needs": [], "first_wave": True, "commits": [a[:8]],
+                    "launched": "01:00", "ended": "01:55", "worked_minutes": 50, "turns": [["01:00", "01:55"]]},
+                   {"id": "B", "name": "Second", "level": "high", "status": "merged", "needs": [], "first_wave": True, "commits": [b[:8]],
+                    "launched": "05:00", "ended": "05:50", "worked_minutes": 45, "turns": [["05:00", "05:50"]]}]}
+json.dump(facts, open(facts_path, "w"))
+EOF
+"$scripts/run-charts" "$work/facts-rounds.json" "$work/charts-rounds" --repo "$rounds_repo" > "$work/rounds.out" 2>&1
+python3 -I - "$work" <<'EOF'
+import json, os, re, sys
+work = sys.argv[1]
+data = json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(work, "charts-rounds", "run-map.html")).read()).group(1))
+assert [r["n"] for r in data["rounds"]] == [1, 2] and data["rounds"][1]["headNote"] == "where the run ended · 1 merged", data["rounds"]
+assert data["rounds"][0]["when"] == "00:50–02:00", data["rounds"][0]
+tasks = {t["id"]: t for t in data["tasks"]}
+assert tasks["A"]["round"] == 1 and tasks["B"]["round"] == 2 and tasks["B"]["built"] == [["A", 20]] and "built" not in tasks["A"], tasks
+assert data["asleep"] == [{"start": 105, "end": 165, "reason": "Software Sleep"}], data["asleep"]
+cpu = data["usage"]["mac"]["cpu"]
+assert max(v for v in cpu if v is not None) == 40, cpu   # the 02:00 and 02:30 samples came from dark wakes
+assert int(re.search(r"html_render height (\d+)", open(os.path.join(work, "rounds.out")).read()).group(1)) > 1500   # the taller canvas
+EOF
 if command -v node >/dev/null 2>&1; then
   python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
     "$work/charts-usage/run-map.html" > "$work/run-map-usage.js"
@@ -1065,7 +1141,7 @@ if command -v node >/dev/null 2>&1; then
 fi
 # where a headless Chrome exists, the page draws the panel without an error (light, then dark with the crosshair)
 chrome=""
-for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
+for candidate in ${RUN_MAP_CHROME:+"$RUN_MAP_CHROME"} "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
   if command -v "$candidate" >/dev/null 2>&1; then chrome="$candidate"; break; fi
 done
 # Dumps a page's DOM into $work/dom.html; headless Chrome sometimes draws nothing under load, so once more
@@ -1088,6 +1164,11 @@ if [ -n "$chrome" ]; then
     if grep -q -E 'tl-pband|us-hatch' "$work/dom.html"; then exit 1; fi   # pauses are hatched on their own lanes only
   done
   grep -q 'class="us-cross"' "$work/dom.html"
+  # a run in rounds: the round cards, the commit each ended on, the cut pause, the Mac asleep, built on
+  dump_dom "file://$work/charts-rounds/run-map.html"
+  if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
+  grep -q 'card round' "$work/dom.html" && grep -q 'card mainpill' "$work/dom.html"
+  grep -q 'class="brk-col"' "$work/dom.html" && grep -q 'class="asleep"' "$work/dom.html" && grep -q 'built on A' "$work/dom.html"
   dump_dom "file://$work/charts-tail/run-map.html#fit"
   grep -q 'class="us-ended"' "$work/dom.html"
   # past the last sample the panel says so and the hover lists no readings; inside, the hover is as ever
@@ -1299,7 +1380,7 @@ EOF
 python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
   "$work/charts-correct/run-map.html" > "$work/run-map-credits.js"
 if command -v node >/dev/null 2>&1; then node --check "$work/run-map-credits.js"; fi
-for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
+for candidate in ${RUN_MAP_CHROME:+"$RUN_MAP_CHROME"} "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" google-chrome chromium; do
   if command -v "$candidate" >/dev/null 2>&1; then
     for name in credits expiry mixed before correct partial refresh refresh2 masked1 masked2 down late correctlog afterexp afterexp2 beforeexp twoexp cut still; do
       "$candidate" --headless=new --disable-gpu --user-data-dir="$work/chrome" --window-size=1300,1700 --virtual-time-budget=3000 \
@@ -2215,6 +2296,17 @@ retries = next(s for s in steps if s["title"] == "Retries")
 assert "It left two pictures, under its item in the report." in retries["narration"]
 assert any(s["title"] == "Spell check" and "It is blocked." in s.get("narration", s["caption"]) for s in steps)
 
+# The report's one "What needs you" list (decisions and next steps together) is read the same way, said
+# as things to take in order; older reports' "Open decisions" still parse (above).
+with open(os.path.join(work, "report.md"), "w") as f:
+    f.write(report.replace("## Open decisions\n\n**These need you:**\n", "## What needs you\n\n"))
+needs, needs_tour, _ = run("--repo", repo)
+assert "Two things for you, in the order I'd take them. Turn retries on by default. Give the spell checker a key." in needs["text"], needs["text"]
+assert "The report recommends what to do with each." in needs["text"]
+assert needs_tour["steps"][-1]["caption"] == "Two things for you, in the order I'd take them; the report recommends what to do with each."
+with open(os.path.join(work, "report.md"), "w") as f:
+    f.write(report)
+
 # --no-files: notes only, the same words.
 _, plain, _ = run("--repo", repo, "--no-files")
 plain_steps = (plain["offer"].get("steps") or []) + [s for c in plain["calls"] for s in ([c["step"]] if "step" in c else c["steps"])]
@@ -2665,6 +2757,44 @@ put("recent/E/KEEP", b"")
 put("recent/E/scratch/build.bin", big)
 done = run("--scratch", os.path.join(root, "recent/E"))
 assert done.returncode == 0 and "holds KEEP" in done.stdout and exists("recent/E/scratch/build.bin"), done.stdout
+# a reviewer's SwiftPM build (dependency clones in checkouts/, one with a submodule), a cache with a .git
+# marker, and a clean detached worktree of the run's repository: removed, the worktree with git worktree remove
+import json, subprocess as sp
+def git(*args, cwd):
+    sp.run(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", *args], check=True, capture_output=True)
+repo_r = os.path.join(outside, "run-repo")
+os.makedirs(repo_r)
+git("init", "-q", "-b", "main", cwd=repo_r)
+open(os.path.join(repo_r, "f.txt"), "w").write("x\n")
+git("add", "f.txt", cwd=repo_r)
+git("commit", "-q", "-m", "one", cwd=repo_r)
+json.dump({"repo": repo_r, "integration_branch": "main", "tasks": {}}, open(os.path.join(root, "recent", "watch.json"), "w"))
+dep = os.path.join(root, "recent/S/scratch/review-build/checkouts/dep")
+sp.run(["git", "clone", "-q", repo_r, dep], check=True)
+put("recent/S/scratch/review-build/workspace-state.json", b"{}")
+put("recent/S/scratch/review-build/checkouts/dep/sub/.git", b"gitdir: ../.git/modules/sub")
+put("recent/S/scratch/review-build/repositories/dep-1/HEAD", b"ref: refs/heads/main")
+put("recent/S/scratch/uv/CACHEDIR.TAG", b"Signature: 8a477f597d28d172789f06886806bc55")
+put("recent/S/scratch/uv/git-v0/checkouts/x/.git", b"gitdir: /nowhere")
+wt = os.path.join(root, "recent/S/scratch/final-check")
+git("worktree", "add", "-q", "--detach", wt, "main", cwd=repo_r)
+done = run("--scratch", os.path.join(root, "recent/S"))
+assert done.returncode == 0 and not exists("recent/S/scratch"), (done.stdout, done.stderr)
+assert wt not in sp.run(["git", "-C", repo_r, "worktree", "list"], capture_output=True, text=True).stdout
+# refused: a worktree with uncommitted changes, and a clone with commits on no remote and not in main
+wt = os.path.join(root, "recent/T/scratch/wt")
+git("worktree", "add", "-q", "--detach", wt, "main", cwd=repo_r)
+open(os.path.join(wt, "f.txt"), "w").write("changed\n")
+done = run("--scratch", os.path.join(root, "recent/T"))
+assert done.returncode == 1 and "uncommitted changes" in done.stderr and exists("recent/T/scratch/wt/f.txt"), done.stderr
+mine = os.path.join(root, "recent/U/scratch/mine")
+sp.run(["git", "clone", "-q", repo_r, mine], check=True)
+open(os.path.join(mine, "g.txt"), "w").write("y\n")
+git("add", "g.txt", cwd=mine)
+git("commit", "-q", "-m", "work", cwd=mine)
+done = run("--scratch", os.path.join(root, "recent/U"))
+assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/U/scratch/mine/g.txt"), done.stderr
+os.remove(os.path.join(root, "recent", "watch.json"))
 # pruned.txt as a link out of the run: the note isn't written through it, nothing outside changes
 put("linked/A/build.bin", big)
 put("linked.md", b"# r\nStatus: finished\n", age_days=10)
@@ -2797,5 +2927,36 @@ EOF
 
 # run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority
 nice -n 10 "$script_dir/run-watch-test" >/dev/null
+
+# heartbeat: an idle wake is one line ("nothing to act on") and a ledger line; run-watch's findings and a
+# task's events say to act; a running Fable task makes the usage reading live.
+hb="$work/hb-run"
+mkdir -p "$hb/usage"
+printf '%s\n' '{"t": "2026-11-11T01:46:00+02:00", "providers": {"claude": {"windows": {"weekly": {"used": 22.0}, "five_hour": {"used": 5.0}}}}}' > "$hb/usage/providers.jsonl"
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-opus-5-5"}}}' > "$hb/watch.json"
+printf '# ledger\n' > "$hb.md"
+printf '#!/bin/sh\n' > "$work/hb-watch-quiet"
+printf '#!/bin/sh\necho "commit A 2026-11-11T01:50:00+02:00 abc fix"\n' > "$work/hb-watch-event"
+printf '#!/bin/sh\necho "hang A: stuck"\n' > "$work/hb-watch-flag"
+printf '#!/bin/sh\necho %s\n' "'{\"providers\": {\"claude\": {\"windows\": {\"weekly_fable\": {\"used_percent\": 7}}}}}'" > "$work/hb-usage"
+chmod +x "$work/hb-watch-quiet" "$work/hb-watch-event" "$work/hb-watch-flag" "$work/hb-usage"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb")
+case "$out" in *"nothing to act on"*"running A"*"claude five_hour 5%, weekly 22%"*) ;; *) echo "heartbeat idle: $out"; exit 1;; esac
+test "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 1
+grep -q '^- [0-9:]* heartbeat: running A' "$hb.md"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-event" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"commit A"*) ;; *) echo "heartbeat event: $out"; exit 1;; esac
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-flag" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"hang A: stuck"*) ;; *) echo "heartbeat flag: $out"; exit 1;; esac
+test "$(grep -c heartbeat "$hb.md")" -eq 1
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"live: claude weekly_fable 7%"*) ;; *) echo "heartbeat fable: $out"; exit 1;; esac
+printf '%s\n' '{"usage_marks": {"claude.weekly": 22}, "tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"usage: claude weekly at 22%, at or past the run's mark of 22%"*) ;; *) echo "heartbeat mark: $out"; exit 1;; esac
+status=0
+"$scripts/heartbeat" "$hb" --bogus >/dev/null 2>&1 || status=$?
+test "$status" -eq 2
 
 echo "orchestrator scripts: ok"
