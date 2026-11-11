@@ -2864,6 +2864,24 @@ git("rm", "-q", "--cached", "o.txt", cwd=orphan)
 os.remove(os.path.join(orphan, "o.txt"))
 done = run("--scratch", os.path.join(root, "recent/O2"))
 assert done.returncode == 1 and exists("recent/O2/scratch/repo/.git"), (done.stdout, done.stderr)
+reset = os.path.join(root, "recent/R2/scratch/clone")   # a local commit reset away, still in the reflog
+sp.run(["git", "clone", "-q", repo_r, reset], check=True)
+open(os.path.join(reset, "r.txt"), "w").write("r\n")
+git("add", "r.txt", cwd=reset)
+git("commit", "-q", "-m", "reset away", cwd=reset)
+git("reset", "-q", "--hard", "HEAD~1", cwd=reset)
+done = run("--scratch", os.path.join(root, "recent/R2"))
+assert done.returncode == 1 and "on no remote" in done.stderr, done.stderr
+sp.run(["git", "clone", "-q", "--bare", repo_r, os.path.join(root, "recent/B2/scratch/mirror.git")], check=True)
+done = run("--scratch", os.path.join(root, "recent/B2"))
+assert done.returncode == 1 and "bare repository" in done.stderr and exists("recent/B2/scratch/mirror.git/HEAD"), done.stderr
+outer = os.path.join(root, "recent/N2/scratch/outer")   # a clone inside a clone, ignored by the outer one
+sp.run(["git", "clone", "-q", repo_r, outer], check=True)
+open(os.path.join(outer, ".git", "info", "exclude"), "a").write("inner/\n")
+sp.run(["git", "clone", "-q", repo_r, os.path.join(outer, "inner")], check=True)
+open(os.path.join(outer, "inner", "i.txt"), "w").write("i\n")
+done = run("--scratch", os.path.join(root, "recent/N2"))
+assert done.returncode == 1 and "inner is a clone with uncommitted changes" in done.stderr, done.stderr
 dirty = os.path.join(root, "recent/V/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
 open(os.path.join(dirty, "f.txt"), "w").write("edited\n")

@@ -486,6 +486,10 @@ def scratch_check(scratch, run):
         if "CACHEDIR.TAG" in files:
             dirs[:] = []
             continue
+        if ".git" not in dirs and ".git" not in files and "HEAD" in files and {"objects", "refs"} <= set(dirs):
+            problems.append(f"{rel} is a bare repository")   # its refs may hold the only copy of commits
+            dirs[:] = []
+            continue
         if top != scratch and ".git" in files:   # a linked worktree, or a submodule of a clone
             common = git_out(["rev-parse", "--path-format=absolute", "--git-common-dir"], top)
             try:
@@ -509,12 +513,11 @@ def scratch_check(scratch, run):
                 problems.append(f"the worktree {rel} has commits on no branch, remote or tag")
             else:
                 worktrees.append((top, common.strip()))
-            dirs[:] = []
-            continue
+            continue   # and on into it: a repository nested inside is checked on its own
         if ".git" in dirs:     # a clone (scratch itself, too)
             status = git_out(["status", "--porcelain", "--untracked-files=all"], top)
             # HEAD too: a commit on a detached HEAD is on no ref --all lists
-            listed = git_out(["rev-list", "HEAD", "--all", "--not", "--remotes"], top)
+            listed = git_out(["rev-list", "HEAD", "--all", "--reflog", "--not", "--remotes"], top)   # and what a reflog still holds
             if listed is None and (git_out(["symbolic-ref", "-q", "HEAD"], top) or "").startswith("refs/heads/") \
                     and git_out(["for-each-ref", "--count=1"], top) == "" and git_out(["rev-list", "--all", "--reflog"], top) == "":   # no commit a reflog still holds either
                 # proven unborn: HEAD names a branch (so it isn't detached), and no ref and no commit exist;
@@ -534,7 +537,7 @@ def scratch_check(scratch, run):
                     own = [c for c in own if git_out(["merge-base", "--is-ancestor", c, branch], repo) is None]
                 if own:
                     problems.append(f"{rel} is a clone with {len(own)} commit(s) on no remote and not in the integration branch")
-            dirs[:] = []
+            dirs[:] = [d for d in dirs if d != ".git"]   # on into it: a repository nested inside is checked on its own
             continue
         if "workspace-state.json" in files or os.path.basename(top) == ".build":   # SwiftPM's dependency clones
             dirs[:] = [d for d in dirs if d not in ("checkouts", "repositories")]

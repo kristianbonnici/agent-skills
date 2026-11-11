@@ -2,7 +2,7 @@
 
 ## 4.0.1 (2026-11-11)
 
-- **`prune-runs --scratch` keeps two more kinds of work** (re-look of 4.0.0's fixes after its last review round, by Codex GPT-6.1 Terra, which found no defect in those fixes and three older gaps in the same path). It now sees untracked files in a clone or worktree even where `status.showUntrackedFiles=no` hides them, and it counts a repository as empty only when no reflog holds a commit either (a branch deleted after a commit would otherwise have let that commit go). Left: a repository inside a SwiftPM build's dependency folders or a cache isn't looked into, since tools make those and they hold no work. Tests cover both fixes; the re-look of this change is recorded below.
+- **`prune-runs --scratch` keeps two more kinds of work** (re-look of 4.0.0's fixes after its last review round, by Codex GPT-6.1 Terra, which found no defect in those fixes and three older gaps in the same path). It now sees untracked files in a clone or worktree even where `status.showUntrackedFiles=no` hides them, and it counts a repository as empty only when no reflog holds a commit either (a branch deleted after a commit would otherwise have let that commit go). Its re-look found those two sound and four more older gaps; three are fixed too: a commit a reflog still holds in any clone (a local commit reset away) counts as the clone's own, a bare repository refuses, and a repository inside a clone or worktree is checked on its own. Left: ignored files in a clean repository (a scratch folder holds only what can be made again, and builds are ignored files), and a repository inside a SwiftPM build's dependency folders or a cache (tools make those, and they hold no work). Tests cover each fix.
 
 ## 4.0.0 (2026-11-11)
 
