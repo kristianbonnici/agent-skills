@@ -46,29 +46,43 @@ the files simply stay local.
 agent-skills/
 ├── skills/                 Canonical host-neutral skills
 ├── adapters/               Host-specific commands or metadata
-├── install/links.tsv       Declarative source-to-host mapping
+├── install/                Which hosts get each skill, and where each host looks for skills
 ├── docs/                   Versioning rules; each skill's changelog, flow and evidence
 ├── runtime/                Pinned shared tool dependencies
 ├── scripts/                Bootstrap, doctor, uninstall, upstream checks
 └── tests/                  Disposable-home integration tests
 ```
 
+## Where skills are installed
+
+Three tables in `install/` say what is linked where; `scripts/bootstrap`, `scripts/doctor` and `scripts/uninstall` all act on them.
+
+| Table | One row per | Columns |
+|---|---|---|
+| `install/skills.tsv` | skill | `install` or `retired`, the skill's folder name, the hosts that get it |
+| `install/hosts.tsv` | folder a host reads skills from | host, its name in the table below, `link`, `adapter` or `retired`, the folder |
+| `install/links.tsv` | link that is not a skill's folder, such as a host's command file | host, mode, source, target |
+
+To give a host a skill, add the host to the skill's row. To take a skill away, or after renaming or removing it, name it in a `retired` row: bootstrap then removes the links an earlier version installed. `./scripts/manifest` prints every link the tables declare, and refuses tables that contradict themselves.
+
+Hosts read the checkout itself through these links, so the checked-out files are what every agent runs. Doctor fails while the checkout is off its default branch or a file a host reads has an uncommitted change.
+
 ## Available skills
 
-Each skill's version is in its `SKILL.md`; its changelog, and for some a flow diagram and the evidence behind it, are in `docs/skills/<skill>/`.
+Each skill's version is in its `SKILL.md`; its changelog, and for some a flow diagram and the evidence behind it, are in `docs/skills/<skill>/`. `tests/install-manifest-test` keeps the "Installed into" column equal to what `install/` says.
 
 | Skill | Installed into | Purpose |
 |---|---|---|
-| `long-horizon-task-planner` | Codex user locations | Propose maturity-aware autonomous task portfolios with calibrated workloads and safe parallel plans. |
-| `long-horizon-orchestrator` | Codex and Claude Code user locations | Run approved long tasks as separate agents (T3 threads on any provider, or native subagents), get woken when they finish, route by capacity and strengths, merge reviewed work, and report in plain language with a run diagram. |
-| `review-gate` | Codex and Claude Code user locations | Have a finished change reviewed by agents of other model families before it merges, at a level set by what the diff touches, with every finding verified. See its [flow](docs/skills/review-gate/README.md). |
-| `skill-evolution` | Codex and Claude Code user locations | Turn what went wrong with a skill into at most three proposed changes, with their evidence, for the owner to apply or decline; the orchestrator calls it at a run's finish. See its [flow](docs/skills/skill-evolution/README.md). |
-| `skill-evidence` | Codex and Claude Code user locations | Keep each skill's evidence current: new top-tier work that bears on its rules, cited sources rechecked, edits on a branch for the owner to merge, and rule changes as skill-evolution proposals; a T3 scheduled task runs it. See its [flow](docs/skills/skill-evidence/README.md). |
-| `disk-cleanup` | Codex and Claude Code user locations | Find what is wasting disk space on a Mac with a read-only scan, prove it is unused, and clear only what the owner picks, remembering their decisions so later rounds show what's new; a T3 scheduled task runs the report. |
-| `excalidraw-drawing` | Codex and Claude Code user locations | Draw in Excalidraw's hand-drawn style: a one-page infographic that explains one source, or a single chart or diagram (line and bar charts from numbers, flowcharts, sequence diagrams, timelines and more). A JSON spec, and a build that lays it out, checks it and writes a PNG and an editable `.excalidraw` file (in an Obsidian vault, the Excalidraw plugin's `.excalidraw.md`); a hand-edited drawing is changed in place and previewed. |
-| `agent-ready-repo` | Codex user locations | Audit agent readiness for new, existing, and maintained repositories; apply improvements when explicitly requested. |
-| `remote-session-reporting` | Codex and Claude Code user locations | Show results in chat (screenshots, pasted text, check summaries) while the user follows a session remotely. |
-| `product-design` | OpenCode, Factory, and Google Antigravity | Research, audit, ideate, prototype, visually QA, and share product experiences. See its [README](skills/product-design/README.md). |
+| `long-horizon-task-planner` | Codex, Claude Code | Propose maturity-aware autonomous task portfolios with calibrated workloads and safe parallel plans. |
+| `long-horizon-orchestrator` | Codex, Claude Code | Run approved long tasks as separate agents (T3 threads on any provider, or native subagents), get woken when they finish, route by capacity and strengths, merge reviewed work, and report in plain language with a run diagram. |
+| `review-gate` | Codex, Claude Code | Have a finished change reviewed by agents of other model families before it merges, at a level set by what the diff touches, with every finding verified. See its [flow](docs/skills/review-gate/README.md). |
+| `skill-evolution` | Codex, Claude Code | Turn what went wrong with a skill into at most three proposed changes, with their evidence, for the owner to apply or decline; the orchestrator calls it at a run's finish. See its [flow](docs/skills/skill-evolution/README.md). |
+| `skill-evidence` | Codex, Claude Code | Keep each skill's evidence current: new top-tier work that bears on its rules, cited sources rechecked, edits on a branch for the owner to merge, and rule changes as skill-evolution proposals; a T3 scheduled task runs it. See its [flow](docs/skills/skill-evidence/README.md). |
+| `disk-cleanup` | Codex, Claude Code | Find what is wasting disk space on a Mac with a read-only scan, prove it is unused, and clear only what the owner picks, remembering their decisions so later rounds show what's new; a T3 scheduled task runs the report. |
+| `excalidraw-drawing` | Codex, Claude Code | Draw in Excalidraw's hand-drawn style: a one-page infographic that explains one source, or a single chart or diagram (line and bar charts from numbers, flowcharts, sequence diagrams, timelines and more). A JSON spec, and a build that lays it out, checks it and writes a PNG and an editable `.excalidraw` file (in an Obsidian vault, the Excalidraw plugin's `.excalidraw.md`); a hand-edited drawing is changed in place and previewed. |
+| `agent-ready-repo` | Codex | Audit agent readiness for new, existing, and maintained repositories; apply improvements when explicitly requested. |
+| `remote-session-reporting` | Codex, Claude Code | Show results in chat (screenshots, pasted text, check summaries) while the user follows a session remotely. |
+| `product-design` | OpenCode, Factory, Google Antigravity | Research, audit, ideate, prototype, visually QA, and share product experiences. See its [README](skills/product-design/README.md). |
 
 ## Maintenance
 
@@ -78,9 +92,12 @@ Run the local checks before committing:
 
 ```bash
 ./tests/bootstrap-test
+./tests/install-manifest-test
 ./tests/skill-versions-test
 ./scripts/doctor --all
 ```
+
+Every suite in `tests/` also runs on GitHub for each push to `main` and each pull request ([.github/workflows/tests.yml](.github/workflows/tests.yml)). Doctor does not: it checks this computer.
 
 Each change to a skill raises its version and adds a changelog entry ([docs/VERSIONING.md](docs/VERSIONING.md)).
 

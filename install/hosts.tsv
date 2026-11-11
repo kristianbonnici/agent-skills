@@ -1,0 +1,13 @@
+# Where each host looks for skills: one row per folder, so a host with two folders has two rows.
+# label: the host's name in the README's table of skills.
+# mode: link (a skill's folder is linked there whole), adapter (a real folder there holds links to
+#   the skill's parts, for a host that cannot discover a linked folder) or retired (the host no
+#   longer uses that folder, so the links an earlier version installed there are removed).
+# host	label	mode	folder
+opencode	OpenCode	link	~/.config/opencode/skills
+factory	Factory	link	~/.factory/skills
+antigravity	Google Antigravity	adapter	~/.gemini/config/skills
+antigravity-cli	Google Antigravity	adapter	~/.gemini/antigravity-cli/skills
+codex	Codex	link	~/.agents/skills
+codex	Codex	link	~/.codex/skills
+claude	Claude Code	link	~/.claude/skills

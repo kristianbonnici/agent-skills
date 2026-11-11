@@ -115,6 +115,91 @@ AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_ro
 grep -q "mcp-excalidraw-server 2.1.2 is newer than npm's latest release, 2.1.2-rc.1" "$test_home/doctor-pre.out"
 fi
 
+# Hosts read the checkout itself through the links, so doctor fails while the checkout is off its
+# default branch or a file a host reads has an uncommitted change. A stand-in checkout holds this
+# repository's scripts and manifests, so this passes on any branch and with work in progress.
+checkout="$test_home/checkout"
+mkdir -p "$checkout"
+cp -R "$repo_root/scripts" "$repo_root/install" "$checkout/"
+"$repo_root/scripts/manifest" links | awk -F '\t' '$2 != "retired" { print $3 }' | sort -u | while IFS= read -r installed; do
+  case "$installed" in
+    skills/*) mkdir -p "$checkout/$installed"; echo stand-in >"$checkout/$installed/SKILL.md" ;;
+    *) mkdir -p "$(dirname -- "$checkout/$installed")"; echo stand-in >"$checkout/$installed" ;;
+  esac
+done
+in_checkout() {
+  HOME="$test_home" git -C "$checkout" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false "$@"
+}
+checkout_doctor() {
+  HOME="$test_home" "$checkout/scripts/doctor" "$@" >"$test_home/doctor-checkout.out" 2>&1 || true
+}
+in_checkout init -q
+in_checkout symbolic-ref HEAD refs/heads/main
+in_checkout add -A
+in_checkout commit -q -m "A release"
+checkout_doctor --host claude
+grep -q "PASS checkout is on main" "$test_home/doctor-checkout.out"
+grep -q "PASS installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
+# A changed file a host reads fails; it is another host's check only if that host reads it too.
+echo edit >>"$checkout/skills/review-gate/SKILL.md"
+checkout_doctor --host claude
+grep -q "FAIL 1 installed file(s) changed and not committed, .*: skills/review-gate/SKILL.md$" "$test_home/doctor-checkout.out"
+checkout_doctor --host factory
+grep -q "PASS installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
+checkout_doctor --host codex
+grep -q "FAIL 1 installed file(s) changed and not committed" "$test_home/doctor-checkout.out"
+in_checkout checkout -q -- skills/review-gate/SKILL.md
+# A new file counts too, also where git is told not to show untracked files.
+in_checkout config status.showUntrackedFiles no
+echo new >"$checkout/skills/review-gate/notes.md"
+checkout_doctor --host claude
+grep -q "FAIL 1 installed file(s) changed and not committed, .*: skills/review-gate/notes.md$" "$test_home/doctor-checkout.out"
+# Five are named, the rest counted.
+for extra in 1 2 3 4 5; do echo new >"$checkout/skills/review-gate/more-$extra.md"; done
+checkout_doctor --host claude
+grep -q "FAIL 6 installed file(s) changed and not committed, .*, \.\.\.$" "$test_home/doctor-checkout.out"
+rm "$checkout/skills/review-gate/notes.md" "$checkout"/skills/review-gate/more-*.md
+# A change no host reads does not count.
+echo note >"$checkout/NOTES.md"
+echo "# a comment" >>"$checkout/scripts/uninstall"
+checkout_doctor --host claude
+grep -q "PASS installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
+in_checkout add -A
+in_checkout commit -q -m "Notes"
+# Git failing to answer is a failure, not a clean checkout.
+cp "$checkout/.git/index" "$test_home/index.kept"
+echo "not an index" >"$checkout/.git/index"
+checkout_doctor --host claude
+grep -q "FAIL git could not say whether installed files have uncommitted changes" "$test_home/doctor-checkout.out"
+cp "$test_home/index.kept" "$checkout/.git/index"
+# Another branch, and a commit checked out by itself.
+in_checkout checkout -q -b work
+checkout_doctor --host claude
+grep -q "FAIL checkout is on work, not main: " "$test_home/doctor-checkout.out"
+in_checkout checkout -q --detach
+checkout_doctor --host claude
+grep -q "FAIL checkout is at a detached commit ([0-9a-f]*), not on main: " "$test_home/doctor-checkout.out"
+# The default branch is the one the remote names, where a clone recorded it.
+in_checkout checkout -q -b trunk
+in_checkout update-ref refs/remotes/origin/trunk HEAD
+in_checkout symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+checkout_doctor --host claude
+grep -q "PASS checkout is on trunk" "$test_home/doctor-checkout.out"
+in_checkout checkout -q main
+checkout_doctor --host claude
+grep -q "FAIL checkout is on main, not trunk: " "$test_home/doctor-checkout.out"
+# A copy that is not a git checkout is skipped, also one that sits inside another repository.
+rm -rf "$checkout/.git"
+checkout_doctor --host claude
+grep -q "SKIP .*/checkout is not a git checkout of its own" "$test_home/doctor-checkout.out"
+HOME="$test_home" git -C "$test_home" init -q
+checkout_doctor --host claude
+grep -q "SKIP .*/checkout is not a git checkout of its own" "$test_home/doctor-checkout.out"
+if grep -q "checkout is on\|installed file" "$test_home/doctor-checkout.out"; then
+  echo "doctor judged a checkout that belongs to another repository" >&2; exit 1
+fi
+rm -rf "$test_home/.git"
+
 # Uninstall removes a retired link that is still there too.
 ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository is the canonical source for personal agent skills. Skills here are shared across local agent tools by symlink or adapter directories declared in `install/links.tsv`.
+This repository is the canonical source for personal agent skills. Skills here are shared across local agent tools by symlink or adapter directories declared in the tables in `install/`.
 
 Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~/.agents`, `~/.claude/skills`, `~/.antigravity`, `~/.antigravity-ide`, and `~/.gemini` are installation targets only.
 
@@ -12,7 +12,7 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 - `skills/<skill-name>/agents/` contains optional platform-facing metadata such as `openai.yaml`.
 - `skills/<skill-name>/references/` contains supporting reference files loaded only when needed.
 - `adapters/` contains host-only command or metadata files.
-- `install/links.tsv` is the source of truth for host exposure and install destinations.
+- `install/` is the source of truth for host exposure and install destinations: `skills.tsv` names the hosts each skill goes to, `hosts.tsv` the folders each host reads skills from, and `links.tsv` any link that is not a skill's folder. `scripts/manifest` prints the links they declare.
 - `docs/skills/<skill-name>/` holds each skill's changelog, flow diagram and evidence; agents never load it ([docs/VERSIONING.md](docs/VERSIONING.md)).
 - `runtime/` contains pinned dependencies shared by portable skills.
 - `scripts/` contains idempotent installation and verification commands.
@@ -33,11 +33,11 @@ Treat this repo as the source of truth. Tool-specific paths under `~/.codex`, `~
 
 ## Installation Rules
 
-- Add or change installation mappings in `install/links.tsv`; do not maintain copy-paste installation snippets.
+- Add or change installation mappings in `install/`; do not maintain copy-paste installation snippets. To give a host a skill, add the host to the skill's row in `install/skills.tsv`.
 - Use `scripts/bootstrap` to create or repair links and `scripts/uninstall` to remove them.
 - Per-owner skill state lives in the owner's private `agent-skills-state` repository (next to this one, or `AGENT_SKILLS_STATE`); bootstrap links its `<skill>/<file>` entries into `${XDG_STATE_HOME:-~/.local/state}/agent-skills/`. Never copy its contents into this public repository.
 - Full-directory links are preferred. Use `adapter` mode only for hosts that cannot discover a symlinked skill directory.
-- When a skill is renamed or removed, replace each of its `link` rows with a `retired` row for the old path: bootstrap and uninstall then remove a link an earlier version installed, and doctor fails while one is left. Keep retired rows at least until every computer has run bootstrap since.
+- When a skill is renamed or removed, change its row in `install/skills.tsv` from `install` to `retired` under its old name; when it is taken away from some hosts only, add a `retired` row naming those hosts. Bootstrap and uninstall then remove a link an earlier version installed, and doctor fails while one is left. A folder a host no longer reads is retired the same way, in `install/hosts.tsv`, and any other link in `install/links.tsv`. Keep retired rows at least until every computer has run bootstrap since.
 - Never expose `skills/product-design` through `~/.agents/skills` or `~/.codex/skills`. It is an OpenCode/Factory/Antigravity compatibility implementation; Codex must use the official Product Design plugin.
 - After changing links or skill metadata, restart the target app or open a new conversation so skills are reindexed.
 
@@ -48,6 +48,7 @@ Before saying a skill is installed, run:
 ```bash
 ./scripts/doctor --all
 ./tests/bootstrap-test
+./tests/install-manifest-test         # the tables in install/ expand to the expected links and refuse a contradiction, and the README's table of skills says what they say
 ./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's scripts (lease, run-charts and the run map, usage-sampler, report-offer, prune-runs, run-watch, heartbeat, run-costs)
 ./tests/skill-versions-test         # every skill's version and its changelog agree
 ./tests/skill-evolution-test        # skill-evolution's lessons script: two computers sharing the private lessons, one file per entry
@@ -57,6 +58,8 @@ Before saying a skill is installed, run:
 ```
 
 The doctor must confirm Product Design is absent from Codex discovery paths.
+
+Hosts read this checkout's files through the links, so doctor also fails while the checkout is off its default branch or a file a host reads has an uncommitted change: commit a skill change before running it. The same suites run on GitHub for each push and pull request (`.github/workflows/tests.yml`); doctor runs only here, because it checks this computer.
 
 ## Git Hygiene
 

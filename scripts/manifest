@@ -1,0 +1,170 @@
+#!/bin/sh
+# Prints what the install manifests declare. The manifests are three tables in install/:
+#   hosts.tsv   where each host looks for skills: host, label, mode, folder
+#   skills.tsv  which hosts get each skill in skills/: mode, skill, hosts
+#   links.tsv   any other link: host, mode, source, target
+# bootstrap, doctor and uninstall read their links from here, so only this script knows the tables.
+#
+#   manifest [links]   every link: host, mode (link, adapter or retired), source, target
+#   manifest hosts     every host named
+#   manifest skills    every installed skill and the hosts that get it, by their labels
+#
+# Exits 1, printing nothing but the reasons, on a row it cannot read, a host hosts.tsv does not
+# name, a skill named twice for one host, and a path claimed by two sources or both installed and
+# retired.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+install_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)/install
+what=links
+
+usage() {
+  echo "Usage: manifest [links | hosts | skills] [--dir INSTALL_DIR]" >&2
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    links|hosts|skills) what=$1; shift ;;
+    --dir) [ "$#" -ge 2 ] || { usage; exit 2; }; install_dir=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+[ -d "$install_dir" ] || { echo "manifest: no folder $install_dir" >&2; exit 1; }
+# Absolute, so that awk never reads a table's path as a variable assignment.
+install_dir=$(CDPATH= cd -- "$install_dir" && pwd)
+for table in hosts.tsv skills.tsv; do
+  [ -f "$install_dir/$table" ] || { echo "manifest: missing $install_dir/$table" >&2; exit 1; }
+done
+
+set -- table=hosts "$install_dir/hosts.tsv" table=skills "$install_dir/skills.tsv"
+[ ! -f "$install_dir/links.tsv" ] || set -- "$@" table=links "$install_dir/links.tsv"
+
+awk -F '\t' -v what="$what" '
+function here(    parts, count) {
+  count = split(FILENAME, parts, "/")
+  return parts[count] ":" FNR
+}
+function refuse(message) {
+  printf "manifest: %s: %s\n", here(), message > "/dev/stderr"
+  refused = 1
+}
+function known_mode(mode) {
+  return mode == "link" || mode == "adapter" || mode == "retired"
+}
+# One link. A path may be named twice only for the same source in the same mode (two hosts that
+# share a folder); anything else would leave what is installed there to the order of the rows.
+function add(host, mode, source, target) {
+  if (mode == "retired") {
+    if (target in live_source) {
+      refuse(target " is both installed (" live_where[target] ") and retired")
+      return
+    }
+    if (!(target in retired_where)) retired_where[target] = here()
+  } else {
+    if (target in retired_where) {
+      refuse(target " is both retired (" retired_where[target] ") and installed")
+      return
+    }
+    if (target in live_source && (live_source[target] != source || live_mode[target] != mode)) {
+      refuse(target " is claimed twice: by " live_source[target] " (" live_where[target] ") and by " source)
+      return
+    }
+    live_source[target] = source
+    live_mode[target] = mode
+    live_where[target] = here()
+  }
+  rows++
+  row_host[rows] = host
+  row_mode[rows] = mode
+  row_source[rows] = source
+  row_target[rows] = target
+}
+function name_host(host) {
+  if (host in host_named) return
+  host_named[host] = 1
+  host_names[++host_count] = host
+}
+
+{ sub(/\r$/, "") }
+/^[ \t]*(#|$)/ { next }
+
+table == "hosts" {
+  if (NF != 4) { refuse("expected four columns: host, label, mode, folder"); next }
+  if (!known_mode($3)) { refuse("unknown mode \"" $3 "\": expected link, adapter or retired"); next }
+  if (($1, $4) in folder_seen) { refuse($4 " is listed twice for " $1); next }
+  if ($1 in host_label && host_label[$1] != $2) {
+    refuse($1 " has two labels: \"" host_label[$1] "\" and \"" $2 "\""); next
+  }
+  folder_seen[$1, $4] = 1
+  host_label[$1] = $2
+  name_host($1)
+  folders++
+  folder_host[folders] = $1
+  folder_mode[folders] = $3
+  folder_path[folders] = $4
+  next
+}
+
+table == "skills" {
+  if (NF != 3) { refuse("expected three columns: mode, skill, hosts"); next }
+  if ($1 != "install" && $1 != "retired") {
+    refuse("unknown mode \"" $1 "\": expected install or retired"); next
+  }
+  if ($2 !~ /^[a-z0-9]+(-[a-z0-9]+)*$/) { refuse("not a skill folder name: \"" $2 "\""); next }
+  pieces = split($3, named, / +/)
+  used = 0
+  for (piece = 1; piece <= pieces; piece++) {
+    host = named[piece]
+    if (host == "") continue
+    used++
+    if (!(host in host_label)) { refuse("hosts.tsv names no host \"" host "\""); continue }
+    if (($2, host) in pair_seen) { refuse($2 " is named twice for " host); continue }
+    pair_seen[$2, host] = 1
+    for (folder = 1; folder <= folders; folder++) {
+      if (folder_host[folder] != host) continue
+      # The mode of the folder, which is already "retired" for one the host no longer reads.
+      mode = ($1 == "retired") ? "retired" : folder_mode[folder]
+      add(host, mode, "skills/" $2, folder_path[folder] "/" $2)
+      if (mode == "retired") continue
+      if (!($2 in skill_listed)) { skill_listed[$2] = 1; skill_names[++skill_count] = $2 }
+      installed[$2, host] = 1
+    }
+  }
+  if (used == 0) refuse($2 " names no host")
+  next
+}
+
+table == "links" {
+  if (NF != 4) { refuse("expected four columns: host, mode, source, target"); next }
+  if (!known_mode($2)) { refuse("unknown mode \"" $2 "\": expected link, adapter or retired"); next }
+  name_host($1)
+  add($1, $2, $3, $4)
+  next
+}
+
+END {
+  if (refused) exit 1
+  if (what == "links") {
+    for (row = 1; row <= rows; row++)
+      printf "%s\t%s\t%s\t%s\n", row_host[row], row_mode[row], row_source[row], row_target[row]
+  } else if (what == "hosts") {
+    for (host = 1; host <= host_count; host++) print host_names[host]
+  } else {
+    # Labels in the order hosts.tsv names the hosts, each once: two hosts may share a label.
+    for (skill = 1; skill <= skill_count; skill++) {
+      labels = ""
+      split("", label_used)
+      for (host = 1; host <= host_count; host++) {
+        if (!((skill_names[skill], host_names[host]) in installed)) continue
+        label = host_label[host_names[host]]
+        if (label in label_used) continue
+        label_used[label] = 1
+        labels = labels (labels == "" ? "" : ", ") label
+      }
+      printf "%s\t%s\n", skill_names[skill], labels
+    }
+  }
+}
+' "$@"

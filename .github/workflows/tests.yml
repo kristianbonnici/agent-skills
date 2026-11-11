@@ -1,0 +1,51 @@
+# Runs every suite in tests/ on each push to main and each pull request, so a suite nobody ran by
+# hand still runs. scripts/doctor is not run here: it checks the computer the skills are installed
+# on, not the repository.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    # macOS: the computer the skills and their scripts are written for and checked on.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      # Actions are pinned to a commit, as the runtimes are pinned to a version: a moved tag cannot
+      # change what runs here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      # The same command a new computer runs, so this also checks that the pinned runtimes install
+      # from their lockfiles.
+      - name: Install the pinned runtimes
+        run: ./scripts/bootstrap --dependencies
+      # Every suite, whatever it is called: a new file in tests/ needs no line here. All of them
+      # run even after one fails, and each has its own folded section in the log.
+      - name: Run every suite in tests/
+        run: |
+          failed=""
+          for suite in tests/*-test; do
+            echo "::group::$suite"
+            if "./$suite"; then
+              echo "passed: $suite"
+            else
+              failed="$failed $suite"
+            fi
+            echo "::endgroup::"
+            case " $failed " in *" $suite "*) echo "::error title=$suite::$suite failed" ;; esac
+          done
+          [ -z "$failed" ] || { echo "Failed:$failed"; exit 1; }

@@ -3,7 +3,6 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-manifest="$repo_root/install/links.tsv"
 state_repo=${AGENT_SKILLS_STATE:-$(dirname -- "$repo_root")/agent-skills-state}
 state_home=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills
 host=all
@@ -61,8 +60,10 @@ looks_retired() {
   return 1
 }
 
+# Every link install/ declares, as host, mode, source and target.
+rows=$("$script_dir/manifest" links) || exit 1
 while IFS=$(printf '\t') read -r row_host mode source target; do
-  case "$row_host" in ''|'#'*) continue ;; esac
+  [ -n "$row_host" ] || continue
   [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
   source_path="$repo_root/$source"
   target_path=$(expand_target "$target")
@@ -89,7 +90,9 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
       fi
       ;;
   esac
-done < "$manifest"
+done <<EOF
+$rows
+EOF
 
 if [ -d "$state_repo/.git" ]; then
   for state_file in "$state_repo"/*/*; do

@@ -3,7 +3,6 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-manifest="$repo_root/install/links.tsv"
 # The owner's private state repository: each <skill>/<file> in it is linked into
 # the skills' state folder, so per-owner facts follow the owner between computers.
 state_repo=${AGENT_SKILLS_STATE:-$(dirname -- "$repo_root")/agent-skills-state}
@@ -15,14 +14,16 @@ install_links=1
 install_dependencies=1
 
 usage() {
-  cat >&2 <<'EOF'
+  # The hosts are the ones the install manifests name, not a second list kept here.
+  hosts=$("$script_dir/manifest" hosts 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+  cat >&2 <<EOF
 Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies]
        bootstrap --dependencies [--dry-run]
 
-Hosts: opencode, factory, codex, claude, antigravity, antigravity-ide, antigravity-cli
+Hosts: $hosts
 
 Also links the files of a private state repository (AGENT_SKILLS_STATE, by default
-agent-skills-state next to this repository) into ${XDG_STATE_HOME:-~/.local/state}/agent-skills.
+agent-skills-state next to this repository) into \${XDG_STATE_HOME:-~/.local/state}/agent-skills.
 EOF
 }
 
@@ -129,8 +130,11 @@ retire_one() {
 selected_product_design=0
 selected_excalidraw_drawing=0
 if [ "$install_links" -eq 1 ]; then
+  # Every link install/ declares, as host, mode, source and target; a manifest that cannot be read
+  # installs nothing.
+  rows=$("$script_dir/manifest" links) || exit 1
   while IFS=$(printf '\t') read -r row_host mode source target; do
-    case "$row_host" in ''|'#'*) continue ;; esac
+    [ -n "$row_host" ] || continue
     [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
     source_path="$repo_root/$source"
     target_path=$(expand_target "$target")
@@ -143,7 +147,9 @@ if [ "$install_links" -eq 1 ]; then
     esac
     case "$source" in skills/product-design*) selected_product_design=1 ;; esac
     case "$source" in skills/excalidraw-drawing*) selected_excalidraw_drawing=1 ;; esac
-  done < "$manifest"
+  done <<EOF
+$rows
+EOF
 
   if [ -d "$state_repo/.git" ]; then
     for state_file in "$state_repo"/*/*; do

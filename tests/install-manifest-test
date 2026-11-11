@@ -1,0 +1,204 @@
+#!/bin/sh
+# Checks scripts/manifest, which turns the three tables in install/ into the links that bootstrap,
+# doctor and uninstall act on. Made-up tables expand to the expected links, hosts and skills, a
+# retired skill and a retired folder turn their links into retired ones, and two hosts may share a
+# folder. It refuses an unknown host, a skill named twice for a host, a path with two sources, a
+# path both installed and retired, and a row it cannot read, printing no links when it does.
+# Then this repository's own tables: every skill folder is installed somewhere, every source
+# exists, and the README's table of skills names each skill once with the hosts the manifest gives.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+manifest="$repo_root/scripts/manifest"
+work=$(mktemp -d "${TMPDIR:-/tmp}/install-manifest-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+# One row of a table: its cells with tabs between them.
+row() {
+  printf '%s' "$1"
+  shift
+  for cell do printf '\t%s' "$cell"; done
+  printf '\n'
+}
+
+base="$work/base"
+mkdir -p "$base"
+{
+  echo "# host, label, mode, folder"
+  row alpha Alpha link '~/.alpha/skills'
+  row alpha Alpha link '~/.shared/skills'
+  echo
+  row beta "Beta App" adapter '~/.beta/skills'
+  row gamma "Beta App" link '~/.gamma/skills'
+  row old Old retired '~/.old/skills'
+} >"$base/hosts.tsv"
+{
+  echo "# mode, skill, hosts"
+  row install one "alpha beta"
+  row install two "gamma  beta old"
+  row retired gone alpha
+  row install three alpha
+  row retired three gamma
+} >"$base/skills.tsv"
+{
+  row alpha link adapters/alpha/cmd.md '~/.alpha/commands/cmd.md'
+  row extra retired adapters/extra/old.md '~/.extra/old.md'
+} >"$base/links.tsv"
+
+# Skills in the order of their rows, each host's folders in the order hosts.tsv lists them, then
+# the other links. A retired skill's links are retired, and so is every link into a retired folder.
+{
+  row alpha link skills/one '~/.alpha/skills/one'
+  row alpha link skills/one '~/.shared/skills/one'
+  row beta adapter skills/one '~/.beta/skills/one'
+  row gamma link skills/two '~/.gamma/skills/two'
+  row beta adapter skills/two '~/.beta/skills/two'
+  row old retired skills/two '~/.old/skills/two'
+  row alpha retired skills/gone '~/.alpha/skills/gone'
+  row alpha retired skills/gone '~/.shared/skills/gone'
+  row alpha link skills/three '~/.alpha/skills/three'
+  row alpha link skills/three '~/.shared/skills/three'
+  row gamma retired skills/three '~/.gamma/skills/three'
+  row alpha link adapters/alpha/cmd.md '~/.alpha/commands/cmd.md'
+  row extra retired adapters/extra/old.md '~/.extra/old.md'
+} >"$work/links.expected"
+"$manifest" links --dir "$base" >"$work/links.out"
+diff "$work/links.expected" "$work/links.out"
+"$manifest" --dir "$base" | diff "$work/links.expected" -
+
+test "$("$manifest" hosts --dir "$base" | paste -sd' ' -)" = "alpha beta gamma old extra"
+
+# Labels once each, in the hosts' order; a host whose only folder is retired gets nothing.
+{
+  row one "Alpha, Beta App"
+  row two "Beta App"
+  row three Alpha
+} >"$work/skills.expected"
+"$manifest" skills --dir "$base" | diff "$work/skills.expected" -
+
+# A relative folder, and tables with Windows line ends, read the same.
+(cd "$work" && "$manifest" links --dir base) | diff "$work/links.expected" -
+mkdir "$work/crlf"
+for table in hosts.tsv skills.tsv links.tsv; do sed "s/\$/$(printf '\r')/" "$base/$table" >"$work/crlf/$table"; done
+"$manifest" links --dir "$work/crlf" | diff "$work/links.expected" -
+
+# links.tsv is optional.
+mkdir "$work/no-links"
+cp "$base/hosts.tsv" "$base/skills.tsv" "$work/no-links/"
+test "$("$manifest" links --dir "$work/no-links" | wc -l | tr -d ' ')" = 11
+
+# Two hosts that share a folder may both get a skill: the same link, named for each.
+mkdir "$work/shared"
+cp "$base"/*.tsv "$work/shared/"
+row twin Twin link '~/.alpha/skills' >>"$work/shared/hosts.tsv"
+row install four "alpha twin" >>"$work/shared/skills.tsv"
+"$manifest" links --dir "$work/shared" >"$work/shared.out"
+grep -q "^alpha	link	skills/four	~/.alpha/skills/four$" "$work/shared.out"
+grep -q "^twin	link	skills/four	~/.alpha/skills/four$" "$work/shared.out"
+
+# refused TABLE WHY CELL...: the base tables with that row added to TABLE are refused for WHY,
+# and no link is printed.
+case_number=0
+refused() {
+  refused_table=$1
+  refused_why=$2
+  shift 2
+  case_number=$((case_number + 1))
+  refused_dir="$work/refused-$case_number"
+  mkdir "$refused_dir"
+  cp "$base"/*.tsv "$refused_dir/"
+  row "$@" >>"$refused_dir/$refused_table"
+  if "$manifest" links --dir "$refused_dir" >"$refused_dir/out" 2>"$refused_dir/err"; then
+    echo "not refused: $* in $refused_table" >&2
+    exit 1
+  fi
+  if [ -s "$refused_dir/out" ]; then
+    echo "printed links although it refused: $* in $refused_table" >&2
+    exit 1
+  fi
+  if ! grep -q -- "$refused_why" "$refused_dir/err"; then
+    echo "refused $* in $refused_table, but not for \"$refused_why\":" >&2
+    cat "$refused_dir/err" >&2
+    exit 1
+  fi
+}
+
+refused skills.tsv 'skills.tsv:7: hosts.tsv names no host "nobody"' install four nobody
+refused skills.tsv 'one is named twice for alpha' install one alpha
+refused links.tsv '~/.alpha/skills/one is claimed twice: by skills/one (skills.tsv:2) and by adapters/x' alpha link adapters/x '~/.alpha/skills/one'
+refused links.tsv '~/.alpha/skills/one is claimed twice' alpha adapter skills/one '~/.alpha/skills/one'
+refused links.tsv '~/.alpha/skills/one is both installed (skills.tsv:2) and retired' alpha retired skills/one '~/.alpha/skills/one'
+refused links.tsv '~/.alpha/skills/gone is both retired (skills.tsv:4) and installed' alpha link skills/other '~/.alpha/skills/gone'
+refused hosts.tsv 'unknown mode "symlink": expected link, adapter or retired' delta Delta symlink '~/.delta/skills'
+refused hosts.tsv 'alpha has two labels: "Alpha" and "Other"' alpha Other link '~/.other/skills'
+refused hosts.tsv '~/.alpha/skills is listed twice for alpha' alpha Alpha link '~/.alpha/skills'
+refused hosts.tsv 'expected four columns: host, label, mode, folder' delta Delta link
+refused skills.tsv 'expected three columns: mode, skill, hosts' install four
+refused skills.tsv 'unknown mode "remove": expected install or retired' remove one alpha
+refused skills.tsv 'not a skill folder name: "../escape"' install ../escape alpha
+refused skills.tsv 'not a skill folder name: "Upper"' install Upper alpha
+refused skills.tsv 'four names no host' install four ''
+refused links.tsv 'unknown mode "copy"' alpha copy adapters/x '~/.alpha/x'
+refused links.tsv 'expected four columns: host, mode, source, target' alpha link adapters/x
+
+# One host installs a skill into a folder another host shares, and that other host retires it.
+mkdir "$work/shared-retired"
+cp "$base"/*.tsv "$work/shared-retired/"
+row twin Twin link '~/.alpha/skills' >>"$work/shared-retired/hosts.tsv"
+row retired one twin >>"$work/shared-retired/skills.tsv"
+if "$manifest" links --dir "$work/shared-retired" >/dev/null 2>"$work/shared-retired/err"; then
+  echo "not refused: a skill installed and retired in one shared folder" >&2; exit 1
+fi
+grep -q '~/.alpha/skills/one is both installed (skills.tsv:2) and retired' "$work/shared-retired/err"
+
+# Every refusal in one run, not only the first.
+mkdir "$work/several"
+cp "$base"/*.tsv "$work/several/"
+row install four nobody >>"$work/several/skills.tsv"
+row install five nowhere >>"$work/several/skills.tsv"
+"$manifest" links --dir "$work/several" 2>"$work/several/err" && exit 1
+test "$(wc -l <"$work/several/err" | tr -d ' ')" = 2
+
+# A missing table, a missing folder and a bad argument.
+mkdir "$work/no-skills"
+cp "$base/hosts.tsv" "$work/no-skills/"
+"$manifest" links --dir "$work/no-skills" 2>"$work/err" && exit 1
+grep -q "missing .*/no-skills/skills.tsv" "$work/err"
+"$manifest" links --dir "$work/absent" 2>"$work/err" && exit 1
+grep -q "no folder" "$work/err"
+status=0
+"$manifest" everything 2>/dev/null || status=$?
+test "$status" = 2
+
+# This repository's own tables.
+"$manifest" links >"$work/own.links"
+"$manifest" skills >"$work/own.skills"
+awk -F '\t' '$2 != "retired" { print $3 }' "$work/own.links" | sort -u | while IFS= read -r source; do
+  [ -e "$repo_root/$source" ] || { echo "install/ names $source, which does not exist" >&2; exit 1; }
+done
+# A skill no host gets is one nobody can use: each folder in skills/ has an install row.
+for skill_file in "$repo_root"/skills/*/SKILL.md; do
+  skill=$(basename -- "$(dirname -- "$skill_file")")
+  grep -q "^$skill	" "$work/own.skills" || { echo "skills/$skill is installed for no host: add it to install/skills.tsv" >&2; exit 1; }
+done
+
+# The README's table of skills: one row per installed skill, and its "Installed into" cell is the
+# manifest's labels for it, so the README cannot say something the manifest does not.
+awk -F '|' '
+  /^## / { listing = ($0 == "## Available skills") }
+  listing && /^\| `[a-z0-9-]+` \|/ {
+    skill = $2; hosts = $3
+    gsub(/^[ `]+|[ `]+$/, "", skill)
+    gsub(/^ +| +$/, "", hosts)
+    printf "%s\t%s\n", skill, hosts
+  }
+' "$repo_root/README.md" | sort >"$work/readme.skills"
+sort "$work/own.skills" >"$work/own.skills.sorted"
+if ! diff "$work/own.skills.sorted" "$work/readme.skills" >"$work/readme.diff"; then
+  echo "README.md's table of skills disagrees with install/ (< the manifest, > the README):" >&2
+  cat "$work/readme.diff" >&2
+  exit 1
+fi
+
+echo "install-manifest-test: passed"

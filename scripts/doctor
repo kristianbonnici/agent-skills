@@ -3,7 +3,6 @@ set -u
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
-manifest="$repo_root/install/links.tsv"
 state_repo=${AGENT_SKILLS_STATE:-$(dirname -- "$repo_root")/agent-skills-state}
 state_home=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills
 host=all
@@ -53,8 +52,57 @@ looks_retired() {
   return 1
 }
 
+# Every link install/ declares, as host, mode, source and target.
+rows=$("$script_dir/manifest" links) || { echo "FAIL the install manifests cannot be read" >&2; exit 1; }
+
+# Hosts read this checkout's own files through the links, so what is checked out is what every
+# agent runs: another branch, or an installed file changed and not committed, is already live.
+check_checkout() {
+  top=$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null) || top=
+  if [ -z "$top" ] || [ "$(CDPATH= cd -- "$top" && pwd -P)" != "$(CDPATH= cd -- "$repo_root" && pwd -P)" ]; then
+    echo "SKIP $repo_root is not a git checkout of its own: cannot tell which version hosts read"
+    return
+  fi
+  # The remote's default branch where a clone recorded it, main otherwise.
+  default=$(git -C "$repo_root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || default=
+  default=${default#origin/}
+  [ -n "$default" ] || default=main
+  branch=$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=
+  if [ "$branch" = "$default" ]; then
+    pass "checkout is on $default"
+  elif [ -n "$branch" ]; then
+    fail "checkout is on $branch, not $default: every host is reading that branch's skills"
+  else
+    fail "checkout is at a detached commit ($(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null)), not on $default: every host is reading that commit's skills"
+  fi
+  # Only what a selected host reads counts: a change to a test or to these scripts reaches no agent.
+  set --
+  while IFS= read -r installed; do
+    [ -z "$installed" ] || set -- "$@" "$installed"
+  done <<EOF
+$(printf '%s\n' "$rows" | awk -F '\t' -v h="$host" '$2 != "retired" && (h == "all" || $1 == h) { print $3 }' | sort -u)
+EOF
+  [ "$#" -gt 0 ] || return 0
+  # --untracked-files=all: a new file counts whatever status.showUntrackedFiles says.
+  # Git failing to answer is a failure, not a clean checkout.
+  if ! changed=$(git -C "$repo_root" status --porcelain --untracked-files=all -- "$@" 2>/dev/null); then
+    fail "git could not say whether installed files have uncommitted changes"
+    return
+  fi
+  changed=$(printf '%s\n' "$changed" | sed -e 's/^...//' -e '/^$/d')
+  if [ -z "$changed" ]; then
+    pass "installed files have no uncommitted changes"
+    return
+  fi
+  changed_count=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
+  changed_names=$(printf '%s\n' "$changed" | sed 5q | paste -sd, - | sed 's/,/, /g')
+  [ "$changed_count" -le 5 ] || changed_names="$changed_names, ..."
+  fail "$changed_count installed file(s) changed and not committed, which every host is already reading: $changed_names"
+}
+check_checkout
+
 while IFS=$(printf '\t') read -r row_host mode source target; do
-  case "$row_host" in ''|'#'*) continue ;; esac
+  [ -n "$row_host" ] || continue
   [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
   source_path="$repo_root/$source"
   target_path=$(expand_target "$target")
@@ -80,7 +128,9 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
       done
       ;;
   esac
-done < "$manifest"
+done <<EOF
+$rows
+EOF
 
 if [ -d "$state_repo/.git" ]; then
   for state_file in "$state_repo"/*/*; do
@@ -169,7 +219,7 @@ fi
 
 # The excalidraw-drawing runtime matters only for hosts that install the skill: bootstrap for
 # another host never installs it.
-if [ "$host" = all ] || awk -F '\t' -v h="$host" '$1 == h && $3 ~ /^skills\/excalidraw-drawing/ { found = 1 } END { exit !found }' "$manifest"; then
+if [ "$host" = all ] || printf '%s\n' "$rows" | awk -F '\t' -v h="$host" '$1 == h && $2 != "retired" && $3 ~ /^skills\/excalidraw-drawing/ { found = 1 } END { exit !found }'; then
   node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
   [ "$node_major" -ge 20 ] 2>/dev/null && pass "Node $node_major for excalidraw-drawing" || fail "excalidraw-drawing needs Node 20 or newer (found ${node_major})"
   excalidraw_pin=$(pinned_version "$repo_root/runtime/excalidraw/package.json" mcp-excalidraw-server)

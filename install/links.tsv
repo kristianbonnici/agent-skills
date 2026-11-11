@@ -1,35 +1,4 @@
+# Links that are not a skill's folder in a host's skills folder. Skills go in skills.tsv.
+# mode: link, adapter or retired, as in hosts.tsv.
 # host	mode	source	target
-opencode	link	skills/product-design	~/.config/opencode/skills/product-design
 opencode	link	adapters/opencode/commands/product-design.md	~/.config/opencode/commands/product-design.md
-factory	link	skills/product-design	~/.factory/skills/product-design
-antigravity	adapter	skills/product-design	~/.gemini/config/skills/product-design
-antigravity-cli	adapter	skills/product-design	~/.gemini/antigravity-cli/skills/product-design
-codex	link	skills/long-horizon-task-planner	~/.agents/skills/long-horizon-task-planner
-codex	link	skills/long-horizon-task-planner	~/.codex/skills/long-horizon-task-planner
-codex	link	skills/long-horizon-orchestrator	~/.agents/skills/long-horizon-orchestrator
-codex	link	skills/long-horizon-orchestrator	~/.codex/skills/long-horizon-orchestrator
-codex	link	skills/agent-ready-repo	~/.agents/skills/agent-ready-repo
-codex	link	skills/agent-ready-repo	~/.codex/skills/agent-ready-repo
-codex	link	skills/remote-session-reporting	~/.agents/skills/remote-session-reporting
-codex	link	skills/remote-session-reporting	~/.codex/skills/remote-session-reporting
-claude	link	skills/remote-session-reporting	~/.claude/skills/remote-session-reporting
-claude	link	skills/long-horizon-task-planner	~/.claude/skills/long-horizon-task-planner
-claude	link	skills/long-horizon-orchestrator	~/.claude/skills/long-horizon-orchestrator
-codex	link	skills/review-gate	~/.agents/skills/review-gate
-codex	link	skills/review-gate	~/.codex/skills/review-gate
-claude	link	skills/review-gate	~/.claude/skills/review-gate
-codex	link	skills/skill-evolution	~/.agents/skills/skill-evolution
-codex	link	skills/skill-evolution	~/.codex/skills/skill-evolution
-claude	link	skills/skill-evolution	~/.claude/skills/skill-evolution
-codex	link	skills/skill-evidence	~/.agents/skills/skill-evidence
-codex	link	skills/skill-evidence	~/.codex/skills/skill-evidence
-claude	link	skills/skill-evidence	~/.claude/skills/skill-evidence
-codex	link	skills/disk-cleanup	~/.agents/skills/disk-cleanup
-codex	link	skills/disk-cleanup	~/.codex/skills/disk-cleanup
-claude	link	skills/disk-cleanup	~/.claude/skills/disk-cleanup
-codex	link	skills/excalidraw-drawing	~/.agents/skills/excalidraw-drawing
-codex	link	skills/excalidraw-drawing	~/.codex/skills/excalidraw-drawing
-claude	link	skills/excalidraw-drawing	~/.claude/skills/excalidraw-drawing
-codex	retired	skills/sketch-infographic	~/.agents/skills/sketch-infographic
-codex	retired	skills/sketch-infographic	~/.codex/skills/sketch-infographic
-claude	retired	skills/sketch-infographic	~/.claude/skills/sketch-infographic

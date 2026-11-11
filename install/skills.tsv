@@ -1,0 +1,16 @@
+# Which hosts get each skill in skills/: one row per skill, its hosts separated by spaces and named
+# in hosts.tsv.
+# mode: install, or retired for a skill that was renamed, removed or taken away from the hosts
+#   named, so that the links an earlier version installed are removed.
+# mode	skill	hosts
+install	product-design	opencode factory antigravity antigravity-cli
+install	long-horizon-task-planner	codex claude
+install	long-horizon-orchestrator	codex claude
+install	agent-ready-repo	codex
+install	remote-session-reporting	codex claude
+install	review-gate	codex claude
+install	skill-evolution	codex claude
+install	skill-evidence	codex claude
+install	disk-cleanup	codex claude
+install	excalidraw-drawing	codex claude
+retired	sketch-infographic	codex claude
