@@ -510,7 +510,8 @@ def scratch_check(scratch, run):
         if ".git" in dirs:     # a clone (scratch itself, too)
             status = git_out(["status", "--porcelain"], top)
             # HEAD too: a commit on a detached HEAD is on no ref --all lists
-            listed = git_out(["rev-list", "HEAD", "--all", "--not", "--remotes"], top)
+            born = git_out(["rev-parse", "--verify", "-q", "HEAD"], top) is not None   # a repository with no commits has no HEAD
+            listed = git_out(["rev-list", *(["HEAD"] if born else []), "--all", "--not", "--remotes"], top)
             if has_linked_worktrees(top):
                 problems.append(f"{rel} is a clone other worktrees were made from")
             elif status is None:

@@ -428,6 +428,32 @@ try:
         f.write(f"{pm(time.time() - 600)} Sleep               \tEntering Sleep state due to 'Clamshell Sleep'\n")
     dark = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
     assert any(l.startswith("slept ") and " - (Clamshell Sleep)" in l and "dark wake" in l for l in dark), dark
+    # a second sleep whose times.log append fails is told again next time, and only it, not the first
+    log_lines.append(f"{pm(t_sleep + 6000)} Sleep               \tEntering Sleep state due to 'Maintenance Sleep'")
+    log_lines.append(f"{pm(t_sleep + 6600)} Wake                \tWake from Normal Sleep [CDNVA] : due to UserActivity")
+    open(os.path.join(work, "pmset.log"), "w").write("\n".join(log_lines) + "\n")
+    os.rename(os.path.join(vm_run, "times.log"), os.path.join(vm_run, "times.kept"))
+    os.mkdir(os.path.join(vm_run, "times.log"))
+    failed = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
+    assert any(l.startswith("note: couldn't add the sleeps") for l in failed), failed
+    os.rmdir(os.path.join(vm_run, "times.log"))
+    retold = [l for l in subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
+              if l.startswith("slept ") and " - (" not in l]
+    assert len(retold) == 1 and "(Maintenance Sleep)" in retold[0], retold
+    # a blind task leaves the blind list once it has a log of a harness run-watch reads
+    watch_json = os.path.join(vm_run, "watch.json")
+    wt_g = os.path.join(work, "wt-g")
+    os.makedirs(wt_g, exist_ok=True)
+    w = json.load(open(watch_json))
+    w["tasks"] = {"G": {"worktree": wt_g, "harness": "opencode", "status": "running", "launched": stamp(time.time() - 60)}}
+    json.dump(w, open(watch_json, "w"))
+    subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env)
+    state_file = os.path.join(vm_run, "run-watch.state.json")
+    assert "G" in json.load(open(state_file))["blind"]
+    w["tasks"]["G"].update(harness="claude-code", session_log=claude_log(wt_g, "g1", [use("x1", "Read", time.time() - 30), result("x1", time.time() - 29)]))
+    json.dump(w, open(watch_json, "w"))
+    subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env)
+    assert "G" not in json.load(open(state_file))["blind"], json.load(open(state_file))["blind"]
 finally:
     for p in started:
         try:

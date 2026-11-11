@@ -2831,6 +2831,9 @@ git("add", "m.txt", cwd=top)
 git("commit", "-q", "-m", "work in scratch itself", cwd=top)
 done = run("--scratch", os.path.join(root, "recent/T2"))
 assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/T2/scratch/m.txt"), done.stderr
+sp.run(["git", "init", "-q", os.path.join(root, "recent/E2/scratch/empty")], check=True)   # no commits yet: nothing to keep
+done = run("--scratch", os.path.join(root, "recent/E2"))
+assert done.returncode == 0 and not exists("recent/E2/scratch"), done.stderr
 dirty = os.path.join(root, "recent/V/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
 open(os.path.join(dirty, "f.txt"), "w").write("edited\n")
