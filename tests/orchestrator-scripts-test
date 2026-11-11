@@ -2794,6 +2794,11 @@ git("add", "g.txt", cwd=mine)
 git("commit", "-q", "-m", "work", cwd=mine)
 done = run("--scratch", os.path.join(root, "recent/U"))
 assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/U/scratch/mine/g.txt"), done.stderr
+dirty = os.path.join(root, "recent/V/scratch/clone")
+sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
+open(os.path.join(dirty, "f.txt"), "w").write("edited\n")
+done = run("--scratch", os.path.join(root, "recent/V"))
+assert done.returncode == 1 and "clone with uncommitted changes" in done.stderr and exists("recent/V/scratch/clone/f.txt"), done.stderr
 os.remove(os.path.join(root, "recent", "watch.json"))
 # pruned.txt as a link out of the run: the note isn't written through it, nothing outside changes
 put("linked/A/build.bin", big)

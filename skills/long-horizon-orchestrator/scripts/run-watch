@@ -970,7 +970,7 @@ def main(argv: list[str]) -> int:
     if slept_lines:   # kept with the times, for the report's facts
         try:
             with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
-                fh.write("".join(line.split(":", 1)[0] + "\n" for line in slept_lines))
+                fh.write("".join(line.split("): ", 1)[0] + ")\n" for line in slept_lines))
         except OSError:
             pass
     if open_span is not None and open_span[0] > started - 86400:

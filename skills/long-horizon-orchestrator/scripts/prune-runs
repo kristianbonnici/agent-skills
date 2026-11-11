@@ -491,6 +491,10 @@ def scratch_check(scratch, run):
         if top != scratch and ".git" in dirs:     # a clone
             if has_linked_worktrees(top):
                 problems.append(f"{rel} is a clone other worktrees were made from")
+            elif git_out(["status", "--porcelain"], top) is None:
+                problems.append(f"{rel} is a clone whose state can't be read")
+            elif git_out(["status", "--porcelain"], top):
+                problems.append(f"{rel} is a clone with uncommitted changes")
             else:
                 own = (git_out(["rev-list", "--all", "--not", "--remotes"], top) or "").split()
                 if own and repo and branch:

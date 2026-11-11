@@ -14,6 +14,7 @@ shrunk through its environment variables, and CPU use is made up by a stand-in p
 burned), so the whole check takes about ten seconds."""
 
 import json
+import re
 import os
 import shutil
 import signal
@@ -419,7 +420,8 @@ try:
     assert not has_cc or any(l.startswith("vm ") and "qemu-system-aarc" in l and "GB" in l for l in first), first
     slept = [l for l in first if l.startswith("slept ")]
     assert len(slept) == 1 and "(Software Sleep pid=419): 90 min" in slept[0], first
-    assert open(os.path.join(vm_run, "times.log")).read().startswith("slept "), "times.log"
+    logged = open(os.path.join(vm_run, "times.log")).read().splitlines()
+    assert len(logged) == 1 and re.fullmatch(r"slept \S+T\d\d:\d\d:\d\d\S* \S+T\d\d:\d\d:\d\d\S* \(Software Sleep pid=419\)", logged[0]), logged
     again = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
     assert (not has_cc or any(l.startswith("vm ") for l in again)) and not any(l.startswith("slept ") for l in again), again
     with open(os.path.join(work, "pmset.log"), "a") as f:
