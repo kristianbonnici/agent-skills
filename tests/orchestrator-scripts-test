@@ -2838,6 +2838,16 @@ assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent
 sp.run(["git", "init", "-q", os.path.join(root, "recent/E2/scratch/empty")], check=True)   # no commits yet: nothing to keep
 done = run("--scratch", os.path.join(root, "recent/E2"))
 assert done.returncode == 0 and not exists("recent/E2/scratch"), done.stderr
+merged = os.path.join(root, "recent/M2/scratch/clone")   # its own commit is already in the integration branch
+sp.run(["git", "clone", "-q", repo_r, merged], check=True)
+open(os.path.join(merged, "n.txt"), "w").write("n\n")
+git("add", "n.txt", cwd=merged)
+git("commit", "-q", "-m", "merged work", cwd=merged)
+git("fetch", "-q", merged, "HEAD", cwd=repo_r)
+git("merge", "-q", "--ff-only", "FETCH_HEAD", cwd=repo_r)
+git("remote", "remove", "origin", cwd=merged)
+done = run("--scratch", os.path.join(root, "recent/M2"))
+assert done.returncode == 0 and not exists("recent/M2/scratch"), done.stderr
 dirty = os.path.join(root, "recent/V/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
 open(os.path.join(dirty, "f.txt"), "w").write("edited\n")
@@ -3009,6 +3019,10 @@ printf '#!/bin/sh\necho %s\n' "'{\"providers\": {}}'" > "$work/hb-usage-empty"
 chmod +x "$work/hb-usage-empty"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-empty" "$scripts/heartbeat" "$hb" --no-ledger --live)
 case "$out" in *"act on the lines below"*"the live reading had no windows"*) ;; *) echo "heartbeat empty usage: $out"; exit 1;; esac
+printf '#!/bin/sh\necho "slept 2026-11-11T03:12:00+02:00 2026-11-11T05:40:00+02:00 (Clamshell Sleep): 148 min"\n' > "$work/hb-watch-slept"
+chmod +x "$work/hb-watch-slept"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-slept" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"slept 03:12"*) ;; *) echo "heartbeat slept: $out"; exit 1;; esac
 printf '#!/bin/sh\nexit 3\n' > "$work/hb-watch-broken"
 chmod +x "$work/hb-watch-broken"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-broken" "$scripts/heartbeat" "$hb" --no-ledger)
