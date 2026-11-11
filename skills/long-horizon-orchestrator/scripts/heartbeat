@@ -28,7 +28,7 @@ provider-usage call (about 20 seconds, no model tokens). Without readings either
 
 It appends "- HH:MM heartbeat: <the summary>" to the ledger (<run directory>.md) unless
 --no-ledger. It exits 0, or 2 for a usage error. For tests, HEARTBEAT_RUN_WATCH and
-HEARTBEAT_PROVIDER_USAGE replace the two scripts it runs.
+HEARTBEAT_PROVIDER_USAGE replace the two scripts it runs, and HEARTBEAT_PS the ps it lists processes with.
 """
 
 import json
@@ -171,13 +171,14 @@ def main(argv):
     swap = re.search(r"used = ([\d.]+)([MG])", run(["sysctl", "-n", "vm.swapusage"]))
     swap_gb = (float(swap.group(1)) / (1024 if swap.group(2) == "M" else 1)) if swap else None
     load = os.getloadavg()[0]
-    ps = run(["ps", "-axo", "pid=,comm="])
+    ps_cmd = os.environ.get("HEARTBEAT_PS", "ps")
+    ps = run([ps_cmd, "-axo", "pid=,comm="])
     dialogs = len([l for l in ps.splitlines() if l.strip().endswith("SecurityAgent")])
     alive = []
     for name in ("keep_awake_pid", "sampler_pid"):
         pid = watch.get(name)
         if isinstance(pid, int):
-            alive.append(f"{name.split('_pid')[0].replace('_', '-')} {'up' if run(['ps', '-p', str(pid), '-o', 'pid=']).strip() else 'DOWN'}")
+            alive.append(f"{name.split('_pid')[0].replace('_', '-')} {'up' if run([ps_cmd, '-p', str(pid), '-o', 'pid=']).strip() else 'DOWN'}")
 
     now = time.strftime("%H:%M")
     bits = [f"running {', '.join(running) or 'none'}"]

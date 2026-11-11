@@ -70,6 +70,9 @@ Only for the run map, all optional:
                                                    # where the Mac slept (run-watch's slept lines): shaded on
                                                    # the timeline and usage panel, its samples left out
 
+  "costs": {"file": "<run directory>/report/costs.json"}   # what scripts/run-costs --json wrote: each task's and
+                                                   # the orchestrator's cost at API prices on their cards, the
+                                                   # run's in the header, and its paragraph in summary.txt
   "usage": {"folder": "<run directory>/usage"}     # the folder scripts/usage-sampler wrote (absolute, or
                                                    # relative to the facts file): machine.jsonl and
                                                    # providers.jsonl. Adds a usage panel under the timeline, usage.mmd and
@@ -1284,6 +1287,14 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             "start": minute(run.get("start")), "end": minute(run.get("end")), "worked": run.get("worked_minutes"),
             "wakes": run.get("wakes"), "turns": turns(run), "helpers": helpers(run.get("helpers")),
             **who(facts.get("orchestrator"), run.get("level"), maker=run.get("maker"))}
+    costs = read_costs(facts, base)
+    if costs:
+        owners = costs.get("totals", {}).get("owners", {})
+        for t in tasks:
+            if t["id"] in owners:
+                t["cost"] = cost_of(owners[t["id"]])
+        if "orchestrator" in owners:
+            orch["cost"] = cost_of(owners["orchestrator"])
     data = {"title": facts.get("title", ""), "date": facts.get("date", ""), "integration": facts.get("integration", {}),
             "orch": orch, "pauses": pauses, "tasks": tasks, "files": inline, "rounds": rounds, "asleep": asleep,
             "turns_missing": any(not t.get("turns") for t in timed(facts["tasks"]))}
@@ -1301,7 +1312,47 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             data["usage"] = usage
         else:
             print(f"run-charts: no usage samples for the run in {folder}; the usage panel is left out", file=sys.stderr)
+    if costs:
+        t = costs.get("totals", {})
+        gaps = [f"Not counted or partly counted: {why}: {n} thread{'s' if n != 1 else ''}" for why, n in (t.get("incomplete") or {}).items()]
+        if t.get("malformed"):
+            gaps.append(f"{t['malformed']} malformed log record(s) skipped")
+        if t.get("orchestrator_counted") is False:
+            gaps.append("The orchestrator's own tokens are not counted (no thread given)")
+        data["cost"] = {"total": t.get("total"), "incomplete": bool(gaps),
+                        "lines": [f"{m}: {money_text(v)}" for m, v in (t.get("by_model") or {}).items()]
+                        + gaps + [f"Prices: {costs.get('price_source', '')}"]}
     return data, inline, paths
+
+
+def money_text(v) -> str:
+    v = v if isinstance(v, (int, float)) else 0
+    return f"${v:,.0f}" if v >= 100 else f"${v:,.2f}"
+
+
+def read_costs(facts: dict, base: Path) -> dict | None:
+    """The run-costs JSON the facts name ("costs": {"file": ...}), or None."""
+    given = (facts.get("costs") or {}).get("file") if isinstance(facts.get("costs"), dict) else None
+    if not given:
+        return None
+    path = Path(given).expanduser()
+    path = path if path.is_absolute() else base / path
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) and isinstance(data.get("totals"), dict) else None
+    except (OSError, ValueError):
+        print(f"run-charts: can't read the costs file {path}; the map shows no costs", file=sys.stderr)
+        return None
+
+
+def cost_of(owner: dict) -> dict:
+    """A card's cost: its total at API prices and the lines its hover lists (who, then which model)."""
+    names = {"orchestrator": "Its own work", "task": "Its own work", "reviewer": "Its reviewers", "helper": "Its helpers"}
+    lines = [f"{names.get(r, r)}: {money_text(v)}" for r, v in (owner.get("roles") or {}).items()]
+    lines += [f"{m}: {money_text(v)}" for m, v in (owner.get("models") or {}).items()]
+    gaps = owner.get("incomplete") or []
+    lines += [f"Not counted or partly counted: {why}" for why in gaps]
+    return {"total": owner.get("total") or 0, "lines": lines, "incomplete": bool(gaps)}
 
 
 def run_map(facts: dict, data: dict, paths: list[str], folder: Path) -> tuple[int, int]:
@@ -1440,7 +1491,9 @@ def main(argv: list[str]) -> int:
     (folder / "timeline.mmd").write_text(timeline(facts))
     line = summary(facts)
     extra = usage_line(usage) if usage else ""
-    (folder / "summary.txt").write_text(line + "\n" + (extra + "\n" if extra else ""))
+    costs = read_costs(facts, Path(args.facts).resolve().parent)
+    cost_line = costs.get("paragraph", "") if costs else ""
+    (folder / "summary.txt").write_text(line + "\n" + (extra + "\n" if extra else "") + (cost_line + "\n" if cost_line else ""))
     print(f"run-charts: wrote {folder / 'graph.mmd'}, {folder / 'timeline.mmd'} and {folder / 'summary.txt'}")
     charts = usage_mermaid(usage, facts) if usage else {}
     for name, text in charts.items():

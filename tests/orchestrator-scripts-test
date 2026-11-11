@@ -3021,6 +3021,180 @@ EOF
 # run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority
 nice -n 10 "$script_dir/run-watch-test" >/dev/null
 
+# run-costs: a run's tokens at API list prices, from made-up T3 records (threads, a Claude result line, Codex
+# token counts), OpenCode's session totals and a price list; only the run's span counts; a Claude Code subagent
+# is in its parent's figures; Antigravity is "not counted"; run-charts puts the costs on the cards and in summary.txt.
+costs="$work/costs"
+mkdir -p "$costs/t3/logs/provider" "$costs/run"
+python3 -I - "$costs" <<'EOF'
+import json, os, sqlite3, sys
+root = sys.argv[1]
+t3 = os.path.join(root, "t3")
+db = sqlite3.connect(os.path.join(t3, "statev2.sqlite"))
+db.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+db.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+db.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+def thread(tid, title, instance, model, parent=None, created="2026-11-10T00:30:00Z", native=None, driver=None):
+    db.execute("insert into orchestration_v2_projection_threads values (?, ?)", (tid, json.dumps({
+        "title": title, "providerInstanceId": instance, "modelSelection": {"model": model},
+        "lineage": {"parentThreadId": parent}, "createdAt": created})))
+    if native:
+        db.execute("insert into orchestration_v2_projection_provider_threads values (?, ?)", (tid, json.dumps({"nativeThreadRef": {"driver": driver, "nativeId": native}})))
+thread("orch-1", "Orchestrator", "claudeAgent", "claude-opus-5-5")
+thread("mcp:launch:task-a", "A", "claudeAgent", "claude-opus-5-5")
+thread("thread:review-a-terra", "A review (Terra)", "codex", "gpt-6.1-terra", parent="mcp:launch:task-a", native="cx-1", driver="codex")
+thread("thread:research-a", "A research", "opencode", "opencode/deepseek-v4.1-flash-free", parent="mcp:launch:task-a", native="ses_1", driver="opencode")
+thread("thread:critique-a-argon", "A critique (Argon)", "antigravity", "gemini-4-argon-high", parent="mcp:launch:task-a", native="ag-1", driver="antigravity")
+thread("thread:provider:claudeAgent:native-thread:sub", "Explore code", "claudeAgent", "claude-haiku-5-5", parent="mcp:launch:task-a")
+thread("thread:old-review", "A review from another run", "codex", "gpt-6.1-terra", parent="mcp:launch:task-a", created="2026-11-01T00:00:00Z")
+db.commit()
+def claude_line(at, thread_id, uuid, usage):
+    return f"[{at}] NTIVE: " + json.dumps({"provider": "claudeAgent", "providerSessionId": f"provider-session:provider-instance:claudeAgent:thread:{thread_id.replace(':', '%3A')}:abc",
+                                           "event": {"payload": {"uuid": uuid, "total_cost_usd": 1.0, "model_usage_since_last_result": usage}}})
+opus = {"claude-opus-5-5": {"inputTokens": 1000, "outputTokens": 10000, "cacheReadInputTokens": 1000000, "cacheCreationInputTokens": 3000,
+                            "cacheCreationEphemeral1hInputTokens": 1000, "costUSD": 9.99}}
+codex = lambda at, total, native="cx-1": f"[{at}] NTIVE: " + json.dumps({"provider": "codex", "event": {"payload": {"method": "thread/tokenUsage/updated",
+    "params": {"threadId": native, "tokenUsage": {"total": {"inputTokens": total, "cachedInputTokens": total // 2, "cacheWriteInputTokens": 0, "outputTokens": total // 100}}}}}})
+with open(os.path.join(t3, "logs/provider/events.task-a.log"), "w") as f:
+    f.write(claude_line("2026-11-09T22:00:00.000Z", "mcp:launch:task-a", "u0", opus) + "\n")   # before the run: not counted
+    f.write(claude_line("2026-11-10T01:00:00.000Z", "mcp:launch:task-a", "u1", opus) + "\n")
+    f.write(claude_line("2026-11-10T01:00:00.000Z", "mcp:launch:task-a", "u1", opus) + "\n")   # logged twice: once
+    f.write(claude_line("2026-11-10T02:00:00.000Z", "orch-1", "u2", opus) + "\n")
+with open(os.path.join(t3, "logs/provider/events.review.log.1"), "w") as f:   # the older, rotated file
+    f.write(codex("2026-11-09T23:00:00.000Z", 100000) + "\n")   # before the run: the start of the rise
+with open(os.path.join(t3, "logs/provider/events.review.log"), "w") as f:
+    f.write(codex("2026-11-10T01:30:00.000Z", 300000) + "\n")
+    f.write(codex("2026-11-10T03:30:00.000Z", 400000) + "\n")   # after the thread's next run began on Luna
+    f.write("[2026-11-10T03:40:00.000Z] NTIVE: " + json.dumps({"event": {"payload": None}}) + " thread/tokenUsage/updated\n")   # malformed
+    f.write("[2026-11-10T03:41:00.000Z] NTIVE: " + json.dumps({"event": {"payload": {"method": "thread/tokenUsage/updated", "params": {"threadId": ["cx-1"]}}}}) + "\n")   # a list as its ID
+    f.write(codex("2026-11-10T03:42:00.000Z", 400000).replace("400000", "1e999", 1) + "\n")   # an infinite count: read as 0, no crash
+    for native in ("cx-old", "cx-new"):
+        f.write(codex("2026-11-10T02:10:00.000Z", 1000, native) + "\n")
+        f.write(codex("2026-11-10T02:20:00.000Z", 1600, native) + "\n")
+os.utime(os.path.join(t3, "logs/provider/events.review.log.1"), (1, 1))   # untouched for long: still read
+db.execute("insert into orchestration_v2_projection_runs values (?, ?, ?)", ("thread:review-a-terra", "2026-11-10T00:40:00Z", json.dumps({"modelSelection": {"model": "gpt-6.1-terra"}})))
+db.execute("insert into orchestration_v2_projection_runs values (?, ?, ?)", ("thread:review-a-terra", "2026-11-10T03:00:00Z", json.dumps({"modelSelection": {"model": "gpt-6-luna"}})))
+db.commit()
+# a Claude result with its own figures, then one with only cumulative ones: the second counts only its rise
+mixed = lambda at, uuid, since, total: f"[{at}] NTIVE: " + json.dumps({"providerSessionId": "provider-session:provider-instance:claudeAgent:thread:thread%3Ahelp-a:s1",
+    "event": {"payload": dict({"uuid": uuid, "total_cost_usd": 1.0, "modelUsage": total}, **({"model_usage_since_last_result": since} if since else {}))}})
+thread("thread:help-a", "A helper", "claudeAgent", "claude-sonnet-5-5", parent="mcp:launch:task-a")
+thread("thread:task-b", "B", "claudeAgent", "claude-opus-5-5", parent="orch-1")   # a task launched with delegate_task
+db.commit()
+son = lambda n: {"claude-sonnet-5-5": {"inputTokens": n, "outputTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}
+with open(os.path.join(t3, "logs/provider/events.help.log"), "w") as f:
+    f.write(mixed("2026-11-10T01:00:00.000Z", "h1", son(100), son(100)) + "\n")
+    f.write(mixed("2026-11-10T01:10:00.000Z", "h2", None, son(250)) + "\n")
+prices = {"fetchedAtMs": 1794345905354, "document": {
+    "claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05, "cache_read_input_token_cost": 2e-07,
+                        "cache_creation_input_token_cost": 5e-06, "cache_creation_input_token_cost_above_1hr": 8e-06},
+    "gpt-6.1-terra": {"input_cost_per_token": 1e-06, "output_cost_per_token": 5e-06, "cache_read_input_token_cost": 5e-08},
+    "azure_ai/deepseek-v4.1-flash": {"input_cost_per_token": 3e-07, "output_cost_per_token": 1.2e-06, "cache_read_input_token_cost": 6e-09}}}
+json.dump(prices, open(os.path.join(t3, "usage-model-rates.json"), "w"))
+oc = sqlite3.connect(os.path.join(root, "opencode.db"))
+oc.execute("create table session_v2 (id text, model text, tokens_input int, tokens_output int, tokens_reasoning int, tokens_cache_read int, tokens_cache_write int)")
+oc.execute("insert into session_v2 values ('ses_1', ?, 100000, 1000, 1000, 0, 0)", (json.dumps({"id": "deepseek-v4.1-flash-free", "providerID": "opencode"}),))
+oc.execute("create table session_message (id text, session_id text, type text, time_created int, data text)")
+def message(ms, tokens):
+    oc.execute("insert into session_message values ('m', 'ses_1', 'assistant', ?, ?)", (ms, json.dumps({"time": {"created": ms},
+        "model": {"id": "deepseek-v4.1-flash-free", "providerID": "opencode"}, "tokens": tokens})))
+message(1794268800000 + 3600000, {"input": 60000, "output": 500, "reasoning": 500, "cache": {"read": 0, "write": 0}})   # 01:00 in the run
+message(1794268800000 - 3600000, {"input": 40000, "output": 500, "reasoning": 500, "cache": {"read": 0, "write": 0}})   # before it
+# OpenCode sessions with no per-message records: totals inside the run count, totals reaching outside don't;
+# a session whose records hold no tokens used nothing
+for sid, created, updated in (("ses_in", 1794269000000, 1794270000000), ("ses_out", 1794200000000, 1794270000000)):
+    oc.execute("insert into session_v2 (id, model, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write) values (?, ?, 5000, 100, 0, 0, 0)",
+               (sid, json.dumps({"id": "glm-5.3-flash-free", "providerID": "opencode"})))
+oc.execute("alter table session_v2 add column time_created int")
+oc.execute("alter table session_v2 add column time_updated int")
+oc.execute("update session_v2 set time_created = 1794269000000, time_updated = 1794270000000 where id = 'ses_in'")
+oc.execute("update session_v2 set time_created = 1794200000000, time_updated = 1794270000000 where id = 'ses_out'")
+oc.execute("insert into session_message values ('m', 'ses_empty', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}}),))
+oc.execute("insert into session_message values ('m', 'ses_bad', 'assistant', 1794272400000, '{not json')")   # unreadable: partial, not $0
+oc.execute("insert into session_message values ('m', 'ses_null', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}, "tokens": None}),))
+oc.execute("insert into session_message values ('m', 'ses_null', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}, "tokens": {"input": 5, "cache": [1]}}),))
+for sid in ("ses_in", "ses_out", "ses_empty", "ses_bad", "ses_null"):
+    thread(f"thread:{sid}", f"A {sid}", "opencode", "opencode/glm-5.3-flash-free", parent="mcp:launch:task-a", native=sid, driver="opencode")
+# Codex threads with no count before the run: one older than the run (its first count is a baseline), one new
+thread("thread:old-codex", "C", "codex", "gpt-6.1-terra", created="2026-11-09T23:00:00Z", native="cx-old", driver="codex")   # a Codex task begun before the run
+thread("thread:new-codex", "A review new (Terra)", "codex", "gpt-6.1-terra", parent="mcp:launch:task-a", created="2026-11-10T02:00:00Z", native="cx-new", driver="codex")
+db.commit()
+oc.commit()
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "orchestrator_thread": "orch-1",
+           "tasks": {"A": {"thread": "mcp:launch:task-a", "status": "merged"}, "B": {"thread": "thread:task-b", "status": "merged"},
+                     "C": {"thread": "thread:old-codex", "status": "merged"}}},
+          open(os.path.join(root, "run", "watch.json"), "w"))
+with open(os.path.join(t3, "logs/provider/events.task-b.log"), "w") as f:
+    f.write(claude_line("2026-11-10T02:30:00.000Z", "thread:task-b", "b1", opus) + "\n")
+EOF
+T3_USERDATA="$costs/t3" OPENCODE_DB="$costs/opencode.db" "$scripts/run-costs" "$costs/run" --json "$costs/costs.json" > "$costs/costs.md"
+python3 -I - "$costs" <<'EOF'
+import json, os, sys
+root = sys.argv[1]
+d = json.load(open(os.path.join(root, "costs.json")))
+lines = {(l["owner"], l["role"], l["title"]): l for l in d["lines"]}
+opus = 1000 * 4e-06 + 10000 * 2e-05 + 1000000 * 2e-07 + 2000 * 5e-06 + 1000 * 8e-06   # 1-hour cache writes at their own rate
+task = lines[("A", "task", "A")]
+assert abs(task["usd"] - round(opus, 4)) < 1e-6 and task["reported_usd"] == 9.99, task                       # once, inside the span
+assert abs(lines[("orchestrator", "orchestrator", "Orchestrator")]["usd"] - round(opus, 4)) < 1e-6
+terra = next(l for l in d["lines"] if l["title"] == "A review (Terra)" and l["model"] == "gpt-6.1-terra")
+assert terra["tokens"] == {"input": 100000, "cache_read": 100000, "cache_write": 0, "cache_write_1h": 0, "output": 2000}, terra   # its baseline from the rotated file
+luna = [l for l in d["lines"] if l["title"] == "A review (Terra)" and l["model"] == "gpt-6-luna"]
+assert len(luna) == 1 and luna[0]["tokens"]["input"] == 50000 and luna[0]["usd"] is None, luna   # the rise after its run moved to Luna; no Luna price here
+assert "no price" in d["paragraph"], d["paragraph"]
+helper = lines[("A", "helper", "A helper")]
+assert helper["tokens"]["input"] == 250, helper   # 100, then the rise to 250, not 100 + 250
+research = lines[("A", "helper", "A research")]
+assert research["tokens"]["input"] == 60000 and research["tokens"]["output"] == 1000, research   # only the message inside the run
+assert "azure_ai/deepseek-v4.1-flash" in research["basis"] and "$0 billed" in research["basis"], research
+assert lines[("A", "reviewer", "A critique (Argon)")]["usd"] is None and lines[("A", "helper", "Explore code")].get("included")
+assert not any(l["title"] == "A review from another run" for l in d["lines"])
+t = d["totals"]
+assert t["threads_not_counted"].get("antigravity") == 1 and set(t["owners"]) == {"A", "B", "C", "orchestrator"}, t
+by_title = lambda title: [l for l in d["lines"] if l["title"] == title]
+assert by_title("A ses_in")[0]["tokens"]["input"] == 5000 and "lies inside the run" in by_title("A ses_in")[0]["missing"]
+assert by_title("A ses_out")[0]["usd"] is None and "reach outside the run" in by_title("A ses_out")[0]["missing"]
+assert by_title("A ses_empty")[0]["usd"] == 0.0 and not by_title("A ses_empty")[0].get("missing")
+assert by_title("A ses_bad")[0]["usd"] is None, by_title("A ses_bad")
+assert by_title("A ses_null")[0]["usd"] is None and "couldn't be read" in by_title("A ses_null")[0]["missing"], by_title("A ses_null")
+assert t["incomplete"]["no price for gpt-6-luna"] == 1, t["incomplete"]   # one thread, however many lines
+old, new = by_title("C")[0], by_title("A review new (Terra)")[0]
+assert old["tokens"]["input"] + old["tokens"]["cache_read"] == 600 and "isn't counted" in old["missing"], old   # 1000 was its baseline
+assert new["tokens"]["input"] + new["tokens"]["cache_read"] == 1600 and not new.get("missing"), new          # a new thread: from zero
+assert [l["role"] for l in d["lines"] if l["thread"] == "thread:task-b"] == ["task"], "B counted once, as a task"
+assert t["malformed"] >= 1 and "malformed log record" in d["paragraph"] and "(antigravity)" in d["paragraph"], d["paragraph"]
+assert d["paragraph"].startswith("Cost at API prices (estimate): $") and "not what the subscriptions cost" in d["paragraph"]
+assert "| Task A |" in open(os.path.join(root, "costs.md")).read()
+facts = {"title": "Costs", "orchestrator": "Claude Code (T3) · Opus 5.5 (High)", "integration": {"branch": "main", "head": "abc"},
+         "run": {"start": "02:00", "end": "08:00", "level": "high", "worked_minutes": 10, "wakes": 3}, "costs": {"file": "costs.json"},
+         "tasks": [{"id": "A", "name": "A", "level": "high", "status": "merged", "needs": [], "first_wave": True,
+                    "launched": "02:10", "ended": "05:00", "worked_minutes": 100}]}
+json.dump(facts, open(os.path.join(root, "facts.json"), "w"))
+EOF
+"$scripts/run-charts" "$costs/facts.json" "$costs/charts" >/dev/null 2>&1
+grep -q '^Cost at API prices (estimate): \$' "$costs/charts/summary.txt"
+# a costs file that can't be read: a note, and the map as without one; outside T3 a clean refusal, exit 2
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["costs"] = {"file": "missing.json"}; json.dump(f, open(sys.argv[2], "w"))' "$costs/facts.json" "$costs/facts-bad.json"
+"$scripts/run-charts" "$costs/facts-bad.json" "$costs/charts-bad" > /dev/null 2> "$costs/bad.err"
+grep -q "can't read the costs file" "$costs/bad.err" && ! grep -q '"cost"' "$costs/charts-bad/run-map.html"
+status=0
+T3_USERDATA="$costs/nowhere" "$scripts/run-costs" "$costs/run" > /dev/null 2> "$costs/no-t3.err" || status=$?
+test "$status" -eq 2 && grep -q "works only for a run under T3" "$costs/no-t3.err"
+python3 -I -c 'import json, sys; w = json.load(open(sys.argv[1])); w.pop("orchestrator_thread"); json.dump(w, open(sys.argv[1], "w"))' "$costs/run/watch.json"
+T3_USERDATA="$costs/t3" OPENCODE_DB="$costs/opencode.db" "$scripts/run-costs" "$costs/run" --json "$costs/costs-no-orch.json" | grep -q "orchestrator's own tokens are not counted"
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["costs"] = {"file": sys.argv[2]}; json.dump(f, open(sys.argv[1], "w"))' "$costs/facts-bad.json" "$costs/costs-no-orch.json"
+"$scripts/run-charts" "$costs/facts-bad.json" "$costs/charts-no-orch" >/dev/null 2>&1
+grep -q "orchestrator's own tokens are not counted" "$costs/charts-no-orch/run-map.html" && grep -q '"incomplete": true' "$costs/charts-no-orch/run-map.html"
+python3 -I - "$costs/charts/run-map.html" <<'EOF'
+import json, re, sys
+data = json.loads(re.search(r"const DATA = (\{.*?\});\n", open(sys.argv[1]).read()).group(1))
+assert data["cost"]["total"] > 0 and data["tasks"][0]["cost"]["total"] > data["orch"]["cost"]["total"] > 0, data.get("cost")
+assert any(l.startswith("Its reviewers: $") for l in data["tasks"][0]["cost"]["lines"]), data["tasks"][0]["cost"]
+a = data["tasks"][0]["cost"]
+assert a["incomplete"] is True and any(l.startswith("Not counted or partly counted") for l in a["lines"]), a
+assert data["orch"]["cost"]["incomplete"] is False, data["orch"]["cost"]   # the orchestrator's figure misses nothing
+EOF
+
 # heartbeat: an idle wake is one line ("nothing to act on") and a ledger line; run-watch's findings and a
 # task's events say to act; a running Fable task makes the usage reading live.
 hb="$work/hb-run"
@@ -3028,6 +3202,9 @@ mkdir -p "$hb/usage"
 printf '%s\n' '{"t": "2026-11-11T01:46:00+02:00", "providers": {"claude": {"windows": {"weekly": {"used": 22.0}, "five_hour": {"used": 5.0}}}}}' > "$hb/usage/providers.jsonl"
 printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-opus-5-5"}}}' > "$hb/watch.json"
 printf '# ledger\n' > "$hb.md"
+printf '#!/bin/sh\n' > "$work/hb-ps"   # no processes: a test elsewhere on the machine can't show up as a dialog
+chmod +x "$work/hb-ps"
+export HEARTBEAT_PS="$work/hb-ps"
 printf '#!/bin/sh\n' > "$work/hb-watch-quiet"
 printf '#!/bin/sh\necho "commit A 2026-11-11T01:50:00+02:00 abc fix"\n' > "$work/hb-watch-event"
 printf '#!/bin/sh\necho "hang A: stuck"\n' > "$work/hb-watch-flag"
@@ -3075,5 +3252,6 @@ case "$out" in *"act on the lines below"*"usage: claude weekly at 22%, at or pas
 status=0
 "$scripts/heartbeat" "$hb" --bogus >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
+unset HEARTBEAT_PS
 
 echo "orchestrator scripts: ok"

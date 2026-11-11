@@ -1,0 +1,621 @@
+#!/usr/bin/env python3
+"""What a run's tokens would have cost at API list prices: per thread, by model, for the orchestrator,
+each task, each task's reviewers and its helpers. An estimate of what the same tokens would cost on the
+API, not what the subscriptions cost: most of the work runs on flat-rate plans or free tiers.
+
+Usage: run-costs <run directory> [--orchestrator <thread ID>] [--from <ISO time>] [--to <ISO time>]
+                 [--json <file>] [--markdown <file>]
+
+The run: <run directory>/watch.json gives the tasks' thread IDs ("tasks": {"A": {"thread": ...}}), the
+run's start ("started") and, when the orchestrator recorded them, its own thread ("orchestrator_thread")
+and the run's end ("finished"). --orchestrator, --from and --to override them; the end defaults to now.
+Only tokens used between the start and the end count, since one orchestrator thread may serve several
+runs.
+
+Where the numbers come from (T3 Code's records; T3_USERDATA moves its folder, ~/.t3/userdata by default):
+  - the threads: T3's statev2.sqlite, read only: each thread's title, model and parent (a reviewer or
+    helper a task started with delegate_task hangs under the task's thread), and the provider's own
+    session or thread ID for it;
+  - Claude (Claude Code under T3): the result lines T3 logs for each turn (logs/provider/events.*.log),
+    with each model's tokens since the last result, subagents included (1-hour cache writes apart);
+    Claude Code's own cost figure on those lines is kept as a cross-check;
+  - Codex: T3's logged "thread/tokenUsage/updated" events, cumulative per Codex thread: the rise inside
+    the run's span, priced by the price table;
+  - OpenCode: OpenCode's own database (~/.local/share/opencode/opencode.db, OPENCODE_DB moves it),
+    each assistant message's tokens and model inside the span (a T3 thread is one session), priced by
+    the price table; a session with no per-message records counts by its totals only when it lies
+    inside the run; its free models cost the owner $0, and
+    the estimate is their list-price equivalent;
+  - Antigravity and Copilot keep no token counts this script can read: their threads are listed as
+    "not counted". A Claude Code subagent that T3 mirrors as a thread of its own is in its parent's
+    figures already, and is listed as such.
+The price table is LiteLLM's model price list, as T3 Code caches it (usage-model-rates.json, with the
+time it fetched it), or a copy given as RUN_COSTS_PRICES. A model is priced by its own entry, else its
+maker's (deepseek/, zai/, gemini/), else Azure AI's listing, and the source is named. T3's provider logs
+rotate (four files per thread), so a long, busy thread can lose its oldest turns: the report says when a
+thread's first logged turn comes after its start.
+
+It prints a Markdown table and a "Cost at API prices (estimate)" paragraph, and with --json writes the
+numbers for run-charts (facts' "costs": {"file": ...}). Exit 0; 2 for a usage error or when T3's records
+can't be read (a run outside T3).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+import sys
+import time
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import unquote
+
+REVIEW = re.compile(r"review|critique|re-look", re.I)
+MAKERS = ("deepseek/", "zai/", "gemini/", "openai/", "anthropic/", "azure_ai/")
+FREE = re.compile(r"(^|/)opencode/.*-free$|-free$")
+
+
+def userdata() -> Path:
+    return Path(os.environ.get("T3_USERDATA", Path.home() / ".t3" / "userdata"))
+
+
+def stamp(value) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value / 1000 if value > 1e11 else float(value)
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).timestamp()
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+
+
+# ------------------------------------------------------------------------------------------ threads
+
+def load_threads(db: Path) -> tuple[dict, dict, dict]:
+    """thread ID -> {title, model, instance, parent, created}; thread ID -> [(native driver, native ID)];
+    thread ID -> [(requested time, model)] for its runs, oldest first."""
+    con = connect(db)
+    threads, natives, runs = {}, defaultdict(list), defaultdict(list)
+    for tid, payload in con.execute("select thread_id, payload_json from orchestration_v2_projection_threads"):
+        try:
+            p = json.loads(payload)
+        except (TypeError, ValueError):
+            continue
+        lineage = p.get("lineage") or {}
+        threads[tid] = {"title": p.get("title") or "", "model": (p.get("modelSelection") or {}).get("model"),
+                        "instance": p.get("providerInstanceId"), "parent": lineage.get("parentThreadId"),
+                        "created": stamp(p.get("createdAt"))}
+    for tid, payload in con.execute("select thread_id, payload_json from orchestration_v2_projection_provider_threads"):
+        try:
+            ref = json.loads(payload).get("nativeThreadRef") or {}
+        except (TypeError, ValueError):
+            continue
+        if ref.get("nativeId"):
+            natives[tid].append((ref.get("driver"), ref["nativeId"]))
+    for tid, requested, payload in con.execute("select thread_id, requested_at, payload_json from orchestration_v2_projection_runs"):
+        try:
+            model = (json.loads(payload).get("modelSelection") or {}).get("model")
+        except (TypeError, ValueError):
+            model = None
+        if model:
+            runs[tid].append((stamp(requested) or 0, model))
+    con.close()
+    for v in runs.values():
+        v.sort()
+    return threads, natives, runs
+
+
+def model_at(tid: str, at: float, threads: dict, runs: dict) -> str | None:
+    found = [m for t, m in runs.get(tid, []) if t <= at + 1]
+    return found[-1] if found else threads.get(tid, {}).get("model")
+
+
+# ------------------------------------------------------------------------------------------ prices
+
+def load_prices() -> tuple[dict, str]:
+    path = Path(os.environ.get("RUN_COSTS_PRICES", userdata() / "usage-model-rates.json"))
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}, f"no price table ({path} unreadable)"
+    doc = data.get("document", data) if isinstance(data, dict) else {}
+    fetched = data.get("fetchedAtMs") if isinstance(data, dict) else None
+    when = datetime.fromtimestamp(fetched / 1000).strftime("%Y-%m-%d") if isinstance(fetched, (int, float)) else "date unknown"
+    return doc, f"LiteLLM's model price list as T3 Code cached it on {when}"
+
+
+def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
+    """The price entry for a model ID, and the entry's name; OpenCode's prefixes and -free dropped."""
+    name = re.sub(r"^(opencode-go|opencode)/", "", model or "")
+    name = re.sub(r"-free$", "", name)
+    name = re.sub(r"-(low|medium|high|xhigh|max)$", "", name) if name.startswith("gemini-") else name
+    if name in doc:
+        return doc[name], name
+    for prefix in MAKERS:
+        if prefix + name in doc:
+            return doc[prefix + name], prefix + name
+    tails = sorted(k for k in doc if k.split("/")[-1] == name)
+    return (doc[tails[0]], tails[0]) if tails else (None, "")
+
+
+def priced(tokens: dict, entry: dict) -> float:
+    def rate(key, fallback=0.0):
+        v = entry.get(key)
+        return float(v) if isinstance(v, (int, float)) else fallback
+    inp = rate("input_cost_per_token")
+    write = rate("cache_creation_input_token_cost", inp)
+    return (tokens["input"] * inp + tokens["cache_read"] * rate("cache_read_input_token_cost", inp)
+            + tokens["cache_write"] * write + tokens.get("cache_write_1h", 0) * rate("cache_creation_input_token_cost_above_1hr", write)
+            + tokens["output"] * rate("output_cost_per_token"))
+
+
+# ------------------------------------------------------------------------------------------ tokens
+
+def zero() -> dict:
+    return {"input": 0, "cache_read": 0, "cache_write": 0, "cache_write_1h": 0, "output": 0}
+
+
+def num(value) -> int:
+    """A token count, or 0 for anything that isn't a non-negative number (a malformed field)."""
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 and value == value and value != float("inf")
+    return int(value) if ok else 0
+
+
+def log_order(path: Path) -> tuple:
+    """Rotated files hold older lines: events.x.log.3 before .log.2, .log.1 and events.x.log."""
+    m = re.search(r"\.log(?:\.(\d+))?$", path.name)
+    return (path.name[: m.start()] if m else path.name, -(int(m.group(1)) if m and m.group(1) else 0))
+
+
+def scan_t3_logs(wanted: set[str], codex_natives: dict) -> dict:
+    """From T3's provider logs, every relevant record, whatever its time (the span is applied later, and
+    Codex needs the last cumulative count before the run): Claude results per app thread, Codex
+    cumulative counts per native thread, each app thread's earliest logged line in the files it appears
+    in, and how many records were malformed."""
+    folder = userdata() / "logs" / "provider"
+    claude, codex, file_first, malformed = [], defaultdict(list), {}, 0
+    seen: set = set()
+    for path in sorted(folder.glob("events.*.log*"), key=log_order):
+        try:
+            handle = path.open("rb")
+        except OSError:
+            continue
+        first_at, apps = None, set()
+        with handle:
+            for n, raw in enumerate(handle):
+                if n == 0:
+                    m = re.match(rb"\[([^\]]+)\]", raw)
+                    first_at = stamp(m.group(1).decode(errors="replace")) if m else None
+                is_claude = b'"total_cost_usd"' in raw
+                is_codex = b'thread/tokenUsage/updated' in raw
+                if not (is_claude or is_codex):
+                    continue
+                text = raw.decode("utf-8", errors="replace")
+                m = re.match(r"\[([^\]]+)\]", text)
+                at = stamp(m.group(1)) if m else None
+                brace = text.find("{")
+                try:
+                    record = json.loads(text[brace:]) if at is not None and brace >= 0 else None
+                    payload = record["event"]["payload"]
+                    if not isinstance(payload, dict):
+                        raise TypeError
+                except (ValueError, KeyError, TypeError):
+                    malformed += 1
+                    continue
+                if is_codex:
+                    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+                    usage = (params.get("tokenUsage") or {}).get("total") if isinstance(params.get("tokenUsage"), dict) else None
+                    native = params.get("threadId")
+                    if isinstance(native, str) and native in codex_natives:
+                        if not isinstance(usage, dict):
+                            malformed += 1
+                            continue
+                        codex[native].append((stamp(payload.get("emittedAtMs")) or at, usage))
+                        apps.add(codex_natives[native])
+                    continue
+                session = str(record.get("providerSessionId") or "")
+                sm = re.search(r":thread:(.+):[^:]+$", session)
+                app = unquote(sm.group(1)) if sm else None
+                if app not in wanted:
+                    continue
+                key = (session, payload.get("uuid"))
+                if payload.get("uuid") and key in seen:
+                    continue   # the same result logged twice
+                seen.add(key)
+                apps.add(app)
+                claude.append((at, app, session, payload))
+        for app in apps:
+            if first_at is not None:
+                file_first[app] = min(file_first.get(app, first_at), first_at)
+    return {"claude": claude, "codex": codex, "file_first": file_first, "malformed": malformed}
+
+
+CLAUDE_KEYS = (("inputTokens", "input"), ("cacheReadInputTokens", "cache_read"), ("outputTokens", "output"))
+
+
+def claude_usage(records: list, start: float, end: float) -> tuple[dict, int]:
+    """(app thread, model) -> {tokens, usd} inside the span, from results in time order. A result's own
+    since-last-result figures are used; one without them counts the rise of its session's cumulative
+    figures, which every result (of either kind) moves forward."""
+    out: dict = defaultdict(lambda: {"tokens": zero(), "usd": 0.0})
+    cumulative: dict = {}
+    malformed = 0
+    for at, app, session, payload in sorted(records, key=lambda r: r[0]):
+        try:
+            totals = payload.get("modelUsage") if isinstance(payload.get("modelUsage"), dict) else {}
+            since = payload.get("model_usage_since_last_result")
+            if not isinstance(since, dict):
+                since = {}
+                for name, u in totals.items():
+                    before = cumulative.get((session, name))
+                    since[name] = {k: max(0, num(u.get(k)) - num((before or {}).get(k))) if before else num(u.get(k))
+                                   for k in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens",
+                                             "cacheCreationEphemeral1hInputTokens")}
+                    since[name]["costUSD"] = max(0.0, float(u.get("costUSD") or 0) - float((before or {}).get("costUSD") or 0))
+            for name, u in totals.items():
+                if isinstance(u, dict):
+                    cumulative[(session, name)] = u
+            if not (start <= at <= end):
+                continue
+            for name, u in since.items():
+                if not isinstance(u, dict):
+                    malformed += 1
+                    continue
+                slot = out[(app, name)]
+                for src, dst in CLAUDE_KEYS:
+                    slot["tokens"][dst] += num(u.get(src))
+                hour = num(u.get("cacheCreationEphemeral1hInputTokens"))   # 1-hour cache writes cost more
+                slot["tokens"]["cache_write"] += max(0, num(u.get("cacheCreationInputTokens")) - hour)
+                slot["tokens"]["cache_write_1h"] += hour
+                cost = u.get("costUSD")
+                slot["usd"] += float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else 0.0
+        except (TypeError, ValueError, AttributeError):
+            malformed += 1
+    return out, malformed
+
+
+def codex_usage(series: list, start: float, end: float, model_of, skip_first: bool = False) -> tuple[dict, bool]:
+    """model -> tokens: the rise of a Codex thread's cumulative counts inside the span, each rise under
+    the model its thread ran at that time (a fall is a new session); and whether a count before the
+    span was seen. Without one, the first count in the span is taken whole, or, with skip_first (a
+    thread older than the run, whose earlier counts rotated away), only used as the baseline."""
+    out: dict = defaultdict(zero)
+    prev, baseline = None, False
+    for i, (at, total) in enumerate(sorted(series, key=lambda x: x[0])):
+        cur = {"input": num(total.get("inputTokens")), "cached": num(total.get("cachedInputTokens")),
+               "write": num(total.get("cacheWriteInputTokens")), "output": num(total.get("outputTokens"))}
+        delta = cur if prev is None or cur["input"] < prev["input"] else {k: max(0, cur[k] - prev[k]) for k in cur}
+        prev = cur
+        if at < start:
+            baseline = True
+            continue
+        if at > end:
+            break
+        if skip_first and not baseline and i == 0:
+            continue   # its count holds what the thread did before the run: a baseline, not this run's use
+        slot = out[model_of(at)]
+        slot["input"] += max(0, delta["input"] - delta["cached"] - delta["write"])
+        slot["cache_read"] += delta["cached"]
+        slot["cache_write"] += delta["write"]
+        slot["output"] += delta["output"]
+    return out, baseline
+
+
+def opencode_usage(sessions: set[str], start: float, end: float) -> tuple[dict, set, set, set]:
+    """OpenCode session ID -> {model: tokens} for its assistant messages inside the span, each under its
+    own model (session_message, else the older message table); the sessions counted by their whole-session
+    totals (no per-message records, and the session lies inside the run); those left out (no
+    per-message records, and the session reaches outside the run); and those with records it couldn't
+    read."""
+    path = Path(os.environ.get("OPENCODE_DB", Path.home() / ".local/share/opencode/opencode.db"))
+    out: dict = defaultdict(lambda: defaultdict(zero))
+    whole: set = set()
+    outside: set = set()
+    unreadable: set = set()
+    if not sessions or not path.exists():
+        return out, whole, outside, unreadable
+    con = connect(path)
+    marks = ",".join("?" * len(sessions))
+    found: set = set()
+    for query in (f"select session_id, data from session_message where type = 'assistant' and session_id in ({marks})",
+                  f"select session_id, data from message where session_id in ({marks})"):
+        try:
+            rows = con.execute(query, tuple(sessions)).fetchall()
+        except sqlite3.Error:
+            continue
+        for sid, data in rows:
+            if sid in found and "from message" in query:
+                continue   # already read from session_message
+            try:
+                d = json.loads(data)
+                if not isinstance(d, dict):
+                    raise TypeError
+            except (TypeError, ValueError):
+                unreadable.add(sid)   # a record it can't read: the session's figure is partial
+                continue
+            if "session_message" in query:
+                found.add(sid)   # it has readable per-message records, whatever each one holds
+            if "tokens" not in d:
+                continue   # a message with no usage, such as a failed request
+            try:
+                t = d["tokens"]
+                at = stamp((d.get("time") or {}).get("created"))
+                m = d.get("model") if isinstance(d.get("model"), dict) else {"id": d.get("modelID"), "providerID": d.get("providerID")}
+                name = f"{m.get('providerID')}/{m.get('id')}" if m.get("id") else "unknown"
+                cache = t.get("cache") or {}
+                if not isinstance(t, dict) or not isinstance(cache, dict) or at is None:
+                    raise TypeError
+            except (TypeError, ValueError, KeyError, AttributeError):
+                unreadable.add(sid)   # usage it can't read: the session's figure is partial
+                continue
+            if not (start <= at <= end):
+                continue
+            slot = out[sid][name]
+            slot["input"] += num(t.get("input"))
+            slot["cache_read"] += num(cache.get("read"))
+            slot["cache_write"] += num(cache.get("write"))
+            slot["output"] += num(t.get("output")) + num(t.get("reasoning"))
+    for sid in found - set(out):   # per-message records, none with tokens in the span: it used nothing then
+        out[sid] = {}
+    for sid in sessions - found - set(out):   # no per-message records: the session's totals, if it lies inside the run
+        try:
+            row = con.execute("select model, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, "
+                              "time_created, time_updated from session_v2 where id = ?", (sid,)).fetchone()
+        except sqlite3.Error:
+            row = None
+        if row and not (start <= (stamp(row[6]) or 0) and (stamp(row[7]) or float("inf")) <= end):
+            outside.add(sid)   # its totals can't be bounded to the run: not counted
+            continue
+        if row:
+            try:
+                m = json.loads(row[0]) if row[0] else {}
+                name = f"{m.get('providerID')}/{m.get('id')}"
+            except (TypeError, ValueError, AttributeError):
+                name = "unknown"
+            out[sid][name] = {"input": num(row[1]), "cache_read": num(row[4]), "cache_write": num(row[5]), "cache_write_1h": 0,
+                              "output": num(row[2]) + num(row[3])}
+            whole.add(sid)
+    con.close()
+    return out, whole, outside, unreadable
+
+
+# ------------------------------------------------------------------------------------------ the run
+
+def harness_of(instance: str | None) -> str:
+    i = (instance or "").lower()
+    return ("claude-api" if "claude_api" in i else "claude" if i.startswith("claude") else "codex" if i.startswith("codex")
+            else "opencode" if i.startswith("opencode") else "antigravity" if i.startswith("antigravity")
+            else "copilot" if "copilot" in i else i or "unknown")
+
+
+def collect(run_dir: Path, orchestrator: str | None, start: float, end: float) -> dict:
+    watch = json.loads((run_dir / "watch.json").read_text())
+    tasks = {str(k): v.get("thread") for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict) and v.get("thread")}
+    threads, natives, runs = load_threads(userdata() / "statev2.sqlite")
+    children = defaultdict(list)
+    for tid, t in threads.items():
+        if t["parent"]:
+            children[t["parent"]].append(tid)
+    rows = []   # one per thread: who it belongs to and its role
+    task_threads, added = set(tasks.values()), set()
+
+    def add(tid: str, owner: str, role: str):
+        if tid in added:
+            return
+        added.add(tid)
+        t = threads.get(tid, {"title": "", "model": None, "instance": None, "created": None})
+        rows.append({"thread": tid, "owner": owner, "role": role, "title": t["title"], "harness": harness_of(t["instance"]),
+                     "model": t["model"]})
+        for child in children.get(tid, []):
+            if child in task_threads:
+                continue   # a task launched with delegate_task: counted as its own task, not as a helper
+            created = threads[child]["created"]
+            if created is not None and not (start - 60 <= created <= end):
+                continue   # a thread from another run on the same parent
+            add(child, owner, "reviewer" if REVIEW.search(threads[child]["title"]) else "helper")
+
+    if orchestrator:
+        add(orchestrator, "orchestrator", "orchestrator")
+    for task_id, tid in sorted(tasks.items()):
+        add(tid, task_id, "task")
+
+    wanted = {r["thread"] for r in rows}
+    codex_natives = {n: r["thread"] for r in rows for d, n in natives.get(r["thread"], []) if d == "codex"}
+    scan = scan_t3_logs(wanted, codex_natives)
+    claude, malformed = claude_usage(scan["claude"], start, end)
+    malformed += scan["malformed"]
+    oc_sessions = {n: r["thread"] for r in rows for d, n in natives.get(r["thread"], []) if d == "opencode"}
+    opencode, whole, outside, unreadable = opencode_usage(set(oc_sessions), start, end)
+
+    def flag(l: dict, why: str) -> None:
+        """Add a reason the line's figure is partial, keeping the ones it has."""
+        if why not in (l.get("missing") or "").split("; "):
+            l["missing"] = f"{l['missing']}; {why}" if l.get("missing") else why
+    doc, price_source = load_prices()
+
+    def line(r, model, tokens, reported=None):
+        entry, name = price_of(model, doc)
+        usd = round(priced(tokens, entry), 4) if entry else None
+        basis = f"price list: {name}" if entry else "no price for this model"
+        if FREE.search(model or ""):
+            basis += "; free tier, $0 billed"
+        elif (model or "").startswith("opencode-go/"):
+            basis += "; OpenCode Go, flat rate"
+        out = dict(r, model=model, tokens=tokens, usd=usd, basis=basis, billed=r["harness"] == "claude-api")
+        if reported is not None:
+            out["reported_usd"] = round(reported, 4)
+        if usd is None:
+            out["missing"] = f"no price for {model}"
+        return out
+
+    lines = []   # one per (thread, model)
+    for r in rows:
+        mine = []
+        for (app, model), slot in claude.items():
+            if app == r["thread"]:
+                mine.append(line(r, model, slot["tokens"], slot["usd"]))
+        for native, app in codex_natives.items():
+            if app == r["thread"] and scan["codex"].get(native):
+                created = threads.get(app, {}).get("created")
+                older = created is not None and created < start - 60
+                by_model, baseline = codex_usage(scan["codex"][native], start, end,
+                                                 lambda at, app=app: model_at(app, at, threads, runs) or r["model"] or "unknown",
+                                                 skip_first=older)
+                for model, tokens in by_model.items():
+                    mine.append(line(r, model, tokens))
+                if older and not baseline:
+                    for l in mine:
+                        flag(l, "no count from before the run's start (rotated away): its first turn in the run isn't counted")
+        for sid, app in oc_sessions.items():
+            if app == r["thread"] and opencode.get(sid):
+                for model, tokens in opencode[sid].items():
+                    mine.append(line(r, r["model"] if model == "unknown" else model, dict(tokens)))
+                    if sid in whole:
+                        flag(mine[-1], "OpenCode kept only the session's totals (the session lies inside the run)")
+                    if sid in unreadable:
+                        flag(mine[-1], "some of OpenCode's records for it couldn't be read")
+        first = scan["file_first"].get(r["thread"])
+        created = threads.get(r["thread"], {}).get("created")
+        if mine and first is not None and first > max(start, created or start) + 60:
+            for l in mine:
+                flag(l, "T3's logs for it begin after the run's start (rotated away): earlier turns are missing")
+        if not mine and any(app == r["thread"] and sid in opencode and not opencode[sid] and sid not in unreadable for sid, app in oc_sessions.items()):
+            lines.append(dict(r, tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
+            continue
+        if not mine and any(app == r["thread"] and sid in outside for sid, app in oc_sessions.items()):
+            why = "OpenCode kept only its session's totals, which reach outside the run"
+            lines.append(dict(r, tokens=None, usd=None, basis="not counted: " + why, missing=why, billed=False))
+            continue
+        if mine:
+            lines += mine
+        elif r["thread"].startswith("thread:provider:claudeAgent:native-thread:"):
+            # a subagent Claude Code ran inside a task: T3 mirrors it as a thread, and its tokens are
+            # already in its parent's result figures
+            lines.append(dict(r, tokens=None, usd=None, included=True, basis="in its parent's Claude figures (a Claude Code subagent)", billed=False))
+        else:
+            why = ("its harness keeps no token counts that can be read" if r["harness"] in ("antigravity", "copilot")
+                   else "OpenCode's records for it couldn't be read" if any(app == r["thread"] and sid in unreadable for sid, app in oc_sessions.items())
+                   else "no usage logged in the span")
+            lines.append(dict(r, tokens=None, usd=None, basis="not counted: " + why, missing=why, billed=False))
+    return {"run": run_dir.name, "from": datetime.fromtimestamp(start).astimezone().isoformat(timespec="minutes"),
+            "to": datetime.fromtimestamp(end).astimezone().isoformat(timespec="minutes"), "price_source": price_source,
+            "lines": lines, "malformed": malformed}
+
+
+def totals(data: dict) -> dict:
+    by_model, by_role, by_owner = defaultdict(float), defaultdict(float), defaultdict(float)
+    owners: dict = defaultdict(lambda: {"total": 0.0, "roles": defaultdict(float), "models": defaultdict(float), "incomplete": set()})
+    counted, uncounted, reasons = defaultdict(int), defaultdict(int), defaultdict(set)
+    for l in data["lines"]:
+        if l.get("included"):
+            continue
+        for why in (l.get("missing") or "").split("; ") if l.get("missing") else []:
+            reasons[why + (f" ({l['harness']})" if l["usd"] is None and not why.startswith("no price") else "")].add(l["thread"])
+            owners[l["owner"]]["incomplete"].add(why)
+        if l["usd"] is None:
+            uncounted[l["harness"]] += 1
+            continue
+        counted[l["harness"]] += 1
+        by_model[l["model"]] += l["usd"]
+        by_role[l["role"]] += l["usd"]
+        by_owner[l["owner"]] += l["usd"]
+        o = owners[l["owner"]]
+        o["total"] += l["usd"]
+        o["roles"][l["role"]] += l["usd"]
+        o["models"][l["model"]] += l["usd"]
+    total = sum(by_model.values())
+    reported = sum(l.get("reported_usd") or 0 for l in data["lines"])
+    return {"total": round(total, 2), "by_model": {k: round(v, 2) for k, v in sorted(by_model.items(), key=lambda kv: -kv[1])},
+            "by_role": {k: round(v, 2) for k, v in by_role.items()}, "by_owner": {k: round(v, 2) for k, v in by_owner.items()},
+            "owners": {k: {"total": round(v["total"], 2), "roles": {r: round(x, 2) for r, x in v["roles"].items()},
+                           "models": {m: round(x, 2) for m, x in sorted(v["models"].items(), key=lambda kv: -kv[1])},
+                           "incomplete": sorted(v["incomplete"])} for k, v in owners.items()},
+            "threads_counted": dict(counted), "threads_not_counted": dict(uncounted), "claude_reported": round(reported, 2),
+            "incomplete": {k: len(v) for k, v in reasons.items()}, "malformed": data.get("malformed", 0),
+            "orchestrator_counted": data.get("orchestrator_counted", True)}
+
+
+def money(v: float) -> str:
+    return f"${v:,.0f}" if v >= 100 else f"${v:,.2f}"
+
+
+def markdown(data: dict, t: dict) -> str:
+    owners = ["orchestrator"] + sorted({l["owner"] for l in data["lines"]} - {"orchestrator"})
+    out = [f"| | Total | " + " | ".join(t["by_model"]) + " |", "|---|---|" + "---|" * len(t["by_model"])]
+    for owner in owners:
+        for role in ("orchestrator", "task", "reviewer", "helper"):
+            sel = [l for l in data["lines"] if l["owner"] == owner and l["role"] == role and l["usd"] is not None]
+            if not sel:
+                continue
+            per = defaultdict(float)
+            for l in sel:
+                per[l["model"]] += l["usd"]
+            label = ("Orchestrator" if role == "orchestrator" else f"Task {owner}" if role == "task" else
+                     f"Orchestrator's {role}s" if owner == "orchestrator" else f"{owner} {role}s")
+            out.append(f"| {label} | {money(sum(per.values()))} | " + " | ".join(money(per[m]) if per.get(m) else "–" for m in t["by_model"]) + " |")
+    out.append(f"| **All** | **{money(t['total'])}** | " + " | ".join(f"**{money(v)}**" for v in t["by_model"].values()) + " |")
+    roles = ", ".join(f"{k}s {money(t['by_role'][k])}" if k != "orchestrator" else f"orchestrator {money(t['by_role'][k])}"
+                      for k in ("orchestrator", "task", "reviewer", "helper") if t["by_role"].get(k))
+    models = ", ".join(f"{m} {money(v)}" for m, v in t["by_model"].items())
+    gaps = [f"{why}: {n} thread{'s' if n != 1 else ''}" for why, n in t["incomplete"].items()]
+    if t.get("malformed"):
+        gaps.append(f"{t['malformed']} malformed log record(s) skipped")
+    paragraph = (f"Cost at API prices (estimate): {money(t['total'])} — what the run's tokens would have cost at the providers' "
+                 f"API list prices, not what the subscriptions cost. By role: {roles}. By model: {models}."
+                 + (" Incomplete: " + "; ".join(gaps) + "." if gaps else " Every thread was counted.")
+                 + ("" if data.get("orchestrator_counted", True) else " The orchestrator's own tokens are not counted (no thread given).")
+                 + f" Prices: {data['price_source']}, for every provider, as T3 Code prices its usage"
+                 + (f" (Claude Code's own figure for the Claude tokens: {money(t['claude_reported'])})." if t.get("claude_reported") else "."))
+    return "\n".join(out) + "\n\n" + paragraph + "\n"
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="run-costs", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("run")
+    parser.add_argument("--orchestrator")
+    parser.add_argument("--from", dest="start")
+    parser.add_argument("--to", dest="end")
+    parser.add_argument("--json")
+    parser.add_argument("--markdown")
+    args = parser.parse_args(argv)
+    run_dir = Path(args.run)
+    try:
+        watch = json.loads((run_dir / "watch.json").read_text())
+    except (OSError, ValueError) as e:
+        print(f"run-costs: can't read {run_dir / 'watch.json'}: {e}", file=sys.stderr)
+        return 2
+    start = stamp(args.start or watch.get("started"))
+    end = stamp(args.end or watch.get("finished")) or time.time()
+    if start is None:
+        print("run-costs: no start: give --from or watch.json's started", file=sys.stderr)
+        return 2
+    orchestrator = args.orchestrator or watch.get("orchestrator_thread")
+    try:
+        data = collect(run_dir, orchestrator, start, end)
+    except (sqlite3.Error, OSError) as e:
+        print(f"run-costs: T3 Code's records at {userdata()} can't be read ({e}); this works only for a run under T3", file=sys.stderr)
+        return 2
+    data["orchestrator_counted"] = bool(orchestrator)
+    data["totals"] = totals(data)
+    text = markdown(data, data["totals"])
+    data["table"], data["paragraph"] = text.split("\n\n", 1)[0], text.split("\n\n", 1)[1].strip()
+    if args.json:
+        Path(args.json).write_text(json.dumps(data, indent=1) + "\n")
+    if args.markdown:
+        Path(args.markdown).write_text(text)
+    print(text, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -33,6 +33,8 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 <With usage samples: the usage line from `summary.txt`, its second line (see "Usage graphs" below), for example: "Usage: Claude weekly 62% → 59% left, Fable weekly 90% → 71% left; Codex weekly 100% → 96% left; Antigravity Gemini weekly 100% → 94.6% left, Gemini 4 Argon weekly 76.7% → 58.2% left; Copilot monthly 88% → 85% left; Claude API credits $314 → $200 left (estimate; $114 expired at 02:00). The Mac peaked at 72% CPU, 61% GPU and 49.8 of 64 GB memory, and free disk went from 168.6 to 151.2 GB.">
 
+<In T3, the cost line, the last line of `summary.txt` (see "Cost at API prices" below), for example: "Cost at API prices (estimate): $631 — what the run's tokens would have cost at the providers' API list prices, not what the subscriptions cost. By role: orchestrator $50.19, tasks $544, reviewers $36.02, helpers $0.33. By model: claude-opus-5-5 $423, claude-fable-5-2 $175, … Incomplete: its harness keeps no token counts that can be read (antigravity): 5 threads. Prices: …">
+
 <Outside T3 only: the dependency graph and the timeline; see "Run charts" below, and the usage charts when there are any ("Usage graphs"). In T3 the run map above the report shows all of them.>
 
 <One or two lines the map or charts can't say on their own, such as why the pauses happened, why effort levels changed, a helper that hit a rate limit and what its work switched to, or what you changed because the user asked during the run.>
@@ -94,6 +96,7 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 - **Commits:** a merged task's `commits` are the ones the ledger lists for it. With them, `scripts/report-offer` finds the task's key change for the tour. To choose it yourself, give the task a `key_change` instead ([below](#offer-it-to-listen-to-with-its-tour)).
 - **Rounds:** when the run went on after its report, the ledger's rounds as `"rounds": [{"n", "title", "cause", "start", "end", "base", "head"}]`; a task belongs to the round it launched in (or give its `"round"`), and with `--repo <integration checkout>` run-charts finds each task's `built_on` (the earlier rounds' tasks whose lines its merged commits changed most, from git blame) from the tasks' `commits`.
 - **The Mac asleep:** `run-watch`'s `slept` lines (also in `times.log`) as `"asleep": [{"start", "end", "reason"}]`. A round or a sleep still open leaves out its `end` (an interim report): the sleep is drawn to the run's end, or the latest time the facts give.
+- **Costs:** the file `scripts/run-costs --json` wrote, as `"costs": {"file": "<run directory>/report/costs.json"}`; leave it out when the run had none.
 - **Usage:** the folder `scripts/usage-sampler` wrote ([machine.md](machine.md#9-the-usage-sampler)), as `"usage": {"folder": "<run directory>/usage"}`. Leave it out when the run had no sampler.
 - **Makers:** each card's mark comes from the model's name (`assets/marks/marks.json` knows about 40 makers and harnesses). When the name doesn't say who made the model, add the maker as the host's model ID names it (`"maker": "moonshotai"` for `openrouter/moonshotai/…`); a maker without a mark gets a letter.
 
@@ -109,6 +112,17 @@ In T3, the report's picture of the run is the run map, drawn with `html_render` 
 4. Never paste `run-map.html` or `run-map.svg` into a tool, and never write the map's HTML yourself: either costs tens of thousands of tokens and invites typos. If the short page fails to draw, post the Mermaid charts instead and say so in one line.
 
 Outside T3, or on a host that can't show HTML, use the Mermaid charts below.
+
+## Cost at API prices
+
+What the run's tokens would have cost on the providers' APIs, at list prices: an estimate for comparing runs, models and roles, never the subscriptions' bill (most of a run is on flat-rate plans and free tiers). `scripts/run-costs` works it out at the finish from T3 Code's own records, as T3's Usage page does:
+
+- **Who:** each thread from T3's state database, by its lineage: the orchestrator's thread (`watch.json`'s `orchestrator_thread`, counted only between the run's start and its `finished`, since one thread may serve several runs), each task's thread, and the threads each task started with `delegate_task`, a reviewer when its title says review, critique or re-look, a helper otherwise.
+- **Tokens:** Claude's from the result lines T3 logs per turn (subagents included, 1-hour cache writes apart); Codex's from T3's logged token counts, the rise inside the run, each rise under the model its thread ran then; OpenCode's from OpenCode's own per-message records inside the run. Antigravity and Copilot keep none it can read. A Claude Code subagent T3 shows as a thread is already in its parent's figures.
+- **Gaps are named, never hidden:** the paragraph ends with "Incomplete: …" for every thread it couldn't count or counted only in part (a harness without readable counts, a model with no price, history T3's logs rotated away, an OpenCode session known only by its totals), or says every thread was counted, and that the orchestrator wasn't counted when no thread was given. On the map, a figure that misses something ends in "+", with the gaps on hover.
+- **Prices:** LiteLLM's model price list as T3 caches it (with its date), for every provider; a free or Go model gets its list-price equivalent and says it cost $0 or the flat rate. Claude Code also writes its own cost figure; it is kept as a cross-check only, since it disagreed with Anthropic's list prices for some models.
+
+In the report, the "How it ran" section gets the paragraph `run-costs` writes (the last line of `summary.txt`), and the run map shows each task's cost (its own work with its reviewers and helpers, listed on hover) and the orchestrator's on their cards, and the run's in its header. `report/costs.md` holds the table by role and model, for when the owner asks.
 
 ## Usage graphs
 

@@ -270,6 +270,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .edge.built { stroke: var(--rm-built); stroke-width: 2; stroke-dasharray: 6 5; opacity: .9; }
 .rm.focus .edge.built.hl { opacity: 1; }
 .chip.built { color: var(--rm-built); background: color-mix(in srgb, var(--rm-built) 11%, transparent); }
+.chip.cost { color: var(--rm-fg); background: var(--rm-soft); }
 .chip.later { color: var(--rm-muted); background: var(--rm-soft); }
 /* breaks: the quiet stretches, drawn short on the time axes */
 .brk-col { fill: var(--rm-card); }
@@ -363,6 +364,7 @@ stat(`<b class="ok">${count("merged")}</b> merged`);
 ["blocked", "failed", "parked"].forEach(st => { if (count(st)) stat(`<b class="bad">${count(st)}</b> ${st}`); });
 if (allTimes.length) stat(`<b>${dur(span1 - span0)}</b>`);
 const I = F.integration || {};
+if (F.cost) { stat(`≈ <b>${money(F.cost.total)}</b>${F.cost.incomplete ? " +" : ""} at API prices`); stats.lastChild.title = "What the run's tokens would cost at API list prices, not what the subscriptions cost\n" + F.cost.lines.join("\n"); }
 if (I.branch) stat(`${esc(I.branch)}${I.head ? ` <b>${esc(I.head)}</b>` : ""}${I.ci === "passed" ? ' · CI <b class="ok">✓</b>' : I.ci === "failed" ? ' · CI <b class="bad">✕</b>' : ""}`);
 head.append(title, stats); root.append(head);
 const controls = el("div", "rm-controls"); root.append(controls);
@@ -379,6 +381,7 @@ cv.append(el("div", "cv-hint", "Drag to pan · drag a card to move it · ⌘-scr
 const peekBox = el("div", "peek"); peekBox.hidden = true; cv.append(peekBox);
 
 function toggleKids(n, open) { n.open = open; if (n.toggle) n.toggle.setAttribute("aria-expanded", String(open)); }
+function money(v) { return v >= 100 ? "$" + Math.round(v).toLocaleString("en-US") : "$" + (v || 0).toFixed(2); }
 function card(n) {
   const kind = n.kind, c = el("div", `card ${kind}` + (["replaced", "parked", "blocked", "failed"].includes(n.status) ? ` is-${n.status}` : ""));
   c.style.width = W[kind] + "px"; c._node = n;
@@ -400,6 +403,7 @@ function card(n) {
     } else if (!timed(n)) foot.append(el("span", null, n.status === "parked" ? "never started" : "not timed"));
     else if (worked(n) < 1) foot.append(el("span", null, `${clock(n.launched)} · stopped at once`));
     else foot.append(el("span", "strong", dur(worked(n))), el("span", null, `· ${clock(n.launched)}–${clock(n.ended)}`));
+    if (n.cost) { const b = el("span", "chip cost", "≈ " + money(n.cost.total) + (n.cost.incomplete ? " +" : "")); b.title = "At API prices (an estimate, not the subscriptions' cost)\n" + n.cost.lines.join("\n"); foot.append(b); }
     if (n.need && n.need.length) foot.append(el("span", "chip need", "needs " + n.need.join(" · ")));
     if (n.built && n.built.length) { const b = el("span", "chip built", "built on " + n.built.map(x => x[0]).join(" · ")); b.title = n.built.map(([id, lines]) => `changed ${lines} lines ${id} wrote`).join("\n"); foot.append(b); }
     if (n.later) foot.append(el("span", "chip later", `merged in round ${n.later}`));
