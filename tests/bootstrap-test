@@ -15,6 +15,8 @@ export AGENT_SKILLS_STATE="$state_repo"
 export XDG_STATE_HOME="$test_home/.local/state"
 # Doctor asks npm for newer releases of the pinned runtimes; the test does that with a stand-in npm.
 export AGENT_SKILLS_NO_UPDATE_CHECK=1
+# Only this repository's tables until the stand-in private repository below: never the owner's own.
+export AGENT_SKILLS_PRIVATE=
 
 # An upgrade from a release that installed sketch-infographic (renamed excalidraw-drawing in 2.0.0):
 # this repository's old links are retired; a path someone else put there is kept.
@@ -121,7 +123,7 @@ fi
 checkout="$test_home/checkout"
 mkdir -p "$checkout"
 cp -R "$repo_root/scripts" "$repo_root/install" "$checkout/"
-"$repo_root/scripts/manifest" links | awk -F '\t' '$2 != "retired" { print $3 }' | sort -u | while IFS= read -r installed; do
+"$repo_root/scripts/manifest" links | awk -F '\t' -v r="$repo_root/" '$2 != "retired" && index($3, r) == 1 { print substr($3, length(r) + 1) }' | sort -u | while IFS= read -r installed; do
   case "$installed" in
     skills/*) mkdir -p "$checkout/$installed"; echo stand-in >"$checkout/$installed/SKILL.md" ;;
     *) mkdir -p "$(dirname -- "$checkout/$installed")"; echo stand-in >"$checkout/$installed" ;;
@@ -138,56 +140,56 @@ in_checkout symbolic-ref HEAD refs/heads/main
 in_checkout add -A
 in_checkout commit -q -m "A release"
 checkout_doctor --host claude
-grep -q "PASS checkout is on main" "$test_home/doctor-checkout.out"
-grep -q "PASS installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
+grep -q "PASS checkout checkout is on main" "$test_home/doctor-checkout.out"
+grep -q "PASS checkout installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
 # A changed file a host reads fails; it is another host's check only if that host reads it too.
 echo edit >>"$checkout/skills/review-gate/SKILL.md"
 checkout_doctor --host claude
-grep -q "FAIL 1 installed file(s) changed and not committed, .*: skills/review-gate/SKILL.md$" "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout: 1 installed file(s) changed and not committed, .*: skills/review-gate/SKILL.md$" "$test_home/doctor-checkout.out"
 checkout_doctor --host factory
-grep -q "PASS installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
+grep -q "PASS checkout installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
 checkout_doctor --host codex
-grep -q "FAIL 1 installed file(s) changed and not committed" "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout: 1 installed file(s) changed and not committed" "$test_home/doctor-checkout.out"
 in_checkout checkout -q -- skills/review-gate/SKILL.md
 # A new file counts too, also where git is told not to show untracked files.
 in_checkout config status.showUntrackedFiles no
 echo new >"$checkout/skills/review-gate/notes.md"
 checkout_doctor --host claude
-grep -q "FAIL 1 installed file(s) changed and not committed, .*: skills/review-gate/notes.md$" "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout: 1 installed file(s) changed and not committed, .*: skills/review-gate/notes.md$" "$test_home/doctor-checkout.out"
 # Five are named, the rest counted.
 for extra in 1 2 3 4 5; do echo new >"$checkout/skills/review-gate/more-$extra.md"; done
 checkout_doctor --host claude
-grep -q "FAIL 6 installed file(s) changed and not committed, .*, \.\.\.$" "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout: 6 installed file(s) changed and not committed, .*, \.\.\.$" "$test_home/doctor-checkout.out"
 rm "$checkout/skills/review-gate/notes.md" "$checkout"/skills/review-gate/more-*.md
 # A change no host reads does not count.
 echo note >"$checkout/NOTES.md"
 echo "# a comment" >>"$checkout/scripts/uninstall"
 checkout_doctor --host claude
-grep -q "PASS installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
+grep -q "PASS checkout installed files have no uncommitted changes" "$test_home/doctor-checkout.out"
 in_checkout add -A
 in_checkout commit -q -m "Notes"
 # Git failing to answer is a failure, not a clean checkout.
 cp "$checkout/.git/index" "$test_home/index.kept"
 echo "not an index" >"$checkout/.git/index"
 checkout_doctor --host claude
-grep -q "FAIL git could not say whether installed files have uncommitted changes" "$test_home/doctor-checkout.out"
+grep -q "FAIL git could not say whether checkout's installed files have uncommitted changes" "$test_home/doctor-checkout.out"
 cp "$test_home/index.kept" "$checkout/.git/index"
 # Another branch, and a commit checked out by itself.
 in_checkout checkout -q -b work
 checkout_doctor --host claude
-grep -q "FAIL checkout is on work, not main: " "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout checkout is on work, not main: " "$test_home/doctor-checkout.out"
 in_checkout checkout -q --detach
 checkout_doctor --host claude
-grep -q "FAIL checkout is at a detached commit ([0-9a-f]*), not on main: " "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout checkout is at a detached commit ([0-9a-f]*), not on main: " "$test_home/doctor-checkout.out"
 # The default branch is the one the remote names, where a clone recorded it.
 in_checkout checkout -q -b trunk
 in_checkout update-ref refs/remotes/origin/trunk HEAD
 in_checkout symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
 checkout_doctor --host claude
-grep -q "PASS checkout is on trunk" "$test_home/doctor-checkout.out"
+grep -q "PASS checkout checkout is on trunk" "$test_home/doctor-checkout.out"
 in_checkout checkout -q main
 checkout_doctor --host claude
-grep -q "FAIL checkout is on main, not trunk: " "$test_home/doctor-checkout.out"
+grep -q "FAIL checkout checkout is on main, not trunk: " "$test_home/doctor-checkout.out"
 # A copy that is not a git checkout is skipped, also one that sits inside another repository.
 rm -rf "$checkout/.git"
 checkout_doctor --host claude
@@ -199,6 +201,49 @@ if grep -q "checkout is on\|installed file" "$test_home/doctor-checkout.out"; th
   echo "doctor judged a checkout that belongs to another repository" >&2; exit 1
 fi
 rm -rf "$test_home/.git"
+
+# A private repository next to this one: its own skill, a pinned copy of another's skill in vendor/,
+# and an external link that a tool installs. Bootstrap links its skills too, doctor checks them and
+# warns about what no table names, and uninstall removes them.
+# As the scripts spell it: TMPDIR may end in a slash.
+private=$(CDPATH= cd -- "$test_home" && pwd)/agent-skills-private
+mkdir -p "$private/install" "$private/skills/mine" "$private/vendor/theirs"
+echo mine >"$private/skills/mine/SKILL.md"
+echo theirs >"$private/vendor/theirs/SKILL.md"
+printf 'install\tmine\tclaude\nvendor\ttheirs\tclaude codex\n' >"$private/install/skills.tsv"
+printf 'claude\texternal\ta tool\t~/.claude/skills/tools-own\n' >"$private/install/links.tsv"
+export AGENT_SKILLS_PRIVATE="$private"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host claude --skip-dependencies >"$test_home/private.out" 2>&1
+test "$(readlink "$test_home/.claude/skills/mine")" = "$private/skills/mine"
+test "$(readlink "$test_home/.claude/skills/theirs")" = "$private/vendor/theirs"
+test ! -e "$test_home/.agents/skills/theirs"
+# Bootstrap never touches an external link.
+test ! -e "$test_home/.claude/skills/tools-own"
+HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-private.out" 2>&1 || true
+grep -q "PASS $test_home/.claude/skills/theirs" "$test_home/doctor-private.out"
+grep -q "WARN ~*.*/.claude/skills/tools-own is listed as installed by a tool, but is not there" "$test_home/doctor-private.out"
+grep -q "SKIP $private is not a git checkout of its own" "$test_home/doctor-private.out"
+mkdir "$test_home/.claude/skills/tools-own" "$test_home/.claude/skills/by-hand"
+HOME="$test_home" "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-private.out" 2>&1 || true
+grep -q "PASS $test_home/.claude/skills/tools-own (installed by a tool)" "$test_home/doctor-private.out"
+grep -q "WARN $test_home/.claude/skills/by-hand is in no install table" "$test_home/doctor-private.out"
+if grep -q "WARN $test_home/.claude/skills/\(tools-own\|mine\|theirs\|review-gate\) is in no install table" "$test_home/doctor-private.out"; then
+  echo "doctor called a listed skill unlisted" >&2; exit 1
+fi
+# Unlisted entries are only warnings.
+if grep -q "FAIL.*by-hand" "$test_home/doctor-private.out"; then echo "an unlisted entry failed doctor" >&2; exit 1; fi
+HOME="$test_home" "$repo_root/scripts/uninstall" --host claude >/dev/null 2>&1
+test ! -e "$test_home/.claude/skills/mine" && test ! -e "$test_home/.claude/skills/theirs"
+# An external link is the tool's to remove.
+test -d "$test_home/.claude/skills/tools-own"
+rm -rf "$test_home/.claude/skills/tools-own" "$test_home/.claude/skills/by-hand"
+# A private repository named but missing stops bootstrap before it changes anything.
+if AGENT_SKILLS_PRIVATE="$test_home/nowhere" HOME="$test_home" "$repo_root/scripts/bootstrap" --host claude --skip-dependencies >"$test_home/missing.out" 2>&1; then
+  echo "bootstrap ran without the private repository it was given" >&2; exit 1
+fi
+grep -q "has no install folder" "$test_home/missing.out"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host claude --skip-dependencies >/dev/null 2>&1
+export AGENT_SKILLS_PRIVATE=
 
 # Uninstall removes a retired link that is still there too.
 ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"

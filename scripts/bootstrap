@@ -130,13 +130,15 @@ retire_one() {
 selected_product_design=0
 selected_excalidraw_drawing=0
 if [ "$install_links" -eq 1 ]; then
-  # Every link install/ declares, as host, mode, source and target; a manifest that cannot be read
-  # installs nothing.
+  # Every link the install tables declare, here and in the private repository, as host, mode,
+  # source and target; tables that cannot be read install nothing.
   rows=$("$script_dir/manifest" links) || exit 1
   while IFS=$(printf '\t') read -r row_host mode source target; do
     [ -n "$row_host" ] || continue
     [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
-    source_path="$repo_root/$source"
+    # Something else installs an external link: it is listed only so doctor knows it.
+    [ "$mode" != external ] || continue
+    source_path=$source
     target_path=$(expand_target "$target")
     if [ "$mode" = retired ]; then retire_one "$source_path" "$target_path"; continue; fi
     [ -e "$source_path" ] || { echo "Missing source: $source_path" >&2; exit 1; }
@@ -145,8 +147,8 @@ if [ "$install_links" -eq 1 ]; then
       adapter) adapter_one "$source_path" "$target_path" ;;
       *) echo "Unknown manifest mode: $mode" >&2; exit 1 ;;
     esac
-    case "$source" in skills/product-design*) selected_product_design=1 ;; esac
-    case "$source" in skills/excalidraw-drawing*) selected_excalidraw_drawing=1 ;; esac
+    case "$source" in "$repo_root"/skills/product-design*) selected_product_design=1 ;; esac
+    case "$source" in "$repo_root"/skills/excalidraw-drawing*) selected_excalidraw_drawing=1 ;; esac
   done <<EOF
 $rows
 EOF

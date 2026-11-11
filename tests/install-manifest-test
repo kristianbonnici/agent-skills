@@ -4,6 +4,8 @@
 # retired skill and a retired folder turn their links into retired ones, and two hosts may share a
 # folder. It refuses an unknown host, a skill named twice for a host, a path with two sources, a
 # path both installed and retired, and a row it cannot read, printing no links when it does.
+# Tables from two repositories: a private one adds vendor/ skills and external links, may name the
+# other's hosts but not claim its paths, and is found next to this one or by AGENT_SKILLS_PRIVATE.
 # Then this repository's own tables: every skill folder is installed somewhere, every source
 # exists, and the README's table of skills names each skill once with the hosts the manifest gives.
 set -eu
@@ -13,6 +15,10 @@ repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 manifest="$repo_root/scripts/manifest"
 work=$(mktemp -d "${TMPDIR:-/tmp}/install-manifest-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+# As the script spells it: TMPDIR may end in a slash.
+work=$(CDPATH= cd -- "$work" && pwd)
+# Only this repository's tables: the owner's private repository must not change what is checked.
+export AGENT_SKILLS_PRIVATE=
 
 # One row of a table: its cells with tabs between them.
 row() {
@@ -24,6 +30,10 @@ row() {
 
 base="$work/base"
 mkdir -p "$base"
+# The links with each source relative to its repository, the parent of the tables' folder.
+links_of() {
+  "$manifest" links "$@" | sed "s#	$work/#	#"
+}
 {
   echo "# host, label, mode, folder"
   row alpha Alpha link '~/.alpha/skills'
@@ -63,9 +73,9 @@ mkdir -p "$base"
   row alpha link adapters/alpha/cmd.md '~/.alpha/commands/cmd.md'
   row extra retired adapters/extra/old.md '~/.extra/old.md'
 } >"$work/links.expected"
-"$manifest" links --dir "$base" >"$work/links.out"
+links_of --dir "$base" >"$work/links.out"
 diff "$work/links.expected" "$work/links.out"
-"$manifest" --dir "$base" | diff "$work/links.expected" -
+"$manifest" --dir "$base" | sed "s#	$work/#	#" | diff "$work/links.expected" -
 
 test "$("$manifest" hosts --dir "$base" | paste -sd' ' -)" = "alpha beta gamma old extra"
 
@@ -78,10 +88,10 @@ test "$("$manifest" hosts --dir "$base" | paste -sd' ' -)" = "alpha beta gamma o
 "$manifest" skills --dir "$base" | diff "$work/skills.expected" -
 
 # A relative folder, and tables with Windows line ends, read the same.
-(cd "$work" && "$manifest" links --dir base) | diff "$work/links.expected" -
+(cd "$work" && links_of --dir base) | diff "$work/links.expected" -
 mkdir "$work/crlf"
 for table in hosts.tsv skills.tsv links.tsv; do sed "s/\$/$(printf '\r')/" "$base/$table" >"$work/crlf/$table"; done
-"$manifest" links --dir "$work/crlf" | diff "$work/links.expected" -
+links_of --dir "$work/crlf" | diff "$work/links.expected" -
 
 # links.tsv is optional.
 mkdir "$work/no-links"
@@ -93,7 +103,7 @@ mkdir "$work/shared"
 cp "$base"/*.tsv "$work/shared/"
 row twin Twin link '~/.alpha/skills' >>"$work/shared/hosts.tsv"
 row install four "alpha twin" >>"$work/shared/skills.tsv"
-"$manifest" links --dir "$work/shared" >"$work/shared.out"
+links_of --dir "$work/shared" >"$work/shared.out"
 grep -q "^alpha	link	skills/four	~/.alpha/skills/four$" "$work/shared.out"
 grep -q "^twin	link	skills/four	~/.alpha/skills/four$" "$work/shared.out"
 
@@ -124,22 +134,22 @@ refused() {
   fi
 }
 
-refused skills.tsv 'skills.tsv:7: hosts.tsv names no host "nobody"' install four nobody
+refused skills.tsv 'skills.tsv:7: no hosts.tsv names a host "nobody"' install four nobody
 refused skills.tsv 'one is named twice for alpha' install one alpha
-refused links.tsv '~/.alpha/skills/one is claimed twice: by skills/one (skills.tsv:2) and by adapters/x' alpha link adapters/x '~/.alpha/skills/one'
+refused links.tsv '~/.alpha/skills/one is claimed twice: by .*/skills/one (.*/skills.tsv:2) and by .*/adapters/x' alpha link adapters/x '~/.alpha/skills/one'
 refused links.tsv '~/.alpha/skills/one is claimed twice' alpha adapter skills/one '~/.alpha/skills/one'
-refused links.tsv '~/.alpha/skills/one is both installed (skills.tsv:2) and retired' alpha retired skills/one '~/.alpha/skills/one'
-refused links.tsv '~/.alpha/skills/gone is both retired (skills.tsv:4) and installed' alpha link skills/other '~/.alpha/skills/gone'
+refused links.tsv '~/.alpha/skills/one is both installed (.*/skills.tsv:2) and retired' alpha retired skills/one '~/.alpha/skills/one'
+refused links.tsv '~/.alpha/skills/gone is both retired (.*/skills.tsv:4) and installed' alpha link skills/other '~/.alpha/skills/gone'
 refused hosts.tsv 'unknown mode "symlink": expected link, adapter or retired' delta Delta symlink '~/.delta/skills'
 refused hosts.tsv 'alpha has two labels: "Alpha" and "Other"' alpha Other link '~/.other/skills'
 refused hosts.tsv '~/.alpha/skills is listed twice for alpha' alpha Alpha link '~/.alpha/skills'
 refused hosts.tsv 'expected four columns: host, label, mode, folder' delta Delta link
 refused skills.tsv 'expected three columns: mode, skill, hosts' install four
-refused skills.tsv 'unknown mode "remove": expected install or retired' remove one alpha
+refused skills.tsv 'unknown mode "remove": expected install, vendor or retired' remove one alpha
 refused skills.tsv 'not a skill folder name: "../escape"' install ../escape alpha
 refused skills.tsv 'not a skill folder name: "Upper"' install Upper alpha
 refused skills.tsv 'four names no host' install four ''
-refused links.tsv 'unknown mode "copy"' alpha copy adapters/x '~/.alpha/x'
+refused links.tsv 'unknown mode "copy": expected link, adapter, retired or external' alpha copy adapters/x '~/.alpha/x'
 refused links.tsv 'expected four columns: host, mode, source, target' alpha link adapters/x
 
 # One host installs a skill into a folder another host shares, and that other host retires it.
@@ -150,7 +160,7 @@ row retired one twin >>"$work/shared-retired/skills.tsv"
 if "$manifest" links --dir "$work/shared-retired" >/dev/null 2>"$work/shared-retired/err"; then
   echo "not refused: a skill installed and retired in one shared folder" >&2; exit 1
 fi
-grep -q '~/.alpha/skills/one is both installed (skills.tsv:2) and retired' "$work/shared-retired/err"
+grep -q '~/.alpha/skills/one is both installed (.*/skills.tsv:2) and retired' "$work/shared-retired/err"
 
 # Every refusal in one run, not only the first.
 mkdir "$work/several"
@@ -171,11 +181,74 @@ status=0
 "$manifest" everything 2>/dev/null || status=$?
 test "$status" = 2
 
+# The folders view: every folder a host reads, retired ones too.
+test "$("$manifest" folders --dir "$base" | wc -l | tr -d ' ')" = 5
+"$manifest" folders --dir "$base" | grep -q "^old	retired	~/.old/skills$"
+
+# Two repositories. The second adds a host, a pinned copy in vendor/, its own skill, and an external
+# link; it may name the first one's hosts.
+two="$work/two"
+mkdir -p "$two/public/install" "$two/private/install"
+cp "$base/hosts.tsv" "$base/skills.tsv" "$two/public/install/"
+row delta Delta link '~/.delta/skills' >"$two/private/install/hosts.tsv"
+{
+  row vendor theirs "alpha delta"
+  row install mine beta
+} >"$two/private/install/skills.tsv"
+{
+  row alpha external "a tool" '~/.alpha/skills/tools-own'
+  row beta external "a tool" '~/.alpha/skills/tools-own'
+} >"$two/private/install/links.tsv"
+"$manifest" links --dir "$two/public/install" --dir "$two/private/install" >"$two/links.out"
+grep -q "^alpha	link	$two/public/skills/one	~/.alpha/skills/one$" "$two/links.out"
+grep -q "^alpha	link	$two/private/vendor/theirs	~/.alpha/skills/theirs$" "$two/links.out"
+grep -q "^alpha	link	$two/private/vendor/theirs	~/.shared/skills/theirs$" "$two/links.out"
+grep -q "^delta	link	$two/private/vendor/theirs	~/.delta/skills/theirs$" "$two/links.out"
+grep -q "^beta	adapter	$two/private/skills/mine	~/.beta/skills/mine$" "$two/links.out"
+# An external link names what installs it, not a path; two hosts may list the same one.
+grep -q "^alpha	external	a tool	~/.alpha/skills/tools-own$" "$two/links.out"
+grep -q "^beta	external	a tool	~/.alpha/skills/tools-own$" "$two/links.out"
+test "$("$manifest" roots --dir "$two/public/install" --dir "$two/private/install" | paste -sd' ' -)" = "$two/public $two/private"
+"$manifest" skills --dir "$two/public/install" --dir "$two/private/install" | grep -q "^theirs	Alpha, Delta$"
+# The second repository cannot claim a path the first installs, by name, by link or as external.
+for clash in "skills.tsv:install	one	alpha" "skills.tsv:vendor	one	alpha" "links.tsv:alpha	link	x	~/.alpha/skills/one" "links.tsv:alpha	external	a tool	~/.alpha/skills/one"; do
+  mkdir -p "$two/clash/install"
+  cp "$two/private/install/"*.tsv "$two/clash/install/"
+  printf '%s\n' "${clash#*:}" >>"$two/clash/install/${clash%%:*}"
+  if "$manifest" links --dir "$two/public/install" --dir "$two/clash/install" >/dev/null 2>"$two/clash.err"; then
+    echo "not refused: ${clash#*:} in a second repository" >&2; exit 1
+  fi
+  grep -q "~/.alpha/skills/one is claimed twice: by $two/public/skills/one" "$two/clash.err"
+  rm -rf "$two/clash"
+done
+# Without --dir: this repository, and the private one next to it unless AGENT_SKILLS_PRIVATE says
+# otherwise (empty: none; a path: that one, which must be there).
+mkdir -p "$two/home/agent-skills/scripts" "$two/home/agent-skills-private/install" "$two/home/elsewhere/install"
+cp "$manifest" "$two/home/agent-skills/scripts/"
+cp -R "$two/public/install" "$two/home/agent-skills/"
+cp "$two/private/install/"*.tsv "$two/home/agent-skills-private/install/"
+cp "$two/private/install/"*.tsv "$two/home/elsewhere/install/"
+found_roots() { "$two/home/agent-skills/scripts/manifest" roots | sed "s#$two/home/##" | paste -sd' ' -; }
+test "$(unset AGENT_SKILLS_PRIVATE; found_roots)" = "agent-skills agent-skills-private"
+test "$(AGENT_SKILLS_PRIVATE= found_roots)" = "agent-skills"
+test "$(AGENT_SKILLS_PRIVATE="$two/home/elsewhere" found_roots)" = "agent-skills elsewhere"
+(unset AGENT_SKILLS_PRIVATE; "$two/home/agent-skills/scripts/manifest" links) | grep -q "	$two/home/agent-skills-private/vendor/theirs	"
+if AGENT_SKILLS_PRIVATE="$two/nowhere" "$two/home/agent-skills/scripts/manifest" links >/dev/null 2>"$two/err"; then
+  echo "a missing AGENT_SKILLS_PRIVATE was ignored" >&2; exit 1
+fi
+grep -q "AGENT_SKILLS_PRIVATE is $two/nowhere, which has no install folder" "$two/err"
+# A second repository needs no hosts.tsv; the first does.
+rm "$two/private/install/hosts.tsv"
+printf 'vendor\ttheirs\talpha\n' >"$two/private/install/skills.tsv"
+"$manifest" links --dir "$two/public/install" --dir "$two/private/install" | grep -q "$two/private/vendor/theirs"
+"$manifest" links --dir "$two/private/install" --dir "$two/public/install" 2>"$two/err" && exit 1
+grep -q "missing $two/private/install/hosts.tsv" "$two/err"
+
 # This repository's own tables.
 "$manifest" links >"$work/own.links"
 "$manifest" skills >"$work/own.skills"
 awk -F '\t' '$2 != "retired" { print $3 }' "$work/own.links" | sort -u | while IFS= read -r source; do
-  [ -e "$repo_root/$source" ] || { echo "install/ names $source, which does not exist" >&2; exit 1; }
+  [ -e "$source" ] || { echo "install/ names $source, which does not exist" >&2; exit 1; }
 done
 # A skill no host gets is one nobody can use: each folder in skills/ has an install row.
 for skill_file in "$repo_root"/skills/*/SKILL.md; do

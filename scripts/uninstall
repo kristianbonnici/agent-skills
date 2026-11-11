@@ -60,12 +60,13 @@ looks_retired() {
   return 1
 }
 
-# Every link install/ declares, as host, mode, source and target.
+# Every link the install tables declare, here and in the private repository.
 rows=$("$script_dir/manifest" links) || exit 1
 while IFS=$(printf '\t') read -r row_host mode source target; do
   [ -n "$row_host" ] || continue
   [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
-  source_path="$repo_root/$source"
+  [ "$mode" != external ] || continue
+  source_path=$source
   target_path=$(expand_target "$target")
   case "$mode" in
     link) remove_link "$source_path" "$target_path" ;;

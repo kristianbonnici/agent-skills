@@ -1,0 +1,97 @@
+#!/bin/sh
+# Checks scripts/vendor against a made-up upstream git repository, offline: add copies a folder at a
+# commit byte for byte (executable bits too) and records it, check passes until a file is changed or
+# added by hand and names a folder no row records, status reports upstream's newer commits, update
+# moves the pin and leaves the change uncommitted, the committed folder hashes to upstream's tree,
+# and bad input changes nothing.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+vendor="$repo_root/scripts/vendor"
+work=$(mktemp -d "${TMPDIR:-/tmp}/vendor-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+export XDG_CACHE_HOME="$work/cache"
+export AGENT_SKILLS_PRIVATE=
+
+in_git() {
+  git -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false -c init.defaultBranch=main "$@"
+}
+
+upstream="$work/upstream"
+in_git init -q "$upstream"
+mkdir -p "$upstream/skills/foo/scripts" "$upstream/skills/bar"
+echo one >"$upstream/skills/foo/SKILL.md"
+printf '#!/bin/sh\necho run\n' >"$upstream/skills/foo/scripts/run"
+chmod +x "$upstream/skills/foo/scripts/run"
+echo bar >"$upstream/skills/bar/SKILL.md"
+in_git -C "$upstream" add -A
+in_git -C "$upstream" commit -qm "first"
+first=$(git -C "$upstream" rev-parse HEAD)
+echo two >"$upstream/skills/foo/SKILL.md"
+in_git -C "$upstream" commit -qam "foo two"
+
+private="$work/private"
+in_git init -q "$private"
+run() { "$vendor" --root "$private" "$@"; }
+
+# add, pinned to the first commit
+run add foo "file://$upstream" skills/foo --ref "$first" --license MIT >"$work/add.out"
+grep -q "^foo: skills/foo at ${first%"${first#????????????}"}" "$work/add.out"
+test "$(cat "$private/vendor/foo/SKILL.md")" = one
+test -x "$private/vendor/foo/scripts/run"
+grep -q "^foo	file://$upstream	skills/foo	$first	$(git -C "$upstream" rev-parse "$first:skills/foo")	MIT$" "$private/vendor/sources.tsv"
+run check >/dev/null
+# Nothing committed: the owner reads the change first.
+test -z "$(git -C "$private" log --oneline 2>/dev/null)"
+
+# status: upstream changed foo since the pin
+run status >"$work/status.out"
+grep -q "^foo: upstream changed it in 1 commit(s) since" "$work/status.out"
+grep -q "foo two" "$work/status.out"
+
+# check: a file changed or added by hand, and a folder no row records
+echo edited >>"$private/vendor/foo/SKILL.md"
+if run check 2>"$work/check.err"; then echo "check passed a changed copy" >&2; exit 1; fi
+grep -q "^foo: vendor/foo differs from" "$work/check.err"
+echo one >"$private/vendor/foo/SKILL.md"
+run check >/dev/null
+echo extra >"$private/vendor/foo/notes.md"
+if run check 2>/dev/null; then echo "check passed an added file" >&2; exit 1; fi
+rm "$private/vendor/foo/notes.md"
+mkdir "$private/vendor/stray"
+if run check 2>"$work/check.err"; then echo "check passed a folder no row records" >&2; exit 1; fi
+grep -q "^stray: vendor/stray is in no row" "$work/check.err"
+rmdir "$private/vendor/stray"
+
+# update to upstream HEAD; the pinned tree is upstream's
+run update foo >"$work/update.out"
+test "$(cat "$private/vendor/foo/SKILL.md")" = two
+grep -q "^foo	file://$upstream	skills/foo	$(git -C "$upstream" rev-parse HEAD)	" "$private/vendor/sources.tsv"
+run check >/dev/null
+in_git -C "$private" add -A
+in_git -C "$private" commit -qm "pin"
+test "$(git -C "$private" rev-parse HEAD:vendor/foo)" = "$(git -C "$upstream" rev-parse HEAD:skills/foo)"
+run status >"$work/status.out"
+grep -q "^foo: up to date at" "$work/status.out"
+
+# a second skill from the same upstream, and update --all
+run add bar "file://$upstream" skills/bar >/dev/null
+echo bar2 >"$upstream/skills/bar/SKILL.md"
+in_git -C "$upstream" commit -qam "bar two"
+run update --all >"$work/update.out"
+grep -q "^foo: unchanged at" "$work/update.out"
+grep -q "^bar: now skills/bar at" "$work/update.out"
+test "$(cat "$private/vendor/bar/SKILL.md")" = bar2
+
+# bad input changes nothing
+cp "$private/vendor/sources.tsv" "$work/sources.before"
+for bad in "add foo file://$upstream skills/foo" "add Bad file://$upstream skills/foo" "add nope file://$upstream skills/missing" "add nope file://$upstream skills/foo --ref no-such-ref" "update unknown" "update"; do
+  # shellcheck disable=SC2086
+  if run $bad >/dev/null 2>&1; then echo "accepted: vendor $bad" >&2; exit 1; fi
+done
+cmp -s "$work/sources.before" "$private/vendor/sources.tsv"
+test ! -e "$private/vendor/nope"
+ls -A "$private/vendor" | grep -q '^\.' && { echo "a staging folder was left behind" >&2; exit 1; }
+
+echo "vendor-test: passed"

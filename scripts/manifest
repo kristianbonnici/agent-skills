@@ -1,50 +1,100 @@
 #!/bin/sh
-# Prints what the install manifests declare. The manifests are three tables in install/:
+# Prints what the install manifests declare. Each repository of skills has three tables in install/:
 #   hosts.tsv   where each host looks for skills: host, label, mode, folder
-#   skills.tsv  which hosts get each skill in skills/: mode, skill, hosts
+#   skills.tsv  which hosts get each skill: mode (install, vendor or retired), skill, hosts
 #   links.tsv   any other link: host, mode, source, target
-# bootstrap, doctor and uninstall read their links from here, so only this script knows the tables.
+# The tables are read from this repository and, when it exists, the owner's private one
+# (AGENT_SKILLS_PRIVATE, by default agent-skills-private next to this repository; set it empty to
+# leave it out). bootstrap, doctor and uninstall read their links from here, so only this script
+# knows the tables.
 #
-#   manifest [links]   every link: host, mode (link, adapter or retired), source, target
+#   manifest [links]   every link: host, mode, source, target. A source is an absolute path, except
+#                      for an external link, whose source names what installs it.
 #   manifest hosts     every host named
+#   manifest folders   every folder a host reads skills from: host, mode, folder
 #   manifest skills    every installed skill and the hosts that get it, by their labels
+#   manifest roots     every repository read, this one first
 #
-# Exits 1, printing nothing but the reasons, on a row it cannot read, a host hosts.tsv does not
-# name, a skill named twice for one host, and a path claimed by two sources or both installed and
-# retired.
+# --dir INSTALL_DIR, once or more, reads only those folders' tables instead. The first must have a
+# hosts.tsv; each needs a skills.tsv.
+#
+# Exits 1, printing nothing but the reasons, on a row it cannot read, a host no hosts.tsv names, a
+# skill named twice for one host, and a path claimed by two sources or both installed and retired.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-install_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)/install
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 what=links
+dirs=""
+nl='
+'
 
 usage() {
-  echo "Usage: manifest [links | hosts | skills] [--dir INSTALL_DIR]" >&2
+  echo "Usage: manifest [links | hosts | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    links|hosts|skills) what=$1; shift ;;
-    --dir) [ "$#" -ge 2 ] || { usage; exit 2; }; install_dir=$2; shift 2 ;;
+    links|hosts|folders|skills|roots) what=$1; shift ;;
+    --dir) [ "$#" -ge 2 ] || { usage; exit 2; }; dirs="$dirs$2$nl"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
 
-[ -d "$install_dir" ] || { echo "manifest: no folder $install_dir" >&2; exit 1; }
-# Absolute, so that awk never reads a table's path as a variable assignment.
-install_dir=$(CDPATH= cd -- "$install_dir" && pwd)
-for table in hosts.tsv skills.tsv; do
-  [ -f "$install_dir/$table" ] || { echo "manifest: missing $install_dir/$table" >&2; exit 1; }
-done
+if [ -z "$dirs" ]; then
+  dirs="$repo_root/install$nl"
+  # Unset: the sibling folder, if there is one. Empty: none. Named: it must be there.
+  if [ "${AGENT_SKILLS_PRIVATE+set}" = set ]; then
+    if [ -n "$AGENT_SKILLS_PRIVATE" ]; then
+      [ -d "$AGENT_SKILLS_PRIVATE/install" ] || {
+        echo "manifest: AGENT_SKILLS_PRIVATE is $AGENT_SKILLS_PRIVATE, which has no install folder" >&2; exit 1; }
+      dirs="$dirs$AGENT_SKILLS_PRIVATE/install$nl"
+    fi
+  elif [ -d "$(dirname -- "$repo_root")/agent-skills-private/install" ]; then
+    dirs="$dirs$(dirname -- "$repo_root")/agent-skills-private/install$nl"
+  fi
+fi
 
-set -- table=hosts "$install_dir/hosts.tsv" table=skills "$install_dir/skills.tsv"
-[ ! -f "$install_dir/links.tsv" ] || set -- "$@" table=links "$install_dir/links.tsv"
+# Hosts first, from every folder, so any repository's skills may name any repository's hosts.
+set --
+first=1
+roots=""
+table_dirs=""
+while IFS= read -r dir; do
+  [ -n "$dir" ] || continue
+  [ -d "$dir" ] || { echo "manifest: no folder $dir" >&2; exit 1; }
+  # Absolute, so that awk never reads a table's path as a variable assignment.
+  dir=$(CDPATH= cd -- "$dir" && pwd)
+  [ -f "$dir/skills.tsv" ] || { echo "manifest: missing $dir/skills.tsv" >&2; exit 1; }
+  if [ "$first" -eq 1 ]; then
+    [ -f "$dir/hosts.tsv" ] || { echo "manifest: missing $dir/hosts.tsv" >&2; exit 1; }
+    first=0
+  fi
+  roots="$roots$(dirname -- "$dir")$nl"
+  table_dirs="$table_dirs$dir$nl"
+  [ ! -f "$dir/hosts.tsv" ] || set -- "$@" table=hosts root="$(dirname -- "$dir")" "$dir/hosts.tsv"
+done <<EOF
+$dirs
+EOF
+
+if [ "$what" = roots ]; then
+  printf '%s' "$roots"
+  exit 0
+fi
+
+while IFS= read -r dir; do
+  [ -n "$dir" ] || continue
+  set -- "$@" table=skills root="$(dirname -- "$dir")" "$dir/skills.tsv"
+  [ ! -f "$dir/links.tsv" ] || set -- "$@" table=links root="$(dirname -- "$dir")" "$dir/links.tsv"
+done <<EOF
+$table_dirs
+EOF
 
 awk -F '\t' -v what="$what" '
 function here(    parts, count) {
   count = split(FILENAME, parts, "/")
-  return parts[count] ":" FNR
+  return parts[count - 2] "/" parts[count - 1] "/" parts[count] ":" FNR
 }
 function refuse(message) {
   printf "manifest: %s: %s\n", here(), message > "/dev/stderr"
@@ -109,24 +159,27 @@ table == "hosts" {
 
 table == "skills" {
   if (NF != 3) { refuse("expected three columns: mode, skill, hosts"); next }
-  if ($1 != "install" && $1 != "retired") {
-    refuse("unknown mode \"" $1 "\": expected install or retired"); next
+  if ($1 != "install" && $1 != "vendor" && $1 != "retired") {
+    refuse("unknown mode \"" $1 "\": expected install, vendor or retired"); next
   }
   if ($2 !~ /^[a-z0-9]+(-[a-z0-9]+)*$/) { refuse("not a skill folder name: \"" $2 "\""); next }
+  # Skills of the owner are in skills/, pinned copies of skills by others in vendor/.
+  source = root "/" ($1 == "vendor" ? "vendor" : "skills") "/" $2
   pieces = split($3, named, / +/)
   used = 0
   for (piece = 1; piece <= pieces; piece++) {
     host = named[piece]
     if (host == "") continue
     used++
-    if (!(host in host_label)) { refuse("hosts.tsv names no host \"" host "\""); continue }
-    if (($2, host) in pair_seen) { refuse($2 " is named twice for " host); continue }
-    pair_seen[$2, host] = 1
+    if (!(host in host_label)) { refuse("no hosts.tsv names a host \"" host "\""); continue }
+    # Within one repository; across two, the path check below names both sources.
+    if ((root, $2, host) in pair_seen) { refuse($2 " is named twice for " host); continue }
+    pair_seen[root, $2, host] = 1
     for (folder = 1; folder <= folders; folder++) {
       if (folder_host[folder] != host) continue
       # The mode of the folder, which is already "retired" for one the host no longer reads.
       mode = ($1 == "retired") ? "retired" : folder_mode[folder]
-      add(host, mode, "skills/" $2, folder_path[folder] "/" $2)
+      add(host, mode, source, folder_path[folder] "/" $2)
       if (mode == "retired") continue
       if (!($2 in skill_listed)) { skill_listed[$2] = 1; skill_names[++skill_count] = $2 }
       installed[$2, host] = 1
@@ -138,9 +191,12 @@ table == "skills" {
 
 table == "links" {
   if (NF != 4) { refuse("expected four columns: host, mode, source, target"); next }
-  if (!known_mode($2)) { refuse("unknown mode \"" $2 "\": expected link, adapter or retired"); next }
+  # external: something else installs it (a tool, or a host itself); listed so doctor knows it.
+  if (!known_mode($2) && $2 != "external") {
+    refuse("unknown mode \"" $2 "\": expected link, adapter, retired or external"); next
+  }
   name_host($1)
-  add($1, $2, $3, $4)
+  add($1, $2, $2 == "external" ? $3 : root "/" $3, $4)
   next
 }
 
@@ -151,6 +207,9 @@ END {
       printf "%s\t%s\t%s\t%s\n", row_host[row], row_mode[row], row_source[row], row_target[row]
   } else if (what == "hosts") {
     for (host = 1; host <= host_count; host++) print host_names[host]
+  } else if (what == "folders") {
+    for (folder = 1; folder <= folders; folder++)
+      printf "%s\t%s\t%s\n", folder_host[folder], folder_mode[folder], folder_path[folder]
   } else {
     # Labels in the order hosts.tsv names the hosts, each once: two hosts may share a label.
     for (skill = 1; skill <= skill_count; skill++) {

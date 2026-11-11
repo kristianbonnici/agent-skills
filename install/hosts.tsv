@@ -11,3 +11,4 @@ antigravity-cli	Google Antigravity	adapter	~/.gemini/antigravity-cli/skills
 codex	Codex	link	~/.agents/skills
 codex	Codex	link	~/.codex/skills
 claude	Claude Code	link	~/.claude/skills
+gemini	Gemini CLI	link	~/.gemini/skills

@@ -40,6 +40,36 @@ repository cloned next to this one as `agent-skills-state` (or set
 into the state folder, and doctor checks the links. Without that repository,
 the files simply stay local.
 
+### Private skills and other people's skills
+
+Skills that are not for sharing, and other people's skills taken into use, belong in a second
+private repository with this one's shape, cloned next to it as `agent-skills-private` (or set
+`AGENT_SKILLS_PRIVATE` to its path; set it empty to leave it out). Bootstrap, doctor and uninstall
+read its `install/` tables together with this repository's, so every host gets both:
+
+| Its folder | Holds | Its `install/skills.tsv` mode |
+|---|---|---|
+| `skills/<skill>/` | the owner's own unshared skills | `install` |
+| `vendor/<skill>/` | someone else's skill, byte for byte as one upstream commit has it | `vendor` |
+
+Its `install/links.tsv` may also list `external` rows: a skill that a tool installs and updates
+itself (a CLI's own installer, or the host). Bootstrap never touches those; they are listed so doctor
+knows them. The private repository may use this one's hosts but never claims a path this one
+installs, and nothing of it is ever named here.
+
+`scripts/vendor` keeps the `vendor/` copies, recorded in `vendor/sources.tsv` with their repository,
+commit, git's hash of the folder and licence:
+
+```bash
+./scripts/vendor add <skill> <repository URL> <path in it> --license <SPDX>   # pin upstream HEAD, or --ref
+./scripts/vendor status            # each copy still matches its pin; what upstream changed since
+./scripts/vendor update <skill>    # or --all: move the pin; read the diff, then commit it there
+```
+
+Nothing is committed for you: a newer upstream version reaches the agents only after its diff is read
+and committed. Doctor fails while a copy differs from its pinned commit, which also catches an
+installer writing through a link.
+
 ## Repository layout
 
 ```text
@@ -49,7 +79,7 @@ agent-skills/
 ├── install/                Which hosts get each skill, and where each host looks for skills
 ├── docs/                   Versioning rules; each skill's changelog, flow and evidence
 ├── runtime/                Pinned shared tool dependencies
-├── scripts/                Bootstrap, doctor, uninstall, upstream checks
+├── scripts/                Bootstrap, doctor, uninstall, the manifest, vendored skills, upstream checks
 └── tests/                  Disposable-home integration tests
 ```
 
@@ -65,7 +95,7 @@ Three tables in `install/` say what is linked where; `scripts/bootstrap`, `scrip
 
 To give a host a skill, add the host to the skill's row. To take a skill away, or after renaming or removing it, name it in a `retired` row: bootstrap then removes the links an earlier version installed. `./scripts/manifest` prints every link the tables declare, and refuses tables that contradict themselves.
 
-Hosts read the checkout itself through these links, so the checked-out files are what every agent runs. Doctor fails while the checkout is off its default branch or a file a host reads has an uncommitted change.
+Hosts read the checkout itself through these links, so the checked-out files are what every agent runs. Doctor fails while the checkout, or the private one, is off its default branch or a file a host reads has an uncommitted change. It warns about anything in a host's skills folder that no table names: put it in a table, as `external` if a tool installs it.
 
 ## Available skills
 
@@ -93,6 +123,7 @@ Run the local checks before committing:
 ```bash
 ./tests/bootstrap-test
 ./tests/install-manifest-test
+./tests/vendor-test
 ./tests/skill-versions-test
 ./scripts/doctor --all
 ```

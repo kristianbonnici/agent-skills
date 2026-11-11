@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Pinned copies of skills by others, in a repository's vendor/ folder.
+
+Each copy is one folder of an upstream git repository at one commit, kept byte for byte, so git's
+hash of the folder (its tree) proves it is unchanged. vendor/sources.tsv records, per skill:
+skill, repository URL, path in it, commit, tree, licence. A newer upstream version reaches the
+hosts only when the owner updates the pin, reads the diff and commits it.
+
+  vendor add SKILL URL PATH [--ref REF] [--license SPDX]   copy PATH at REF (default: upstream HEAD)
+  vendor check                                             every folder matches its recorded tree
+  vendor status                                            check, and ask upstream for newer commits
+  vendor update SKILL... | --all [--ref REF]               move the pins to REF (default: upstream HEAD)
+
+--root ROOT names the repository (default: AGENT_SKILLS_PRIVATE, or agent-skills-private next to
+this one). Nothing is committed: add and update leave the change for the owner to read and commit.
+Upstream repositories are cached, without file contents until needed, in
+${XDG_CACHE_HOME:-~/.cache}/agent-skills/vendor.
+"""
+import argparse
+import hashlib
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+FIELDS = ["skill", "repository", "path", "commit", "tree", "license"]
+HEADER = (
+    "# Pinned copies of skills by others: each vendor/<skill> folder is <path> of <repository> at\n"
+    "# <commit>, byte for byte, and <tree> is git's hash of that folder. Change rows with scripts/vendor\n"
+    "# in the public agent-skills repository, never by hand.\n"
+    "# " + "\t".join(FIELDS) + "\n"
+)
+
+
+def fail(message):
+    print(f"vendor: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def git(*args, cwd=None, check=True):
+    done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if check and done.returncode != 0:
+        fail(f"git {' '.join(args)}: {done.stderr.strip() or 'failed'}")
+    return done.stdout.strip()
+
+
+def default_root():
+    here = Path(__file__).resolve().parent.parent
+    named = os.environ.get("AGENT_SKILLS_PRIVATE")
+    return Path(named) if named else here.parent / "agent-skills-private"
+
+
+def read_sources(root):
+    table = root / "vendor" / "sources.tsv"
+    rows = []
+    if not table.exists():
+        return rows
+    for number, line in enumerate(table.read_text().splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        cells = line.split("\t")
+        if len(cells) != len(FIELDS):
+            fail(f"{table}:{number}: expected {len(FIELDS)} columns: {', '.join(FIELDS)}")
+        rows.append(dict(zip(FIELDS, cells)))
+    return rows
+
+
+def write_sources(root, rows):
+    table = root / "vendor" / "sources.tsv"
+    table.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join("\t".join(row[f] for f in FIELDS) + "\n" for row in sorted(rows, key=lambda r: r["skill"]))
+    table.write_text(HEADER + body)
+
+
+def folder_tree(folder):
+    """Git's tree hash of a folder as it is on disk, ignored files and all."""
+    with tempfile.TemporaryDirectory() as scratch:
+        env = dict(os.environ, GIT_DIR=os.path.join(scratch, "git"), GIT_WORK_TREE=str(folder),
+                   GIT_INDEX_FILE=os.path.join(scratch, "index"))
+        subprocess.run(["git", "init", "-q", "--bare", env["GIT_DIR"]], check=True, capture_output=True)
+        for step in (["git", "-c", "core.excludesFile=/dev/null", "-c", "core.autocrlf=false",
+                      "add", "-A", "--force", "."], ["git", "write-tree"]):
+            done = subprocess.run(step, cwd=folder, env=env, capture_output=True, text=True)
+            if done.returncode != 0:
+                fail(f"could not hash {folder}: {done.stderr.strip()}")
+        return done.stdout.strip()
+
+
+def cache_for(url):
+    base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "agent-skills" / "vendor"
+    name = url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1]
+    clone = base / f"{name}-{hashlib.sha256(url.encode()).hexdigest()[:12]}.git"
+    if not clone.exists():
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        git("clone", "-q", "--bare", "--filter=blob:none", url, str(clone))
+    else:
+        git("fetch", "-q", "--prune", "origin", "+refs/heads/*:refs/heads/*", "+HEAD:refs/remotes/origin/HEAD",
+            cwd=clone, check=False)
+        git("fetch", "-q", "--prune", "origin", "+refs/heads/*:refs/heads/*", cwd=clone)
+    return clone
+
+
+def resolve(clone, ref):
+    if ref:
+        commit = git("rev-parse", "--verify", "-q", f"{ref}^{{commit}}", cwd=clone, check=False)
+        if not commit:
+            git("fetch", "-q", "origin", ref, cwd=clone, check=False)
+            commit = git("rev-parse", "--verify", "-q", f"FETCH_HEAD^{{commit}}", cwd=clone, check=False)
+        if not commit:
+            fail(f"{ref} is not a commit, branch or tag of the upstream repository")
+        return commit
+    return git("rev-parse", "HEAD", cwd=clone)
+
+
+def export(clone, commit, path, destination):
+    """Replace destination with path at commit: written to a sibling folder, then swapped in."""
+    tree = git("rev-parse", "--verify", "-q", f"{commit}:{path}", cwd=clone, check=False)
+    if not tree or git("cat-file", "-t", tree, cwd=clone) != "tree":
+        fail(f"{path} is not a folder at {commit[:12]}")
+    staging = destination.parent / f".{destination.name}.incoming"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    archive = subprocess.run(["git", "archive", "--format=tar", f"{commit}:{path}"], cwd=clone, capture_output=True)
+    if archive.returncode != 0:
+        shutil.rmtree(staging, ignore_errors=True)
+        fail(f"could not read {path} at {commit[:12]}: {archive.stderr.decode().strip()}")
+    subprocess.run(["tar", "-x", "-f", "-", "-C", str(staging)], input=archive.stdout, check=True)
+    if folder_tree(staging) != tree:
+        shutil.rmtree(staging, ignore_errors=True)
+        fail(f"the copy of {path} does not hash to {tree[:12]}: refusing it")
+    shutil.rmtree(destination, ignore_errors=True)
+    staging.rename(destination)
+    return tree
+
+
+def show_change(root, skill):
+    folder = f"vendor/{skill}"
+    git("add", "-N", "--", folder, cwd=root, check=False)
+    stat = git("diff", "--stat", "--", folder, cwd=root, check=False)
+    print(stat or f"{folder}: no change")
+
+
+def cmd_add(root, args):
+    rows = read_sources(root)
+    if any(r["skill"] == args.skill for r in rows):
+        fail(f"{args.skill} is already vendored: use update")
+    clone = cache_for(args.url)
+    commit = resolve(clone, args.ref)
+    tree = export(clone, commit, args.path.strip("/"), root / "vendor" / args.skill)
+    rows.append(dict(skill=args.skill, repository=args.url, path=args.path.strip("/"), commit=commit, tree=tree,
+                     license=args.license or "unknown"))
+    write_sources(root, rows)
+    print(f"{args.skill}: {args.path} at {commit[:12]}")
+    show_change(root, args.skill)
+    print(f"Read the files, add {args.skill} to install/skills.tsv as vendor, and commit.")
+
+
+def cmd_check(root, quiet=False):
+    rows = read_sources(root)
+    problems = 0
+    listed = {r["skill"] for r in rows}
+    for row in rows:
+        folder = root / "vendor" / row["skill"]
+        if not folder.is_dir():
+            print(f"{row['skill']}: vendor/{row['skill']} is missing", file=sys.stderr)
+            problems += 1
+        elif folder_tree(folder) != row["tree"]:
+            print(f"{row['skill']}: vendor/{row['skill']} differs from {row['commit'][:12]}: "
+                  f"changed by hand or by another installer", file=sys.stderr)
+            problems += 1
+        elif not quiet:
+            print(f"{row['skill']}: matches {row['commit'][:12]}")
+    vendor = root / "vendor"
+    for folder in sorted(vendor.iterdir()) if vendor.is_dir() else []:
+        if folder.is_dir() and not folder.name.startswith(".") and folder.name not in listed \
+                and folder.name != "licenses":
+            print(f"{folder.name}: vendor/{folder.name} is in no row of vendor/sources.tsv", file=sys.stderr)
+            problems += 1
+    return problems
+
+
+def cmd_status(root):
+    problems = cmd_check(root, quiet=True)
+    for row in read_sources(root):
+        clone = cache_for(row["repository"])
+        head = git("rev-parse", "HEAD", cwd=clone)
+        newest = git("rev-parse", "--verify", "-q", f"{head}:{row['path']}", cwd=clone, check=False)
+        if newest == row["tree"]:
+            print(f"{row['skill']}: up to date at {row['commit'][:12]}")
+        elif not newest:
+            print(f"{row['skill']}: upstream no longer has {row['path']}")
+        else:
+            changes = git("log", "--format=%h %cs %s", f"{row['commit']}..{head}", "--", row["path"],
+                          cwd=clone, check=False).splitlines()
+            print(f"{row['skill']}: upstream changed it in {len(changes)} commit(s) since {row['commit'][:12]}")
+            for line in changes[:5]:
+                print(f"  {line}")
+    return problems
+
+
+def cmd_update(root, args):
+    rows = read_sources(root)
+    names = [r["skill"] for r in rows] if args.all else args.skills
+    if not names:
+        fail("name the skills to update, or --all")
+    by_name = {r["skill"]: r for r in rows}
+    for name in names:
+        if name not in by_name:
+            fail(f"{name} is not vendored")
+    for name in names:
+        row = by_name[name]
+        clone = cache_for(row["repository"])
+        commit = resolve(clone, args.ref)
+        if git("rev-parse", "--verify", "-q", f"{commit}:{row['path']}", cwd=clone, check=False) == row["tree"]:
+            print(f"{name}: unchanged at {commit[:12]}")
+            row["commit"] = commit
+            continue
+        row["tree"] = export(clone, commit, row["path"], root / "vendor" / name)
+        row["commit"] = commit
+        print(f"{name}: now {row['path']} at {commit[:12]}")
+        show_change(root, name)
+    write_sources(root, rows)
+    print("Read the diff (git diff vendor/) before committing: these files become instructions agents follow.")
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="vendor", description=__doc__.split("\n")[0])
+    parser.add_argument("--root", type=Path, default=None)
+    sub = parser.add_subparsers(dest="command", required=True)
+    add = sub.add_parser("add")
+    add.add_argument("skill")
+    add.add_argument("url")
+    add.add_argument("path")
+    add.add_argument("--ref")
+    add.add_argument("--license")
+    sub.add_parser("check")
+    sub.add_parser("status")
+    update = sub.add_parser("update")
+    update.add_argument("skills", nargs="*")
+    update.add_argument("--all", action="store_true")
+    update.add_argument("--ref")
+    args = parser.parse_args()
+    root = (args.root or default_root()).resolve()
+    if not root.is_dir():
+        fail(f"no repository at {root}")
+    if args.command == "add":
+        if not args.skill.replace("-", "").isalnum() or args.skill != args.skill.lower():
+            fail(f"not a skill folder name: {args.skill}")
+        cmd_add(root, args)
+    elif args.command == "check":
+        sys.exit(1 if cmd_check(root) else 0)
+    elif args.command == "status":
+        sys.exit(1 if cmd_status(root) else 0)
+    else:
+        cmd_update(root, args)
+
+
+if __name__ == "__main__":
+    main()
