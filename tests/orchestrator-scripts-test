@@ -3205,6 +3205,11 @@ printf '# ledger\n' > "$hb.md"
 printf '#!/bin/sh\n' > "$work/hb-ps"   # no processes: a test elsewhere on the machine can't show up as a dialog
 chmod +x "$work/hb-ps"
 export HEARTBEAT_PS="$work/hb-ps"
+# Never the real provider-usage: it would read the owner's own accounts, and its answer would differ
+# between computers. A check that needs a reading names its own stand-in.
+printf '#!/bin/sh\necho "a heartbeat check read live usage without a stand-in" >&2\nexit 1\n' > "$work/hb-usage-unset"
+chmod +x "$work/hb-usage-unset"
+export HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-unset"
 printf '#!/bin/sh\n' > "$work/hb-watch-quiet"
 printf '#!/bin/sh\necho "commit A 2026-11-11T01:50:00+02:00 abc fix"\n' > "$work/hb-watch-event"
 printf '#!/bin/sh\necho "hang A: stuck"\n' > "$work/hb-watch-flag"
@@ -3230,6 +3235,8 @@ printf '#!/bin/sh\necho %s\n' "'{\"providers\": {}}'" > "$work/hb-usage-empty"
 chmod +x "$work/hb-usage-empty"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-empty" "$scripts/heartbeat" "$hb" --no-ledger --live)
 case "$out" in *"act on the lines below"*"the live reading had no windows"*) ;; *) echo "heartbeat empty usage: $out"; exit 1;; esac
+# Back to a task that is not on Fable: the checks below read no live usage.
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-opus-5-5"}}}' > "$hb/watch.json"
 printf '#!/bin/sh\necho "slept 2026-11-11T03:12:00+02:00 2026-11-11T05:40:00+02:00 (Clamshell Sleep): 148 min"\n' > "$work/hb-watch-slept"
 chmod +x "$work/hb-watch-slept"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-slept" "$scripts/heartbeat" "$hb" --no-ledger)
