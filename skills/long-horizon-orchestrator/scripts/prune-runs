@@ -439,7 +439,11 @@ def prune_scratch(root, task):
 
 
 def git_out(args, cwd):
-    done = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    """A git command's output, or None when it failed or took over two minutes (a refusal then)."""
+    try:
+        done = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     return done.stdout if done.returncode == 0 else None
 
 
@@ -503,7 +507,7 @@ def scratch_check(scratch, run):
                 worktrees.append((top, common.strip()))
             dirs[:] = []
             continue
-        if top != scratch and ".git" in dirs:     # a clone
+        if ".git" in dirs:     # a clone (scratch itself, too)
             status = git_out(["status", "--porcelain"], top)
             # HEAD too: a commit on a detached HEAD is on no ref --all lists
             listed = git_out(["rev-list", "HEAD", "--all", "--not", "--remotes"], top)
@@ -518,8 +522,7 @@ def scratch_check(scratch, run):
             else:
                 own = listed.split()
                 if own and repo and branch:
-                    own = [c for c in own if subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", c, branch],
-                                                            capture_output=True).returncode != 0]
+                    own = [c for c in own if git_out(["merge-base", "--is-ancestor", c, branch], repo) is None]
                 if own:
                     problems.append(f"{rel} is a clone with {len(own)} commit(s) on no remote and not in the integration branch")
             dirs[:] = []

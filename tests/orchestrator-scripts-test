@@ -1121,6 +1121,11 @@ facts = {"title": "Rounds", "date": "Sat 7 Nov", "orchestrator": "Claude Code (T
 json.dump(facts, open(facts_path, "w"))
 EOF
 "$scripts/run-charts" "$work/facts-rounds.json" "$work/charts-rounds" --repo "$rounds_repo" > "$work/rounds.out" 2>&1
+# an interim report: the last round and a sleep still open draw, ending with the run
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); del f["rounds"][1]["end"]; f["asleep"].append({"start": "05:40", "reason": "Clamshell Sleep"}); json.dump(f, open(sys.argv[2], "w"))' \
+  "$work/facts-rounds.json" "$work/facts-rounds-open.json"
+"$scripts/run-charts" "$work/facts-rounds-open.json" "$work/charts-rounds-open" >/dev/null 2>&1
+grep -q '"start": 340, "end": 360, "reason": "Clamshell Sleep"' "$work/charts-rounds-open/run-map.html"
 python3 -I - "$work" <<'EOF'
 import json, os, re, sys
 work = sys.argv[1]
@@ -2819,6 +2824,13 @@ git("add", "k.txt", cwd=loose)
 git("commit", "-q", "-m", "detached in a clone", cwd=loose)
 done = run("--scratch", os.path.join(root, "recent/Y"))
 assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/Y/scratch/clone/k.txt"), done.stderr
+top = os.path.join(root, "recent/T2/scratch")
+sp.run(["git", "clone", "-q", repo_r, top], check=True)
+open(os.path.join(top, "m.txt"), "w").write("m\n")
+git("add", "m.txt", cwd=top)
+git("commit", "-q", "-m", "work in scratch itself", cwd=top)
+done = run("--scratch", os.path.join(root, "recent/T2"))
+assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/T2/scratch/m.txt"), done.stderr
 dirty = os.path.join(root, "recent/V/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
 open(os.path.join(dirty, "f.txt"), "w").write("edited\n")

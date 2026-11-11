@@ -158,6 +158,8 @@ def main(argv):
     for l in watch_lines:
         if EVENT.match(l):
             word, who = l.split()[:2]
+            if word == "slept":   # a time, not a task: said as its clock time
+                who = (re.search(r"T(\d\d:\d\d)", who) or re.match("(.*)", who)).group(1)
             events.setdefault(word, []).append(who)
 
     repo, branch = watch.get("repo"), watch.get("integration_branch")

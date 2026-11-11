@@ -1212,7 +1212,10 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             named = [t["id"] for t in timed(facts["tasks"]) if minute(t["launched"]) < end and minute(t["ended"]) > start]
         pauses.append({"start": start, "end": end, "reason": p.get("reason", ""), "which": p.get("which", ""), "tasks": named})
 
-    asleep = [{"start": minute(z["start"]), "end": minute(z["end"]), "reason": z.get("reason", "")} for z in facts.get("asleep") or []]
+    open_end = minute(run.get("end")) if run.get("end") else None   # a sleep still open ends with the run
+    asleep = [{"start": minute(z["start"]), "end": minute(z.get("end")) if z.get("end") else open_end, "reason": z.get("reason", "")}
+              for z in facts.get("asleep") or []]
+    asleep = [z for z in asleep if z["end"] is not None]
 
     def when(a, b) -> str:
         if not (a and b):
@@ -1380,7 +1383,8 @@ def check_facts(facts) -> None:
     for key, what in (("pauses", "pause"), ("asleep", "sleep"), ("rounds", "round")):
         for n, p in enumerate(objects("the run", facts.get(key), key), 1):
             for k in ("start", "end"):
-                check_time(p.get(k), f"{what} {n}'s {k}")
+                if k == "start" or key == "pauses" or p.get(k) is not None:   # a round or a sleep may still be open
+                    check_time(p.get(k), f"{what} {n}'s {k}")
     run = facts.get("run")
     if run is not None:
         if not isinstance(run, dict):
