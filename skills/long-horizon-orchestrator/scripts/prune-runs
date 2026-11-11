@@ -43,7 +43,7 @@ a scratch/ holding KEEP, an evidence/ folder, a git worktree or clone with uncom
 commits on no remote and not in the run's integration branch (watch.json's repo and
 integration_branch), a worktree with commits on no branch, remote or tag, or a clone other worktrees
 were made from. A clean worktree whose commits are on a branch is removed first with git worktree
-remove; SwiftPM's dependency clones
+remove. A git look that fails, or a folder that can't be read, refuses too. SwiftPM's dependency clones
 (a build folder's checkouts/ and repositories/), caches (CACHEDIR.TAG) and submodules aren't looked
 into. It doesn't know whether the task merged: the orchestrator
 calls it only for a merged task whose processes have stopped. Use it only once the task and everything it started have stopped.
@@ -459,7 +459,9 @@ def scratch_check(scratch, run):
     Refused: KEEP, an evidence/ folder, a git worktree or clone with uncommitted changes, a worktree with
     commits on no branch, remote or tag, a clone with commits on no remote and not in the run's integration branch, or a clone other worktrees were made from. Not looked
     into: a SwiftPM build folder's checkouts/ and repositories/ (dependency clones, a reviewer's
-    --scratch-path build), a cache (CACHEDIR.TAG, as uv's), and a submodule inside a clone."""
+    --scratch-path build), a cache (CACHEDIR.TAG, as uv's), and a submodule inside a clone (a linked worktree
+    of a submodule's repository is checked). A git look that fails, or a folder that can't be read, refuses
+    too: nothing is removed on a guess."""
     problems, worktrees = [], []
     repo, branch = integration_of(run)
     if os.path.lexists(os.path.join(scratch, ".git")) and not os.path.isdir(os.path.join(scratch, ".git")):

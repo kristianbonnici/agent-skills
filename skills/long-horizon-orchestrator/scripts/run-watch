@@ -37,7 +37,7 @@ Each line starts with a word saying what it is:
                    approval prompt, or a hang before the command started
   quiet <task>     a running task whose session log, worktree and run folder haven't changed for
                    20 minutes and whose processes are idle
-  blind <task>     (once per task) a running task whose session log this script can't read (a
+  blind <task>     (once per task; kept in its state file's "blind" list until its log is found) a running task whose session log this script can't read (a
                    harness it doesn't know, or a log it didn't find): it sees only that task's
                    processes and files
   hog <pid>        a process started since the run began, not the run's, above 80% of a core for
@@ -662,6 +662,7 @@ def main(argv: list[str]) -> int:
         running = task.get("status", "running") == "running"
         if log:
             sessions[tid] = log
+            blind_told.discard(tid)   # read now: no longer blind (the heartbeat reads this list)
         elif tid not in blind_told and task.get("status", "running") == "running":
             why = "no session log this script reads" if kind is None else "its session log wasn't found (give its session_log in watch.json)"
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
@@ -966,9 +967,11 @@ def main(argv: list[str]) -> int:
             spans.append((open_span[0], t, open_span[1]))
             open_span = None
     slept_lines = []
+    new_keys = set()
     for a, b, why in spans:
         if b > started and b - a >= 60 and str(round(a)) not in slept_told:
             slept_told.add(str(round(a)))
+            new_keys.add(str(round(a)))
             slept_lines.append(f"slept {iso(max(a, started))} {iso(b)} ({why or 'reason not logged'}): {(b - max(a, started)) / 60:.0f} min; tasks ran "
                                "only in dark wakes then: tell the tasks whose timings it skews, and put it in the facts' \"asleep\"")
     lines.extend(slept_lines)
@@ -978,7 +981,7 @@ def main(argv: list[str]) -> int:
                 fh.write("".join(line.split("): ", 1)[0] + ")\n" for line in slept_lines))
         except OSError as e:   # not told, so the next wake prints and adds them again
             lines.append(f"note: couldn't add the sleeps to {os.path.join(run_dir, TIMES_LOG)}: {e}")
-            slept_told -= {str(round(a)) for a, b, why in spans}
+            slept_told -= new_keys
     if open_span is not None and open_span[0] > started - 86400:
         lines.append(f"slept {iso(max(open_span[0], started))} - ({open_span[1] or 'reason not logged'}): the Mac is asleep and this is a "
                      "dark wake; nothing runs for long until it wakes (a sleep something asked for passes caffeinate -i)")

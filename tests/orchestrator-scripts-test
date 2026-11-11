@@ -2794,6 +2794,10 @@ git("add", "g.txt", cwd=mine)
 git("commit", "-q", "-m", "work", cwd=mine)
 done = run("--scratch", os.path.join(root, "recent/U"))
 assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/U/scratch/mine/g.txt"), done.stderr
+put("recent/Z/scratch/uv/CACHEDIR.TAG", b"Signature: 8a477f597d28d172789f06886806bc55")
+put("recent/Z/scratch/uv/evidence/trace.bin", big)        # evidence/ inside a cache still protects
+done = run("--scratch", os.path.join(root, "recent/Z"))
+assert done.returncode == 1 and "evidence" in done.stderr and exists("recent/Z/scratch/uv/evidence/trace.bin"), done.stderr
 protected = os.path.join(root, "recent/X/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, protected], check=True)
 put("recent/X/scratch/clone/build/KEEP", b"")             # ignored by the clone's status, still protects
@@ -2982,6 +2986,10 @@ printf '#!/bin/sh\necho %s\n' "'{\"providers\": {\"claude\": {\"windows\": {\"we
 chmod +x "$work/hb-usage-nofable"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-nofable" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"no live Fable reading"*) ;; *) echo "heartbeat no fable: $out"; exit 1;; esac
+printf '#!/bin/sh\necho %s\n' "'{\"providers\": {}}'" > "$work/hb-usage-empty"
+chmod +x "$work/hb-usage-empty"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-empty" "$scripts/heartbeat" "$hb" --no-ledger --live)
+case "$out" in *"act on the lines below"*"the live reading had no windows"*) ;; *) echo "heartbeat empty usage: $out"; exit 1;; esac
 printf '#!/bin/sh\nexit 3\n' > "$work/hb-watch-broken"
 chmod +x "$work/hb-watch-broken"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-broken" "$scripts/heartbeat" "$hb" --no-ledger)
