@@ -1,7 +1,8 @@
 #!/bin/sh
 # Prints what the install manifests declare. Each repository of skills has three tables in install/:
 #   hosts.tsv   where each host looks for skills: host, label, mode, folder
-#   skills.tsv  which hosts get each skill: mode (install, vendor or retired), skill, hosts
+#   skills.tsv  which hosts get each skill: mode (install, vendor or retired), skill, hosts. A skill
+#               may sit in a group folder, named group/skill; hosts see it by its own name.
 #   links.tsv   any other link: host, mode, source, target
 # The tables are read from this repository and, when it exists, the owner's private one
 # (AGENT_SKILLS_PRIVATE, by default agent-skills-private next to this repository; set it empty to
@@ -162,9 +163,14 @@ table == "skills" {
   if ($1 != "install" && $1 != "vendor" && $1 != "retired") {
     refuse("unknown mode \"" $1 "\": expected install, vendor or retired"); next
   }
-  if ($2 !~ /^[a-z0-9]+(-[a-z0-9]+)*$/) { refuse("not a skill folder name: \"" $2 "\""); next }
-  # Skills of the owner are in skills/, pinned copies of skills by others in vendor/.
+  if ($2 !~ /^([a-z0-9]+(-[a-z0-9]+)*\/)?[a-z0-9]+(-[a-z0-9]+)*$/) {
+    refuse("not a skill folder name, or group/name: \"" $2 "\""); next
+  }
+  # Skills of the owner are in skills/, pinned copies of skills by others in vendor/, either one
+  # in a group folder. A host sees a skill by its own name, so two groups cannot both have one.
   source = root "/" ($1 == "vendor" ? "vendor" : "skills") "/" $2
+  name = $2
+  sub(/^.*\//, "", name)
   pieces = split($3, named, / +/)
   used = 0
   for (piece = 1; piece <= pieces; piece++) {
@@ -173,19 +179,19 @@ table == "skills" {
     used++
     if (!(host in host_label)) { refuse("no hosts.tsv names a host \"" host "\""); continue }
     # Within one repository; across two, the path check below names both sources.
-    if ((root, $2, host) in pair_seen) { refuse($2 " is named twice for " host); continue }
-    pair_seen[root, $2, host] = 1
+    if ((root, name, host) in pair_seen) { refuse(name " is named twice for " host); continue }
+    pair_seen[root, name, host] = 1
     for (folder = 1; folder <= folders; folder++) {
       if (folder_host[folder] != host) continue
       # The mode of the folder, which is already "retired" for one the host no longer reads.
       mode = ($1 == "retired") ? "retired" : folder_mode[folder]
-      add(host, mode, source, folder_path[folder] "/" $2)
+      add(host, mode, source, folder_path[folder] "/" name)
       if (mode == "retired") continue
-      if (!($2 in skill_listed)) { skill_listed[$2] = 1; skill_names[++skill_count] = $2 }
-      installed[$2, host] = 1
+      if (!(name in skill_listed)) { skill_listed[name] = 1; skill_names[++skill_count] = name }
+      installed[name, host] = 1
     }
   }
-  if (used == 0) refuse($2 " names no host")
+  if (used == 0) refuse(name " names no host")
   next
 }
 

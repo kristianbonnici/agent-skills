@@ -49,8 +49,11 @@ read its `install/` tables together with this repository's, so every host gets b
 
 | Its folder | Holds | Its `install/skills.tsv` mode |
 |---|---|---|
-| `skills/<skill>/` | the owner's own unshared skills | `install` |
-| `vendor/<skill>/` | someone else's skill, byte for byte as one upstream commit has it | `vendor` |
+| `skills/<skill>/` or `skills/<group>/<skill>/` | the owner's own unshared skills | `install` |
+| `vendor/<group>/<skill>/` | someone else's skill, byte for byte as one upstream commit has it, grouped by upstream repository with its licence | `vendor` |
+
+A skill in a group is named `group/skill` in the tables; hosts see it by its own name, so two groups
+cannot both hold a skill of the same name.
 
 Its `install/links.tsv` may also list `external` rows: a skill that a tool installs and updates
 itself (a CLI's own installer, or the host). Bootstrap never touches those; they are listed so doctor
@@ -58,10 +61,10 @@ knows them. The private repository may use this one's hosts but never claims a p
 installs, and nothing of it is ever named here.
 
 `scripts/vendor` keeps the `vendor/` copies, recorded in `vendor/sources.tsv` with their repository,
-commit, git's hash of the folder and licence:
+commit, git's hash of the folder and licence, and copies each upstream licence into its group:
 
 ```bash
-./scripts/vendor add <skill> <repository URL> <path in it> --license <SPDX>   # pin upstream HEAD, or --ref
+./scripts/vendor add <skill> <repository URL> <path in it> --license <SPDX>   # pin upstream HEAD, or --ref; into vendor/<owner>-<repository>/, or --group
 ./scripts/vendor status            # each copy still matches its pin; what upstream changed since
 ./scripts/vendor update <skill>    # or --all: move the pin; read the diff, then commit it there
 ```

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Checks scripts/vendor against a made-up upstream git repository, offline: add copies a folder at a
-# commit byte for byte (executable bits too) and records it, check passes until a file is changed or
+# commit byte for byte (executable bits too) into its group folder with the upstream licence and
+# records it, a skill name is taken by one group only, check passes until a file is changed or
 # added by hand and names a folder no row records, status reports upstream's newer commits, update
 # moves the pin and leaves the change uncommitted, the committed folder hashes to upstream's tree,
 # and bad input changes nothing.
@@ -25,6 +26,7 @@ echo one >"$upstream/skills/foo/SKILL.md"
 printf '#!/bin/sh\necho run\n' >"$upstream/skills/foo/scripts/run"
 chmod +x "$upstream/skills/foo/scripts/run"
 echo bar >"$upstream/skills/bar/SKILL.md"
+echo "MIT License" >"$upstream/LICENSE"
 in_git -C "$upstream" add -A
 in_git -C "$upstream" commit -qm "first"
 first=$(git -C "$upstream" rev-parse HEAD)
@@ -36,62 +38,71 @@ in_git init -q "$private"
 run() { "$vendor" --root "$private" "$@"; }
 
 # add, pinned to the first commit
-run add foo "file://$upstream" skills/foo --ref "$first" --license MIT >"$work/add.out"
-grep -q "^foo: skills/foo at ${first%"${first#????????????}"}" "$work/add.out"
-test "$(cat "$private/vendor/foo/SKILL.md")" = one
-test -x "$private/vendor/foo/scripts/run"
-grep -q "^foo	file://$upstream	skills/foo	$first	$(git -C "$upstream" rev-parse "$first:skills/foo")	MIT$" "$private/vendor/sources.tsv"
+run add foo "file://$upstream" skills/foo --ref "$first" --license MIT --group tools >"$work/add.out"
+grep -q "^tools/foo: skills/foo at ${first%"${first#????????????}"}" "$work/add.out"
+test "$(cat "$private/vendor/tools/foo/SKILL.md")" = one
+test -x "$private/vendor/tools/foo/scripts/run"
+test "$(cat "$private/vendor/tools/LICENSE")" = "MIT License"
+grep -q "^tools/foo	file://$upstream	skills/foo	$first	$(git -C "$upstream" rev-parse "$first:skills/foo")	MIT$" "$private/vendor/sources.tsv"
 run check >/dev/null
 # Nothing committed: the owner reads the change first.
 test -z "$(git -C "$private" log --oneline 2>/dev/null)"
 
 # status: upstream changed foo since the pin
 run status >"$work/status.out"
-grep -q "^foo: upstream changed it in 1 commit(s) since" "$work/status.out"
+grep -q "^tools/foo: upstream changed it in 1 commit(s) since" "$work/status.out"
 grep -q "foo two" "$work/status.out"
 
 # check: a file changed or added by hand, and a folder no row records
-echo edited >>"$private/vendor/foo/SKILL.md"
+echo edited >>"$private/vendor/tools/foo/SKILL.md"
 if run check 2>"$work/check.err"; then echo "check passed a changed copy" >&2; exit 1; fi
-grep -q "^foo: vendor/foo differs from" "$work/check.err"
-echo one >"$private/vendor/foo/SKILL.md"
+grep -q "^tools/foo: vendor/tools/foo differs from" "$work/check.err"
+echo one >"$private/vendor/tools/foo/SKILL.md"
 run check >/dev/null
-echo extra >"$private/vendor/foo/notes.md"
+echo extra >"$private/vendor/tools/foo/notes.md"
 if run check 2>/dev/null; then echo "check passed an added file" >&2; exit 1; fi
-rm "$private/vendor/foo/notes.md"
+rm "$private/vendor/tools/foo/notes.md"
 mkdir "$private/vendor/stray"
 if run check 2>"$work/check.err"; then echo "check passed a folder no row records" >&2; exit 1; fi
 grep -q "^stray: vendor/stray is in no row" "$work/check.err"
 rmdir "$private/vendor/stray"
+mkdir "$private/vendor/tools/stray"
+if run check 2>"$work/check.err"; then echo "check passed a folder in a group that no row records" >&2; exit 1; fi
+grep -q "^tools/stray: vendor/tools/stray is in no row" "$work/check.err"
+rmdir "$private/vendor/tools/stray"
 
 # update to upstream HEAD; the pinned tree is upstream's
 run update foo >"$work/update.out"
-test "$(cat "$private/vendor/foo/SKILL.md")" = two
-grep -q "^foo	file://$upstream	skills/foo	$(git -C "$upstream" rev-parse HEAD)	" "$private/vendor/sources.tsv"
+test "$(cat "$private/vendor/tools/foo/SKILL.md")" = two
+grep -q "^tools/foo	file://$upstream	skills/foo	$(git -C "$upstream" rev-parse HEAD)	" "$private/vendor/sources.tsv"
 run check >/dev/null
 in_git -C "$private" add -A
 in_git -C "$private" commit -qm "pin"
-test "$(git -C "$private" rev-parse HEAD:vendor/foo)" = "$(git -C "$upstream" rev-parse HEAD:skills/foo)"
+test "$(git -C "$private" rev-parse HEAD:vendor/tools/foo)" = "$(git -C "$upstream" rev-parse HEAD:skills/foo)"
 run status >"$work/status.out"
-grep -q "^foo: up to date at" "$work/status.out"
+grep -q "^tools/foo: up to date at" "$work/status.out"
 
-# a second skill from the same upstream, and update --all
+# a second skill from the same upstream, in the group named after it, and update --all
 run add bar "file://$upstream" skills/bar >/dev/null
+bar_group=$(cut -f1 "$private/vendor/sources.tsv" | grep '/bar$' | cut -d/ -f1)
+case "$bar_group" in *-upstream) ;; *) echo "bar went to group $bar_group, not <owner>-<repository>" >&2; exit 1;; esac
 echo bar2 >"$upstream/skills/bar/SKILL.md"
 in_git -C "$upstream" commit -qam "bar two"
 run update --all >"$work/update.out"
-grep -q "^foo: unchanged at" "$work/update.out"
-grep -q "^bar: now skills/bar at" "$work/update.out"
-test "$(cat "$private/vendor/bar/SKILL.md")" = bar2
+grep -q "^tools/foo: unchanged at" "$work/update.out"
+grep -q "^$bar_group/bar: now skills/bar at" "$work/update.out"
+test "$(cat "$private/vendor/$bar_group/bar/SKILL.md")" = bar2
+# Named by group too.
+run update "tools/foo" >/dev/null
 
 # bad input changes nothing
 cp "$private/vendor/sources.tsv" "$work/sources.before"
-for bad in "add foo file://$upstream skills/foo" "add Bad file://$upstream skills/foo" "add nope file://$upstream skills/missing" "add nope file://$upstream skills/foo --ref no-such-ref" "update unknown" "update"; do
+for bad in "add foo file://$upstream skills/foo" "add foo file://$upstream skills/foo --group other" "add baz file://$upstream skills/bar --group Bad" "add Bad file://$upstream skills/foo" "add nope file://$upstream skills/missing" "add nope file://$upstream skills/foo --ref no-such-ref" "update unknown" "update"; do
   # shellcheck disable=SC2086
   if run $bad >/dev/null 2>&1; then echo "accepted: vendor $bad" >&2; exit 1; fi
 done
 cmp -s "$work/sources.before" "$private/vendor/sources.tsv"
 test ! -e "$private/vendor/nope"
-ls -A "$private/vendor" | grep -q '^\.' && { echo "a staging folder was left behind" >&2; exit 1; }
+if find "$private/vendor" -name '.*.incoming' | grep -q .; then echo "a staging folder was left behind" >&2; exit 1; fi
 
 echo "vendor-test: passed"

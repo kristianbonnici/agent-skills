@@ -2,11 +2,15 @@
 """Pinned copies of skills by others, in a repository's vendor/ folder.
 
 Each copy is one folder of an upstream git repository at one commit, kept byte for byte, so git's
-hash of the folder (its tree) proves it is unchanged. vendor/sources.tsv records, per skill:
-skill, repository URL, path in it, commit, tree, licence. A newer upstream version reaches the
-hosts only when the owner updates the pin, reads the diff and commits it.
+hash of the folder (its tree) proves it is unchanged. The copies of one upstream repository sit
+together in a group folder, vendor/<group>/<skill>, with the upstream licence beside them.
+vendor/sources.tsv records, per skill: group/skill, repository URL, path in it, commit, tree,
+licence. A newer upstream version reaches the hosts only when the owner updates the pin, reads the
+diff and commits it. A SKILL below is its own name, or group/name when two groups share one.
 
-  vendor add SKILL URL PATH [--ref REF] [--license SPDX]   copy PATH at REF (default: upstream HEAD)
+  vendor add SKILL URL PATH [--ref REF] [--license SPDX] [--group GROUP]
+                               copy PATH at REF (default: upstream HEAD) into vendor/GROUP/SKILL;
+                               GROUP defaults to <owner>-<repository>
   vendor check                                             every folder matches its recorded tree
   vendor status                                            check, and ask upstream for newer commits
   vendor update SKILL... | --all [--ref REF]               move the pins to REF (default: upstream HEAD)
@@ -19,6 +23,7 @@ ${XDG_CACHE_HOME:-~/.cache}/agent-skills/vendor.
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,8 +31,10 @@ import tempfile
 from pathlib import Path
 
 FIELDS = ["skill", "repository", "path", "commit", "tree", "license"]
+NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+LICENSE_NAMES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE", "LICENCE.md", "COPYING", "COPYING.md")
 HEADER = (
-    "# Pinned copies of skills by others: each vendor/<skill> folder is <path> of <repository> at\n"
+    "# Pinned copies of skills by others: each vendor/<group>/<skill> folder is <path> of <repository> at\n"
     "# <commit>, byte for byte, and <tree> is git's hash of that folder. Change rows with scripts/vendor\n"
     "# in the public agent-skills repository, never by hand.\n"
     "# " + "\t".join(FIELDS) + "\n"
@@ -72,6 +79,35 @@ def write_sources(root, rows):
     table.parent.mkdir(parents=True, exist_ok=True)
     body = "".join("\t".join(row[f] for f in FIELDS) + "\n" for row in sorted(rows, key=lambda r: r["skill"]))
     table.write_text(HEADER + body)
+
+
+def default_group(url):
+    """<owner>-<repository> from the URL's last two parts: heygen-com/hyperframes is heygen-com-hyperframes."""
+    parts = [part for part in re.split(r"[/:]", url.rstrip("/").removesuffix(".git")) if part][-2:]
+    group = re.sub(r"[^a-z0-9]+", "-", "-".join(parts).lower()).strip("-")
+    if not NAME.match(group):
+        fail(f"cannot make a group name from {url}: pass --group")
+    return group
+
+
+def find_row(rows, name):
+    """A row by group/skill, or by the skill's own name when only one group has it."""
+    matches = [row for row in rows if row["skill"] == name or row["skill"].rsplit("/", 1)[-1] == name]
+    if not matches:
+        fail(f"{name} is not vendored")
+    if len(matches) > 1:
+        fail(f"{name} is in more than one group: name it as " + " or ".join(row["skill"] for row in matches))
+    return matches[0]
+
+
+def copy_license(clone, commit, root, group):
+    """The upstream licence, from the repository's top folder, into the group folder."""
+    for name in LICENSE_NAMES:
+        text = subprocess.run(["git", "show", f"{commit}:{name}"], cwd=clone, capture_output=True)
+        if text.returncode == 0:
+            (root / "vendor" / group / name).write_bytes(text.stdout)
+            return name
+    return None
 
 
 def folder_tree(folder):
@@ -144,17 +180,24 @@ def show_change(root, skill):
 
 def cmd_add(root, args):
     rows = read_sources(root)
-    if any(r["skill"] == args.skill for r in rows):
+    group = args.group or default_group(args.url)
+    if not NAME.match(group):
+        fail(f"not a group folder name: {group}")
+    # Hosts see a skill by its own name, so no two groups may hold one.
+    if any(r["skill"].rsplit("/", 1)[-1] == args.skill for r in rows):
         fail(f"{args.skill} is already vendored: use update")
     clone = cache_for(args.url)
     commit = resolve(clone, args.ref)
-    tree = export(clone, commit, args.path.strip("/"), root / "vendor" / args.skill)
-    rows.append(dict(skill=args.skill, repository=args.url, path=args.path.strip("/"), commit=commit, tree=tree,
+    (root / "vendor" / group).mkdir(parents=True, exist_ok=True)
+    tree = export(clone, commit, args.path.strip("/"), root / "vendor" / group / args.skill)
+    licence_file = copy_license(clone, commit, root, group)
+    key = f"{group}/{args.skill}"
+    rows.append(dict(skill=key, repository=args.url, path=args.path.strip("/"), commit=commit, tree=tree,
                      license=args.license or "unknown"))
     write_sources(root, rows)
-    print(f"{args.skill}: {args.path} at {commit[:12]}")
-    show_change(root, args.skill)
-    print(f"Read the files, add {args.skill} to install/skills.tsv as vendor, and commit.")
+    print(f"{key}: {args.path} at {commit[:12]}" + ("" if licence_file else " (upstream has no licence file)"))
+    show_change(root, key)
+    print(f"Read the files, add {key} to install/skills.tsv as vendor, and commit.")
 
 
 def cmd_check(root, quiet=False):
@@ -172,12 +215,21 @@ def cmd_check(root, quiet=False):
             problems += 1
         elif not quiet:
             print(f"{row['skill']}: matches {row['commit'][:12]}")
+    # Every folder is a recorded skill or a group of them; nothing else belongs in vendor/.
+    groups = {key.split("/", 1)[0] for key in listed if "/" in key}
     vendor = root / "vendor"
     for folder in sorted(vendor.iterdir()) if vendor.is_dir() else []:
-        if folder.is_dir() and not folder.name.startswith(".") and folder.name not in listed \
-                and folder.name != "licenses":
+        if not folder.is_dir() or folder.name.startswith(".") or folder.name in listed:
+            continue
+        if folder.name not in groups:
             print(f"{folder.name}: vendor/{folder.name} is in no row of vendor/sources.tsv", file=sys.stderr)
             problems += 1
+            continue
+        for inner in sorted(folder.iterdir()):
+            key = f"{folder.name}/{inner.name}"
+            if inner.is_dir() and not inner.name.startswith(".") and key not in listed:
+                print(f"{key}: vendor/{key} is in no row of vendor/sources.tsv", file=sys.stderr)
+                problems += 1
     return problems
 
 
@@ -205,14 +257,13 @@ def cmd_update(root, args):
     names = [r["skill"] for r in rows] if args.all else args.skills
     if not names:
         fail("name the skills to update, or --all")
-    by_name = {r["skill"]: r for r in rows}
-    for name in names:
-        if name not in by_name:
-            fail(f"{name} is not vendored")
-    for name in names:
-        row = by_name[name]
+    chosen = [find_row(rows, name) for name in names]
+    for row in chosen:
+        name = row["skill"]
         clone = cache_for(row["repository"])
         commit = resolve(clone, args.ref)
+        if "/" in name:
+            copy_license(clone, commit, root, name.split("/", 1)[0])
         if git("rev-parse", "--verify", "-q", f"{commit}:{row['path']}", cwd=clone, check=False) == row["tree"]:
             print(f"{name}: unchanged at {commit[:12]}")
             row["commit"] = commit
@@ -235,6 +286,7 @@ def main():
     add.add_argument("path")
     add.add_argument("--ref")
     add.add_argument("--license")
+    add.add_argument("--group")
     sub.add_parser("check")
     sub.add_parser("status")
     update = sub.add_parser("update")
@@ -246,7 +298,7 @@ def main():
     if not root.is_dir():
         fail(f"no repository at {root}")
     if args.command == "add":
-        if not args.skill.replace("-", "").isalnum() or args.skill != args.skill.lower():
+        if not NAME.match(args.skill):
             fail(f"not a skill folder name: {args.skill}")
         cmd_add(root, args)
     elif args.command == "check":

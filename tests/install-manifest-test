@@ -146,8 +146,11 @@ refused hosts.tsv '~/.alpha/skills is listed twice for alpha' alpha Alpha link '
 refused hosts.tsv 'expected four columns: host, label, mode, folder' delta Delta link
 refused skills.tsv 'expected three columns: mode, skill, hosts' install four
 refused skills.tsv 'unknown mode "remove": expected install, vendor or retired' remove one alpha
-refused skills.tsv 'not a skill folder name: "../escape"' install ../escape alpha
-refused skills.tsv 'not a skill folder name: "Upper"' install Upper alpha
+refused skills.tsv 'not a skill folder name, or group/name: "../escape"' install ../escape alpha
+refused skills.tsv 'not a skill folder name, or group/name: "Upper"' install Upper alpha
+refused skills.tsv 'not a skill folder name, or group/name: "a/b/c"' install a/b/c alpha
+refused skills.tsv 'not a skill folder name, or group/name: "/one"' install /one alpha
+refused skills.tsv 'not a skill folder name, or group/name: "group/"' install group/ alpha
 refused skills.tsv 'four names no host' install four ''
 refused links.tsv 'unknown mode "copy": expected link, adapter, retired or external' alpha copy adapters/x '~/.alpha/x'
 refused links.tsv 'expected four columns: host, mode, source, target' alpha link adapters/x
@@ -243,6 +246,20 @@ printf 'vendor\ttheirs\talpha\n' >"$two/private/install/skills.tsv"
 "$manifest" links --dir "$two/public/install" --dir "$two/private/install" | grep -q "$two/private/vendor/theirs"
 "$manifest" links --dir "$two/private/install" --dir "$two/public/install" 2>"$two/err" && exit 1
 grep -q "missing $two/private/install/hosts.tsv" "$two/err"
+
+# A skill in a group folder: linked from the group, seen by hosts under its own name. Two groups
+# with a skill of the same name would both claim its link.
+mkdir -p "$work/groups"
+cp "$base/hosts.tsv" "$work/groups/"
+printf 'vendor\tsomeone-tools/four\talpha\ninstall\tmine/five\tbeta\nretired\tsomeone-tools/old\tgamma\n' >"$work/groups/skills.tsv"
+links_of --dir "$work/groups" >"$work/groups.out"
+grep -q "^alpha	link	vendor/someone-tools/four	~/.alpha/skills/four$" "$work/groups.out"
+grep -q "^beta	adapter	skills/mine/five	~/.beta/skills/five$" "$work/groups.out"
+grep -q "^gamma	retired	skills/someone-tools/old	~/.gamma/skills/old$" "$work/groups.out"
+"$manifest" skills --dir "$work/groups" | grep -q "^four	Alpha$"
+printf 'vendor\tother-tools/four\talpha\n' >>"$work/groups/skills.tsv"
+"$manifest" links --dir "$work/groups" >/dev/null 2>"$work/groups.err" && exit 1
+grep -q "four is named twice for alpha" "$work/groups.err"
 
 # This repository's own tables.
 "$manifest" links >"$work/own.links"
