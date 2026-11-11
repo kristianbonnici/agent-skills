@@ -1212,7 +1212,8 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             named = [t["id"] for t in timed(facts["tasks"]) if minute(t["launched"]) < end and minute(t["ended"]) > start]
         pauses.append({"start": start, "end": end, "reason": p.get("reason", ""), "which": p.get("which", ""), "tasks": named})
 
-    open_end = minute(run.get("end")) if run.get("end") else None   # a sleep still open ends with the run
+    # a sleep still open ends with the run, or, in a run still going, at the latest time the facts give
+    open_end = minute(run.get("end")) if run.get("end") else max((minute(v) for v in values), default=None)
     asleep = [{"start": minute(z["start"]), "end": minute(z.get("end")) if z.get("end") else open_end, "reason": z.get("reason", "")}
               for z in facts.get("asleep") or []]
     asleep = [z for z in asleep if z["end"] is not None]

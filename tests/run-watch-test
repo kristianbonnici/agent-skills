@@ -454,6 +454,12 @@ try:
     json.dump(w, open(watch_json, "w"))
     subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env)
     assert "G" not in json.load(open(state_file))["blind"], json.load(open(state_file))["blind"]
+    # a task whose log run-watch can't parse (another harness) is blind from the start, even with a log
+    w["tasks"]["H"] = {"worktree": wt_g, "harness": "opencode", "status": "running", "launched": stamp(time.time() - 60),
+                       "session_log": w["tasks"]["G"]["session_log"]}
+    json.dump(w, open(watch_json, "w"))
+    out_h = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
+    assert any(l.startswith("blind H") for l in out_h) and "H" in json.load(open(state_file))["blind"], out_h
 finally:
     for p in started:
         try:

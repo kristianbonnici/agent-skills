@@ -660,12 +660,14 @@ def main(argv: list[str]) -> int:
         elif kind == "codex":
             log = find_codex_log(task, launched, sessions.get(tid))
         running = task.get("status", "running") == "running"
+        readable = bool(log) and kind is not None and os.access(log, os.R_OK)
         if log:
             sessions[tid] = log
-            if kind is not None and os.access(log, os.R_OK):   # a log it can read now: no longer blind (the heartbeat reads this list)
-                blind_told.discard(tid)
+        if readable:   # a log it can read: not blind, or no longer (the heartbeat reads this list)
+            blind_told.discard(tid)
         elif tid not in blind_told and task.get("status", "running") == "running":
-            why = "no session log this script reads" if kind is None else "its session log wasn't found (give its session_log in watch.json)"
+            why = ("no session log this script reads" if kind is None else
+                   "its session log can't be read" if log else "its session log wasn't found (give its session_log in watch.json)")
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
                          "it sees only the task's processes and files, so read its thread for stuck calls")
             blind_told.add(tid)

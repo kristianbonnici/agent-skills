@@ -425,9 +425,13 @@ def prune_scratch(root, task):
         print(f"{os.path.basename(real)}: scratch left alone: " + "; ".join(problems), file=sys.stderr)
         return 1
     for wt, common in worktrees:   # clean worktrees hold no work: their commits stay on their branches
-        done = subprocess.run(["git", "--git-dir", common, "worktree", "remove", "--force", wt], capture_output=True, text=True)
-        if done.returncode != 0 and os.path.lexists(wt):
-            print(f"{os.path.basename(real)}: couldn't remove the worktree {wt}: {done.stderr.strip()}; scratch left alone", file=sys.stderr)
+        try:
+            done = subprocess.run(["git", "--git-dir", common, "worktree", "remove", "--force", wt], capture_output=True, text=True, timeout=120)
+            failed, why = done.returncode != 0, done.stderr.strip()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            failed, why = True, str(e)
+        if failed and os.path.lexists(wt):
+            print(f"{os.path.basename(real)}: couldn't remove the worktree {wt}: {why}; scratch left alone", file=sys.stderr)
             return 1
     size = tree_size(scratch)
     error = delete(root, scratch)
@@ -510,8 +514,11 @@ def scratch_check(scratch, run):
         if ".git" in dirs:     # a clone (scratch itself, too)
             status = git_out(["status", "--porcelain"], top)
             # HEAD too: a commit on a detached HEAD is on no ref --all lists
-            born = git_out(["rev-parse", "--verify", "-q", "HEAD"], top) is not None   # a repository with no commits has no HEAD
-            listed = git_out(["rev-list", *(["HEAD"] if born else []), "--all", "--not", "--remotes"], top)
+            listed = git_out(["rev-list", "HEAD", "--all", "--not", "--remotes"], top)
+            if listed is None and git_out(["for-each-ref", "--count=1"], top) == "" \
+                    and git_out(["rev-parse", "--verify", "-q", "HEAD"], top) is None \
+                    and git_out(["rev-list", "--all"], top) == "":
+                listed = ""   # a repository with no commits at all (no HEAD, no refs): nothing to keep
             if has_linked_worktrees(top):
                 problems.append(f"{rel} is a clone other worktrees were made from")
             elif status is None:

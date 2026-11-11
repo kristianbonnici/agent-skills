@@ -1126,6 +1126,10 @@ python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); del f["rounds
   "$work/facts-rounds.json" "$work/facts-rounds-open.json"
 "$scripts/run-charts" "$work/facts-rounds-open.json" "$work/charts-rounds-open" >/dev/null 2>&1
 grep -q '"start": 340, "end": 360, "reason": "Clamshell Sleep"' "$work/charts-rounds-open/run-map.html"
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); del f["run"]["end"]; json.dump(f, open(sys.argv[2], "w"))' \
+  "$work/facts-rounds-open.json" "$work/facts-rounds-going.json"
+"$scripts/run-charts" "$work/facts-rounds-going.json" "$work/charts-rounds-going" >/dev/null 2>&1
+grep -q '"start": 340, "end": 350, "reason": "Clamshell Sleep"' "$work/charts-rounds-going/run-map.html"   # to B's end, the latest time
 python3 -I - "$work" <<'EOF'
 import json, os, re, sys
 work = sys.argv[1]
