@@ -672,7 +672,7 @@ def main(argv: list[str]) -> int:
                          "it sees only the task's processes and files, so read its thread for stuck calls")
             blind_told.add(tid)
         calls, reports, logs, starts = {}, [], [], []
-        if log:
+        if readable:   # only a harness it knows, through its own parser
             logs = [log]
             sub = os.path.join(os.path.splitext(log)[0], "subagents")
             if kind == "claude" and os.path.isdir(sub) and "/subagents/" not in log:

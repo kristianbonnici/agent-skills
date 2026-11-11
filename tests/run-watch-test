@@ -460,6 +460,13 @@ try:
     json.dump(w, open(watch_json, "w"))
     out_h = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
     assert any(l.startswith("blind H") for l in out_h) and "H" in json.load(open(state_file))["blind"], out_h
+    # and its log isn't parsed by another harness's parser: a line that would trip the Codex parser is harmless
+    with open(w["tasks"]["G"]["session_log"], "a") as f:
+        f.write(json.dumps({"payload": "call"}) + "\n")
+    w["tasks"]["G"]["harness"] = "opencode"
+    json.dump(w, open(watch_json, "w"))
+    rc = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).returncode
+    assert rc == 0, rc
 finally:
     for p in started:
         try:
