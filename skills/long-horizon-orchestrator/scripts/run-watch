@@ -662,7 +662,8 @@ def main(argv: list[str]) -> int:
         running = task.get("status", "running") == "running"
         if log:
             sessions[tid] = log
-            blind_told.discard(tid)   # read now: no longer blind (the heartbeat reads this list)
+            if kind is not None and os.access(log, os.R_OK):   # a log it can read now: no longer blind (the heartbeat reads this list)
+                blind_told.discard(tid)
         elif tid not in blind_told and task.get("status", "running") == "running":
             why = "no session log this script reads" if kind is None else "its session log wasn't found (give its session_log in watch.json)"
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
