@@ -87,13 +87,18 @@ def windows_line(providers: dict, key_used: str) -> str:
     return "; ".join(parts)
 
 
-def usage(run_dir: str, live: bool, marks: dict) -> tuple[str, list[str]]:
+def usage(run_dir: str, live: bool, marks: dict, fable: bool = False) -> tuple[str, list[str]]:
     if live:
         out = run([os.environ.get("HEARTBEAT_PROVIDER_USAGE", os.path.join(HERE, "provider-usage"))], timeout=120)
         try:
             providers = json.loads(out).get("providers") or {}
             line = windows_line(providers, "used_percent")
-            return (("live: " + line) if line else "usage: no live reading"), near_limits(providers, "used_percent", marks)
+            limits = near_limits(providers, "used_percent", marks)
+            if not line:
+                limits.append("usage: the live reading had no windows: read provider-usage yourself")
+            elif fable and "weekly_fable" not in ((providers.get("claude") or {}).get("windows") or {}):
+                limits.append("usage: no live Fable reading while a Fable task runs: the run's Fable budget can't be checked")
+            return (("live: " + line) if line else "usage: no live reading"), limits
         except (ValueError, AttributeError):
             return "usage: the live reading failed", ["usage: the live reading failed: read provider-usage yourself"]
     path = os.path.join(run_dir, "usage", "providers.jsonl")
@@ -133,7 +138,14 @@ def main(argv):
     running = sorted(t for t, v in tasks.items() if isinstance(v, dict) and v.get("status", "running") == "running")
     fable = any(re.search(r"fable", str(tasks[t].get("model", "")), re.I) for t in running)
 
-    watch_lines = [l for l in run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir], timeout=180).splitlines() if l.strip()]
+    try:
+        done = subprocess.run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir],
+                              capture_output=True, text=True, timeout=180)
+        watch_lines = [l for l in done.stdout.splitlines() if l.strip()]
+        if done.returncode != 0:
+            watch_lines.append(f"note: run-watch failed (exit {done.returncode}): {done.stderr.strip()[-200:]}; run it yourself")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        watch_lines = [f"note: run-watch didn't run ({e}); run it yourself"]
     flagged = [l for l in watch_lines if not EVENT.match(l) and not REMINDER.match(l)]
     reminders = [l.split(":", 1)[0][3:] + l.split("still running", 1)[1] for l in watch_lines if REMINDER.match(l)]
     # tasks run-watch can't read (it names each once): their threads need a look on every wake
@@ -181,7 +193,7 @@ def main(argv):
     if blind_running:
         bits.append(f"blind, read their threads: {', '.join(blind_running)}")
     marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
-    usage_line, limits = usage(run_dir, "--live" in flags or fable, marks)
+    usage_line, limits = usage(run_dir, "--live" in flags or fable, marks, fable)
     bits.append(usage_line)
     summary = ". ".join(bits) + "."
     flagged += limits

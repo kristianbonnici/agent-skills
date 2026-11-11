@@ -976,8 +976,9 @@ def main(argv: list[str]) -> int:
         try:
             with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
                 fh.write("".join(line.split("): ", 1)[0] + ")\n" for line in slept_lines))
-        except OSError:
-            pass
+        except OSError as e:   # not told, so the next wake prints and adds them again
+            lines.append(f"note: couldn't add the sleeps to {os.path.join(run_dir, TIMES_LOG)}: {e}")
+            slept_told -= {str(round(a)) for a, b, why in spans}
     if open_span is not None and open_span[0] > started - 86400:
         lines.append(f"slept {iso(max(open_span[0], started))} - ({open_span[1] or 'reason not logged'}): the Mac is asleep and this is a "
                      "dark wake; nothing runs for long until it wakes (a sleep something asked for passes caffeinate -i)")

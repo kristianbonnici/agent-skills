@@ -464,18 +464,24 @@ def scratch_check(scratch, run):
     repo, branch = integration_of(run)
     if os.path.lexists(os.path.join(scratch, ".git")) and not os.path.isdir(os.path.join(scratch, ".git")):
         return ["scratch is itself a git worktree"], []
-    for top, dirs, files in os.walk(scratch, followlinks=False):
+    # KEEP and evidence/ protect wherever they are, inside a repository or a cache too: a walk of its own
+    for top, dirs, files in os.walk(scratch, followlinks=False, onerror=lambda e: problems.append(f"can't read {e.filename}")):
         rel = os.path.relpath(top, scratch)
         if "KEEP" in files or "KEEP" in dirs:
             problems.append(f"{rel}/KEEP")
         if EVIDENCE in dirs:
             problems.append(f"{os.path.join(rel, EVIDENCE)}/")
+    for top, dirs, files in os.walk(scratch, followlinks=False):
+        rel = os.path.relpath(top, scratch)
         if "CACHEDIR.TAG" in files:
             dirs[:] = []
             continue
         if top != scratch and ".git" in files:   # a linked worktree, or a submodule of a clone
             common = git_out(["rev-parse", "--path-format=absolute", "--git-common-dir"], top)
-            gitfile = open(os.path.join(top, ".git"), errors="replace").read()
+            try:
+                gitfile = open(os.path.join(top, ".git"), errors="replace").read()
+            except OSError:
+                gitfile = ""
             if "/modules/" in gitfile and "/worktrees/" not in gitfile:   # a submodule: part of its clone
                 dirs[:] = []
                 continue
@@ -484,7 +490,10 @@ def scratch_check(scratch, run):
                 dirs[:] = []
                 continue
             unshared = git_out(["rev-list", "-n1", "HEAD", "--not", "--branches", "--remotes", "--tags"], top)
-            if git_out(["status", "--porcelain"], top):
+            status = git_out(["status", "--porcelain"], top)
+            if status is None:   # every failed look refuses: nothing is removed on a guess
+                problems.append(f"the worktree {rel} can't be read (git status failed)")
+            elif status:
                 problems.append(f"the worktree {rel} has uncommitted changes")
             elif unshared is None or unshared.strip():
                 problems.append(f"the worktree {rel} has commits on no branch, remote or tag")
@@ -499,8 +508,10 @@ def scratch_check(scratch, run):
                 problems.append(f"{rel} is a clone whose state can't be read")
             elif git_out(["status", "--porcelain"], top):
                 problems.append(f"{rel} is a clone with uncommitted changes")
+            elif git_out(["rev-list", "--all", "--not", "--remotes"], top) is None:
+                problems.append(f"{rel} is a clone whose commits can't be read")
             else:
-                own = (git_out(["rev-list", "--all", "--not", "--remotes"], top) or "").split()
+                own = git_out(["rev-list", "--all", "--not", "--remotes"], top).split()
                 if own and repo and branch:
                     own = [c for c in own if subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", c, branch],
                                                             capture_output=True).returncode != 0]

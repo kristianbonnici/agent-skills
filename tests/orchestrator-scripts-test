@@ -2794,6 +2794,12 @@ git("add", "g.txt", cwd=mine)
 git("commit", "-q", "-m", "work", cwd=mine)
 done = run("--scratch", os.path.join(root, "recent/U"))
 assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/U/scratch/mine/g.txt"), done.stderr
+protected = os.path.join(root, "recent/X/scratch/clone")
+sp.run(["git", "clone", "-q", repo_r, protected], check=True)
+put("recent/X/scratch/clone/build/KEEP", b"")             # ignored by the clone's status, still protects
+open(os.path.join(protected, ".git", "info", "exclude"), "a").write("build/\n")
+done = run("--scratch", os.path.join(root, "recent/X"))
+assert done.returncode == 1 and "KEEP" in done.stderr and exists("recent/X/scratch/clone/build/KEEP"), done.stderr
 wt = os.path.join(root, "recent/W2/scratch/detached")
 git("worktree", "add", "-q", "--detach", wt, "main", cwd=repo_r)
 open(os.path.join(wt, "h.txt"), "w").write("z\n")
@@ -2964,6 +2970,14 @@ test "$(grep -c heartbeat "$hb.md")" -eq 1
 printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"live: claude weekly_fable 7%"*) ;; *) echo "heartbeat fable: $out"; exit 1;; esac
+printf '#!/bin/sh\necho %s\n' "'{\"providers\": {\"claude\": {\"windows\": {\"weekly\": {\"used_percent\": 7}}}}}'" > "$work/hb-usage-nofable"
+chmod +x "$work/hb-usage-nofable"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-nofable" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"no live Fable reading"*) ;; *) echo "heartbeat no fable: $out"; exit 1;; esac
+printf '#!/bin/sh\nexit 3\n' > "$work/hb-watch-broken"
+chmod +x "$work/hb-watch-broken"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-broken" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"run-watch failed (exit 3)"*) ;; *) echo "heartbeat broken run-watch: $out"; exit 1;; esac
 printf '#!/bin/sh\necho "vm 123 qemu-system-aarc: still running, 2.0 GB"\n' > "$work/hb-watch-vm"
 chmod +x "$work/hb-watch-vm"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-vm" "$scripts/heartbeat" "$hb" --no-ledger)
