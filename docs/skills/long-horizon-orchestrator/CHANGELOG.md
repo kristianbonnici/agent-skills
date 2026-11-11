@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 4.0.1 (2026-11-11)
+
+- **`prune-runs --scratch` keeps two more kinds of work** (re-look of 4.0.0's fixes after its last review round, by Codex GPT-6.1 Terra, which found no defect in those fixes and three older gaps in the same path). It now sees untracked files in a clone or worktree even where `status.showUntrackedFiles=no` hides them, and it counts a repository as empty only when no reflog holds a commit either (a branch deleted after a commit would otherwise have let that commit go). Left: a repository inside a SwiftPM build's dependency folders or a cache isn't looked into, since tools make those and they hold no work. Tests cover both fixes; the re-look of this change is recorded below.
+
 ## 4.0.0 (2026-11-11)
 
 Fourteen lessons the owner approved on 2026-11-11, and Fable made rarer. Major because two defaults about spending changed: a run now has a Claude budget that parks Claude work once it would be passed, and Fable needs a stated reason why Opus would fall short; the report's last two lists also became one.

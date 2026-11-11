@@ -2848,6 +2848,22 @@ git("merge", "-q", "--ff-only", "FETCH_HEAD", cwd=repo_r)
 git("remote", "remove", "origin", cwd=merged)
 done = run("--scratch", os.path.join(root, "recent/M2"))
 assert done.returncode == 0 and not exists("recent/M2/scratch"), done.stderr
+hidden = os.path.join(root, "recent/H2/scratch/clone")   # untracked work hidden by status.showUntrackedFiles=no
+sp.run(["git", "clone", "-q", repo_r, hidden], check=True)
+git("config", "status.showUntrackedFiles", "no", cwd=hidden)
+open(os.path.join(hidden, "work.txt"), "w").write("w\n")
+done = run("--scratch", os.path.join(root, "recent/H2"))
+assert done.returncode == 1 and "uncommitted changes" in done.stderr and exists("recent/H2/scratch/clone/work.txt"), done.stderr
+orphan = os.path.join(root, "recent/O2/scratch/repo")   # its only branch deleted, the commit kept by the reflog
+sp.run(["git", "init", "-q", "-b", "main", orphan], check=True)
+open(os.path.join(orphan, "o.txt"), "w").write("o\n")
+git("add", "o.txt", cwd=orphan)
+git("commit", "-q", "-m", "only here", cwd=orphan)
+git("update-ref", "-d", "refs/heads/main", cwd=orphan)
+git("rm", "-q", "--cached", "o.txt", cwd=orphan)
+os.remove(os.path.join(orphan, "o.txt"))
+done = run("--scratch", os.path.join(root, "recent/O2"))
+assert done.returncode == 1 and exists("recent/O2/scratch/repo/.git"), (done.stdout, done.stderr)
 dirty = os.path.join(root, "recent/V/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
 open(os.path.join(dirty, "f.txt"), "w").write("edited\n")

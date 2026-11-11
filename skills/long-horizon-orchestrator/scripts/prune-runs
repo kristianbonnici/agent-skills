@@ -500,7 +500,7 @@ def scratch_check(scratch, run):
                 dirs[:] = []
                 continue
             unshared = git_out(["rev-list", "-n1", "HEAD", "--not", "--branches", "--remotes", "--tags"], top)
-            status = git_out(["status", "--porcelain"], top)
+            status = git_out(["status", "--porcelain", "--untracked-files=all"], top)
             if status is None:   # every failed look refuses: nothing is removed on a guess
                 problems.append(f"the worktree {rel} can't be read (git status failed)")
             elif status:
@@ -512,11 +512,11 @@ def scratch_check(scratch, run):
             dirs[:] = []
             continue
         if ".git" in dirs:     # a clone (scratch itself, too)
-            status = git_out(["status", "--porcelain"], top)
+            status = git_out(["status", "--porcelain", "--untracked-files=all"], top)
             # HEAD too: a commit on a detached HEAD is on no ref --all lists
             listed = git_out(["rev-list", "HEAD", "--all", "--not", "--remotes"], top)
             if listed is None and (git_out(["symbolic-ref", "-q", "HEAD"], top) or "").startswith("refs/heads/") \
-                    and git_out(["for-each-ref", "--count=1"], top) == "" and git_out(["rev-list", "--all"], top) == "":
+                    and git_out(["for-each-ref", "--count=1"], top) == "" and git_out(["rev-list", "--all", "--reflog"], top) == "":   # no commit a reflog still holds either
                 # proven unborn: HEAD names a branch (so it isn't detached), and no ref and no commit exist;
                 # any look that fails leaves listed None, a refusal
                 listed = ""
