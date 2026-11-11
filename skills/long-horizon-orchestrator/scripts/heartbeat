@@ -12,6 +12,10 @@ It reads <run directory>/watch.json, as run-watch does, and prints:
   heartbeat HH:MM: act on the lines below. <the summary>
   <run-watch's lines, each as it printed it>             otherwise
 
+A task run-watch can't read (its "blind" list) is named on every wake and keeps it from being idle, since
+only its thread shows an approval prompt or a turn that ended; a virtual machine already reported is a
+reminder in the summary ("VMs still running"), not a finding.
+
 The summary: the running tasks, the integration branch's head and how many tracked files are changed
 in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
 sampler run, and each subscription's windows used. A window to act on is a line of its own and makes the
@@ -37,6 +41,7 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
+REMINDER = re.compile(r"^vm \d+ .*: still running")
 
 
 def run(cmd, timeout=60):
@@ -129,7 +134,14 @@ def main(argv):
     fable = any(re.search(r"fable", str(tasks[t].get("model", "")), re.I) for t in running)
 
     watch_lines = [l for l in run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir], timeout=180).splitlines() if l.strip()]
-    flagged = [l for l in watch_lines if not EVENT.match(l)]
+    flagged = [l for l in watch_lines if not EVENT.match(l) and not REMINDER.match(l)]
+    reminders = [l.split(":", 1)[0][3:] + l.split("still running", 1)[1] for l in watch_lines if REMINDER.match(l)]
+    # tasks run-watch can't read (it names each once): their threads need a look on every wake
+    try:
+        blind = set(json.load(open(os.path.join(run_dir, "run-watch.state.json"))).get("blind") or [])
+    except (OSError, ValueError, AttributeError):
+        blind = set()
+    blind_running = sorted(t for t in running if t in blind)
     events = {}
     for l in watch_lines:
         if EVENT.match(l):
@@ -164,6 +176,10 @@ def main(argv):
         bits.append(f"{dialogs} password dialog(s)")
     if alive:
         bits.append(", ".join(alive))
+    if reminders:
+        bits.append("VMs still running: " + "; ".join(reminders))
+    if blind_running:
+        bits.append(f"blind, read their threads: {', '.join(blind_running)}")
     marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
     usage_line, limits = usage(run_dir, "--live" in flags or fable, marks)
     bits.append(usage_line)
@@ -172,7 +188,7 @@ def main(argv):
     watch_lines += limits
     if dialogs and not any(l.startswith("dialog") for l in flagged):
         flagged.append("dialog")
-    idle = not flagged and not events
+    idle = not flagged and not events and not blind_running
     print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
     for l in watch_lines:
         if not idle:

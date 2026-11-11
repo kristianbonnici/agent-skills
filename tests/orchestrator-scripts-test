@@ -2794,6 +2794,13 @@ git("add", "g.txt", cwd=mine)
 git("commit", "-q", "-m", "work", cwd=mine)
 done = run("--scratch", os.path.join(root, "recent/U"))
 assert done.returncode == 1 and "on no remote" in done.stderr and exists("recent/U/scratch/mine/g.txt"), done.stderr
+wt = os.path.join(root, "recent/W2/scratch/detached")
+git("worktree", "add", "-q", "--detach", wt, "main", cwd=repo_r)
+open(os.path.join(wt, "h.txt"), "w").write("z\n")
+git("add", "h.txt", cwd=wt)
+git("commit", "-q", "-m", "detached work", cwd=wt)
+done = run("--scratch", os.path.join(root, "recent/W2"))
+assert done.returncode == 1 and "on no branch" in done.stderr and exists("recent/W2/scratch/detached/h.txt"), done.stderr
 dirty = os.path.join(root, "recent/V/scratch/clone")
 sp.run(["git", "clone", "-q", repo_r, dirty], check=True)
 open(os.path.join(dirty, "f.txt"), "w").write("edited\n")
@@ -2957,6 +2964,14 @@ test "$(grep -c heartbeat "$hb.md")" -eq 1
 printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"live: claude weekly_fable 7%"*) ;; *) echo "heartbeat fable: $out"; exit 1;; esac
+printf '#!/bin/sh\necho "vm 123 qemu-system-aarc: still running, 2.0 GB"\n' > "$work/hb-watch-vm"
+chmod +x "$work/hb-watch-vm"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-vm" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"nothing to act on"*"VMs still running: 123 qemu-system-aarc, 2.0 GB"*) ;; *) echo "heartbeat vm: $out"; exit 1;; esac
+printf '%s\n' '{"blind": ["A"]}' > "$hb/run-watch.state.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"blind, read their threads: A"*) ;; *) echo "heartbeat blind: $out"; exit 1;; esac
+rm "$hb/run-watch.state.json"
 printf '%s\n' '{"usage_marks": {"claude.weekly": 22}, "tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"usage: claude weekly at 22%, at or past the run's mark of 22%"*) ;; *) echo "heartbeat mark: $out"; exit 1;; esac

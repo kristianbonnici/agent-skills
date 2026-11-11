@@ -48,7 +48,7 @@ Each line starts with a word saying what it is:
                    in 20 seconds at most (while disk only stays low, every 10 minutes at most); swap
                    above 20 GB
   dialog           a password dialog (SecurityAgent) is up
-  vm <pid>         (every wake) a virtual machine process started since the run began (Virtualization.framework's
+  vm <pid>         (first seen; later wakes say "still running") a virtual machine process started since the run began (Virtualization.framework's
                    VirtualMachine service, as Lume, Tart, UTM and cua sb use, QEMU, vfkit, krunkit, Docker's), with
                    its memory: the finish stops each one the run started
   slept <from> <to> (<reason>)   (once each) where the Mac slept since the run began, from pmset's log: a
@@ -933,15 +933,20 @@ def main(argv: list[str]) -> int:
 
     # Virtual machines started since the run began (L-FPUP): they run under a daemon, so their command
     # lines name neither the run nor a worktree, and nothing else would see one left running.
-    vms = []
+    vms, vms_told = [], set(state.get("vms", []))
     for pid, p in sorted(procs.items()):
         if p["start"] < started or not VM_EXE.search(exe(p)):
             continue
         rss = run([os.environ.get("RUN_WATCH_PS", "ps"), "-o", "rss=", "-p", str(pid)]).strip()
         gb = f"{int(rss) / 1024 ** 2:.1f} GB" if rss.isdigit() else "memory unknown"
+        if key(pid, p) in vms_told:   # seen before: a reminder, not a new finding
+            vms.append(f"vm {pid} {short(exe(p), 50)}: still running, {gb}")
+            continue
+        vms_told.add(key(pid, p))
         vms.append(f"vm {pid} {short(exe(p), 50)}: {gb}, started {hm(p['start'])}, since the run began: note which task uses it, "
                    "and stop it at the finish once none does (lume stop, cua sb stop, docker stop, by its name)")
     lines.extend(vms)
+    state["vms"] = sorted(k for k in vms_told if int(k.split("@")[0]) in procs)
 
     # Where the Mac slept (L-KXSC): caffeinate -i stops only idle sleep, so a sleep something asked for
     # (an automation, the Sleep menu) passes it, and tasks then run only in dark wakes of a few minutes.

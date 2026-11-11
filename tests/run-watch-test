@@ -423,7 +423,7 @@ try:
     logged = open(os.path.join(vm_run, "times.log")).read().splitlines()
     assert len(logged) == 1 and re.fullmatch(r"slept \S+T\d\d:\d\d:\d\d\S* \S+T\d\d:\d\d:\d\d\S* \(Software Sleep pid=419\)", logged[0]), logged
     again = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()
-    assert (not has_cc or any(l.startswith("vm ") for l in again)) and not any(l.startswith("slept ") for l in again), again
+    assert (not has_cc or any(l.startswith("vm ") and "still running" in l for l in again)) and not any(l.startswith("slept ") for l in again), again
     with open(os.path.join(work, "pmset.log"), "a") as f:
         f.write(f"{pm(time.time() - 600)} Sleep               \tEntering Sleep state due to 'Clamshell Sleep'\n")
     dark = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).stdout.splitlines()

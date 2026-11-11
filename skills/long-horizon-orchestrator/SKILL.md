@@ -140,7 +140,7 @@ Do not ask the user to check on tasks. Do not run short polling loops either: th
      - `quiet`: a running task whose session log, worktree and run folder haven't changed for 20 minutes. Read its thread: it may be waiting on reviewers, stuck, or done without reporting.
      - `hog`: a process started since the run began, not the run's, above 80% of a core for 10 minutes (such as a system service a task's tests set off). Don't stop it. Find what drives it, tell the tasks, and note it.
      - `disk`, `swap`, `dialog`, `keep-awake`, `sampler`: free disk falling 10 GB in 5 minutes or below 20 GB (naming the running tasks' folder that grew most, a harness temp folder too), swap above 20 GB, a password dialog, a stopped keep-awake or sampler. Act as step 4 says.
-     - `vm`: a virtual machine started since the run began, with its memory. Note which task uses it; the finish stops it.
+     - `vm`: a virtual machine started since the run began, with its memory (later wakes: "still running"). Note which task uses it; the finish stops it.
      - `slept`: the Mac slept (a sleep something asked for passes `caffeinate -i`), and tasks ran only in dark wakes: tell the tasks whose timings it skewed, and keep the span for the report's facts (`asleep`). `slept <from> -` means this wake is itself a dark wake.
      - `commit`, `merged`, `report`: the exact times of a task's commits, merges and report-backs. run-watch also adds them to `<run directory>/times.log`; take the ledger's times from there or from the integration branch's `git reflog --date=iso`, never from memory.
      - `blind`, `note`: it reads Claude Code and Codex session logs; for tasks on other harnesses it sees only processes and files, so keep reading their threads.
