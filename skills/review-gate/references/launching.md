@@ -53,11 +53,15 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
 - **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
 - **Muse Spark (trial):** the OpenCode command below with `-m 'opencode-go/muse-spark-1.3-contributor#high'`.
-- **Gemini 4 Hydrogen (trial):** a background Bash command from the worktree, in Antigravity's `plan` mode, which doesn't edit files but runs read-only commands such as `git diff`. `-p` takes the next word as the prompt, so put it last:
+- **Gemini 4 Hydrogen (trial):** a background Bash command from the worktree, in Antigravity's `plan` mode, which holds back edits. Headless `agy` can't ask for a permission, so a shell command that no allow rule matches ends the whole session with no report. Rules match the start of the command line, so `--settings` gives this session the read-only commands, and the brief tells it how to call them:
 
   ```sh
-  cd <worktree> && agy --mode plan --model gemini-4-hydrogen-high --print-timeout 15m -p "<brief>"
+  cd <worktree> && agy --mode plan --model gemini-4-hydrogen-high --print-timeout 15m \
+    --settings '{"trustedWorkspaces":["<worktree>"],"permissions":{"allow":["command(git diff)","command(git log)","command(git show)","command(git status)","command(grep)","command(ls)","command(cat)","command(sed -n)","command(find)"]}}' \
+    -p "<brief>"
   ```
+
+  `-p` takes the next word as the prompt, so put it last. In the brief, write the diff as `git diff <base>...<head>`, run from the worktree, not `git -C <path> diff`, and add after its time line: "Run one shell command at a time, without &&, ; or pipes, and only these: git diff, git log, git show, git status, grep, ls, cat, sed -n, find. Read files with your file-reading tool. Don't run tests or scripts: any other command ends your session before you can report." A run that ends within seconds with "a tool required the \"command\" permission" on stderr didn't review: count it as limited.
 - **Codex Terra:** a background Bash command from the worktree:
 
   ```sh

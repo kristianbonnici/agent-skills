@@ -125,6 +125,37 @@ Why Go's two flash models take the free reviewers' place when the free tier stop
   a probe on 2026-11-13 found cost about 0.2% of the 5-hour window for a 28,000-token call. → *Hydrogen on
   trial, where the gate never rests on it; no other Gemini model reviews.*
 
+## Gemini 4 Hydrogen as a reviewer (2026-11-13)
+
+Five reviews by `gemini-4-hydrogen-high` with the trial reviewer's brief: one in T3 of review-gate 3.2.0's own
+change, and four through `agy --mode plan` of earlier releases of these skills, each in a clone that ends at
+that commit, so the later fixes weren't visible. Each was scored against the defects that change's first
+review round found and fixed, by up to four reviewers together (Terra, Sonnet, a flash model, a trial
+reviewer), and each finding outside that list was checked against the code.
+
+| Change | Known first-round defects | Hydrogen found | Hydrogen's others | Time |
+|---|---|---|---|---|
+| review-gate 3.2.0 / orchestrator 5.1.0 (rules) | 4 (Terra) | 4 | 1 real (Terra missed it) | 5.5 min |
+| orchestrator 5.0.0 (rules, three scripts) | 5 | 1 | 1 wrong (`ps` truncating piped output; it doesn't) | 4 min |
+| orchestrator 3.9.0 (rules, two scripts) | 5 | 1 | 1 real and still open (Fable's effort unset on Claude Code), 3 plausible, 2 nits | 4 min |
+| orchestrator 3.8.0 (three scripts that delete or lock) | 9 | 6, both blockers among them | 1 real and still open (`lease` loops on a relative `--run`) | 3 min |
+| orchestrator 3.7.0 (a new 800-line script) | 4 | 1 in part, and one a later round found | 1 real and still open (a milestone's merge credited to its task), several plausible | 4 min |
+
+- **Recall:** 13 of 27 known defects (48%), where each list is what all of that round's reviewers found
+  together. It did best on script logic (6 of 9) and worst where the defect sat in how rules meet each other
+  over time (Fable's weekly reset, a lease hiding a stuck command).
+- **Precision:** one wrong claim of the findings checked. It tagged some follow-ups as blockers.
+- **What no reviewer had found:** three real defects still in the code today, one per older release.
+- **Cost:** about 3.4% of Antigravity's Gemini 5-hour window and 0.8% of its week per review, 3 to 5 minutes
+  each, on the Pro plan.
+- **Launching it outside T3:** headless `agy` ends the session at the first shell command no allow rule
+  matches, so twelve attempts came back empty in 8 seconds (an untrusted folder, `git -C <path>`, a chain
+  with `&&`, a test run) before the allow list and the brief's one-command rule were in place.
+
+→ *Hydrogen stays a trial reviewer: one review isn't enough to rest a gate on, but it is a useful extra voice,
+level with a paid reviewer on today's rules change and strong on script logic. Five reviews are a small
+sample; the trial's study at about 20 decides.*
+
 ## Blockers and follow-ups (2026-11-06)
 
 One overnight run of nine deep-reviewed tasks building a new app: the stop rule stopped 8 of the 9, and four
