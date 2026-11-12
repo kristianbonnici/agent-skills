@@ -47,8 +47,9 @@ flowchart TD
   the cross reviewer takes its place. It is never waited for past its time, and in T3 one with no activity
   5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
-- **Gemini doesn't review:** its reviews were the weakest in past runs.
-- **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor add one cheap extra
+- **Gemini isn't a regular reviewer:** its reviews were the weakest in past runs. Gemini 4 Hydrogen is on
+  trial instead, since a trial is the only way to learn whether it reviews well.
+- **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5, Muse Spark 1.3 Contributor and Gemini 4 Hydrogen add one cheap extra
   review in round 1 at Standard and Deep, split evenly across a run's tasks. Their findings are checked and fixed
   like any other, but the gate never rests on them. Once each has about 20 reviews, a study compares
   them with Terra and Sonnet: blockers and follow-ups found, those nobody else found, and findings rejected.

@@ -7,19 +7,20 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 - **Time comes from the launch:** the time left to a checkpoint is launch time + allowance − now, with the launch time read from the host (in T3, the thread's `createdAt` from `t3_thread_read`), never carried from memory.
 - **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; a trial reviewer is dropped, never replaced; a paid one is replaced as SKILL.md, section 2 says.
 
-## Before a Go model
+## Before a Go model or Hydrogen
 
-The Go targets below and Muse draw on the owner's OpenCode Go plan, so read its windows first. It spends nothing and takes a second:
+The Go targets below and Muse draw on the owner's OpenCode Go plan, and Gemini 4 Hydrogen on Antigravity's Gemini windows, which the run's helpers share, so read those windows first. It spends nothing and takes a second (Antigravity's reading a few):
 
 ```sh
 <skills folder>/long-horizon-orchestrator/scripts/provider-usage --only opencode_go
+<skills folder>/long-horizon-orchestrator/scripts/provider-usage --only antigravity
 ```
 
-`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2). If the script is missing, or its report has no `opencode_go` windows (an `error`, or no entry at all), launch anyway: a limit stops a Go model with a quota error.
+`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2); Hydrogen when `gemini_models_five_hour` under `providers.antigravity.windows` is. If the script is missing, or its report has no windows for that provider (an `error`, or no entry at all), launch anyway: a limit stops the model with a quota error.
 
 ## In T3
 
-`delegate_task` with role `"review"`, one call per reviewer, and `interactionMode: "plan"` for every OpenCode reviewer (free, Go and Muse): that runs OpenCode's read-only `plan` agent instead of `build`, which can edit. Reviewers started this way aren't bound to your worktree, so the brief names its path.
+`delegate_task` with role `"review"`, one call per reviewer, and `interactionMode: "plan"` for every OpenCode reviewer (free, Go and Muse) and for Hydrogen. On OpenCode that runs its read-only `plan` agent instead of `build`, which can edit; on Antigravity it tells the agent to stay read-only, an instruction rather than a guard (in a probe on 2026-11-13 Hydrogen refused a write that way and still ran `git log` and `git diff`). Reviewers started this way aren't bound to your worktree, so the brief names its path.
 
 Launch every reviewer, a single one too, with mode `"async"`. Then, until each has reported or been stopped:
 
@@ -39,10 +40,11 @@ Launch every reviewer, a single one too, with mode `"async"`. Then, until each h
 | GPT-6 Luna (trial) | `{providerInstanceId: "codex", model: "gpt-6-luna", options: [{id: "reasoningEffort", value: "high"}]}` |
 | Claude Haiku 5.5 (trial) | `{providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{id: "effort", value: "high"}]}` |
 | Muse Spark 1.3 Contributor (trial) | `{providerInstanceId: "opencode", model: "opencode-go/muse-spark-1.3-contributor", options: [{id: "variant", value: "high"}]}` |
+| Gemini 4 Hydrogen (trial) | `{providerInstanceId: "antigravity", model: "gemini-4-hydrogen-high"}` (the level is in the model's name; no options) |
 
 A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed". Muse also stops with "trains on request data" while the workspace blocks such models; treat that as limited.
 
-The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, without `-free`, is a different model that bills per request.
+The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, without `-free`, is a different model that bills per request, and so is `opencode/gemini-4-hydrogen`: Hydrogen goes through Antigravity only.
 
 ## In Claude Code without T3
 
@@ -51,6 +53,11 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
 - **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
 - **Muse Spark (trial):** the OpenCode command below with `-m 'opencode-go/muse-spark-1.3-contributor#high'`.
+- **Gemini 4 Hydrogen (trial):** a background Bash command from the worktree, in Antigravity's `plan` mode, which doesn't edit files but runs read-only commands such as `git diff`. `-p` takes the next word as the prompt, so put it last:
+
+  ```sh
+  cd <worktree> && agy --mode plan --model gemini-4-hydrogen-high --print-timeout 15m -p "<brief>"
+  ```
 - **Codex Terra:** a background Bash command from the worktree:
 
   ```sh
@@ -76,5 +83,6 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
   (or `claude-opus-5-5`), run from the worktree.
 - **Free reviewers and Muse Spark (trial):** the OpenCode command above.
+- **Gemini 4 Hydrogen (trial):** the `agy` command above.
 
 If a host can't launch a reviewer of the family the level needs, use the next option from SKILL.md, section 2, and record why.

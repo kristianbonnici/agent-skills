@@ -1,5 +1,11 @@
 # long-horizon-orchestrator changelog
 
+## 5.1.0 (2026-11-13)
+
+- **Gemini 4 Hydrogen replaces Gemini 3.8 Flash as Antigravity's fast helper** (owner, 2026-11-13). Google released it on 2026-11-12 to replace 3.8 Flash. Briefs, the free-model task pool and the backup order now name `gemini-4-hydrogen-high`; `gemini-3.8-flash-high` is the fallback while Antigravity still lists it, and Hydrogen never runs through OpenCode, where `opencode/gemini-4-hydrogen` bills per request. A probe call moved the Gemini group's windows and not Argon's, so the 85% rule for the Gemini 5-hour window carries over ([evidence.md](evidence.md#outside-sources)). Files: SKILL.md, routing.md, final-report.md.
+- **Advanced sub-tasks go to Hydrogen first, then Argon** (owner, 2026-11-13). Google puts Hydrogen level with Argon, and it draws on the larger Gemini windows instead of Argon's small week. Argon now takes only a sub-task whose Hydrogen answer fell short, given that answer and what it missed. Each such sub-task is recorded in the handoff and the ledger with whether Hydrogen's answer held, and the report counts them, so a later study can judge the claim on our own work. The brief's "advanced helpers" section, the contract and the profile template say so. Files: SKILL.md, routing.md.
+- **Hydrogen joins the trial reviewers** (with review-gate 3.2.0): standard and deep tasks now split their trial reviewer four ways, a quarter each on GPT-6 Luna, Claude Haiku 5.5, Muse Spark 1.3 Contributor and Gemini 4 Hydrogen. No other Gemini model reviews. Files: SKILL.md, routing.md, task-brief.md.
+
 ## 5.0.0 (2026-11-12)
 
 Major because the default reasoning level, a default about spending, moved down for bounded work.

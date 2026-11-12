@@ -1,5 +1,10 @@
 # review-gate changelog
 
+## 3.2.0 (2026-11-13)
+
+- **Gemini 4 Hydrogen is a fourth trial reviewer** (owner, 2026-11-13: "adding it as a trial reviewer is the only way to know if it will be any good as a reviewer"). Google's new lower-cost model, released 2026-11-12, scores level with Gemini 4 Argon on Google's own figures. Gemini stays out as a regular reviewer, since its reviews were the weakest in past runs. Hydrogen runs at high on Antigravity, `gemini-4-hydrogen-high`, never through OpenCode's paid `opencode/gemini-4-hydrogen`. It isn't chosen while the Gemini 5-hour window, which the run's helpers share, is past about 85%, so the gate reads Antigravity's windows before launching it.
+- **How it launches:** in T3 with `interactionMode: "plan"`, which on Antigravity is an instruction to stay read-only, not a guard (a probe refused a write and still ran `git log` and `git diff`). Elsewhere, `agy --mode plan --model gemini-4-hydrogen-high --print-timeout 15m -p "<brief>"`, with `-p` last, since it takes the next word as the prompt (a probe with `--mode` after `-p` failed). In a probe, plan mode didn't write a file and still ran `git log`.
+
 ## 3.1.0 (2026-11-10)
 
 - **Claude Fable 5.2 never reviews,** by default or as a replacement (owner, 2026-11-10: Fable is for the more demanding tasks only, since it costs more and has a weekly limit of its own). A change Fable wrote counts as Opus's: its Claude reviewer is Sonnet 5.5, and "your own model in a fresh context" means Opus 5.5. Without it, the fallback for a paid reviewer stopped by a limit would have put a Fable task's review on Fable.

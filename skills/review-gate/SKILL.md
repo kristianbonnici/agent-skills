@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 3.1.0
+  version: 3.2.0
 ---
 
 # Review Gate
@@ -26,7 +26,7 @@ Read the whole diff against its base. Judge by what it touches, not by its size.
 
 ## 2. Choose the reviewers
 
-Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.1 Terra) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, free ones at their high variant. Gemini doesn't review. A "free reviewer" below is one of those two models on either tier. No other OpenCode model reviews, apart from the trial below: `opencode/` paid models bill per request, and Go's larger models use up the plan in a few reviews.
+Reviewers come from three families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.1 Terra) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, free ones at their high variant. Gemini isn't a regular reviewer; Gemini 4 Hydrogen is on trial below. A "free reviewer" below is one of those two models on either tier. No other OpenCode model reviews, apart from the trial below: `opencode/` paid models bill per request, and Go's larger models use up the plan in a few reviews.
 
 Claude Fable 5.2 never reviews, by default or as a replacement: it costs about twice Opus 5.5 and has a weekly limit of its own, kept for the demanding tasks the owner chose it for. A change Fable wrote counts as Opus's below: its Claude reviewer is Sonnet 5.5, and "your own model in a fresh context" means Opus 5.5.
 
@@ -50,7 +50,7 @@ Limits:
 
 ### Trial reviewers
 
-Three cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5 and Muse Spark 1.3 Contributor on OpenCode Go, at high reasoning. Muse keeps prompts to train Meta's models, so leave it out of code the owner may not share. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short, not Muse when Go counts as limited). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `(trial)`, so a later study can decide whether any earns a regular place.
+Four cheap models are on trial as reviewers: Codex's GPT-6 Luna, Claude Haiku 5.5, Muse Spark 1.3 Contributor on OpenCode Go, and Gemini 4 Hydrogen on Antigravity, at high reasoning. Muse keeps prompts to train Meta's models, so leave it out of code the owner may not share. Hydrogen runs only on Antigravity, which shares its Gemini windows with the run's helpers: never through OpenCode, where `opencode/gemini-4-hydrogen` bills per request. At Standard and Deep, round 1 gets one of them as an extra reviewer: the one your brief names, or else whichever has more room (not Luna when Codex is short, not Muse when Go counts as limited, not Hydrogen while Antigravity's Gemini 5-hour window is past about 85%). Brief it like the others. Check its findings like any other reviewer's and fix the real ones, but the gate never rests on it: a round still needs its regular reviewers, and a trial reviewer gets its time and no more, and one that is limited is dropped, never replaced. Trial reviewers don't review at Light or in later rounds. The record marks them `(trial)`, so a later study can decide whether any earns a regular place.
 
 ## 3. Brief them
 

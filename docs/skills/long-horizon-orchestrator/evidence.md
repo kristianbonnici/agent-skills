@@ -375,6 +375,26 @@ private records.
   since a weekly limit can't be waited out. The rule reads each week's own reset time and treats the 5-hour
   window as for any Claude task, so it doesn't rest on what the pages leave unsaid.*
 
+- **Gemini 4 Hydrogen** (Google, 12 November 2026; [Google Cloud's model page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen),
+  [SiliconANGLE](https://siliconangle.com/2026/11/12/google-releases-gemini-4-hydrogen-a-lower-cost-model-said-to-outscore-argon/),
+  [TestingCatalog](https://www.testingcatalog.com/google-launches-gemini-4-hydrogen-for-pro-and-ultra-users/) and
+  [Silicon Report](https://www.siliconreport.com/google-launches-gemini-4-hydrogen-replacing-gemini-3-8-flash)):
+  - A lower-cost Gemini 4 model for everyday coding and agent work that replaces Gemini 3.8 Flash in
+    Google's products, about 2.5 times faster than it. Google's own figures put it at 51 on the Artificial
+    Analysis Intelligence Index against Argon's 50, at default settings; no independent measurement yet.
+  - A 1,048,576-token context and a March 2026 knowledge cutoff. Google calls it a short-term GA release,
+    with at least 45 days' notice before retirement, so its model ids may change again.
+  - Our probe (2026-11-13): Antigravity lists `gemini-4-hydrogen-low` to `-xhigh`. One `agy -p` call on
+    `gemini-4-hydrogen-high` (about 28,000 input tokens, 44,000 cached) took the Gemini 5-hour window from
+    0% to 0.2% and its week from 2.4% to 2.5%, and left Argon's week at 40.5%: it draws on the Gemini
+    group, as Flash did, though Antigravity's group note names only Flash and Pro. T3 also lists it on
+    OpenCode as `opencode/gemini-4-hydrogen`, a paid model.
+
+  → *Hydrogen replaces Flash as Antigravity's fast helper, and takes the advanced sub-tasks before Argon,
+  which keeps its small week for answers Hydrogen got wrong; each such sub-task records whether Hydrogen's
+  answer held, since the claim that it matches Argon is Google's own. Flash stays the fallback while it is
+  listed, and Hydrogen never runs through OpenCode.*
+
 ## Where the evidence argues against us
 
 - **Multi-agent work costs more and can hurt.** Google's study lost up to 70% on sequential planning and a

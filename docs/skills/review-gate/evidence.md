@@ -115,6 +115,15 @@ Why Go's two flash models take the free reviewers' place when the free tier stop
   on it (OpenCode's docs). With the free tier stopped, `opencode/beam-free` refused while
   `opencode-go/beam-free` answered, and Go's meters stayed at 7% and 3% through the trial. → *Beam goes
   first on Go.*
+- **Gemini 4 Hydrogen** (2026-11-13; [Google Cloud's model page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen),
+  [SiliconANGLE](https://siliconangle.com/2026/11/12/google-releases-gemini-4-hydrogen-a-lower-cost-model-said-to-outscore-argon/),
+  [TestingCatalog](https://www.testingcatalog.com/google-launches-gemini-4-hydrogen-for-pro-and-ultra-users/) and
+  [Silicon Report](https://www.siliconreport.com/google-launches-gemini-4-hydrogen-replacing-gemini-3-8-flash)): Google's lower-cost
+  Gemini 4 model, released 2026-11-12 to replace Gemini 3.8 Flash, which Google's own figures put at 51 on
+  the Artificial Analysis Intelligence Index against Gemini 4 Argon's 50. No independent review benchmark
+  yet, and our own record of Gemini reviews is poor (above). It runs on Antigravity's Gemini windows, which
+  a probe on 2026-11-13 found cost about 0.2% of the 5-hour window for a 28,000-token call. → *Hydrogen on
+  trial, where the gate never rests on it; no other Gemini model reviews.*
 
 ## Blockers and follow-ups (2026-11-06)
 
