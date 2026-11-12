@@ -47,7 +47,7 @@ Each line starts with a word saying what it is:
                    that grew most since a disk line last sized them, else the largest, sized with du
                    in 20 seconds at most (while disk only stays low, every 10 minutes at most); swap
                    above 20 GB
-  dialog           a password dialog (SecurityAgent) is up
+  dialog           a password dialog (the system's SecurityAgent, by its path) is up
   vm <pid>         (first seen; later wakes say "still running") a virtual machine process started since the run began (Virtualization.framework's
                    VirtualMachine service, as Lume, Tart, UTM and cua sb use, QEMU, vfkit, krunkit, Docker's), with
                    its memory: the finish stops each one the run started
@@ -125,6 +125,8 @@ CODEX_SHELL = {"shell", "shell_command", "exec_command", "exec", "local_shell", 
 AGENT_CLIS = {"codex", "claude", "opencode", "gemini", "agy", "copilot", "cursor-agent", "ccs"}
 REPORT = "[long-horizon-orchestrator]"
 DIALOG = "SecurityAgent"
+# Only the system's own SecurityAgent is a real password dialog: a test's stand-in elsewhere is not.
+DIALOG_PATH = "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
 # virtual machine processes: Virtualization.framework (Lume, Tart, UTM, cua sb), QEMU, vfkit and krunkit (Podman)
 VM_EXE = re.compile(r"(Virtualization\.VirtualMachine|^qemu-system|^vfkit$|^krunkit$|com\.docker\.virtualization)")
 
@@ -208,6 +210,7 @@ def processes() -> dict:
         f = line.strip().split(None, 1)
         if len(f) == 2 and f[0].isdigit() and int(f[0]) in procs:
             procs[int(f[0])]["exe"] = os.path.basename(f[1])
+            procs[int(f[0])]["path"] = f[1]
     return procs
 
 
@@ -915,7 +918,7 @@ def main(argv: list[str]) -> int:
         lines.append(f"swap: {swap:.1f} GB in swap, above {SWAP_GB} GB: one large model at a time; stop what holds memory")
 
     # A password dialog, the keep-awake and the sampler.
-    dialogs = [pid for pid, p in procs.items() if exe(p) == DIALOG]
+    dialogs = [pid for pid, p in procs.items() if p.get("path") == DIALOG_PATH]
     if dialogs:
         lines.append(f"dialog: a password dialog is up ({DIALOG} pid {' '.join(map(str, dialogs))}): nobody will answer it; "
                      "find the command that asked, stop it by its pid, and tell the task")

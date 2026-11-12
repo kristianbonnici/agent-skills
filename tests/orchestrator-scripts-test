@@ -3113,7 +3113,16 @@ oc.execute("insert into session_message values ('m', 'ses_empty', 'assistant', 1
 oc.execute("insert into session_message values ('m', 'ses_bad', 'assistant', 1794272400000, '{not json')")   # unreadable: partial, not $0
 oc.execute("insert into session_message values ('m', 'ses_null', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}, "tokens": None}),))
 oc.execute("insert into session_message values ('m', 'ses_null', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}, "tokens": {"input": 5, "cache": [1]}}),))
-for sid in ("ses_in", "ses_out", "ses_empty", "ses_bad", "ses_null"):
+# a count stored as text, or a cache object without its counts, is partial, not zero; a malformed record
+# from before the run changes nothing, beside a good one inside it
+def oc_record(sid, ms, tokens):
+    oc.execute("insert into session_message values ('m', ?, 'assistant', ?, ?)", (sid, ms, json.dumps({"time": {"created": ms},
+        "model": {"id": "glm-5.3-flash-free", "providerID": "opencode"}, "tokens": tokens})))
+oc_record("ses_text", 1794272400000, {"input": "5000", "output": 10, "reasoning": 0, "cache": {"read": 0, "write": 0}})
+oc_record("ses_nocache", 1794272400000, {"input": 5000, "output": 10, "reasoning": 0, "cache": {}})
+oc_record("ses_early_bad", 1794268800000 - 3600000, None)
+oc_record("ses_early_bad", 1794272400000, {"input": 700, "output": 10, "reasoning": 0, "cache": {"read": 0, "write": 0}})
+for sid in ("ses_in", "ses_out", "ses_empty", "ses_bad", "ses_null", "ses_text", "ses_nocache", "ses_early_bad"):
     thread(f"thread:{sid}", f"A {sid}", "opencode", "opencode/glm-5.3-flash-free", parent="mcp:launch:task-a", native=sid, driver="opencode")
 # Codex threads with no count before the run: one older than the run (its first count is a baseline), one new
 thread("thread:old-codex", "C", "codex", "gpt-6.1-terra", created="2026-11-09T23:00:00Z", native="cx-old", driver="codex")   # a Codex task begun before the run
@@ -3157,6 +3166,10 @@ assert by_title("A ses_out")[0]["usd"] is None and "reach outside the run" in by
 assert by_title("A ses_empty")[0]["usd"] == 0.0 and not by_title("A ses_empty")[0].get("missing")
 assert by_title("A ses_bad")[0]["usd"] is None, by_title("A ses_bad")
 assert by_title("A ses_null")[0]["usd"] is None and "couldn't be read" in by_title("A ses_null")[0]["missing"], by_title("A ses_null")
+for sid in ("ses_text", "ses_nocache"):
+    assert by_title(f"A {sid}")[0]["usd"] is None and "couldn't be read" in by_title(f"A {sid}")[0]["missing"], by_title(f"A {sid}")
+early = by_title("A ses_early_bad")[0]
+assert early["tokens"]["input"] == 700 and "couldn't be read" not in (early.get("missing") or ""), early
 assert t["incomplete"]["no price for gpt-6-luna"] == 1, t["incomplete"]   # one thread, however many lines
 old, new = by_title("C")[0], by_title("A review new (Terra)")[0]
 assert old["tokens"]["input"] + old["tokens"]["cache_read"] == 600 and "isn't counted" in old["missing"], old   # 1000 was its baseline
@@ -3253,6 +3266,14 @@ printf '%s\n' '{"blind": ["A"]}' > "$hb/run-watch.state.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"blind, read their threads: A"*) ;; *) echo "heartbeat blind: $out"; exit 1;; esac
 rm "$hb/run-watch.state.json"
+# A test's SecurityAgent stand-in is no dialog; the system's own one, by its path, is.
+printf '#!/bin/sh\necho "  4242 /var/folders/xy/T/run-watch-test.abc/bin/SecurityAgent"\n' > "$work/hb-ps-standin"
+printf '#!/bin/sh\necho "  4243 /System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"\n' > "$work/hb-ps-dialog"
+chmod +x "$work/hb-ps-standin" "$work/hb-ps-dialog"
+out=$(HEARTBEAT_PS="$work/hb-ps-standin" HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"nothing to act on"*) ;; *) echo "heartbeat stand-in dialog: $out"; exit 1;; esac
+out=$(HEARTBEAT_PS="$work/hb-ps-dialog" HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"1 password dialog"*) ;; *) echo "heartbeat real dialog: $out"; exit 1;; esac
 printf '%s\n' '{"usage_marks": {"claude.weekly": 22}, "tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"usage: claude weekly at 22%, at or past the run's mark of 22%"*) ;; *) echo "heartbeat mark: $out"; exit 1;; esac

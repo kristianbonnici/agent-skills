@@ -42,6 +42,7 @@ import time
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
 REMINDER = re.compile(r"^vm \d+ .*: still running")
+DIALOG_PATH = "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
 
 
 def run(cmd, timeout=60):
@@ -173,7 +174,8 @@ def main(argv):
     load = os.getloadavg()[0]
     ps_cmd = os.environ.get("HEARTBEAT_PS", "ps")
     ps = run([ps_cmd, "-axo", "pid=,comm="])
-    dialogs = len([l for l in ps.splitlines() if l.strip().endswith("SecurityAgent")])
+    # only the system's own SecurityAgent, by its path: a test's stand-in elsewhere is no dialog
+    dialogs = len([l for l in ps.splitlines() if l.strip().split(None, 1)[1:] == [DIALOG_PATH]])
     alive = []
     for name in ("keep_awake_pid", "sampler_pid"):
         pid = watch.get(name)

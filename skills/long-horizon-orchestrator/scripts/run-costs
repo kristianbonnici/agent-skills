@@ -171,6 +171,12 @@ def num(value) -> int:
     return int(value) if ok else 0
 
 
+def counts(record: dict, required: tuple, optional: tuple = ()) -> bool:
+    """Whether each required field, and each optional one present, is a token count num() would take."""
+    good = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and num(v) == v
+    return all(k in record and good(record[k]) for k in required) and all(good(record[k]) for k in optional if k in record)
+
+
 def log_order(path: Path) -> tuple:
     """Rotated files hold older lines: events.x.log.3 before .log.2, .log.1 and events.x.log."""
     m = re.search(r"\.log(?:\.(\d+))?$", path.name)
@@ -348,17 +354,25 @@ def opencode_usage(sessions: set[str], start: float, end: float) -> tuple[dict, 
             if "tokens" not in d:
                 continue   # a message with no usage, such as a failed request
             try:
-                t = d["tokens"]
                 at = stamp((d.get("time") or {}).get("created"))
+                if at is None:
+                    raise TypeError
+            except (TypeError, ValueError, AttributeError):
+                unreadable.add(sid)   # a usage record with no readable time: the session's figure is partial
+                continue
+            if not (start <= at <= end):
+                continue   # outside the run, readable or not: it changes nothing here
+            try:
+                t = d["tokens"]
                 m = d.get("model") if isinstance(d.get("model"), dict) else {"id": d.get("modelID"), "providerID": d.get("providerID")}
                 name = f"{m.get('providerID')}/{m.get('id')}" if m.get("id") else "unknown"
-                cache = t.get("cache") or {}
-                if not isinstance(t, dict) or not isinstance(cache, dict) or at is None:
+                cache = t.get("cache", {})
+                # every count a number: one stored as text, or a cache object without its counts, is no zero
+                if not counts(t, ("input", "output"), ("reasoning",)) or "cache" in t and not (
+                        isinstance(cache, dict) and counts(cache, ("read", "write"))):
                     raise TypeError
             except (TypeError, ValueError, KeyError, AttributeError):
                 unreadable.add(sid)   # usage it can't read: the session's figure is partial
-                continue
-            if not (start <= at <= end):
                 continue
             slot = out[sid][name]
             slot["input"] += num(t.get("input"))

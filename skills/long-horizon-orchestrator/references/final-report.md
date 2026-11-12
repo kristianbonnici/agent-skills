@@ -23,7 +23,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 **1. <Plain name> (Task A)**
 <Two or three sentences in everyday language: what you can now do, and where to find it.>
-<If it changed something you can see: its pictures, each on its own line. In T3, `![<caption>](<absolute path>)`; elsewhere, `<caption>: <absolute path>`. If it made options for you to choose between, every sheet of them, numbered as the task numbered them, with its recommendation as one line under them.>
+<If it changed something you can see: its pictures, each on its own line. In T3, `![<caption>](<absolute path>)`; elsewhere, `<caption>: <absolute path>`. If it made options for you to choose between, its one overview image of them, numbered as the task numbered them, with its recommendation as one line under it.>
 
 **2. ...**
 
@@ -77,7 +77,7 @@ A task that changes something you can see leaves one to three pictures of it wit
 - Use them as they are. Don't open them to check them: each task took them from its own build with sample content, and looking costs your context. Open one only when its caption is missing or unclear.
 - They stay in the run directory. Never copy them into a repository, and never link to `/tmp`.
 - A task with nothing visible to show leaves none.
-- A task that made options for the user to choose between (icons, designs, names, layouts) shows every one, numbered, on its sheets, and the report shows all of those sheets: a recommendation is a line of text, never a filter on what is shown. Twice the owner's pick was on no shortlist.
+- A task that made options for the user to choose between (icons, designs, names, layouts) shows every one, numbered, in one overview image. The report shows that one image per set of options (plus one picture per different subject), never a gallery of the same options in other sizes or layouts. The owner, 12 Nov 2026: "one image with the options should be enough, not this huge list of images with the same options in many different images." A recommendation is a line of text, never a filter on what is shown: never a shortlist. Twice the owner's pick was on no shortlist.
 
 ## The run's facts
 

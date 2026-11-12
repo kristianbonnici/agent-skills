@@ -1,5 +1,15 @@
 # long-horizon-orchestrator changelog
 
+## 5.0.0 (2026-11-12)
+
+Major because the default reasoning level, a default about spending, moved down for bounded work.
+
+- **One image per set of options** (owner, 2026-11-12: "one image with the options should be enough, not this huge list of images with the same options in many different images"). The last run's report showed 25 icon sheets and 14 pill sheets of the same options in other sizes and layouts. A task now shows every option it made, numbered, in one overview image where they can be compared; a property the overview can't show (such as legibility at 16 px) is a small row in the same image, never another sheet. The report shows that one image per set of options (plus one picture per different subject), never a gallery. Still never a shortlist. Files: task-brief.md, final-report.md.
+- **Medium is the normal reasoning level for bounded work** (owner, 2026-11-12: "we can more easily use medium reasoning than what we would normally use", with high kept for the more demanding tasks). Medium for well-specified, bounded tasks (documents, small fixes, mechanical changes, settings, integrations with a clear spec); high for demanding ones (design judgment, tricky bugs, data and sync, broad reviews). Still never low. Files: routing.md, SKILL.md.
+- **Only the system's own SecurityAgent is a password dialog** (lesson L-DXXM). Twice in one run the live `run-watch` flagged its own test's stand-in, a process named SecurityAgent in a temporary folder, as a password dialog, and the orchestrator spent two wakes tracing it. `run-watch` and `heartbeat` now count a SecurityAgent only at the system's path in Security.framework, and the skill's `pgrep` hint matches that path. `tests/run-watch-test` checks both: its stand-in gives no `dialog` line, and a process its fake `ps` shows at the system's path does; the heartbeat's test does the same.
+- **`run-costs` reads OpenCode's counts strictly** (the two follow-ups left from 4.1.0's review). A token count stored as text, or a cache object without its counts, now marks the session partial instead of reading as zero; a record's time is checked before its usage, so a malformed record from outside the run no longer marks its session partial. Tested with both.
+- **The owner kept three defaults from 4.0.0** (2026-11-12, on the recommendation in that release's open decisions): Fable's budget is a quarter of what is left of its week; 4.0.0 stays a major version; the one-call heartbeat stays T3's only. routing.md and host-t3.md note the first and last.
+
 ## 4.1.0 (2026-11-11)
 
 - **Every run's report says what its tokens would have cost at API prices** (owner, 2026-11-11: "include the API price cost estimate for the run, and also show it on the dependency diagram per task and also for the orchestrator, so that we can estimate how much API cost-based usage per model was used on the run, by task and by reviewers").

@@ -23,14 +23,14 @@ Running short of capacity is not a reason to route elsewhere. The home subscript
 
 Once the run has started, nothing changes subscription: not the tasks, and not you. Only a fast helper's work may switch between helpers (section 4).
 
-## Reasoning level: err on the side of more
+## Reasoning level: medium for bounded work, high for demanding work
 
-An under-powered agent on important work costs more than an over-powered one: wrong turns, rework, review findings, and failures discovered in the morning. So never under-power a task. High is the default for real work, and you go above it only when you can name the benefit:
+Medium is the normal level for a well-specified, bounded task; high is for demanding work. The owner, 12 Nov 2026: "we can more easily use medium reasoning than what we would normally use", with high kept for the more demanding tasks. An under-powered agent on demanding work still costs more than it saves (wrong turns, rework, failures found in the morning), so when a task is both, take high:
 
 | The work | Reasoning level |
 |---|---|
-| Very simple and fully specified (a mechanical edit, a rename, a lookup) | medium |
-| Any real task that is not trivially simple: the default | high |
+| A well-specified, bounded task: documents, small fixes, mechanical changes, settings, an integration with a clear spec | medium |
+| Demanding work: design judgment, a tricky bug, data and sync, a broad review | high |
 | A task where you see a real benefit from extra thinking (for example subtle correctness or security logic, a bug with an unknown cause, a design choice with no precedent in the project). Name the benefit in the contract | extra high |
 | Rarely, on Claude: a task where Opus 5.5 would probably fall short and Fable would clearly do better. Name why in the contract | Fable 5.2 at high, not Opus 5.5 ([Fable 5.2](#fable-52-the-demanding-tasks-only)) |
 | Sparingly: large or many-sided work that clearly gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor). Name the gain in the contract, and the brief's lane cap: "at most <n> sub-agents at once, <m> in all", from the contract's budget for it | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
@@ -40,8 +40,8 @@ An under-powered agent on important work costs more than an over-powered one: wr
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
 - **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` and `gpt-6.1-terra` default to low.
 - **In T3, the option names differ by provider:**
-  - Claude: `{"id": "effort", "value": "high" | "xhigh"}`. Ultracode is an option of its own beside it, `{"id": "ultracode", "value": true}`, only on models that list it, such as Opus and Fable, not Sonnet. Claude's models default to medium in T3, so always pass the effort.
-  - Codex: `{"id": "reasoningEffort", "value": "high" | "xhigh" | "ultra"}`.
+  - Claude: `{"id": "effort", "value": "medium" | "high" | "xhigh"}`. Ultracode is an option of its own beside it, `{"id": "ultracode", "value": true}`, only on models that list it, such as Opus and Fable, not Sonnet. Claude's models default to medium in T3, so always pass the effort.
+  - Codex: `{"id": "reasoningEffort", "value": "medium" | "high" | "xhigh" | "ultra"}`.
 
   Use only values the capability catalog lists for that model.
 - **Capacity still applies.** Higher reasoning uses more of a subscription, and the multi-agent modes use a 5-hour window much faster than a single agent, because every sub-agent draws on the same window. Start a multi-agent task early in a window, not when the window is already well used, and expect it to pause for a reset on a long run. Don't step down to a level below what the work needs to save capacity.
@@ -65,7 +65,7 @@ Claude Fable 5.2 (`claude-fable-5-2`) is a step above Opus 5.5, and it costs abo
 
 - **Fable work counts on both weeks.** It draws on the all-models week, faster than other models, and the Fable week is a cap inside that week, not extra room. Read each one's `resets_at` rather than assuming they reset together. Whether Fable counts toward the 5-hour window more heavily isn't published: judge a Fable task's 5-hour window as any Claude task's.
 - **Capacity is judged on both.** A Fable task fits only when the Fable week has room for it within the run's budget and the all-models week still has room for the rest of the run with it. Until the profile has a calibration for Fable, assume a Fable task-hour takes about twice an Opus task-hour of the all-models week.
-- **The contract gives Fable work a budget** in points of the Fable week: by default at most a quarter of what is left (the run of 2026-11-10 used that), so the owner keeps the rest of their week, and less when the all-models week is short. Name the Fable tasks and their reasons, and record the budget, and the Fable week's reading at the start, in the ledger.
+- **The contract gives Fable work a budget** in points of the Fable week: by default at most a quarter of what is left (the run of 2026-11-10 used that; the owner kept it on 12 Nov 2026), so the owner keeps the rest of their week, and less when the all-models week is short. Name the Fable tasks and their reasons, and record the budget, and the Fable week's reading at the start, in the ledger.
 - **Every wake's usage check watches it** while a Fable task runs: compare what the run has used of the Fable week with the budget, and watch the pace as for a 5-hour window (section 3). When the budget will be passed before your next heartbeat at the current pace, treat it as passed.
   - **What the run has used** is a running total kept in the ledger beside the last reading it counted: each wake adds the rise since that reading. When the week has reset since (`resets_at` passed, or `reset_since_observed`), it adds the new reading whole, and for the stretch between the last reading before the reset and the reset, the use at the run's average Fable pace (its total so far over the Fable task time so far), and never less than one point for each Fable task that ran in it. So that stretch stays short, a Fable task running when the Fable week will reset gets a one-off wake about 5 minutes before its `resets_at`, scheduled like a resume wake, which takes that last reading: check that the wake's next run falls before the reset, and when the reset is less than 10 minutes away, take the reading now instead. When no reading came in the last 10 minutes before the reset, the run's budget counts as passed. A reset doesn't refill the run's budget.
   - **A missing reading is no reading.** A live `provider-usage` without `weekly_fable` (the live call failed and the logs it falls back to don't carry it) or with a stale `observed_at` or no `resets_at` (so a reset can't be told from use) can't show the budget: launch no Fable work on it, and when no fresh reading has come for an hour while a Fable task runs, treat the budget as passed.

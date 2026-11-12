@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 
 here = os.path.dirname(os.path.abspath(__file__))
 script = os.path.join(here, "..", "skills", "long-horizon-orchestrator", "scripts", "run-watch")
+SYSTEM_DIALOG = "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
 work = os.path.realpath(tempfile.mkdtemp(prefix="run-watch-test."))
 started = []
 
@@ -106,8 +107,10 @@ try:
     os.chmod(ioreg, 0o755)
     # CPU use is made up, so no core is burned: the real ps, with the CPU time of each pid listed in
     # the file set to its share of a core since it started ("fixed:<seconds>": that much CPU, all of it
-    # earlier, and none now).
+    # earlier, and none now). A pid listed in the dialog file shows as the system's own SecurityAgent.
     cpu_shares = os.path.join(work, "cpu-shares")
+    real_dialog = os.path.join(work, "real-dialog-pids")
+    open(real_dialog, "w").close()
     fake_ps = os.path.join(bin_dir, "fake-ps")
     open(fake_ps, "w").write(
         f"#!{sys.executable}\n"
@@ -123,6 +126,8 @@ try:
         "        cpu = float(shares[f[0]][6:]) if fixed else share * age\n"
         "        f[2], f[3] = f'{share * 100:.1f}', f'{int(cpu // 60)}:{cpu % 60:05.2f}'\n"
         "        line = ' '.join(f)\n"
+        f"    if 'comm=' in ' '.join(sys.argv) and f and f[0] in open({real_dialog!r}).read().split():\n"
+        f"        line = f[0] + ' ' + {SYSTEM_DIALOG!r}\n"
         "    print(line)\n")
     os.chmod(fake_ps, 0o755)
 
@@ -169,7 +174,9 @@ try:
     open(gpu_pids, "w").write(str(procs["G"].pid))
     hog = spawn(["sleep", "600"], elsewhere)                                          # not the run's (made-up CPU)
     open(cpu_shares, "w").write(f"{procs['F'].pid} 1.0\n{hog.pid} 2.0\n{procs['P'].pid} fixed:30\n{procs['W'].pid} fixed:6\n")
-    dialog = spawn([os.path.join(bin_dir, "SecurityAgent"), "600"], elsewhere)
+    standin = spawn([os.path.join(bin_dir, "SecurityAgent"), "600"], elsewhere)   # a test's stand-in: no dialog
+    dialog = spawn(["sleep", "600"], elsewhere)                                       # shown as the system's own
+    open(real_dialog, "w").write(str(dialog.pid))
     dead = subprocess.Popen(["true"])
     dead.wait()
     sampler = spawn(["sh", "-c", "sleep 600; :", "usage-sampler"], elsewhere)   # sh stays, with the name
@@ -308,6 +315,7 @@ try:
                for line in out), text
     assert any(line.startswith("swap: 25.0 GB") for line in out), text
     assert any(line.startswith("dialog:") and str(dialog.pid) in line for line in out), text
+    assert not any(line.startswith("dialog:") and str(standin.pid) in line for line in out), text
     assert any(line.startswith(f"keep-awake: caffeinate pid {dead.pid}") for line in out), text
     assert not any(line.startswith("sampler:") for line in out), text
     # exact times, once
