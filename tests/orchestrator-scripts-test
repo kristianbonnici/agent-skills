@@ -3121,6 +3121,7 @@ def oc_record(sid, ms, tokens):
 oc_record("ses_text", 1794272400000, {"input": "5000", "output": 10, "reasoning": 0, "cache": {"read": 0, "write": 0}})
 oc_record("ses_nocache", 1794272400000, {"input": 5000, "output": 10, "reasoning": 0, "cache": {}})
 oc_record("ses_early_bad", 1794268800000 - 3600000, None)
+oc.execute("insert into session_message values ('m', 'ses_early_bad', 'assistant', 1794268800000 - 7200000, '{not json')")   # before the run
 oc_record("ses_early_bad", 1794272400000, {"input": 700, "output": 10, "reasoning": 0, "cache": {"read": 0, "write": 0}})
 for sid in ("ses_in", "ses_out", "ses_empty", "ses_bad", "ses_null", "ses_text", "ses_nocache", "ses_early_bad"):
     thread(f"thread:{sid}", f"A {sid}", "opencode", "opencode/glm-5.3-flash-free", parent="mcp:launch:task-a", native=sid, driver="opencode")

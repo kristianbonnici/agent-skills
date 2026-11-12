@@ -918,7 +918,8 @@ def main(argv: list[str]) -> int:
         lines.append(f"swap: {swap:.1f} GB in swap, above {SWAP_GB} GB: one large model at a time; stop what holds memory")
 
     # A password dialog, the keep-awake and the sampler.
-    dialogs = [pid for pid, p in procs.items() if p.get("path") == DIALOG_PATH]
+    # the executable's path from ps's comm column, else the start of its command line (comm's listing failed)
+    dialogs = [pid for pid, p in procs.items() if (p.get("path") or p.get("args", "").split(" ", 1)[0]) == DIALOG_PATH]
     if dialogs:
         lines.append(f"dialog: a password dialog is up ({DIALOG} pid {' '.join(map(str, dialogs))}): nobody will answer it; "
                      "find the command that asked, stop it by its pid, and tell the task")
