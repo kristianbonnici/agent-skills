@@ -236,7 +236,7 @@ The owner may have Claude API credits beside the Claude subscription: in T3, a s
 | Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex's GPT-6.1 Terra (`gpt-6.1-terra`, at high) | Codex has room for that piece | Owner's assessment, 2026-10: Codex's computer use is stronger. Owner, 2026-10-28: Terra is cheaper than Sol and faster at computer use, so it takes these steps |
 | Research and retrieval: web and documentation research, searching a codebase, logs or many files, surveying how others solve a problem, collecting facts and evidence | A fast helper (see "Fast helpers" below), as a sub-task or a research subagent inside the task | the result can be checked against its sources | Owner, 2026-10-16: use them freely for research and retrieval |
 | A simple, fully specified step: a mechanical edit from an exact rule, renames, boilerplate from a template, extracting facts from named files | A fast helper | the result is cheap to check | Owner, 2026-10 |
-| A bounded sub-task too hard for the flash models: deep research and synthesis, a scoped investigation, a well-specified piece of code | Gemini 4 Hydrogen, then Gemini 4 Argon where Hydrogen's answer fell short (see "Advanced helpers" below) | the Gemini windows have room (Argon: the run's Argon budget has room), and the agent that asked can check the result | Owner, 2026-10-17; Hydrogen first, owner 2026-11-13 |
+| A bounded sub-task too hard for the flash models: deep research and synthesis, a scoped investigation, a well-specified piece of code | Gemini 4 Hydrogen, then Gemini 4 Argon where Hydrogen's answer fell short or Hydrogen was limited (see "Advanced helpers" below) | the Gemini windows have room (Argon: the run's Argon budget has room), and the agent that asked can check the result | Owner, 2026-10-17; Hydrogen first, owner 2026-11-13 |
 | Everything else | Home harness | always | section 1 |
 
 - **A preference, not a rule.** Claude agents can do computer use too. When Codex is short on room, unavailable, or the computer-use part is trivial, keep the work on the home harness.
@@ -312,9 +312,9 @@ What they never take is the same as for the fast helpers: a whole task (unless t
 - **The agent that asked judges its answer.** When it falls short (wrong, shallow, or missing what was asked) and the run's Argon budget has room, the same sub-task goes to Argon; otherwise the agent does it itself.
 - **Record each one** in the handoff, and you in the ledger: the kind of sub-task, Hydrogen's outcome (held, fell short, or stopped by a limit before answering), and what finished it (Hydrogen, Argon, or the agent itself). A later study decides from those whether Argon is still worth its budget.
 
-**Argon when Hydrogen fell short.** Antigravity's `gemini-4-argon-high` has a small quota, so give it a budget. On the Pro plan, Argon has a weekly window of its own (`gemini_4_argon_weekly`) and no 5-hour one, and quota is used by token cost. On 2026-10-17, a one-word reply with a 22,000-token prompt used about 0.9% of the week, so a research lane that reads many files can take a large share. So:
+**Argon when Hydrogen fell short or was limited.** Antigravity's `gemini-4-argon-high` has a small quota, so give it a budget. On the Pro plan, Argon has a weekly window of its own (`gemini_4_argon_weekly`) and no 5-hour one, and quota is used by token cost. On 2026-10-17, a one-word reply with a 22,000-token prompt used about 0.9% of the week, so a research lane that reads many files can take a large share. So:
 - **In the contract,** give the run an Argon budget in points of its weekly window. The default is at most half of what is left, so the owner keeps the rest of the week. Name the tasks that may use it.
-- **Use it only where Hydrogen's answer fell short.** Give Argon the files, paths and question up front, so it doesn't spend its quota searching, and Hydrogen's answer with what was missing from it.
+- **Use it only where Hydrogen's answer fell short, or Hydrogen was limited before it answered.** Give Argon the files, paths and question up front, so it doesn't spend its quota searching, and Hydrogen's answer, if any, with what was missing from it.
 - **Only in `wait` mode, with a timeout of a few minutes,** never as an async lane: a budget can't stop a call already running, and one async lane once took 80 points of a 30-point budget.
 - **Before each wave,** check `gemini_4_argon_weekly` against the budget, and leave Argon out of new briefs once the budget is used.
 - **When Argon is limited** (a quota error, or the budget is used), its work goes back to the agent that asked. Don't hand it back to Hydrogen, or to OpenCode, which can't do it well.
@@ -418,7 +418,7 @@ The owner may edit it at any time, and their statements win over this reference.
 ## Preferences
 - Prefer Codex for computer use when it has room, on <model, e.g. GPT-6.1 Terra> (owner, <date>)
 - Fast helpers inside tasks, for research, retrieval and simple steps: Antigravity's Gemini 4 Hydrogen at high; OpenCode's <models good enough> at high, on the free tier and then on Go; never task agents unless the user asks (owner, <date>)
-- Advanced helpers inside tasks, for bounded harder sub-tasks: Gemini 4 Hydrogen at high first, then Gemini 4 Argon at high where Hydrogen fell short, within a weekly budget per run (owner, <date>)
+- Advanced helpers inside tasks, for bounded harder sub-tasks: Gemini 4 Hydrogen at high first, then Gemini 4 Argon at high where Hydrogen fell short or was limited, within a weekly budget per run (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)
 - Claude's home model is Opus 5.5, complex tasks included; Fable 5.2 only where Opus would probably fall short, never the default, never for helpers or reviewers (owner, <date>)
 
