@@ -171,6 +171,21 @@ status=$?
 set -e
 [ "$status" -eq 3 ] && grep -q "but square is 1500 px tall: cut" "$work/tall.out" || { cat "$work/tall.out"; fail "an overfull page should warn"; }
 
+# 4b. A 16:9 slide is 1500x844 and warns, like any page, when its content is too tall.
+python3 -I - "$work/slide.json" "$work/slide-tall.json" <<'PY'
+import json, sys
+box = lambda h: {"id": "s", "span": 2, "elements": [{"type": "rectangle", "id": "r", "x": 0, "y": 0, "width": 400, "height": h}]}
+json.dump({"title": "Slide", "format": "16:9", "frame": False, "panels": [box(300)]}, open(sys.argv[1], "w"))
+json.dump({"title": "Slide", "format": "16:9", "frame": False, "panels": [box(900)]}, open(sys.argv[2], "w"))
+PY
+node "$build" "$work/slide.json" --lint-only >"$work/slide.out" || { cat "$work/slide.out"; fail "a 16:9 slide should build cleanly"; }
+grep -q "page 1500×844" "$work/slide.out" || { cat "$work/slide.out"; fail "a 16:9 slide should be 1500x844"; }
+set +e
+node "$build" "$work/slide-tall.json" --lint-only >"$work/slide-tall.out"
+status=$?
+set -e
+[ "$status" -eq 3 ] && grep -q "but 16:9 is 844 px tall: cut" "$work/slide-tall.out" || { cat "$work/slide-tall.out"; fail "an overfull slide should warn"; }
+
 # 5. Elements without ids: two stacks in one panel build.
 cat >"$work/noid.json" <<'JSON'
 { "title": "No ids", "format": "auto", "panels": [ { "id": "n", "heading": "Stacks", "elements": [

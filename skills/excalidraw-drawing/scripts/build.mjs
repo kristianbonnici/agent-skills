@@ -54,7 +54,7 @@ export const STYLE = {
 // Page shapes as height ÷ width. 3:4 is what these posts use (1500×2000).
 // "auto" grows to fit the content; "fit" also trims the width to it, for a
 // single diagram that doesn't fill the page.
-export const FORMATS = { '3:4': 4 / 3, '4:5': 5 / 4, 'a4': Math.SQRT2, 'square': 1, 'auto': null, 'fit': null };
+export const FORMATS = { '3:4': 4 / 3, '4:5': 5 / 4, 'a4': Math.SQRT2, 'square': 1, '16:9': 9 / 16, 'auto': null, 'fit': null };
 
 const COLORS = {
   green: ['#b2f2bb', '#2f9e44'], orange: ['#ffd8a8', '#e8590c'], red: ['#ffc9c9', '#e03131'],

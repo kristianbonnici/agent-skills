@@ -25,6 +25,7 @@ The page is 1500 px wide with two columns, and `format` fixes its height:
 | `4:5` | 1500×1875 | Instagram portrait |
 | `a4` | 1500×2121 | printing |
 | `square` | 1500×1500 | a short page |
+| `16:9` | 1500×844 | a slide: one full-width panel, usually `"frame": false`; the title is the slide's point. Use larger type than on a page (labels 20 to 24, captions 18 or more), since slides are read from across a room |
 | `auto` | grows to fit | drafts only |
 | `fit` | grows to fit, and narrows to the drawing | a single diagram ([diagrams.md](diagrams.md)) |
 

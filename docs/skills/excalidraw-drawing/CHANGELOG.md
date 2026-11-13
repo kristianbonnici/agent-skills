@@ -1,5 +1,9 @@
 # excalidraw-drawing changelog
 
+## 3.1.0 (2026-11-13)
+
+- New `16:9` format (1500×844) for slides: one spec per slide, a full-width panel without a frame, and larger type than on a page, since a slide is read from across a room. From turning a one-page infographic into a 20-minute teaching deck: every page format was portrait or square, so a slide would have left a band of empty space on a wide screen. The test builds a slide and checks that an overfull one warns.
+
 ## 3.0.0 (2026-11-07)
 
 Major because the build now writes different files inside an Obsidian vault, and refuses to replace a hand-edited drawing it used to overwrite. From a first page built into an Obsidian vault with the Excalidraw plugin 2.29.2 and then edited there by its owner and by an agent in turns: the page opened in compatibility mode until converted by hand, a heading broke onto a second line over a caption, the build's PNG and the plugin's auto-exported PNG went out of step, and the agent's follow-up edit needed a one-off script and renderer.

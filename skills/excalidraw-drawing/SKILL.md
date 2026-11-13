@@ -2,7 +2,7 @@
 name: excalidraw-drawing
 description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), or a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md) - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 3.0.0
+  version: 3.1.0
 ---
 
 # Excalidraw Drawing
@@ -25,7 +25,7 @@ A source to summarize, or several points to make, is a page. One picture of one 
 Read all of the source. Then write:
 
 - **Title:** the topic in two to five words. **Subtitle:** who said it and what about, in one line ("A transit planner on why buses beat new rail lines in small cities").
-- **Shape:** 3:4 portrait (1500×2000) unless the user names another, or their example page has another shape. Other formats are in [references/spec.md](references/spec.md).
+- **Shape:** 3:4 portrait (1500×2000) unless the user names another, or their example page has another shape. A slide for a talk is `16:9` (1500×844), one spec per slide. Other formats are in [references/spec.md](references/spec.md).
 - **Six or seven panels, enough to fill the page.** A 3:4 page holds about four rows: three rows of two half panels and one full-width panel. Each panel has a heading that makes the point (not a topic label), a picture idea, and a takeaway of at most two sentences and about 30 words. The full-width panel holds the richest example.
 - **Footer:** the source (author, title, date) and any caveat the source gives, such as "design notes and a prototype, not a shipped product".
 
