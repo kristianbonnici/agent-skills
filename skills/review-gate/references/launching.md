@@ -5,7 +5,7 @@ Launch every reviewer of a round at once, read-only, with the brief from [review
 - **Its deadline:** 30 minutes after its launch for a paid reviewer, 15 for a free or trial one (each model a free reviewer tries gets its own 15). One still running then is limited (SKILL.md, section 2). Its brief gives a free or trial reviewer 12 minutes and about 20 commands, so it reports before its deadline.
 - **Its pace check,** for a free or trial reviewer, or Hydrogen at Light, launched through T3, the one host that shows when each of its steps happened: 5 minutes after its launch, look at its activity (the commands it ran, the files it read, its messages). Activity a few seconds apart is one turn of the model. No turn yet, or turns typically more than a minute apart, means it won't finish in its time: it is limited then. A healthy reviewer takes a turn every few seconds to half a minute; a provider too slow to finish takes a minute or more for each.
 - **Time comes from the launch:** the time left to a checkpoint is launch time + allowance − now, with the launch time read from the host (in T3, the thread's `createdAt` from `t3_thread_read`), never carried from memory.
-- **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; a trial reviewer is dropped, never replaced; a paid one is replaced as SKILL.md, section 2 says.
+- **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; a trial reviewer is dropped, never replaced, except Hydrogen at Light, after which the free order starts; a paid one is replaced as SKILL.md, section 2 says.
 
 ## Before a Go model or Hydrogen
 
@@ -16,7 +16,7 @@ The Go targets below and Muse draw on the owner's OpenCode Go plan, and Gemini 4
 <skills folder>/long-horizon-orchestrator/scripts/provider-usage --only antigravity
 ```
 
-`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2); Hydrogen when `gemini_models_five_hour` under `providers.antigravity.windows` is, or, as Light's reviewer, when it is at about 60 or more. If the script is missing, or its report has no windows for that provider (an `error`, or no entry at all), launch anyway: a limit stops the model with a quota error.
+`<skills folder>` is the folder above this skill's. Go counts as limited when any `used_percent` under `providers.opencode_go.windows` is past about 85 (SKILL.md, section 2); Hydrogen when `gemini_models_five_hour` under `providers.antigravity.windows` is, or, as Light's reviewer, when it is at about 60 or more. If the script is missing, or its report has no windows for that provider (an `error`, or no entry at all), launch anyway: a limit stops the model with a quota error. The exception is Hydrogen as Light's reviewer: without a reading, skip it and start the free order, since the 60% limit is there to leave the window to the run's helpers.
 
 ## In T3
 
