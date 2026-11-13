@@ -616,6 +616,11 @@ grep -q '^swift build --jobs 3$' "$run5/other.out"
 (cd "$work/rel" && LEASE_REAL_SWIFT="$work/rel/relrun/locks/bin/swift" perl -e 'alarm 20; exec @ARGV' \
   "$work/rel/relrun/locks/bin/swift" build) > "$run5/self.out" 2>&1 && exit 1
 grep -q 'would run itself' "$run5/self.out"
+# a named pipe called swift on PATH doesn't hang the wrapper check
+mkdir -p "$work/rel/pipe" && mkfifo "$work/rel/pipe/swift"
+(cd "$work/rel" && env -u MAKEFLAGS PATH="$work/rel/pipe:$run5/fakebin:$PATH" LEASE_CORES=8 perl -e 'alarm 20; exec @ARGV' \
+  "$lease5" run cpu --owner A --run relrun -- swift build) > "$run5/pipe.out" 2>&1
+grep -q '^swift build --jobs 3$' "$run5/pipe.out"
 
 # lease: --all is refused on the cpu (exit 2, naming the one-slot rule, nothing taken and nothing run),
 # for acquire and run alike; "all_ok": true allows it; --all on other resources works as before; an

@@ -86,6 +86,7 @@ import os
 import plistlib
 import re
 import shutil
+import stat
 import signal
 import subprocess
 import sys
@@ -136,11 +137,18 @@ class Unsupported(Exception):
 
 def lease_wrapper(folder: str) -> bool:
     """Whether a PATH folder's swift is a wrapper some lease wrote, for this run folder or another."""
-    try:
-        with open(os.path.join(folder, "swift")) as f:
-            return f.read(200).startswith("#!/bin/sh\n# Written by lease")
-    except (OSError, UnicodeDecodeError):
+    try:   # without blocking, and only a regular file: a named pipe called swift must not hang the run
+        fd = os.open(os.path.join(folder, "swift"), os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
         return False
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return False
+        return os.read(fd, 200).startswith(b"#!/bin/sh\n# Written by lease")
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
 
 
 class Owner:
