@@ -186,6 +186,30 @@ reviewer), and each finding outside that list was checked against the code.
 level with a paid reviewer on today's rules change and strong on script logic. Five reviews are a small
 sample; the trial's study at about 20 decides.*
 
+**DeepSeek V4.1 Flash on the same five** (2026-11-13): the free tier through `opencode run --agent plan`,
+with the same brief, clones and scoring, one review at a time. A partial match counts as half.
+
+| Change | Known | Hydrogen | DeepSeek |
+|---|---|---|---|
+| review-gate 3.2.0 / orchestrator 5.1.0 | 4 | 4 | 1 |
+| orchestrator 5.0.0 | 5 | 1 | 2 |
+| orchestrator 3.9.0 | 5 | 1 | 1 (a different one) |
+| orchestrator 3.8.0 | 9 | 6 | 2.5 |
+| orchestrator 3.7.0 | 4 | 1.5 | 2.5 |
+| **All** | **27** | **13.5 (50%)** | **9 (33%)** |
+
+- Hydrogen found more on four of the five, by far on the rules change and the scripts that delete or lock.
+  DeepSeek found more on two: a fallback when a `ps` listing fails, and a call killed on a short look.
+- They overlap little: together they found about 16.5 of the 27 (61%).
+- Neither made a claim that the code disproves beyond the one above (both raised `ps` truncating piped output,
+  DeepSeek as suspected). DeepSeek tagged no finding a blocker, including the one the original round did
+  (a task's cleanup taking a sibling task's folder); Hydrogen tagged some follow-ups as blockers.
+- DeepSeek took 4 to 6.5 minutes each and cost nothing; Hydrogen 3 to 5.5 minutes and about 3.4% of the
+  Gemini 5-hour window.
+
+→ *on this sample Hydrogen is the better single reviewer, and the two together beat either. Five changes
+scored by one agent is a small, judged sample, so no rule changes on it alone.*
+
 ## Blockers and follow-ups (2026-11-06)
 
 One overnight run of nine deep-reviewed tasks building a new app: the stop rule stopped 8 of the 9, and four
