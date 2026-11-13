@@ -41,7 +41,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 
 ## Not finished
 <Only if some tasks are blocked, parked or failed, merged with a narrow miss, or merged with review follow-ups no task fixed.>
-- **<Task>:** what's missing, why, and what it needs from you.
+- **<Task>:** what's missing, why, and what it needs from you<; for a review that didn't converge, Fable's view if you asked for one>.
 - **<Task>, parked:** when it last worked, that nothing continued it after that, and what remains for the next run. Its thread is settled; its worktree, `KEEP` and saved patch are kept.
 - **<Task> merged one check short:** <the check, its result against its threshold>; <the follow-up task> carries it<, and how that ended>.
 - **<Task> merged with review follow-ups:** each open one in a line: what goes wrong and when, and the fix it needs<; then the follow-up task that carries them>.
