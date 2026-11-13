@@ -86,8 +86,7 @@ as rough. The per-task details stay in the owner's private records.
   - The author's own review pass (Claude Code's `/self-review`, Codex's `/review`) raised that rate for all
     three models it was tried on (Claude Opus 5 from 24.53% to 35.85%, GPT-5.6 Sol from 18.40% to 24.06%,
     Claude Sonnet 5 from 16.98% to 18.40%) but lowered the resolve rate every time (GPT-5.6 Sol by 14.62
-    points, from 84.43% to 69.81%). The introduction says such review skills don't raise the rate; its
-    own table says they do.
+    points, from 84.43% to 69.81%).
   - Silent defects were caught less often than loud ones (12.5% against 18.5%).
 
   → *a separate reviewer on every change rather than the author's own check; re-review after a fix that
@@ -97,8 +96,10 @@ as rough. The per-task details stay in the owner's private records.
   - Eight review agents on four backbones (GPT-5.2, GPT-5-mini, Gemma 4 31B, GPT-OSS 20B), plus Gemini
     Code Assist, on 174 verified instances with a labeled defect each, scored by three model judges.
   - "Even the strongest systems detect only about one-third of known defects" (GPT-5-mini 33.7%, GPT-5.2
-    33.0%). Gemini Code Assist's comments were judged useful 78.0% of the time but found 8.1% of the defects.
-  - The two strongest found 45.8% and 48.8% of high-severity defects, against 27.0% and 26.0% of medium ones.
+    33.0%, both with Reflexion). Gemini Code Assist's comments were judged useful 78.0% of the time but
+    found 8.1% of the defects.
+  - With Reflexion, the two strongest found 45.8% and 48.8% of high-severity defects, against 27.0% and
+    26.0% of medium ones; severity mattered only for the GPT-5 backbones.
   - Its conclusion: "agents should assist human reviewers, not gate merges."
 
   The gate doesn't treat a review as proof: "no defects" doesn't make a change correct, its checks must
@@ -207,8 +208,9 @@ Weighed and not cited, so later checks don't weigh them again unless they change
   publishes no quota.
 - **[Autonomous Code Review: Hidden-Test Results on GitHub Issues](https://arxiv.org/abs/2611.10098)**
   (6 November 2026): a cross-provider review step (GPT-6.1 Sol and Claude Sonnet 5.5 reviewing each other)
-  changed no patch's hidden-test result on 12 issues. One author with no named affiliation and 12 issues:
+  changed no patch's hidden-test result in the 40 of 48 workflows on 12 issues that completed. One author with no named affiliation and 12 issues:
   below the bar for a preprint.
 - **GitHub, [Beyond code generation: A developer's guide to agentic engineering](https://github.blog/ai-and-ml/github-copilot/beyond-code-generation-a-developers-guide-to-agentic-engineering/)**
   (6 November 2026): Copilot code review runs "lighter analysis for simple changes and deeper analysis for
-  complex ones", like the gate's levels, but the post gives no method or figures.
+  complex ones", like the gate's levels, but the post gives no method or figures on what the deeper analysis
+  catches.
