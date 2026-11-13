@@ -395,6 +395,23 @@ private records.
   answer held, since the claim that it matches Argon is Google's own. Flash stays the fallback while it is
   listed, and Hydrogen never runs through OpenCode.*
 
+- **Claude Code's advisor** ([Claude Code docs](https://code.claude.com/docs/en/advisor.md),
+  [the API's advisor tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool.md),
+  read 2026-11-13; experimental in Claude Code, beta in the API):
+  - The working model consults a stronger one, which "receives the full conversation, including every tool
+    call and result", and gets advice back. "The timing is model-driven rather than rule-based", and
+    "there is no setting to cap or force advisor calls". "Each advisor call processes the full transcript
+    anew, with no reuse between calls", at the advisor's rates.
+  - Opus 5.5 with a Fable 5.2 advisor is an allowed pair. It works on subscriptions, where advisor use
+    counts toward the plan's limits, and a Fable advisor bills to usage credits on plans where Fable does.
+    Subagents inherit the configured advisor. It is turned on with `advisorModel` in a settings file,
+    `--advisor`, or `/advisor`; T3's catalog offers no per-thread option.
+
+  → *the orchestrator asks Fable directly instead, with a brief it writes, at named decisions, within a
+  count: an always-on advisor would re-read a long orchestrator conversation on every call, at times the
+  orchestrator picks, past any budget, and a settings file would give every Claude session (reviewers and
+  helpers too) a Fable advisor.*
+
 ## Where the evidence argues against us
 
 - **Multi-agent work costs more and can hurt.** Google's study lost up to 70% on sequential planning and a

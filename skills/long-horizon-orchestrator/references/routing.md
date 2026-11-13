@@ -78,6 +78,25 @@ A weekly limit can't be waited out like a 5-hour window, and Opus 5.5 is on the 
 2. **The ledger records the switch:** the time, the task, the Fable week's reading against the budget, and why. Launch no more Fable work in this run, and the report names the move.
 3. **A Fable task stopped by the all-models week or the 5-hour window pauses** like any other task: Opus draws on the same windows, so moving wouldn't help.
 
+### A Fable second opinion for your own decisions
+
+You run on Opus 5.5, and a few of your decisions shape the whole run. Before those, ask Fable 5.2 for a second opinion (owner, 2026-11-13): one bounded question with the facts it needs, answered once, not Fable running the run. Fable doesn't see your conversation, only the brief you write, so a call costs what that brief and the files it reads cost.
+
+**When:** only at these points, and only where the answer is a real choice:
+- **The contract,** before you post it: the split into tasks, the waves and dependencies, the routing, the review levels, and anything you were unsure about.
+- **A review that didn't converge,** before the task waits for the owner ([integration.md](integration.md#a-review-that-didnt-converge)): whether the approach itself is wrong, and a concrete fix for each open blocker if it isn't.
+- **A blocked or failed task whose cause isn't mechanical,** before you park it or relaunch it: what is wrong and what the next attempt should do differently.
+
+Never for a review of a diff (the review gate does that, and Fable never reviews), never for routine wakes, and not when your own thread runs on Fable.
+
+**The brief,** self-contained: the decision and its options; the facts (the contract draft, or the task's brief, handoff and open findings, with the worktree path and branch for it to read); what you lean towards and why; and what to return: a recommendation, its reasons, what would change it, and its confidence. Tell it to stay read-only, not to commit, run nothing that writes, not to reach the owner's apps or services, and never to ask the user anything.
+
+**How:** in T3, `delegate_task` with target `{providerInstanceId: "claudeAgent", model: "claude-fable-5-2", options: [{id: "effort", value: "high"}]}`, role `"research"`, `interactionMode: "plan"` (Claude's read-only mode), mode `"wait"` with a `timeoutMs` of about 15 minutes. In Claude Code, the `Agent` tool with `model: "fable"` and `effort: "high"`, in the foreground. In Codex, a command: `claude -p --model claude-fable-5-2 --effort high --permission-mode plan "<brief>"`, from the worktree when there is one. Not through the API instance unless the contract gives it a dollar budget, and never OpenCode's `opencode/claude-fable-5-2`.
+
+**Its budget:** the contract allows at most 3 second opinions by default (the contract's own, and two later), inside the run's Fable budget ([Its weekly limit](#its-weekly-limit)); a run without Fable tasks gets that budget for them alone. Read `weekly_fable` live before each one and after it, and record both in the ledger. Skip it, and decide alone as before, when the count is used, the Fable week is past the run's budget, a live reading is missing, or the plan doesn't include Fable.
+
+**You still decide.** It advises; your rules still say what waits for the owner. Weigh its answer against what you know, and record in the ledger's decisions log the question, its answer in a line, your decision, and whether its answer changed it. A concrete fix it names counts as the task naming one ([integration.md](integration.md#a-review-that-didnt-converge)) once the task agrees the fix fits. The report says how many second opinions the run asked for and what they changed.
+
 ## 2. Measure capacity as plan size times room left
 
 Run `scripts/provider-usage` (in this skill's folder):
@@ -450,13 +469,14 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
   - Say which tasks may use the fast helpers, and for what.
   - Say which tasks may use the advanced helpers, and give the run's Argon budget, in points of its weekly window.
   - Give the run's Claude estimate and budget in points of the all-models week, from its tasks ([The run's Claude estimate and budget](#the-runs-claude-estimate-and-budget)).
-  - Name each task on Fable 5.2 with why Opus would probably fall short, and give the run's Fable budget in points of the Fable week, or say that no task runs on Fable. When your own thread runs on Fable, say what your wakes will cost of the Fable week, and that the owner can switch you to Opus 5.5 before they leave.
+  - Name each task on Fable 5.2 with why Opus would probably fall short, and give the run's Fable budget in points of the Fable week, or say that no task runs on Fable. Say how many Fable second opinions you may ask for your own decisions (3 by default), and that the contract itself had one if it did ([A Fable second opinion](#a-fable-second-opinion-for-your-own-decisions)). When your own thread runs on Fable, say what your wakes will cost of the Fable week, and that the owner can switch you to Opus 5.5 before they leave.
   - Say which whole tasks start on OpenCode Go, if any, and that helpers and reviews may draw on the plan too.
 - **In the report:**
   - Add one line on usage, before and after.
   - Name any task that paused for a reset, and for how long.
   - Give the run's Claude use against its budget, and name any Claude work the budget parked.
-  - Give Claude's Fable week before and after when a task ran on Fable, and name any Fable task that moved to Opus 5.5, when and why.
+  - Give Claude's Fable week before and after when a task or a second opinion ran on Fable, and name any Fable task that moved to Opus 5.5, when and why.
+  - Say how many Fable second opinions you asked for, and which decisions they changed.
   - Name other runs that used the same subscriptions meanwhile, because their use is in the numbers.
   - Mention a helper that was rate-limited or ran out, and what the work switched to.
   - Give the advanced sub-tasks Hydrogen took: how many held, fell short or were stopped by a limit, and how many Argon or the task's agent then finished.
