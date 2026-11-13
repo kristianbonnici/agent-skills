@@ -1,5 +1,12 @@
 # long-horizon-orchestrator changelog
 
+## 5.2.2 (2026-11-13)
+
+Three defects Gemini 4 Hydrogen found when it reviewed earlier releases for its evaluation, still in the code ([review-gate's evidence](../review-gate/evidence.md#gemini-4-hydrogen-as-a-reviewer-2026-11-13)):
+- **`lease` with a relative `--run` (or `LEASE_RUN_DIR`) no longer calls itself forever when nested.** The outer `lease run cpu` put its swift wrapper's folder on `PATH` by the relative name, so the inner one didn't recognise it, took the wrapper for the real swift, and the wrapper ran itself until the lease ran out. The run folder is now made absolute. Tested: a nested run with a relative `--run` builds once with the capped jobs (the old script hung until the test's alarm stopped it).
+- **`run-watch` credits a merge to a task only for its own branch or one of its milestones** (`<branch>-m2`). A sibling task's branch that starts with the same name, such as `task/a-tests` beside `task/a`, matched too, so its merge appeared as the other task's in the ledger's times. Tested with such a sibling.
+- **On plain Claude Code, the task's `Agent` call sets its effort.** The launch template had no `effort`, so a Fable task ran at Claude Code's default, medium, which the routing rules forbid. Files: host-claude-code.md.
+
 ## 5.2.1 (2026-11-13)
 
 - The rules that say where Hydrogen may review name review-gate 4.0.0's new place for it, Light's reviewer, beside its trial. Files: SKILL.md, routing.md.

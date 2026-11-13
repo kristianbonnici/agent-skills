@@ -13,6 +13,7 @@ Agent({
   isolation: "worktree",
   run_in_background: true,
   model: "<opus by default; fable only for a task the contract chose it for; sonnet or haiku as the contract says>",
+  effort: "<the contract's level: medium, high or xhigh; always set, since Claude Code defaults Fable to medium>",
   prompt: "<the brief>"
 })
 ```

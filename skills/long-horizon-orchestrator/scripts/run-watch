@@ -1016,7 +1016,8 @@ def main(argv: list[str]) -> int:
             log = run(["git", "-C", repo, "log", "-g", "--date=iso-strict", "--format=%H%x09%gd%x09%gs", "refs/heads/" + branch])
             for line in log.splitlines():
                 f = line.split("\t", 2)
-                if len(f) < 3 or not re.match(r"merge " + re.escape(task["branch"]) + r"\b", f[2]):
+                # its own branch or a milestone of it (<branch>-m2), never a sibling's such as <branch>-tests
+                if len(f) < 3 or not re.match(r"merge " + re.escape(task["branch"]) + r"(?:-m\d+)?(?::|$)", f[2]):
                     continue
                 t = parse_time(re.sub(r"^.*@\{(.*)\}$", r"\1", f[1]))
                 if t and t >= launched - 60 and "m" + f[0] not in seen:

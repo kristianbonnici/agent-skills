@@ -189,10 +189,12 @@ class Owner:
 
 
 def run_dir(arg: str | None) -> str:
+    # Absolute, so a nested `lease run cpu` recognises the wrapper folder an outer one put on PATH and
+    # doesn't take its own swift wrapper for the real swift (which made it call itself forever).
     if arg:
-        return arg
+        return os.path.abspath(arg)
     if os.environ.get("LEASE_RUN_DIR"):
-        return os.environ["LEASE_RUN_DIR"]
+        return os.path.abspath(os.environ["LEASE_RUN_DIR"])
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

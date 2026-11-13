@@ -597,6 +597,12 @@ env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" "$lease5" run gpu --owner A -- sh -c
 grep -q "^nice *$base make \\[\\]\$" "$run5/gpu.out"
 grep -q '^swift build$' "$run5/gpu.out"
 
+# lease: a relative --run works nested too: the inner run finds the real swift, not the outer's wrapper
+mkdir -p "$work/rel/relrun" && cp "$run5/leases.json" "$work/rel/relrun/leases.json"
+(cd "$work/rel" && env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" LEASE_CORES=8 perl -e 'alarm 20; exec @ARGV' \
+  "$lease5" run cpu --owner A --run relrun -- "$lease5" run cpu --owner B --run relrun -- swift build) > "$run5/rel.out" 2>&1
+grep -q '^swift build --jobs 3$' "$run5/rel.out"
+
 # lease: --all is refused on the cpu (exit 2, naming the one-slot rule, nothing taken and nothing run),
 # for acquire and run alike; "all_ok": true allows it; --all on other resources works as before; an
 # all_ok that isn't true or false is refused.

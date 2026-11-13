@@ -146,6 +146,12 @@ try:
     open(os.path.join(wt["A"], "f"), "w").write("2\n")
     git("commit", "-q", "-am", "the change", cwd=wt["A"])
     git("merge", "-q", "--ff-only", "task/a", cwd=repo)
+    # a sibling task's branch whose name starts with A's, merged too: not A's merge
+    sib = os.path.join(work, "wt-sibling")
+    git("worktree", "add", "-q", "-b", "task/a-tests", sib, cwd=repo)
+    open(os.path.join(sib, "f"), "w").write("3\n")
+    git("commit", "-q", "-am", "a sibling's change", cwd=sib)
+    git("merge", "-q", "--ff-only", "task/a-tests", cwd=repo)
 
     # Processes, each started by a "harness" working in the task's worktree.
     t_call = time.time() - 1
@@ -322,6 +328,8 @@ try:
     head = subprocess.run(["git", "-C", wt["A"], "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     assert any(line.startswith("commit A ") and head[:10] in line and "the change" in line for line in out), text
     assert any(line.startswith("merged A ") and head[:10] in line and "into main" in line for line in out), text
+    sibling = subprocess.run(["git", "-C", sib, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    assert not any(line.startswith("merged A ") and sibling[:10] in line for line in out), text
     assert any(line.startswith("report R ") and "status=merged" in line for line in out), text
     # it writes only its state file, and adds the time lines to times.log
     assert sorted(os.listdir(run_dir)) == sorted(before + ["run-watch.state.json", "times.log"]), os.listdir(run_dir)
