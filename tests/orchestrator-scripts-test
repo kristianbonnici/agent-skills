@@ -602,6 +602,20 @@ mkdir -p "$work/rel/relrun" && cp "$run5/leases.json" "$work/rel/relrun/leases.j
 (cd "$work/rel" && env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" LEASE_CORES=8 perl -e 'alarm 20; exec @ARGV' \
   "$lease5" run cpu --owner A --run relrun -- "$lease5" run cpu --owner B --run relrun -- swift build) > "$run5/rel.out" 2>&1
 grep -q '^swift build --jobs 3$' "$run5/rel.out"
+# and through two names for one run folder: a link to it, and the folder itself
+ln -s relrun "$work/rel/alias"
+(cd "$work/rel" && env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" LEASE_CORES=8 perl -e 'alarm 20; exec @ARGV' \
+  "$lease5" run cpu --owner A --run alias -- "$lease5" run cpu --owner B --run "$work/rel/relrun" -- swift build) > "$run5/alias.out" 2>&1
+grep -q '^swift build --jobs 3$' "$run5/alias.out"
+# and with two different run folders, the outer one's wrapper first on PATH for the inner one
+mkdir -p "$work/rel/other" && cp "$run5/leases.json" "$work/rel/other/leases.json"
+(cd "$work/rel" && env -u MAKEFLAGS PATH="$run5/fakebin:$PATH" LEASE_CORES=8 perl -e 'alarm 20; exec @ARGV' \
+  "$lease5" run cpu --owner A --run relrun -- "$lease5" run cpu --owner B --run other -- swift build) > "$run5/other.out" 2>&1
+grep -q '^swift build --jobs 3$' "$run5/other.out"
+# a wrapper whose real swift is itself stops at once instead of running itself
+(cd "$work/rel" && LEASE_REAL_SWIFT="$work/rel/relrun/locks/bin/swift" perl -e 'alarm 20; exec @ARGV' \
+  "$work/rel/relrun/locks/bin/swift" build) > "$run5/self.out" 2>&1 && exit 1
+grep -q 'would run itself' "$run5/self.out"
 
 # lease: --all is refused on the cpu (exit 2, naming the one-slot rule, nothing taken and nothing run),
 # for acquire and run alike; "all_ok": true allows it; --all on other resources works as before; an

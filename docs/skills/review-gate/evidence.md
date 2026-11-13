@@ -167,15 +167,15 @@ reviewer), and each finding outside that list was checked against the code.
 |---|---|---|---|---|
 | review-gate 3.2.0 / orchestrator 5.1.0 (rules) | 4 (Terra) | 4 | 1 real (Terra missed it) | 5.5 min |
 | orchestrator 5.0.0 (rules, three scripts) | 5 | 1 | 1 wrong (`ps` truncating piped output; it doesn't) | 4 min |
-| orchestrator 3.9.0 (rules, two scripts) | 5 | 1 | 1 real and still open (Fable's effort unset on Claude Code), 3 plausible, 2 nits | 4 min |
-| orchestrator 3.8.0 (three scripts that delete or lock) | 9 | 6, both blockers among them | 1 real and still open (`lease` loops on a relative `--run`) | 3 min |
-| orchestrator 3.7.0 (a new 800-line script) | 4 | 1 in part, and one a later round found | 1 real and still open (a milestone's merge credited to its task), several plausible | 4 min |
+| orchestrator 3.9.0 (rules, two scripts) | 5 | 1 | 1 real, open until orchestrator 5.2.2 (Fable's effort unset on Claude Code), 3 plausible, 2 nits | 4 min |
+| orchestrator 3.8.0 (three scripts that delete or lock) | 9 | 6, both blockers among them | 1 real, open until orchestrator 5.2.2 (`lease` loops on a relative `--run`) | 3 min |
+| orchestrator 3.7.0 (a new 800-line script) | 4 | 1 in part, and one a later round found | 1 real, open until orchestrator 5.2.2 (a sibling task's merge credited to another task), several plausible | 4 min |
 
 - **Recall:** 13 of 27 known defects (48%), where each list is what all of that round's reviewers found
   together. It did best on script logic (6 of 9) and worst where the defect sat in how rules meet each other
   over time (Fable's weekly reset, a lease hiding a stuck command).
 - **Precision:** one wrong claim of the findings checked. It tagged some follow-ups as blockers.
-- **What no reviewer had found:** three real defects still in the code today, one per older release.
+- **What no reviewer had found:** three real defects, one per older release, still in the code then and fixed in orchestrator 5.2.2.
 - **Cost:** about 3.4% of Antigravity's Gemini 5-hour window and 0.8% of its week per review, 3 to 5 minutes
   each, on the Pro plan.
 - **Launching it outside T3:** headless `agy` ends the session at the first shell command no allow rule

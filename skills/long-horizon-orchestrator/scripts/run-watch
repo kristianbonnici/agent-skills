@@ -997,6 +997,11 @@ def main(argv: list[str]) -> int:
     # Exact times for the ledger: commits, merges and report-backs not printed before.
     told = state.get("told", {})
     timed: list[tuple[str, str, str]] = []
+    branches = {k: v.get("branch") for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict)}
+
+    def other_branches(tid: str) -> set:
+        return {b for k, b in branches.items() if k != tid and b}
+
     for tid, task in tasks.items():
         seen = set(told.get(tid, []))
         launched = parse_time(task.get("launched")) or started
@@ -1016,8 +1021,12 @@ def main(argv: list[str]) -> int:
             log = run(["git", "-C", repo, "log", "-g", "--date=iso-strict", "--format=%H%x09%gd%x09%gs", "refs/heads/" + branch])
             for line in log.splitlines():
                 f = line.split("\t", 2)
-                # its own branch or a milestone of it (<branch>-m2), never a sibling's such as <branch>-tests
-                if len(f) < 3 or not re.match(r"merge " + re.escape(task["branch"]) + r"(?:-m\d+)?(?::|$)", f[2]):
+                # its own branch or a milestone of it (<branch>-m2), never a sibling's such as <branch>-tests,
+                # nor another task's branch that only looks like a milestone
+                m = re.match(r"merge (\S+?)(?::|$)", f[2]) if len(f) >= 3 else None
+                merged = m.group(1) if m else ""
+                if not (merged == task["branch"] or (re.fullmatch(re.escape(task["branch"]) + r"-m\d+", merged)
+                                                     and merged not in other_branches(tid))):
                     continue
                 t = parse_time(re.sub(r"^.*@\{(.*)\}$", r"\1", f[1]))
                 if t and t >= launched - 60 and "m" + f[0] not in seen:

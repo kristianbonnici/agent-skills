@@ -152,6 +152,15 @@ try:
     open(os.path.join(sib, "f"), "w").write("3\n")
     git("commit", "-q", "-am", "a sibling's change", cwd=sib)
     git("merge", "-q", "--ff-only", "task/a-tests", cwd=repo)
+    # A's own milestone branch, and another task's (Z's) branch that only looks like one of A's milestones
+    branch_heads = {}
+    for name, text in (("task/a-m3", "4\n"), ("task/a-m2", "5\n")):
+        other = os.path.join(work, "wt-" + name.replace("/", "-"))
+        git("worktree", "add", "-q", "-b", name, other, cwd=repo)
+        open(os.path.join(other, "f"), "w").write(text)
+        git("commit", "-q", "-am", name, cwd=other)
+        git("merge", "-q", "--ff-only", name, cwd=repo)
+        branch_heads[name] = subprocess.run(["git", "-C", other, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 
     # Processes, each started by a "harness" working in the task's worktree.
     t_call = time.time() - 1
@@ -247,7 +256,8 @@ try:
 
     with open(os.path.join(run_dir, "watch.json"), "w") as f:
         json.dump({"started": stamp(t_launch - 60), "repo": repo, "integration_branch": "main",
-                   "keep_awake_pid": dead.pid, "sampler_pid": sampler.pid, "tasks": tasks}, f)
+                   "keep_awake_pid": dead.pid, "sampler_pid": sampler.pid,
+                   "tasks": dict(tasks, Z={"branch": "task/a-m2", "status": "merged"})}, f)
     now = time.time()
     with open(os.path.join(run_dir, "usage", "machine.jsonl"), "w") as f:
         for dt, free in ((-400, 151.0), (-120, 150.0), (-60, 138.0)):
@@ -330,6 +340,8 @@ try:
     assert any(line.startswith("merged A ") and head[:10] in line and "into main" in line for line in out), text
     sibling = subprocess.run(["git", "-C", sib, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     assert not any(line.startswith("merged A ") and sibling[:10] in line for line in out), text
+    assert any(line.startswith("merged A ") and branch_heads["task/a-m3"][:10] in line for line in out), text
+    assert not any(line.startswith("merged A ") and branch_heads["task/a-m2"][:10] in line for line in out), text
     assert any(line.startswith("report R ") and "status=merged" in line for line in out), text
     # it writes only its state file, and adds the time lines to times.log
     assert sorted(os.listdir(run_dir)) == sorted(before + ["run-watch.state.json", "times.log"]), os.listdir(run_dir)

@@ -114,6 +114,10 @@ SWIFT_WRAPPER = """#!/bin/sh
 # Written by lease: "lease run cpu" puts it first on the command's PATH, so swift build, test and run
 # use at most $LEASE_JOBS parallel jobs, unless the command names its own.
 real="${LEASE_REAL_SWIFT:-/usr/bin/swift}"
+if [ "$real" -ef "$0" ]; then
+  echo "lease: this swift wrapper would run itself; check PATH and LEASE_REAL_SWIFT" >&2
+  exit 127
+fi
 case "$1" in
   build|test|run)
     for arg in "$@"; do
@@ -128,6 +132,15 @@ exec "$real" "$@"
 
 class Unsupported(Exception):
     pass
+
+
+def lease_wrapper(folder: str) -> bool:
+    """Whether a PATH folder's swift is a wrapper some lease wrote, for this run folder or another."""
+    try:
+        with open(os.path.join(folder, "swift")) as f:
+            return f.read(200).startswith("#!/bin/sh\n# Written by lease")
+    except (OSError, UnicodeDecodeError):
+        return False
 
 
 class Owner:
@@ -189,13 +202,14 @@ class Owner:
 
 
 def run_dir(arg: str | None) -> str:
-    # Absolute, so a nested `lease run cpu` recognises the wrapper folder an outer one put on PATH and
-    # doesn't take its own swift wrapper for the real swift (which made it call itself forever).
+    # Resolved through links, so every name for one run folder (relative, a link, `link/..`) is the same
+    # folder, and a nested `lease run cpu` recognises the wrapper folder an outer one put on PATH instead
+    # of taking its own swift wrapper for the real swift (which made it call itself forever).
     if arg:
-        return os.path.abspath(arg)
+        return os.path.realpath(arg)
     if os.environ.get("LEASE_RUN_DIR"):
-        return os.path.abspath(os.environ["LEASE_RUN_DIR"])
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.realpath(os.environ["LEASE_RUN_DIR"])
+    return os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # the copy's run folder, not a link's target
 
 
 class Leases:
@@ -337,8 +351,11 @@ class Leases:
         env = dict(os.environ, LEASE_JOBS=jobs)
         for name, value in (("MAKEFLAGS", f"-j{jobs}"), ("CARGO_BUILD_JOBS", jobs), ("CMAKE_BUILD_PARALLEL_LEVEL", jobs)):
             env.setdefault(name, value)
-        wrappers = os.path.join(self.locks, "bin")
-        path = [p for p in env.get("PATH", os.defpath).split(os.pathsep) if p and os.path.abspath(p) != wrappers]
+        wrappers = os.path.realpath(os.path.join(self.locks, "bin"))
+        # leave out every lease's wrapper folder, an outer run's in another run folder too, so the real
+        # swift is found and no wrapper is taken for it (which made a nested run call itself forever)
+        path = [p for p in env.get("PATH", os.defpath).split(os.pathsep)
+                if p and os.path.realpath(p) != wrappers and not lease_wrapper(p)]
         real = shutil.which("swift", path=os.pathsep.join(path))
         if real is None:
             env["PATH"] = os.pathsep.join(path)
