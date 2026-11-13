@@ -12,10 +12,10 @@ Version and history: [CHANGELOG.md](CHANGELOG.md). Why it works this way: [evide
 ```mermaid
 flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
-  level -->|"only docs, wording, styling"| light["Light<br/>one free reviewer<br/>(DeepSeek, else GLM)"]
+  level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
   level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Terra for a Claude change,<br/>Sonnet for any other"]
   level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus,<br/>+ a free reviewer if one answers"]
-  light -->|no free model answers| standard
+  light -->|neither Hydrogen nor a free model answers| standard
   standard -.->|Codex short| sub["Claude substitute<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
   sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
@@ -31,7 +31,7 @@ flowchart TD
 
 | Level | Round 1 | Later rounds |
 |---|---|---|
-| Light | one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
+| Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
 | Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only a free reviewer asked for |
 | Deep | two paid reviewers, different focus, + a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
@@ -47,8 +47,11 @@ flowchart TD
   the cross reviewer takes its place. It is never waited for past its time, and in T3 one with no activity
   5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
-- **Gemini isn't a regular reviewer:** its reviews were the weakest in past runs. Gemini 4 Hydrogen is on
-  trial instead, since a trial is the only way to learn whether it reviews well.
+- **Gemini isn't a regular reviewer,** except Hydrogen at Light: Gemini's reviews were the weakest in past
+  runs, but Hydrogen found half the known defects on five past changes, against DeepSeek's third
+  ([evidence.md](evidence.md#gemini-4-hydrogen-as-a-reviewer-2026-11-13)). It stays on trial at Standard and
+  Deep, and its Light reviews count toward that trial. The 60% limit keeps room in the Gemini window for the
+  run's helpers, which share it.
 - **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5, Muse Spark 1.3 Contributor and Gemini 4 Hydrogen add one cheap extra
   review in round 1 at Standard and Deep, split evenly across a run's tasks. Their findings are checked and fixed
   like any other, but the gate never rests on them. Once each has about 20 reviews, a study compares

@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 5.2.1 (2026-11-13)
+
+- The rules that say where Hydrogen may review name review-gate 4.0.0's new place for it, Light's reviewer, beside its trial. Files: SKILL.md, routing.md.
+
 ## 5.2.0 (2026-11-13)
 
 - **A Fable second opinion for the orchestrator's hardest decisions** (owner, 2026-11-13: the orchestrator mostly runs on Opus, and Fable could advise it). Before posting the contract, before a task whose review didn't converge waits for the owner, and before parking or relaunching a task blocked for a reason that isn't mechanical, the orchestrator asks Fable 5.2 at high one bounded, read-only question with the facts it needs, and waits for the answer. At most 3 per run by default, inside the run's Fable budget, with the Fable week read live before and after each; skipped when the count or budget is used, a reading is missing, or the plan lacks Fable. It advises and the orchestrator decides: the decisions log keeps the question, the answer, the decision and whether it changed, and the report counts them. A concrete fix it names that the task agrees fits counts as the task's own, so a fix-up may go ahead instead of the task waiting for the owner. Claude Code's own advisor (`advisorModel`, `/advisor`) isn't used: Fable would re-read the whole orchestrator conversation on each call, at times Opus picks, with no cap, and T3 can't scope it to one thread ([evidence.md](evidence.md#outside-sources)). Files: SKILL.md, routing.md, integration.md.

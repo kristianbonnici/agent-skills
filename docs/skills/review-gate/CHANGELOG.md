@@ -1,5 +1,10 @@
 # review-gate changelog
 
+## 4.0.0 (2026-11-13)
+
+Major because Light reviews now spend Antigravity's Gemini window by default, where they spent nothing before.
+- **Gemini 4 Hydrogen is Light's reviewer** (owner, 2026-11-13), while Antigravity's Gemini 5-hour window is under about 60%; otherwise, or when it is limited, the free order (free DeepSeek, free GLM, Go DeepSeek, Go GLM) takes over, then the cross reviewer as before. On the same five past changes, Hydrogen found 13.5 of 27 known defects and DeepSeek 9 ([evidence.md](evidence.md#gemini-4-hydrogen-as-a-reviewer-2026-11-13)). The 60% limit leaves the Gemini window to the run's helpers, which share it. Its Light reviews count toward its trial record; at Standard and Deep it stays one of four trial reviewers, and the free reviewer there is still DeepSeek's order, since the two found different defects (61% together).
+
 ## 3.2.0 (2026-11-13)
 
 - **Gemini 4 Hydrogen is a fourth trial reviewer** (owner, 2026-11-13: "adding it as a trial reviewer is the only way to know if it will be any good as a reviewer"). Google's new lower-cost model, released 2026-11-12, scores level with Gemini 4 Argon on Google's own figures. Gemini stays out as a regular reviewer, since its reviews were the weakest in past runs. Hydrogen runs at high on Antigravity, `gemini-4-hydrogen-high`, never through OpenCode's paid `opencode/gemini-4-hydrogen`. It isn't chosen while the Gemini 5-hour window, which the run's helpers share, is past about 85%, so the gate reads Antigravity's windows before launching it.
