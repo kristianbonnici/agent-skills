@@ -1,5 +1,9 @@
 # skill-evolution changelog
 
+## 1.2.0 (2026-11-14)
+
+- **A newer model generation is a source of proposals** (owner, 2026-11-14): when the owner moves to one, the skill reads each skill for rules that patch an older model's weakness (procedures for what models now do unprompted, checks repeated for reassurance, emphasis in capitals, examples tuned to old mistakes) and proposes removing or softening them, saying what each guarded against and softening when unsure. Rules that hold the owner's decisions, permissions, safety or facts the model can't know are left alone. Until now proposals came only from what went wrong or from new research, and a rule that is no longer needed never causes an incident. Anthropic removed over 80% of Claude Code's system prompt for newer models with no measurable loss on its coding evaluations (Thariq Shihipar, July 2026), and in one migration test removing prompting patterns that "hobble" newer models cut cost by a further 9% (Lance Martin, September 2026).
+
 ## 1.1.0 (2026-10-31)
 
 - **Outside evidence is an incident too** (owner, 2026-10-31): a source the new `skill-evidence` skill verified that contradicts a rule or shows a better one becomes a proposal like an incident from a run, with an `evidence:` incident line, judged by whether the changed rule would stand on better evidence. Until now only what went wrong in a run could propose a change, so a rule the field had moved past stayed until someone noticed.

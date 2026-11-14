@@ -12,7 +12,7 @@ Version and history: [CHANGELOG.md](CHANGELOG.md).
 
 ```mermaid
 flowchart TD
-  src(["Incidents: a run's ledger and handoffs,<br/>or what the user just saw"]) --> rule["Find the rule in the skill's<br/>current text"]
+  src(["Incidents: a run's ledger and handoffs,<br/>what the user just saw, or a newer model"]) --> rule["Find the rule in the skill's<br/>current text"]
   rule --> help{Would a change<br/>have prevented it?}
   help -->|no| seen["Record as seen<br/>(a repeat later is evidence)"]
   help -->|yes| past{Already in the lessons?}
@@ -41,3 +41,10 @@ Until 2026-10-31 every improvement to the skills came from the owner noticing a 
 for example, run folders grew to 14.6 GB over three weeks while the incident that showed it sat in
 a run's notes. Asking for proposals at every finish catches these while the evidence is fresh, and
 the owner's yes per proposal keeps one odd night from drifting a skill.
+
+A rule that is no longer needed never causes an incident, so the newer-model check looks for those
+directly. Rules written to patch an older model's weaknesses go stale as models improve: Anthropic
+removed over 80% of Claude Code's system prompt for newer models with no measurable loss on its
+coding evaluations ([Thariq Shihipar, July 2026](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/)),
+and in one migration test removing prompting patterns that "hobble" newer models cut cost by a further 9%
+([Lance Martin, September 2026](https://claude.com/blog/reducing-cost-and-improving-performance-with-claude-platform)).
