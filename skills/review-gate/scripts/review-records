@@ -11,15 +11,17 @@ table: reads <record folder>/review.json and prints the Review section's first l
 the verdict line, the table, and the "Tagged lower" and "Skipped" lines when there is something to
 say. It first checks the record: every field and tag it knows, each finding's reviewer among the
 reviewers, each report file in the folder and not empty, a reason wherever the author's tag is
-lower than the reviewer's, and a commit for every blocker of a gate that passed. A record that
-fails prints what it lacks, one line each, and no table.
+lower than the reviewer's, and for a gate that passed a commit for every blocker, in the latest
+round that raised it. A record that fails prints what it lacks, one line each, and no table.
 
 totals: reads every record under ${XDG_STATE_HOME:-~/.local/state}/agent-skills:
   - long-horizon-orchestrator/<run>/<task>/review/review.json (and review-2/, review-3/ ...);
   - review-gate/<gate>/review.json, the gates run outside an orchestrated run;
-  - for a task with no review.json, the Review table in its handoff.md, which is all that gates
-    before review-gate 4.1.0 left. Those give each reviewer's counts but not the reviewers' own
-    tags, and a 2.x table's "Must-fix" is blockers and follow-ups together.
+  - the Review table in a task's handoff.md, which is all that gates before review-gate 4.1.0
+    left, when the task has no review.json or the handoff was last changed before any of them was
+    (an earlier gate; a handoff changed after a record repeats it). Those give each reviewer's
+    counts but not the reviewers' own tags, and a 2.x table's "Must-fix" is blockers and
+    follow-ups together.
 It prints the gates by level, result and rounds, one line per reviewer, and how often the author's
 tag differed from the reviewer's. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra,
 high" and "GPT-6.1 Terra, high (fresh look)" are one reviewer. A record it can't read is listed
@@ -105,6 +107,9 @@ def shape_problems(record):
     if not names and record.get("result") in ("passed", "stopped", "reported"):
         problems.append('no reviewer is listed, and "result" isn\'t "no reviewer"')
 
+    if "note" in record and not text(record["note"]):
+        problems.append('"note" isn\'t a line of text')
+
     skipped = record.get("skipped", [])
     if not isinstance(skipped, list) or not all(
             isinstance(s, dict) and text(s.get("name")) and text(s.get("why")) for s in skipped):
@@ -114,7 +119,7 @@ def shape_problems(record):
     if not isinstance(findings, list):
         problems.append('"findings" isn\'t a list')
         findings = []
-    tag_of, seen = {}, set()
+    tag_of, seen, latest = {}, set(), {}
     for place, finding in enumerate(findings, 1):
         where = f"finding {place}"
         if not isinstance(finding, dict):
@@ -143,8 +148,15 @@ def shape_problems(record):
         commit = finding.get("commit")
         if commit is not None and not (isinstance(commit, str) and COMMIT.match(commit)):
             problems.append(f'{where}: "commit" isn\'t a commit\'s hash (7 to 40 hex digits)')
+            bad = True
         if bad:
             continue
+        # The latest round that raised this finding, and whether an entry of that round has a commit.
+        round_, fixed = latest.get(finding["id"], (0, False))
+        if finding["round"] > round_:
+            latest[finding["id"]] = (finding["round"], commit is not None)
+        elif finding["round"] == round_:
+            latest[finding["id"]] = (round_, fixed or commit is not None)
         key = (finding["id"], finding["round"], finding["reviewer"])
         if key in seen:
             problems.append(f"{where}: finding {finding['id']} is listed twice for one reviewer and round")
@@ -157,9 +169,9 @@ def shape_problems(record):
             problems.append(f'{where}: "why" is missing, though your tag is lower than the reviewer\'s '
                             "or rejects the finding")
     if record.get("result") == "passed":
-        fixed = {f["id"] for f in findings if isinstance(f, dict) and f.get("commit")}
-        for finding_id in sorted(i for i, tag in tag_of.items() if tag == "blocker" and i not in fixed):
-            problems.append(f'finding {finding_id} is a blocker with no "commit", and "result" is "passed"')
+        for finding_id in sorted(i for i, tag in tag_of.items() if tag == "blocker" and not latest[i][1]):
+            problems.append(f'finding {finding_id} is a blocker with no "commit" in round {latest[finding_id][0]}, '
+                            'its latest, and "result" is "passed"')
     return problems
 
 
@@ -271,9 +283,10 @@ def table(folder):
 
 EFFORT = re.compile(r",\s*(low|medium|high|extra[- ]high|xhigh|max)\b", re.I)
 HOST = re.compile(r"^(Codex|OpenCode)\s+", re.I)
-VERDICT = re.compile(r"^\*\*Review: (Light|Standard|Deep), (\d+) rounds?", re.I | re.M)
+VERDICT = re.compile(r"^\*\*Review: (Light|Standard|Deep), (no|\d{1,3}) rounds?\b", re.I | re.M)
 TABLE_START = re.compile(r"^\|\s*Reviewer\s*\|")
-NUMBER = re.compile(r"^\d+$")
+NUMBER = re.compile(r"^\d{1,6}$")
+ROUND = re.compile(r"(?<!\d)\d{1,3}(?!\d)")
 
 
 def reviewer_key(name):
@@ -299,6 +312,15 @@ def folders(path):
         return []
 
 
+def older(handoff, records):
+    """Whether the handoff was last changed before every one of the task's records was."""
+    try:
+        changed = os.lstat(handoff).st_mtime_ns
+        return all(changed < os.lstat(os.path.join(folder, "review.json")).st_mtime_ns for folder in records)
+    except OSError:
+        return False
+
+
 def sources(root):
     """("record", folder) for each review.json, ("handoff", file) for a task that has only a handoff."""
     for run in folders(os.path.join(root, "long-horizon-orchestrator")):
@@ -308,7 +330,7 @@ def sources(root):
             for folder in records:
                 yield "record", folder
             handoff = os.path.join(task, "handoff.md")
-            if not records and os.path.isfile(handoff) and not os.path.islink(handoff):
+            if os.path.isfile(handoff) and not os.path.islink(handoff) and older(handoff, records):
                 yield "handoff", handoff
     for folder in folders(os.path.join(root, "review-gate")):
         if os.path.lexists(os.path.join(folder, "review.json")):
@@ -363,22 +385,27 @@ def gate_from_handoff(path):
     except OSError as error:
         return f"handoff.md can't be read ({error.__class__.__name__})"
     lines = content.splitlines()
-    start = next((i for i, line in enumerate(lines) if TABLE_START.match(line)), None)
-    if start is None:
+    starts = [i for i, line in enumerate(lines) if TABLE_START.match(line)]
+    if not starts:
         return None
     names = {"blockers": "blockers", "follow-ups": "follow_ups", "must-fix": "must_fix", "nits": "nits",
              "pre-existing": "pre_existing", "rejected": "rejected"}
-    header = [c.strip().lower() for c in lines[start].strip().strip("|").split("|")]
-    columns = {}
-    for place, title in enumerate(header):
-        if title in names:
-            columns[place] = names[title]
-        elif title.startswith("unique"):
-            columns[place] = "unique"
-        elif title.startswith("rounds"):
-            columns[place] = "rounds"
-    if "rounds" not in columns.values() or not ({"blockers", "must_fix"} & set(columns.values())):
-        return "its Review table has columns this script doesn't know"
+    for start in starts:
+        header = [c.strip().lower() for c in lines[start].strip().strip("|").split("|")]
+        columns = {}
+        for place, title in enumerate(header):
+            if title in names:
+                columns[place] = names[title]
+            elif title.startswith("unique"):
+                columns[place] = "unique"
+            elif title.startswith("rounds"):
+                columns[place] = "rounds"
+        if "rounds" in columns.values() and {"blockers", "must_fix"} & set(columns.values()):
+            break
+    else:
+        return "its tables that start with Reviewer have columns this script doesn't know"
+    verdict = VERDICT.search(content)
+    stated = None if verdict is None else 0 if verdict.group(2).lower() == "no" else int(verdict.group(2))
     rows, rounds = [], 0
     for line in lines[start + 1:]:
         if not line.startswith("|"):
@@ -392,19 +419,18 @@ def gate_from_handoff(path):
                "nits": 0, "pre_existing": 0, "rejected": 0, "unique": 0}
         for place, name in columns.items():
             if name == "rounds":
-                rounds = max([rounds] + [int(n) for n in re.findall(r"\d+", cells[place])][:20])
+                rounds = max([rounds] + [int(n) for n in ROUND.findall(cells[place][:200])])
                 continue
             value = number(cells[place])
             if value is None:
                 return f'a cell of its Review table isn\'t a count: "{one_line(cells[place])[:40]}"'
             row[name] = value
         rows.append(row)
-    if not rows:
+    if not rows and stated != 0:
         return "its Review table has no rows"
-    verdict = VERDICT.search(content)
     return {"source": "handoff", "date": datetime.date.fromtimestamp(changed).isoformat(),
             "level": verdict.group(1).lower() if verdict else "unknown", "result": "unknown",
-            "rounds": int(verdict.group(2)) if verdict else rounds, "rows": rows,
+            "rounds": rounds if stated is None else stated, "rows": rows,
             "tagged": 0, "changes": {}, "lowered_checked": {}}
 
 
@@ -502,7 +528,7 @@ def totals(since, as_json):
 
 
 def main(argv):
-    if len(argv) == 2 and argv[0] == "table":
+    if len(argv) == 2 and argv[0] == "table" and argv[1]:
         return table(argv[1])
     if argv and argv[0] == "totals":
         rest, since, as_json = argv[1:], None, False

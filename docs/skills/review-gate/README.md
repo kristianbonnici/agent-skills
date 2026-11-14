@@ -24,7 +24,7 @@ flowchart TD
   rebase["Rebase: a conflict resolution<br/>that changed logic"] --> rereview
   rereview -->|"no fewer blockers two rounds in a row,<br/>the approach in dispute, or a blocker in round 5"| stop([Stop: report not converging,<br/>don't merge])
   rereview --> sort
-  sort -->|"no blocker left;<br/>follow-ups fixed or listed"| record([Record the Review section,<br/>go to the merge gate])
+  sort -->|"no blocker left;<br/>follow-ups fixed or listed"| record([Save the record: the reports and review.json.<br/>Print the Review section's first lines from it,<br/>go to the merge gate])
 ```
 
 ## Who reviews
@@ -60,7 +60,7 @@ flowchart TD
 
 ## The record
 
-Every gate ends with a verdict line and a table like these, which later studies count:
+Every gate ends with a Review section that starts with lines like these, printed from the gate's record, which later studies count:
 
 **Review: Deep, 2 rounds.** It reads socket input. 2 blockers and 1 follow-up found, all fixed.
 
@@ -84,7 +84,8 @@ reviewers said ([evidence.md](evidence.md#the-record-2026-11-14)):
   lower than the reviewer did.
 - **Where:** a task's `review/` folder in an orchestrated run, which the orchestrator's pruning keeps;
   otherwise `~/.local/state/agent-skills/review-gate/`, so a gate run by hand leaves a record too. Never in
-  the repository under review.
+  the repository under review. The gate makes the folder with plain `mkdir` and takes the next name when
+  one exists, so two gates never write into the same folder.
 
 `scripts/review-records table <folder>` checks the record and prints the verdict line's start, the table and
 the two lines under it, so nobody counts them by hand. `scripts/review-records totals` adds up every record

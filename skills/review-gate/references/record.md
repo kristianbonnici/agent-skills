@@ -60,9 +60,10 @@ The gate:
 - `repository`: the repository's folder name. `base` and `head`: the commits the gate reviewed between, `head` being the last one after the fixes.
 - `author`: the model that made the change, with its reasoning level.
 - `level`: `light`, `standard` or `deep`.
-- `result`: `passed` (no blocker left), `stopped` (the review didn't converge), `no reviewer` (none had room; `reviewers` is then empty), or `reported` (the user asked for a review only, and you changed nothing).
+- `result`: `passed` (no blocker left), `stopped` (the review didn't converge), `no reviewer` (none had room; `reviewers` and `findings` are then empty), or `reported` (the user asked for a review only, and you changed nothing).
 - `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder.
 - `skipped`: every model that was skipped or that a reviewer moved on from, and why.
+- `note`: optional, one line on what a reader of the record must know and no field holds. When no reviewer had room and you read the diff yourself in a fresh pass, say that here and what you found: your own pass isn't a review, so it has no reviewer and no findings.
 
 Each finding:
 
@@ -70,7 +71,7 @@ Each finding:
 - `reviewer_tag`: the tag that reviewer gave it (`blocker`, `follow-up`, `nit`, `pre-existing`), or `none` if it gave none.
 - `tag`: yours (`blocker`, `follow-up`, `nit`, `pre-existing`, `rejected`).
 - `checked`: how you settled whether it is real. `test`: a test that fails on it, or passes where it said one would fail. `run`: you ran the case. `read`: you traced it through the code. `second opinion`: Deep's yes or no from the other paid reviewer.
-- `commit`: the commit that fixed it. Leave it out while the finding is open or needs no change.
+- `commit`: the commit that fixed it. Leave it out while the finding is open or needs no change. A finding that came back "not fixed" carries, on its later entry, the commit that settled it then.
 - `title`: the finding in a few words.
 - `why`: one line, needed when you rejected the finding or gave it a lower tag than the reviewer did (a blocker as a follow-up, a follow-up as a nit or pre-existing).
 
@@ -92,6 +93,6 @@ Each finding:
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*
 ```
 
-A record that fails its check prints what it lacks instead: fix the record and run it again. If the script can't run (no `python3`), write the same lines by hand.
+A gate in which no reviewer reported prints `no round` and a table without rows. A record that fails its check prints what it lacks instead: fix the record and run it again. If the script can't run (no `python3`), write the same lines by hand.
 
 `scripts/review-records totals` adds up every record on this computer, for a study of the gate.
