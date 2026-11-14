@@ -54,7 +54,7 @@ The review gate's follow-ups are real defects that need rare timing or input, or
 
 ## A reviewer that held on its blocker
 
-When a task rejects a finding its reviewer tagged a blocker, or gives it a lower tag, the review gate asks that reviewer whether it agrees and records the answer. The task's tag stands either way. A task lists the blockers its reviewer held on under "A reviewer held" in its handoff's Review section, each with the reviewer's case and the task's reason. They never hold back a merge, and they aren't a reason to relaunch the task, run its gate again or start a follow-up task. Once the task merges (under "leave on branch", once it is `ready`), record them in the ledger and list each under "Worth checking yourself" in the report.
+When a task rejects a finding its reviewer tagged a blocker, or gives it a lower tag, the review gate asks that reviewer whether it agrees and records the answer. The task's tag stands either way. A task lists the blockers its reviewer held on under "A reviewer held" in its handoff's Review section, each with the reviewer's case and the task's reason. They never hold back a merge, and they aren't a reason to relaunch the task, run its gate again or start a follow-up task. One the task itself lists as an open follow-up, because the answer showed it a case it got wrong, goes with its other follow-ups. Once the task merges (under "leave on branch", once it is `ready`), record them in the ledger and list each under "Worth checking yourself" in the report.
 
 ## A task with no independent reviewer
 

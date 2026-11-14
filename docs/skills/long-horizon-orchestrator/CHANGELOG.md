@@ -2,7 +2,7 @@
 
 ## 5.4.0 (2026-11-14)
 
-- **A blocker a reviewer held on is recorded and reported** (owner, 2026-11-14). From review-gate 4.2.0, a task that rejects a finding its reviewer tagged a blocker, or tags it lower, asks that reviewer whether it agrees, and lists the ones the reviewer held on under "A reviewer held" in its handoff. The orchestrator records them in the ledger when the task merges and lists each under "Worth checking yourself" in the report, with the reviewer's case and the task's reason. They never hold back a merge, relaunch a task or start a follow-up task: the owner asked for them to be visible, not blocking, since a stop rule that counted every finding had stopped 8 of 9 tasks in one night ([review-gate's evidence](../review-gate/evidence.md#the-reviewers-reply-2026-11-14)).
+- **A blocker a reviewer held on is recorded and reported** (owner, 2026-11-14). From review-gate 5.0.0, a task that rejects a finding its reviewer tagged a blocker, or tags it lower, asks that reviewer whether it agrees, and lists the ones the reviewer held on under "A reviewer held" in its handoff. The orchestrator records them in the ledger when the task merges and lists each under "Worth checking yourself" in the report, with the reviewer's case and the task's reason. They never hold back a merge, relaunch a task or start a follow-up task: the owner asked for them to be visible, not blocking, since a stop rule that counted every finding had stopped 8 of 9 tasks in one night ([review-gate's evidence](../review-gate/evidence.md#the-reviewers-reply-2026-11-14)).
 
 ## 5.3.1 (2026-11-14)
 

@@ -67,9 +67,10 @@ moving, but it leaves the author judging findings about its own change. So when 
 its reviewer tagged a blocker, or gives it a lower tag, the gate gives it back to that reviewer with the
 author's reason and asks: agree or hold? (A free or trial reviewer's goes to the round's paid reviewer.)
 
-- **It never blocks.** The author's tag stands whatever the answer. A reply doesn't hold back the merge,
-  count toward the stop rule or start a fix or another round, and a reviewer that doesn't answer in ten
-  minutes is recorded as "no answer".
+- **It never blocks.** The author's tag stands whatever the answer. A reply can't turn a finding into a
+  blocker, hold back the merge, count toward the stop rule or start a fix or another round. If it convinces
+  the author, the most that happens is that the finding is listed as an open follow-up. A reviewer that
+  doesn't answer in ten minutes is recorded as "no answer".
 - **It is visible.** The reply goes in the record, the Review section counts the replies and lists each
   blocker a reviewer held on with both sides, and the orchestrator's report puts those under "Worth checking
   yourself".

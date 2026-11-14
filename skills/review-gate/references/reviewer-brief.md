@@ -40,4 +40,4 @@ A blocker is a defect this change introduces or exposes that causes data loss or
 Do you agree with the author's tag? Start your answer with "agree" or "hold". If you hold, give the concrete case that still goes wrong, how often it would happen, and why it is a blocker by the definition above. You have 10 minutes.
 ```
 
-An answer that starts with "agree" is `agrees`, one that starts with "hold" is `holds`, and none in its 10 minutes, or one that says neither, is `no answer`. Save it in the record folder as `reply-<the finding's id>-<reviewer>.md`.
+An answer that starts with "agree", in any letter case, is `agrees`; one that starts with "hold" is `holds`; and none in its 10 minutes, or one that says neither, is `no answer`. Save it in the record folder as `reply-<the finding's id>-<reviewer>.md`.

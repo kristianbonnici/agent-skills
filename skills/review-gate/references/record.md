@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "4.2.0",
+  "gate": "5.0.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -63,7 +63,7 @@ The gate:
 - `author`: the model that made the change, with its reasoning level.
 - `level`: `light`, `standard` or `deep`.
 - `result`: `passed` (no blocker left), `stopped` (the review didn't converge), `no reviewer` (none had room; `reviewers` and `findings` are then empty), or `reported` (the user asked for a review only, and you changed nothing).
-- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder, its replies about tags among them.
+- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder, its replies about tags among them. A reviewer launched only to answer about a tag has `"rounds": ["reply"]`.
 - `skipped`: every model that was skipped or that a reviewer moved on from, and why.
 - `note`: optional, one line on what a reader of the record must know and no field holds. When no reviewer had room and you read the diff yourself in a fresh pass, say that here and what you found: your own pass isn't a review, so it has no reviewer and no findings.
 
@@ -76,7 +76,7 @@ Each finding:
 - `commit`: the commit that fixed it. Leave it out while the finding is open or needs no change. A finding that came back "not fixed" carries, on its later entry, the commit that settled it then.
 - `title`: the finding in a few words.
 - `why`: one line, needed when you rejected the finding or gave it a lower tag than the reviewer did (a blocker as a follow-up, a follow-up as a nit or pre-existing).
-- `reply`: needed when the reviewer's tag was `blocker` and yours is lower or `rejected`: what the reviewer answered when you asked (SKILL.md, section 4): `agrees`, `holds` or `no answer`. `reply_from`: the reviewer that answered, when it wasn't the one that raised the finding.
+- `reply`: needed when the reviewer's tag was `blocker` and yours is lower or `rejected`: what the reviewer answered when you asked (SKILL.md, section 4): `agrees`, `holds` or `no answer`. Give it nowhere else. `reply_from`: the reviewer that answered, when it wasn't the one that raised the finding.
 
 ## The Review lines
 

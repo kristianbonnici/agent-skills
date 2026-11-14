@@ -9,12 +9,14 @@ Usage:
 
 table: reads <record folder>/review.json and prints the Review section's first lines: the start of
 the verdict line, the table, the "Tagged lower", "Replies" and "Skipped" lines when there is
-something to say, and a "Record" line with the folder's path. It first checks the record: every
-field and tag it knows, each finding's reviewer among the reviewers, each report file in the
-folder and not empty, a reason wherever the author's tag is lower than the reviewer's, from
-review-gate 4.2.0 the reviewer's reply wherever the author tagged its blocker lower, and for a gate
-that passed a commit for every blocker, in the latest round that raised it. A record that fails
-prints what it lacks, one line each, and no table.
+something to say, and a "Record" line with the folder's path. It first checks the record:
+  - every field and tag it knows, and each finding's reviewer among the reviewers;
+  - each report file in the folder, and not empty;
+  - a reason wherever the author's tag is lower than the reviewer's;
+  - from review-gate 5.0.0, the reviewer's reply wherever the author tagged its blocker lower, and
+    no reply anywhere else;
+  - for a gate that passed, a commit for every blocker, in the latest round that raised it.
+A record that fails prints what it lacks, one line each, and no table.
 
 totals: reads every record under ${XDG_STATE_HOME:-~/.local/state}/agent-skills:
   - long-horizon-orchestrator/<run>/<task>/review/review.json (and review-2/, review-3/ ...);
@@ -25,16 +27,18 @@ totals: reads every record under ${XDG_STATE_HOME:-~/.local/state}/agent-skills:
     is as near; a table keeps the nearest of its verdict lines. A table with none adds to
     another gate (an updated table, one more look) and isn't counted, unless no table in the
     handoff has one: then the first is the gate, its level unknown. A table with a "Record"
-    line under it that names one of this task's records (the record's folder, in this task's
-    folder) is counted from that record, not from the handoff; when that record is gone, can't
-    be read or is another task's, the handoff's table counts.
+    line under it is counted from the record that line names, not from the handoff, when that
+    is one of this task's readable records (the record's folder, in this task's folder, in
+    this run's) or a readable record under review-gate/. When the record is gone, can't be
+    read or is another task's, the handoff's table counts.
     Handoff tables give each reviewer's counts but not the reviewers' own tags, and a 2.x
     table's "Must-fix" is blockers and follow-ups together.
 It prints the gates by level, result and rounds, one line per reviewer, how often the author's
-tag differed from the reviewer's, and what the reviewers replied where their blocker was tagged lower. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra,
-high" and "GPT-6.1 Terra, high (fresh look)" are one reviewer. A record it can't read is listed
-and left out, never fatal. --since keeps gates dated that day or later (a record's "date"; a
-handoff's last change). --json prints the same totals as JSON.
+tag differed from the reviewer's, and what the reviewers replied where their blocker was tagged
+lower. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra, high" and "GPT-6.1 Terra,
+high (fresh look)" are one reviewer. A record it can't read is listed and left out, never fatal.
+--since keeps gates dated that day or later (a record's "date"; a handoff's last change). --json
+prints the same totals as JSON.
 
 It only reads. Links are never followed.
 
@@ -53,8 +57,8 @@ TAGS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
 REVIEWER_TAGS = ("blocker", "follow-up", "nit", "pre-existing", "none")
 CHECKED = ("test", "run", "read", "second opinion")
 REPLIES = ("agrees", "holds", "no answer")
-VERSION = re.compile(r"^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$")
-REPLY_SINCE = (4, 2, 0)     # the first version whose gates ask the reviewer about a blocker tagged lower
+VERSION = re.compile(r"^\s*(\d{1,4})\.(\d{1,4})(?:\.(\d{1,4}))?")
+REPLY_SINCE = (5, 0, 0)     # the first version whose gates ask the reviewer about a blocker tagged lower
 # How much a tag holds back: a nit and a pre-existing finding are both listed, neither above the other.
 RANK = {"blocker": 3, "follow-up": 2, "nit": 1, "pre-existing": 1, "rejected": 0}
 COLUMNS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
@@ -87,10 +91,10 @@ def shape_problems(record):
     for key in ("gate", "repository", "base", "head", "author"):
         if not text(record.get(key)):
             problems.append(f'"{key}" is missing or empty')
-    version = VERSION.match(record["gate"].strip()) if text(record.get("gate")) else None
-    if text(record.get("gate")) and not version:
-        problems.append('"gate" isn\'t a version written like 4.2.0')
-    asks = bool(version) and tuple(int(part) for part in version.groups()) >= REPLY_SINCE
+    # The gate's version, however it is written ("5.0", "5.0.0 (round 2)"). One this can't read is
+    # taken for an earlier one, as every record of 4.1.0 must still be read.
+    version = VERSION.match(record["gate"]) if text(record.get("gate")) else None
+    asks = bool(version) and tuple(int(part or 0) for part in version.groups()) >= REPLY_SINCE
     if not (isinstance(record.get("date"), str) and DATE.match(record["date"])):
         problems.append('"date" isn\'t a day written as YYYY-MM-DD')
     if record.get("level") not in LEVELS:
@@ -183,9 +187,12 @@ def shape_problems(record):
         if (finding["tag"] == "rejected" or lowered(finding)) and not text(finding.get("why")):
             problems.append(f'{where}: "why" is missing, though your tag is lower than the reviewer\'s '
                             "or rejects the finding")
+        asked = finding["reviewer_tag"] == "blocker" and lowered(finding)
         if "reply" in finding and finding["reply"] not in REPLIES:
             problems.append(f'{where}: "reply" isn\'t one of {", ".join(REPLIES)}')
-        elif asks and finding["reviewer_tag"] == "blocker" and lowered(finding) and "reply" not in finding:
+        elif "reply" in finding and not asked:
+            problems.append(f'{where}: "reply" is given, though your tag isn\'t lower than the reviewer\'s blocker')
+        elif asks and asked and "reply" not in finding:
             problems.append(f'{where}: "reply" is missing, though your tag is lower than the reviewer\'s blocker')
         if "reply_from" in finding and finding["reply_from"] not in names:
             problems.append(f'{where}: "reply_from" isn\'t one of the reviewers\' names')
@@ -259,11 +266,14 @@ def lowered_defects(record):
 
 
 def replies(record):
-    """What reviewers replied on blockers the author tagged lower: each finding's latest reply."""
+    """What reviewers replied on blockers the author tagged lower: for each finding and each
+    reviewer that raised it, the latest reply."""
     latest = {}
     for finding in record["findings"]:
-        if "reply" in finding and finding["round"] >= latest.get(finding["id"], (0, None))[0]:
-            latest[finding["id"]] = (finding["round"], finding["reply"])
+        key = (finding["id"], finding["reviewer"])
+        asked = "reply" in finding and finding["reviewer_tag"] == "blocker" and lowered(finding)
+        if asked and finding["round"] >= latest.get(key, (0, None))[0]:
+            latest[key] = (finding["round"], finding["reply"])
     said = {}
     for _, reply in latest.values():
         said[reply] = said.get(reply, 0) + 1
@@ -354,8 +364,12 @@ def folders(path):
 
 
 def sources(root):
-    """("record", folder) for each review.json and ("handoff", file) for each task's handoff, after
-    the task's records."""
+    """("record", folder) for each review.json and ("handoff", file) for each task's handoff. The
+    records under review-gate/ come first and a task's records before its handoff, since a handoff
+    may name either."""
+    for folder in folders(os.path.join(root, "review-gate")):
+        if os.path.lexists(os.path.join(folder, "review.json")):
+            yield "record", folder
     for run in folders(os.path.join(root, "long-horizon-orchestrator")):
         for task in folders(run):
             records = [f for f in folders(task) if RECORD_FOLDER.match(os.path.basename(f))
@@ -365,9 +379,6 @@ def sources(root):
             handoff = os.path.join(task, "handoff.md")
             if os.path.isfile(handoff) and not os.path.islink(handoff):
                 yield "handoff", handoff
-    for folder in folders(os.path.join(root, "review-gate")):
-        if os.path.lexists(os.path.join(folder, "review.json")):
-            yield "record", folder
 
 
 def gate_from_record(folder):
@@ -412,11 +423,12 @@ def number(cell_text):
     return int(value) if NUMBER.match(value) else None
 
 
-def gates_from_handoff(path, task, recorded):
-    """The gates a handoff's Review tables stand for and no readable record of the task holds
-    (`task`: the task's folder name; `recorded`: the folder names of its readable records). A list
-    of gates, and of strings saying why a table can't be read. The script's opening lines say
-    which table is a gate."""
+def gates_from_handoff(path, run, task, recorded, outside):
+    """The gates a handoff's Review tables stand for and no readable record holds (`run` and `task`:
+    the folder names of the run and the task; `recorded`: the folder names of the task's readable
+    records; `outside`: those of the readable records under review-gate/). A list of gates, and
+    of strings saying why a table can't be read. The script's opening lines say which table is
+    a gate."""
     try:
         if os.path.getsize(path) > MAX_BYTES:
             return ["handoff.md is over 10 MB"]
@@ -471,9 +483,10 @@ def gates_from_handoff(path, task, recorded):
     gates = []
     for place in [p for p in range(len(review)) if p in verdicts] or [0]:
         start, end, header, columns = review[place]
-        folder, name = record_named(lines, end)
-        if name in recorded and folder in ("", task):
-            continue        # printed from one of this task's records: counted there
+        above, folder, name = record_named(lines, end)
+        own = name in recorded and folder in ("", task) and (folder == "" or above in ("", run))
+        if own or (folder == "review-gate" and name in outside):
+            continue        # printed from a record that is read: counted there
         verdict = verdicts[place][1] if place in verdicts else None
         gates.append(table_gate(lines, start, end, header, columns, changed, verdict))
     return gates
@@ -481,16 +494,16 @@ def gates_from_handoff(path, task, recorded):
 
 def record_named(lines, end):
     """The "Record" line that follows the table ending at `end`, before anything else starts: the
-    names of the folder its path ends in and of the folder above that ("" when the path has none).
-    (None, None) when there is no such line."""
+    last three names of its path, the folder it ends in last ("" where the path is shorter).
+    (None, None, None) when there is no such line."""
     for line in lines[end:end + 15]:
         if TABLE_START.match(line) or line.startswith("#") or VERDICT.match(line):
             break
         found = RECORD_LINE.match(line)
         if found:
-            named = found.group(1).rstrip("/")
-            return os.path.basename(os.path.dirname(named)), os.path.basename(named)
-    return None, None
+            parts = [part for part in found.group(1).split("/") if part]
+            return tuple(([""] * 3 + parts)[-3:])
+    return None, None, None
 
 
 def table_gate(lines, start, end, header, columns, changed, verdict):
@@ -536,7 +549,9 @@ def totals(since, as_json):
             if not isinstance(found[0], str):
                 readable.setdefault(task, set()).add(os.path.basename(path))
         else:
-            found = gates_from_handoff(path, os.path.basename(task), readable.get(task, set()))
+            found = gates_from_handoff(path, os.path.basename(os.path.dirname(task)), os.path.basename(task),
+                                       readable.get(task, set()),
+                                       readable.get(os.path.join(root, "review-gate"), set()))
         for gate in found:
             if isinstance(gate, str):
                 unread.append({"path": path, "why": gate})
@@ -608,7 +623,8 @@ def totals(since, as_json):
         print()
         if result["tagged_by_reviewer"]:
             print(f"The author's tag against the reviewer's (review.json only): {result['differed']} of "
-                  f"{result['tagged_by_reviewer']} findings differed.")
+                  f"{result['tagged_by_reviewer']} findings differed, in these pairs of tags (a finding that "
+                  "came back under another tag is in each):")
             for change in sorted(result["changed_tags"], key=lambda c: (-result["changed_tags"][c], c)):
                 print(f"  {change}: {result['changed_tags'][change]}")
             if result["lowered_checked"]:

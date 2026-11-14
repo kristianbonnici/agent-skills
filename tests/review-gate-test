@@ -116,20 +116,41 @@ fails("blocker-refound", refound, 'finding 1 is a blocker with no "commit" in ro
 fails("no-id", lambda r: r["findings"][0].pop("id"), 'finding 1: "id" isn\'t a number from 1 up')
 fails("list-id", lambda r: r["findings"][0].update(id=[1]), 'finding 1: "id" isn\'t a number from 1 up')
 fails("bad-note", lambda r: r.update(note=5), '"note" isn\'t a line of text')
-# From 4.2.0 a blocker tagged lower or rejected has its reviewer's reply; an earlier gate's record needn't.
+# From 5.0.0 a blocker tagged lower or rejected has its reviewer's reply; an earlier gate's record needn't.
 fails("no-reply", lambda r: r["findings"][2].pop("reply"),
       'finding 3: "reply" is missing, though your tag is lower than the reviewer\'s blocker')
 fails("no-reply-rejected", lambda r: r["findings"][3].pop("reply"), 'finding 4: "reply" is missing')
 fails("bad-reply", lambda r: r["findings"][2].update(reply="disagrees"), '"reply" isn\'t one of agrees, holds, no answer')
 fails("bad-reply-from", lambda r: r["findings"][3].update(reply_from="Somebody"),
       '"reply_from" isn\'t one of the reviewers\' names')
-fails("bad-gate", lambda r: r.update(gate="four"), '"gate" isn\'t a version written like 4.2.0')
-earlier = copy.deepcopy(example)
-earlier["gate"] = "4.1.0"
-for finding in earlier["findings"]:
-    finding.pop("reply", None), finding.pop("reply_from", None)
-done = run("table", save(os.path.join(work, "earlier"), earlier))
-assert done.returncode == 0 and "Tagged lower" in done.stdout and "Replies" not in done.stdout, (done.stdout, done.stderr)
+# A reply where none was asked (the author's tag isn't lower than a reviewer's blocker) is refused, not counted.
+fails("stray-reply", lambda r: r["findings"][0].update(reply="holds"),
+      'finding 1: "reply" is given, though your tag isn\'t lower than the reviewer\'s blocker')
+fails("stray-reply-nit", lambda r: r["findings"][4].update(reply="agrees"), 'finding 5: "reply" is given')
+# The gate's version decides: 4.1.0's records, however they wrote it, need no reply and still print;
+# a version this script can't read counts as an earlier one; 5.0 written short still needs the reply.
+for wrote in ("4.1.0", "4.1", "4.1.0 (round 3)", "the first"):
+    earlier = copy.deepcopy(example)
+    earlier["gate"] = wrote
+    for finding in earlier["findings"]:
+        finding.pop("reply", None), finding.pop("reply_from", None)
+    done = run("table", save(os.path.join(work, "earlier"), earlier))
+    assert done.returncode == 0 and "Tagged lower" in done.stdout and "Replies" not in done.stdout, (wrote, done.stderr)
+fails("short-version", lambda r: (r.update(gate="5.0"), r["findings"][2].pop("reply")), 'finding 3: "reply" is missing')
+# Two reviewers called one finding a blocker and were each asked: both answers count.
+both = copy.deepcopy(example)
+both["findings"].insert(3, dict(both["findings"][2], reviewer="Claude Sonnet 5.5, high", reply="agrees"))
+done = run("table", save(os.path.join(work, "both"), both))
+assert done.returncode == 0, done.stderr
+assert "*Replies on the blockers tagged lower: 2 agreed, 1 held, 0 no answer.*" in done.stdout, done.stdout
+both["findings"][2], both["findings"][3] = both["findings"][3], both["findings"][2]
+done = run("table", save(os.path.join(work, "both"), both))
+assert "*Replies on the blockers tagged lower: 2 agreed, 1 held, 0 no answer.*" in done.stdout, done.stdout
+# A finding that came back and was asked about again counts its reviewer's latest answer.
+again_asked = copy.deepcopy(example)
+again_asked["findings"].append(dict(again_asked["findings"][2], round=2, reply="agrees"))
+done = run("table", save(os.path.join(work, "again-asked"), again_asked))
+assert "*Replies on the blockers tagged lower: 2 agreed, 0 held, 0 no answer.*" in done.stdout, done.stdout
 fails("unknown-reviewer", lambda r: r["findings"][0].update(reviewer="Somebody"), "isn't one of the reviewers' names")
 fails("bad-tag", lambda r: r["findings"][4].update(tag="minor"), '"tag" isn\'t one of blocker')
 fails("bad-reviewer-tag", lambda r: r["findings"][4].update(reviewer_tag="minor"), '"reviewer_tag" isn\'t one of')
@@ -403,6 +424,27 @@ write(os.path.join(runs, "run-1", "Y", "handoff.md"), """**Review: Light, 1 roun
 
 *Record: /somewhere/run-1/another-task/review.*
 """)
+# Z: the "Record" line names the record of a task with this task's name in another run, while
+# this task has a readable record too. The table isn't this task's record's: counted from the handoff.
+save(os.path.join(runs, "run-1", "Z", "review"), clean)
+write(os.path.join(runs, "run-1", "Z", "handoff.md"), """**Review: Light, 1 round.** Wording.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Claude Sonnet 5.5, high | 1 | – | – | 3 | – | – | – |
+
+*Record: /somewhere/long-horizon-orchestrator/run-9/Z/review.*
+""")
+# Q: a task that kept its record where gates outside a run keep theirs. Its handoff's table names
+# that record, which is read there: the handoff's copy isn't counted again.
+write(os.path.join(runs, "run-1", "Q", "handoff.md"), """**Review: Light, 1 round.** Wording.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Gemini 4 Hydrogen, high (trial) | 1 | – | 1 | 1 | – | – | – |
+
+*Record: /somewhere/agent-skills/review-gate/20261102-0900-notes-app.*
+""")
 # I: another table that starts with Reviewer comes first; the Review table after it is the one read.
 write(os.path.join(runs, "run-1", "I", "handoff.md"), """| Reviewer | Notes |
 |---|---|
@@ -461,7 +503,8 @@ save(os.path.join(root, "review-gate", "20261102-0900-notes-app"), own, reports=
 for task, day in (("B", (2026, 11, 12)), ("C", (2026, 10, 1)), ("H", (2026, 10, 20)), ("I", (2026, 11, 12)),
                   ("J", (2026, 11, 12)), ("M", (2026, 11, 12)), ("N", (2026, 11, 12)),
                   ("P", (2026, 11, 12)), ("R", (2026, 11, 12)), ("L", (2026, 11, 12)), ("S", (2026, 11, 12)),
-                  ("U", (2026, 11, 12)), ("W", (2026, 11, 12)), ("X", (2026, 11, 12)), ("Y", (2026, 11, 12))):
+                  ("U", (2026, 11, 12)), ("W", (2026, 11, 12)), ("X", (2026, 11, 12)), ("Y", (2026, 11, 12)),
+                  ("Z", (2026, 11, 12)), ("Q", (2026, 11, 12))):
     at = time.mktime(day + (12, 0, 0, 0, 0, -1))
     os.utime(os.path.join(runs, "run-1", task, "handoff.md"), (at, at))
 # M's record is older than its handoff, H's newer: the dates decide nothing. A's handoff has the lines
@@ -472,15 +515,15 @@ os.utime(os.path.join(runs, "run-1", "M", "review", "review.json"), (before_hand
 done = run("totals", "--json")
 assert done.returncode == 0, done.stderr
 total = json.loads(done.stdout)
-assert total["gates"] == 25 and total["from"] == {"review.json": 9, "handoff tables": 16}, total
-assert total["levels"] == {"deep": 6, "standard": 13, "light": 6}, total["levels"]
-assert total["results"] == {"passed": 7, "stopped": 1, "reported": 1}, total["results"]
-assert total["rounds"] == {"0": 1, "1": 17, "2": 5, "3": 2}, total["rounds"]
-# W's four nits, not its updated table's nine; X's one; Y's two; and the example's one.
-assert total["reviewers"]["Claude Sonnet 5.5"] == {"reviews": 5, "blockers": 1, "follow_ups": 1, "must_fix": 0,
-    "nits": 8, "pre_existing": 0, "rejected": 0, "unique": 1}, total["reviewers"]["Claude Sonnet 5.5"]
+assert total["gates"] == 27 and total["from"] == {"review.json": 10, "handoff tables": 17}, total
+assert total["levels"] == {"deep": 6, "standard": 14, "light": 7}, total["levels"]
+assert total["results"] == {"passed": 8, "stopped": 1, "reported": 1}, total["results"]
+assert total["rounds"] == {"0": 1, "1": 19, "2": 5, "3": 2}, total["rounds"]
+# W's four nits, not its updated table's nine; X's one; Y's two; Z's three; and the example's one.
+assert total["reviewers"]["Claude Sonnet 5.5"] == {"reviews": 6, "blockers": 1, "follow_ups": 1, "must_fix": 0,
+    "nits": 11, "pre_existing": 0, "rejected": 0, "unique": 1}, total["reviewers"]["Claude Sonnet 5.5"]
 terra = total["reviewers"]["GPT-6.1 Terra"]
-assert terra == {"reviews": 11, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
+assert terra == {"reviews": 12, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
                  "rejected": 1, "unique": 6}, terra
 assert total["reviewers"]["DeepSeek V4.1 Flash (free)"]["follow_ups"] == 1
 assert total["reviewers"]["DeepSeek V4.1 Flash (Go)"] == {"reviews": 1, "blockers": 0, "follow_ups": 0, "must_fix": 1,
@@ -516,7 +559,7 @@ assert (total["first"], total["last"]) == ("2026-10-01", "2026-11-20"), (total["
 # --since keeps the gates dated that day or later: a record by its date, a handoff by its last change.
 done = run("totals", "--since", "2026-11-10", "--json")
 later = json.loads(done.stdout)
-assert later["gates"] == 22 and later["from"] == {"review.json": 8, "handoff tables": 14}, later
+assert later["gates"] == 24 and later["from"] == {"review.json": 9, "handoff tables": 15}, later
 # A handoff that repeats a record is left out even when --since leaves the record out too.
 done = run("totals", "--since", "2026-11-15", "--json")
 latest = json.loads(done.stdout)
@@ -532,14 +575,14 @@ assert "Left out, 5 that couldn't be read" in done.stdout, done.stdout
 done = run("totals")
 assert done.returncode == 0 and done.stderr == "", done.stderr
 out = done.stdout
-assert "25 gates, " in out and "9 from review.json, 16 from handoff tables." in out, out
-assert "By level: light 6, standard 13, deep 6." in out, out
-assert "By result (review.json only): passed 7, stopped 1, reported 1." in out, out
-assert "By rounds: 0 1, 1 17, 2 5, 3 2." in out, out
+assert "27 gates, " in out and "10 from review.json, 17 from handoff tables." in out, out
+assert "By level: light 7, standard 14, deep 6." in out, out
+assert "By result (review.json only): passed 8, stopped 1, reported 1." in out, out
+assert "By rounds: 0 1, 1 19, 2 5, 3 2." in out, out
 assert "The reviewers' replies on blockers tagged lower: agrees 1, holds 1." in out, out
 row = next(line for line in out.splitlines() if line.startswith("GPT-6.1 Terra"))
-assert row.split()[2:] == ["11", "3", "2", "4", "4", "1", "1", "6"], row
-assert "4 of 6 findings differed" in out and "  blocker to rejected: 1" in out, out
+assert row.split()[2:] == ["12", "3", "2", "4", "4", "1", "1", "6"], row
+assert "4 of 6 findings differed, in these pairs of tags" in out and "  blocker to rejected: 1" in out, out
 assert "How the lowered ones were checked: run 1, read 1." in out, out
 assert "Left out, 5 that couldn't be read:" in out and "A second table" not in out, out
 
