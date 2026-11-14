@@ -9,7 +9,7 @@
 
 With more than about four tasks merging into one branch, every merge sends the others back to rebase, and a full check after each rebase makes them queue for build slots. So the common file carries from the start ([task-brief.md](task-brief.md#common-file-template)):
 
-- **A clean rebase needs only a re-check.** Once the full check has passed on a head of the task's, a later rebase that applies cleanly needs only a build, its focused tests and the tests of any file both sides changed; then it merges at once. A rebase with conflicts, or one that changes code the task calls, needs the full check again. Every later merge that night went through without another queue.
+- **A clean rebase needs only a re-check.** Once the full check has passed on a head of the task's, a later rebase that applies cleanly needs only a build, its focused tests and the tests of any file both sides changed; then it merges at once. A rebase with conflicts, or one that changes code the task calls, needs the full check again.
 - **Timing limits under load** fail at random, a different test each run: the task runs the failing ones once more alone, and merges with both outputs under "Couldn't check" when they pass or differ; one that fails alone, twice, is real.
 - **The full check runs once at the finish,** on the integration branch ([finish.md](finish.md), step 4), and what it finds goes to the task that owns it or to a follow-up task.
 

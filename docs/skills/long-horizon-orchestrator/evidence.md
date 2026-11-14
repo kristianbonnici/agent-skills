@@ -30,7 +30,7 @@ private records.
   cleared a chosen model and wrote first-run state. → *a snapshot at the start, compared and restored key by
   key on every wake.*
 - **OpenCode's free limit** (2026-10-29): it stopped both free models for the whole computer six minutes in,
-  and again 33 minutes after it came back; one task waited out both and was parked unfinished. → *the same
+  and again 33 minutes after a reset 2h 15m later; one task waited out both and was parked unfinished. → *the same
   models on the OpenCode Go plan as their backup, and whole tasks starting there.*
 - **Stopped reviews became the common case** (2026-11-03 and -06): the review gate's stop rule stopped 10
   of 22 tasks in one run and 8 of 9 deep-reviewed tasks in another, nearly all with every must-fix fixed and only
@@ -93,16 +93,16 @@ private records.
   on the screen. → *a snapshot of the owner's state compared at the finish, test builds kept apart from the
   owner's copy, and processes stopped only by a recorded process ID, never by name or pattern.*
 - **The display and sleep:** a display kept awake all day while every task rested made the Mac run warm
-  (2026-10-22); a run kept awake with `-i` alone had its display sleep after 10 idle minutes, and the screen
-  locked 10 minutes into the run although the lock setting read off, so the screen task blocked
-  (2026-10-23); the owner's daily automation put the Mac to sleep for 2.5 hours mid-run, a full check took
+  (2026-10-22); a run kept awake with `-i` alone had its display sleep after 10 idle minutes (`pmset -g`:
+  `displaysleep 10`), and the screen locked 10 minutes into the run although `sysadminctl -screenLock
+  status` said off, so the screen task blocked (2026-10-23); the owner's daily automation put the Mac to sleep for 2.5 hours mid-run, a full check took
   60 minutes instead of 25, and a heartbeat inside a dark wake said all was well (2026-11-07). → *`caffeinate
   -i -d` while screen work remains and `-i` once none does; scheduled sleeps listed in Prepare; run-watch's
   `slept` line.*
 - **Leftover processes** (2026-10-22 and 2026-11-07): a computer-use background service used 17–26% CPU for
   two days, keeping a screen capture going, long after the run that needed it; a task left `tail -F` on its
-  log and another a measurement monitor; a task paused on its usage limit left its test build running; the
-  owner found an 8 GB virtual machine idle 4.5 days after the run whose tasks had restarted it. → *a process
+  log and another a measurement monitor; a task paused on its usage limit left its test build running with a feature on that
+  would have acted on the owner's own selections; the owner found an 8 GB virtual machine idle 4.5 days after the run whose tasks had restarted it. → *a process
   snapshot at the start, leftovers stopped by process ID after each merge and at the finish, and run-watch's
   `vm` line.*
 - **Leases held or waited on too long** (2026-11-07 and -08): three tasks ended their turns waiting for the
@@ -111,18 +111,21 @@ private records.
   waited. → *a task finishes everything that needs no screen before it queues for it; `lease` refuses `--all`
   on the cpu.*
 - **Usage that outran its estimate:** three Codex tasks at high drained a fresh ChatGPT Plus 5-hour window
-  in about 20 minutes, twice, about 90% of a window per task-hour (2026-10-15); four multi-agent tasks
+  in about 20 minutes, twice, about 90% of a window per task-hour (2026-10-15); four Ultracode tasks
   started 10 to 97 sub-agent lanes each and took Claude's week from 81% to 97% in about 16 minutes, and one
   async Argon lane took Argon's week from 0 to 80 points against a budget of 30 (2026-11-03); a contract
   judged "a few percent" from a run that had used 9% of the week in 12 hours with four Opus tasks, and nine
-  Claude tasks at once, three on Fable, used 15 points in 77 minutes (2026-11-10); the same night an
-  orchestrator on Fable re-read its large context five to twelve times a wake and used about a point of the
-  Fable week every 15 to 20 minutes with no task on Fable. → *capacity as plan size times room left; a lane
+  Claude tasks at once, three on Fable, used 15 points in 77 minutes (2026-11-10), which is where the default of about one
+  point per Opus task-hour and two per Fable task-hour on a Max 20x plan comes from; the same night an
+  orchestrator on Fable re-read its large context five to twelve times a wake (`run-watch`, git, usage, a
+  ledger note, ten thread reads) and used about a point of the Fable week every 15 to 20 minutes with no
+  task on Fable. → *capacity as plan size times room left; a lane
   cap in a multi-agent task's brief and Argon only in `wait` mode; the run's Claude estimate from its own
   tasks, with a budget; an idle heartbeat in one call.*
 - **Many tasks merging into one branch** (2026-11-10): three tasks ran the full check on the same base while
-  five waited, one on its second, about 30 to 45 minutes and the matching usage each. → *the cheaper
-  re-check after a clean rebase, and the full check once at the finish.* Earlier (2026-10-15), two tasks
+  five waited, one on its second, about 30 to 45 minutes and the matching usage each. Once a clean rebase needed only
+  a re-check, every later merge that night went through without another queue. → *the cheaper re-check after
+  a clean rebase, and the full check once at the finish.* Earlier (2026-10-15), two tasks
   merged on a narrow, measured miss, each with a follow-up, and both checks were later made to pass as they
   stood. → *the narrow-miss exception.*
 - **Two runs at once** (2026-10-15): two runs shared one checkout, one Claude plan and the screen for about
@@ -134,8 +137,9 @@ private records.
   the tasks after the merge and the report, and before a report it never pushed; what kept tasks going was
   Claude Code waking a thread when its own background jobs and subagents finished, which it does with or
   without a goal. After the reports its checker rejected "Couldn't check" lists, kept tasks working for
-  about 3.8 hours in all, caused 19 extra reports, and pushed tasks into breaking their rules, a question to
-  the owner while they slept among them. Its useful catches were reports claiming checks for the final
+  about 3.8 hours in all, caused 19 extra reports, and pushed tasks into breaking their rules: a global
+  shortcut while the owner's app ran, a re-signed app copy with an injected library on the real screen, the
+  screen lease taken after a merge, and a question to the owner while they slept. Its useful catches were reports claiming checks for the final
   commit that had run on an earlier one, which the handoff's rule on commits covers. → *the brief is the
   task's only message.*
 - **Helpers:** one helper of each provider did a read-only collection job correctly, and an OpenCode helper
@@ -167,7 +171,7 @@ Rules that are the owner's choice, with when they made it:
 - **2026-10:** Codex's computer use is stronger, so its steps go there; from 2026-10-28 on GPT-6.1 Terra,
   which is cheaper than Sol and faster at computer use.
 - **2026-10-16:** fast helpers are used freely for research and retrieval, and only two of OpenCode's free
-  models are good enough for it.
+  models are good enough for it. Simple, fully specified steps go to them too (2026-10).
 - **2026-10-17:** bounded harder sub-tasks may go to Gemini 4 Argon, within a budget.
 - **2026-10-30:** a task on a free model moves along the free and low-cost pool always, and then to a paid
   model without asking ("the run is mostly on paid subscriptions anyway"). The owner's API account had no

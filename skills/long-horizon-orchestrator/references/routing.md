@@ -45,7 +45,7 @@ Medium is the normal level for a well-specified, bounded task; high is for deman
 
   Use only values the capability catalog lists for that model.
 - **Capacity still applies.** Higher reasoning uses more of a subscription, and the multi-agent modes use a 5-hour window much faster than a single agent, because every sub-agent draws on the same window. Start a multi-agent task early in a window, not when the window is already well used, and expect it to pause for a reset on a long run. Don't step down to a level below what the work needs to save capacity.
-- **A budget is set before the call, not after.** A wake can't stop a call already running, and a multi-agent task or an async lane can use most of a week within minutes. So a multi-agent task's brief names its lane cap, and Argon runs only in `wait` mode with a timeout of a few minutes ([Advanced helpers](#advanced-helpers-gemini-4-hydrogen-then-argon)).
+- **A budget is set before the call, not after.** A wake can't stop a call already running: four multi-agent tasks with 10 to 97 sub-agent lanes each have taken 16 points of Claude's week in about 16 minutes, and one async Argon lane 80 points of Argon's week against a budget of 30. So a multi-agent task's brief names its lane cap, and Argon runs only in `wait` mode with a timeout of a few minutes ([Advanced helpers](#advanced-helpers-gemini-4-hydrogen-then-argon)).
 
 ## Fable 5.2: the demanding tasks only
 
@@ -334,7 +334,7 @@ What they never take is the same as for the fast helpers: a whole task (unless t
 - **The agent that asked judges its answer.** When it falls short (wrong, shallow, or missing what was asked) and the run's Argon budget has room, the same sub-task goes to Argon; otherwise the agent does it itself.
 - **Record each one** in the handoff, and you in the ledger: the kind of sub-task, Hydrogen's outcome (held, fell short, or stopped by a limit before answering), and what finished it (Hydrogen, Argon, or the agent itself). A later study decides from those whether Argon is still worth its budget.
 
-**Argon when Hydrogen fell short or was limited.** Antigravity's `gemini-4-argon-high` has a small quota, so give it a budget. On the Pro plan, Argon has a weekly window of its own (`gemini_4_argon_weekly`) and no 5-hour one, and quota is used by token cost. A 22,000-token prompt alone uses about 0.9% of the week, so a research lane that reads many files can take a large share. So:
+**Argon when Hydrogen fell short or was limited.** Antigravity's `gemini-4-argon-high` has a small quota, so give it a budget. On the Pro plan, Argon has a weekly window of its own (`gemini_4_argon_weekly`) and no 5-hour one, and quota is used by token cost. A one-word reply to a 22,000-token prompt uses about 0.9% of the week, so a research lane that reads many files can take a large share. So:
 - **In the contract,** give the run an Argon budget in points of its weekly window. The default is at most half of what is left, so the owner keeps the rest of the week. Name the tasks that may use it.
 - **Use it only where Hydrogen's answer fell short, or Hydrogen was limited before it answered.** Give Argon the files, paths and question up front, so it doesn't spend its quota searching, and Hydrogen's answer, if any, with what was missing from it.
 - **Only in `wait` mode, with a timeout of a few minutes,** never as an async lane: a budget can't stop a call already running, and one async lane once took 80 points of a 30-point budget.
