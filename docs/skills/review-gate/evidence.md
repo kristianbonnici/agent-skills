@@ -244,9 +244,14 @@ how it was checked and why it was lowered; the Review lines printed from that fi
 records.*
 
 The first totals, over the handoff tables of 2026-11-01 to 2026-11-12 (`review-records totals` read 92 of
-the 93; one had the cell above): 87 reviews by Terra, 57 by Sonnet, 58 by DeepSeek V4.1 Flash (31 free, 27
-on Go), and by the trial reviewers 34 by Haiku, 24 by Luna and 16 by Muse. Rounds: 14 gates took one, 25
-two, 24 three, 13 four and 16 five.
+the 93 handoffs; one had the cell above): 93 gates, since one handoff held two. 88 reviews by Terra, 57 by
+Sonnet, 58 by DeepSeek V4.1 Flash (31 free, 27 on Go), and by the trial reviewers 35 by Haiku, 24 by Luna
+and 16 by Muse. Rounds: 14 gates took one, 26 two, 24 three, 13 four and 16 five.
+
+Six of the 93 handoffs held two Review tables, and only one or two of those were two gates: the others were
+an updated table, or one more look at a fix, with no verdict line of its own. → *a handoff's table is a gate
+when it has its own verdict line; a table printed from a record carries a "Record" line and is counted from
+that record.*
 
 Not recorded: what a gate missed. A later fix to code a gate passed is in git, and the record names the
 commits the gate reviewed, so a study can look for it without a rule that costs every gate attention.

@@ -94,8 +94,10 @@ the two lines under it, so nobody counts them by hand. `scripts/review-records t
 on the computer: gates by level, result and rounds, each reviewer's findings, and how often the author's tag
 differed from the reviewer's. For gates before 4.1.0 it reads the table in each task's handoff, which gives
 the counts but not the reviewers' own tags. The "Record" line is how it tells the two apart: a handoff's
-table with that line under it was printed from a record and is counted there, and one without it is a gate
-that left no record.
+table with that line under it, naming one of the task's records, is counted from that record, and one
+without it is a gate that left no record. If the named record is gone or can't be read, the handoff's table
+counts instead. A handoff table with no verdict line of its own (an updated table, one more look) adds to
+another gate and isn't counted as one.
 
 What a gate missed isn't recorded during a run. The record names the commits it reviewed, so a study can
 look in git for later fixes to the same code.
