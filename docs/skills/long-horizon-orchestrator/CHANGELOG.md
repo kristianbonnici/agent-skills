@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 5.4.0 (2026-11-14)
+
+- **A blocker a reviewer held on is recorded and reported** (owner, 2026-11-14). From review-gate 4.2.0, a task that rejects a finding its reviewer tagged a blocker, or tags it lower, asks that reviewer whether it agrees, and lists the ones the reviewer held on under "A reviewer held" in its handoff. The orchestrator records them in the ledger when the task merges and lists each under "Worth checking yourself" in the report, with the reviewer's case and the task's reason. They never hold back a merge, relaunch a task or start a follow-up task: the owner asked for them to be visible, not blocking, since a stop rule that counted every finding had stopped 8 of 9 tasks in one night ([review-gate's evidence](../review-gate/evidence.md#the-reviewers-reply-2026-11-14)).
+
 ## 5.3.1 (2026-11-14)
 
 - **The references carry no dated notes.** 72 dates (37 in `routing.md`, 24 in `machine.md`, 11 in four others) said when a run went wrong, when a figure was measured or when the owner decided something. `AGENTS.md` puts that in the docs: the skill states the rule, [evidence.md](evidence.md) says where it came from. Each rule stays, and so does each figure a rule depends on (about 90% of a small plan's window per heavy task-hour, what multi-agent tasks and an async lane took of a week, 0.75 Copilot units per 100,000 input tokens, about 0.9% of Argon's week for a 22,000-token prompt, a Hydrogen call's cost of the Gemini windows, the sampler's 30 seconds an hour); the stories and dates left. `routing.md` is 350 words shorter and `machine.md` 690. No rule changed. Files: routing.md, machine.md, host-t3.md, integration.md, task-brief.md, final-report.md.

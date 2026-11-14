@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 4.1.0
+  version: 4.2.0
 ---
 
 # Review Gate
@@ -71,6 +71,8 @@ You decide the tag; a reviewer's is a suggestion. Data loss, a security or priva
 
 Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a blocker or follow-up that only one reviewer raised and that you can't show with a test goes to the other paid reviewer for a yes or no with its reason, before you change code.
 
+**Ask the reviewer when you tag its blocker lower.** When you reject a finding a reviewer tagged a blocker, or give it a lower tag, ask that reviewer whether it agrees, with the question in [references/reviewer-brief.md](references/reviewer-brief.md#the-question-about-a-tag): the finding as it reported it, your tag and your reason. A free or trial reviewer's blocker goes to the round's paid reviewer instead (at Light, the cross reviewer, launched for this). Put the question in that reviewer's next round when it has one; otherwise launch it alone, with 10 minutes and no replacement. Record the answer: `agrees`, `holds` or `no answer`. Your tag stands whatever the answer: a reply never holds back the merge, counts in section 5, or starts a fix or a round. Change your tag only if the answer shows you a case you got wrong, as for any finding.
+
 ## 5. Re-review while it converges
 
 Re-review only when a fix changed logic, not for docs, tests or wording. Send the paid reviewers who found blockers or follow-ups the diff since their review and the list of findings already raised, and ask about the fix and what it touches: no earlier finding again, except one a fix didn't settle, reported as "not fixed". Free and trial reviewers, and Hydrogen at Light, don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
@@ -103,6 +105,8 @@ Then run `scripts/review-records table <folder>`: it checks the record and print
 
 *Tagged lower than the reviewer's blocker or follow-up: <n> (<n> rejected).*
 
+*Replies on the blockers tagged lower: <n> agreed, <n> held, <n> no answer.*
+
 *Skipped: <model>: <why: the limit error, or "Codex short">.*
 
 *Record: <the record folder's path>.*
@@ -112,10 +116,11 @@ Then run `scripts/review-records table <folder>`: it checks the record and print
 - A zero is `–`, and a blocker count above zero is bold.
 - "Unique defects" counts the blockers and follow-ups no other reviewer raised.
 - The "Tagged lower" line counts the findings a reviewer called a blocker or follow-up that you tagged lower or rejected. It is left out when there are none.
+- The "Replies" line counts what the reviewers answered about the blockers among them (section 4). It is left out when you asked none.
 - The skipped line names every model that was skipped or that a reviewer moved on from, separated by semicolons. It is left out when there are none.
 - The record line says where the record is. Keep it: a later count takes a table without it for a gate that has no record.
 
-Then list each blocker with its commit, each follow-up with its commit or, if open, the fix it needs, the open nits and pre-existing findings, and the rejected findings with their reasons.
+Then list each blocker with its commit, each follow-up with its commit or, if open, the fix it needs, the open nits and pre-existing findings, and the rejected findings with their reasons. Under its own heading, "A reviewer held", list each blocker you tagged lower whose reviewer held: what it says goes wrong and when, and your reason for your tag.
 
 ## When the user asks for a review
 

@@ -52,6 +52,10 @@ Otherwise, or when that look stops it: if the task names a concrete fix for each
 
 The review gate's follow-ups are real defects that need rare timing or input, or missing hardening, and they don't hold back a merge. A task lists its open ones with their fixes in its handoff (`<run directory>/<task ID>/handoff.md`); read them there once it merges (under "leave on branch", once it is `ready`) and record them in the ledger. Give them to one follow-up task within the contract (from the reserve, or a new task with the same scope) while the run has room; otherwise list them under "Not finished" in the report.
 
+## A reviewer that held on its blocker
+
+When a task rejects a finding its reviewer tagged a blocker, or gives it a lower tag, the review gate asks that reviewer whether it agrees and records the answer. The task's tag stands either way. A task lists the blockers its reviewer held on under "A reviewer held" in its handoff's Review section, each with the reviewer's case and the task's reason. They never hold back a merge, and they aren't a reason to relaunch the task, run its gate again or start a follow-up task. Once the task merges (under "leave on branch", once it is `ready`), record them in the ledger and list each under "Worth checking yourself" in the report.
+
 ## A task with no independent reviewer
 
 A task whose review gate found no reviewer of another family available (each one and its replacement limited) reports `ready` with "no reviewer available". Don't merge it, and don't do its gate yourself: the contract promised an independent review. On a later wake, once a reviewer's subscription has room (after its reset), send the task a follow-up to run the review gate again; its dependents wait meanwhile. If no reviewer has room before the finish, it stays `ready` and the report lists it.

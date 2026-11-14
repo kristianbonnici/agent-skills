@@ -13,7 +13,7 @@ Never inside the repository under review: the reports quote its code, and the re
 
 ## The reports
 
-Save each reviewer's report when it arrives, whole and unedited, as `round-<n>-<reviewer>.md` (`round-1-terra.md`, `round-2-terra.md`). A second opinion, or a look after a rebase, is `look-<n>-<reviewer>.md`. Save its final report only, not its commands or the files it read. A reviewer that was limited and reported nothing has no file: it goes under `skipped`.
+Save each reviewer's report when it arrives, whole and unedited, as `round-<n>-<reviewer>.md` (`round-1-terra.md`, `round-2-terra.md`). A second opinion, or a look after a rebase, is `look-<n>-<reviewer>.md`. Save its final report only, not its commands or the files it read. A reviewer that was limited and reported nothing has no file: it goes under `skipped`. A reviewer's reply about a blocker you tagged lower is `reply-<the finding's id>-<reviewer>.md`.
 
 ## review.json
 
@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "4.1.0",
+  "gate": "4.2.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -30,7 +30,8 @@ Add each finding as you settle it, and finish the file before you write the Revi
   "level": "deep",
   "result": "passed",
   "reviewers": [
-    {"name": "Codex GPT-6.1 Terra, high", "rounds": [1, 2], "reports": ["round-1-terra.md", "round-2-terra.md"]},
+    {"name": "Codex GPT-6.1 Terra, high", "rounds": [1, 2],
+     "reports": ["round-1-terra.md", "round-2-terra.md", "reply-2-terra.md", "reply-3-terra.md"]},
     {"name": "Claude Sonnet 5.5, high", "rounds": [1], "reports": ["round-1-sonnet.md"]},
     {"name": "GPT-6 Luna, high (trial)", "rounds": [1], "reports": ["round-1-luna.md"]}
   ],
@@ -44,10 +45,11 @@ Add each finding as you settle it, and finish the file before you write the Revi
      "checked": "test", "commit": "9c4e2aa", "title": "A crafted link opens a note without asking"},
     {"id": 2, "round": 1, "reviewer": "Codex GPT-6.1 Terra, high", "reviewer_tag": "blocker", "tag": "follow-up",
      "checked": "run", "title": "Two saves within a second keep the older text",
-     "why": "Needs two windows saving the same note in the same second"},
+     "why": "Needs two windows saving the same note in the same second", "reply": "holds"},
     {"id": 3, "round": 1, "reviewer": "GPT-6 Luna, high (trial)", "reviewer_tag": "blocker", "tag": "rejected",
      "checked": "read", "title": "The import reads files outside the chosen folder",
-     "why": "The path is resolved and checked against the folder two lines above"},
+     "why": "The path is resolved and checked against the folder two lines above",
+     "reply": "agrees", "reply_from": "Codex GPT-6.1 Terra, high"},
     {"id": 4, "round": 1, "reviewer": "Claude Sonnet 5.5, high", "reviewer_tag": "nit", "tag": "nit",
      "checked": "read", "commit": "b81d7e4", "title": "The error names the wrong setting"}
   ]
@@ -61,7 +63,7 @@ The gate:
 - `author`: the model that made the change, with its reasoning level.
 - `level`: `light`, `standard` or `deep`.
 - `result`: `passed` (no blocker left), `stopped` (the review didn't converge), `no reviewer` (none had room; `reviewers` and `findings` are then empty), or `reported` (the user asked for a review only, and you changed nothing).
-- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder.
+- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder, its replies about tags among them.
 - `skipped`: every model that was skipped or that a reviewer moved on from, and why.
 - `note`: optional, one line on what a reader of the record must know and no field holds. When no reviewer had room and you read the diff yourself in a fresh pass, say that here and what you found: your own pass isn't a review, so it has no reviewer and no findings.
 
@@ -74,6 +76,7 @@ Each finding:
 - `commit`: the commit that fixed it. Leave it out while the finding is open or needs no change. A finding that came back "not fixed" carries, on its later entry, the commit that settled it then.
 - `title`: the finding in a few words.
 - `why`: one line, needed when you rejected the finding or gave it a lower tag than the reviewer did (a blocker as a follow-up, a follow-up as a nit or pre-existing).
+- `reply`: needed when the reviewer's tag was `blocker` and yours is lower or `rejected`: what the reviewer answered when you asked (SKILL.md, section 4): `agrees`, `holds` or `no answer`. `reply_from`: the reviewer that answered, when it wasn't the one that raised the finding.
 
 ## The Review lines
 
@@ -89,6 +92,8 @@ Each finding:
 | GPT-6 Luna, high (trial) | 1 | – | – | – | – | 1 | – |
 
 *Tagged lower than the reviewer's blocker or follow-up: 2 (1 rejected).*
+
+*Replies on the blockers tagged lower: 1 agreed, 1 held, 0 no answer.*
 
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*
 

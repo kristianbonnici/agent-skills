@@ -8,26 +8,30 @@ Usage:
   review-records totals [--since <YYYY-MM-DD>] [--json]
 
 table: reads <record folder>/review.json and prints the Review section's first lines: the start of
-the verdict line, the table, the "Tagged lower" and "Skipped" lines when there is something to
-say, and a "Record" line with the folder's path. It first checks the record: every field and tag it knows, each finding's reviewer among the
-reviewers, each report file in the folder and not empty, a reason wherever the author's tag is
-lower than the reviewer's, and for a gate that passed a commit for every blocker, in the latest
-round that raised it. A record that fails prints what it lacks, one line each, and no table.
+the verdict line, the table, the "Tagged lower", "Replies" and "Skipped" lines when there is
+something to say, and a "Record" line with the folder's path. It first checks the record: every
+field and tag it knows, each finding's reviewer among the reviewers, each report file in the
+folder and not empty, a reason wherever the author's tag is lower than the reviewer's, from
+review-gate 4.2.0 the reviewer's reply wherever the author tagged its blocker lower, and for a gate
+that passed a commit for every blocker, in the latest round that raised it. A record that fails
+prints what it lacks, one line each, and no table.
 
 totals: reads every record under ${XDG_STATE_HOME:-~/.local/state}/agent-skills:
   - long-horizon-orchestrator/<run>/<task>/review/review.json (and review-2/, review-3/ ...);
   - review-gate/<gate>/review.json, the gates run outside an orchestrated run;
   - the Review tables in a task's handoff.md, which are all that gates before review-gate 4.1.0
-    left. A table is a gate when it has a verdict line of its own: the nearest above it, after
-    the table before it, or else the first below it, before the table after it. A table with
-    none adds to another gate (an updated table, one more look) and isn't counted, unless no
-    table in the handoff has one: then the first is the gate, its level unknown. A table with a
-    "Record" line under it that names one of the task's records is counted from that record, not
-    from the handoff; when that record is gone or can't be read, the handoff's table counts.
+    left. A table is a gate when it has a verdict line of its own. A verdict line belongs to the
+    Review table nearest to it, counted in lines, and to the one after it when the one before
+    is as near; a table keeps the nearest of its verdict lines. A table with none adds to
+    another gate (an updated table, one more look) and isn't counted, unless no table in the
+    handoff has one: then the first is the gate, its level unknown. A table with a "Record"
+    line under it that names one of this task's records (the record's folder, in this task's
+    folder) is counted from that record, not from the handoff; when that record is gone, can't
+    be read or is another task's, the handoff's table counts.
     Handoff tables give each reviewer's counts but not the reviewers' own tags, and a 2.x
     table's "Must-fix" is blockers and follow-ups together.
-It prints the gates by level, result and rounds, one line per reviewer, and how often the author's
-tag differed from the reviewer's. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra,
+It prints the gates by level, result and rounds, one line per reviewer, how often the author's
+tag differed from the reviewer's, and what the reviewers replied where their blocker was tagged lower. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra,
 high" and "GPT-6.1 Terra, high (fresh look)" are one reviewer. A record it can't read is listed
 and left out, never fatal. --since keeps gates dated that day or later (a record's "date"; a
 handoff's last change). --json prints the same totals as JSON.
@@ -48,6 +52,9 @@ RESULTS = ("passed", "stopped", "no reviewer", "reported")
 TAGS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
 REVIEWER_TAGS = ("blocker", "follow-up", "nit", "pre-existing", "none")
 CHECKED = ("test", "run", "read", "second opinion")
+REPLIES = ("agrees", "holds", "no answer")
+VERSION = re.compile(r"^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$")
+REPLY_SINCE = (4, 2, 0)     # the first version whose gates ask the reviewer about a blocker tagged lower
 # How much a tag holds back: a nit and a pre-existing finding are both listed, neither above the other.
 RANK = {"blocker": 3, "follow-up": 2, "nit": 1, "pre-existing": 1, "rejected": 0}
 COLUMNS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
@@ -80,6 +87,10 @@ def shape_problems(record):
     for key in ("gate", "repository", "base", "head", "author"):
         if not text(record.get(key)):
             problems.append(f'"{key}" is missing or empty')
+    version = VERSION.match(record["gate"].strip()) if text(record.get("gate")) else None
+    if text(record.get("gate")) and not version:
+        problems.append('"gate" isn\'t a version written like 4.2.0')
+    asks = bool(version) and tuple(int(part) for part in version.groups()) >= REPLY_SINCE
     if not (isinstance(record.get("date"), str) and DATE.match(record["date"])):
         problems.append('"date" isn\'t a day written as YYYY-MM-DD')
     if record.get("level") not in LEVELS:
@@ -172,6 +183,12 @@ def shape_problems(record):
         if (finding["tag"] == "rejected" or lowered(finding)) and not text(finding.get("why")):
             problems.append(f'{where}: "why" is missing, though your tag is lower than the reviewer\'s '
                             "or rejects the finding")
+        if "reply" in finding and finding["reply"] not in REPLIES:
+            problems.append(f'{where}: "reply" isn\'t one of {", ".join(REPLIES)}')
+        elif asks and finding["reviewer_tag"] == "blocker" and lowered(finding) and "reply" not in finding:
+            problems.append(f'{where}: "reply" is missing, though your tag is lower than the reviewer\'s blocker')
+        if "reply_from" in finding and finding["reply_from"] not in names:
+            problems.append(f'{where}: "reply_from" isn\'t one of the reviewers\' names')
     if record.get("result") == "passed":
         for finding_id in sorted(i for i, tag in tag_of.items() if tag == "blocker" and not latest[i][1]):
             problems.append(f'finding {finding_id} is a blocker with no "commit" in round {latest[finding_id][0]}, '
@@ -241,6 +258,18 @@ def lowered_defects(record):
     return len(ids), sum(1 for tag in ids.values() if tag == "rejected")
 
 
+def replies(record):
+    """What reviewers replied on blockers the author tagged lower: each finding's latest reply."""
+    latest = {}
+    for finding in record["findings"]:
+        if "reply" in finding and finding["round"] >= latest.get(finding["id"], (0, None))[0]:
+            latest[finding["id"]] = (finding["round"], finding["reply"])
+    said = {}
+    for _, reply in latest.values():
+        said[reply] = said.get(reply, 0) + 1
+    return said
+
+
 def cell(number, bold=False):
     if number == 0:
         return "–"
@@ -276,6 +305,11 @@ def table(folder):
     if changed:
         print()
         print(f"*Tagged lower than the reviewer's blocker or follow-up: {changed} ({rejected} rejected).*")
+    said = replies(record)
+    if said:
+        print()
+        print("*Replies on the blockers tagged lower: " + ", ".join(
+            f"{said.get(reply, 0)} {word}" for reply, word in zip(REPLIES, ("agreed", "held", "no answer"))) + ".*")
     skipped = record.get("skipped", [])
     if skipped:
         print()
@@ -349,21 +383,26 @@ def gate_from_record(folder):
         rows.append({"reviewer": reviewer_key(row["name"]), "blockers": row["blocker"],
                      "follow_ups": row["follow-up"], "must_fix": 0, "nits": row["nit"],
                      "pre_existing": row["pre-existing"], "rejected": row["rejected"], "unique": row["unique"]})
-    changes, how = {}, {}
-    seen = set()
+    # A finding that came back may carry another tag of its reviewer's: each pair of tags counts
+    # once for a finding and reviewer, and the finding counts once among those that differed.
+    changes, how, tagged, differed, pairs = {}, {}, set(), set(), set()
     for finding in record["findings"]:
         key = (finding["id"], finding["reviewer"])
-        if key in seen or finding["reviewer_tag"] == "none":
+        pair = key + (finding["reviewer_tag"], finding["tag"])
+        if finding["reviewer_tag"] == "none" or pair in pairs:
             continue
-        seen.add(key)
+        pairs.add(pair)
+        tagged.add(key)
         if finding["reviewer_tag"] != finding["tag"]:
+            differed.add(key)
             change = f"{finding['reviewer_tag']} to {finding['tag']}"
             changes[change] = changes.get(change, 0) + 1
             if lowered(finding):
                 how[finding["checked"]] = how.get(finding["checked"], 0) + 1
     return {"source": "record", "date": record["date"], "level": record["level"],
             "result": record["result"], "rounds": round_count(record), "rows": rows,
-            "tagged": len(seen), "changes": changes, "lowered_checked": how}
+            "tagged": len(tagged), "differed": len(differed), "changes": changes, "lowered_checked": how,
+            "replies": replies(record)}
 
 
 def number(cell_text):
@@ -373,10 +412,11 @@ def number(cell_text):
     return int(value) if NUMBER.match(value) else None
 
 
-def gates_from_handoff(path, recorded):
-    """The gates a handoff's Review tables stand for and no readable record holds (`recorded`: the
-    folder names of the task's readable records). A list of gates, and of strings saying why a
-    table can't be read. The script's opening lines say which table is a gate."""
+def gates_from_handoff(path, task, recorded):
+    """The gates a handoff's Review tables stand for and no readable record of the task holds
+    (`task`: the task's folder name; `recorded`: the folder names of its readable records). A list
+    of gates, and of strings saying why a table can't be read. The script's opening lines say
+    which table is a gate."""
     try:
         if os.path.getsize(path) > MAX_BYTES:
             return ["handoff.md is over 10 MB"]
@@ -387,7 +427,7 @@ def gates_from_handoff(path, recorded):
         return [f"handoff.md can't be read ({error.__class__.__name__})"]
     names = {"blockers": "blockers", "follow-ups": "follow_ups", "must-fix": "must_fix", "nits": "nits",
              "pre-existing": "pre_existing", "rejected": "rejected"}
-    tables = []         # every table that starts with Reviewer: where it starts and ends, and its columns
+    others, review = 0, []      # tables that start with Reviewer: the other ones, and the Review tables
     for start in (i for i, line in enumerate(lines) if TABLE_START.match(line)):
         header = [c.strip().lower() for c in lines[start].strip().strip("|").split("|")]
         columns = {}
@@ -399,49 +439,58 @@ def gates_from_handoff(path, recorded):
             elif title.startswith("rounds"):
                 columns[place] = "rounds"
         if "rounds" not in columns.values() or not ({"blockers", "must_fix"} & set(columns.values())):
-            columns = None      # not a Review table
+            others += 1
+            continue
         end = start + 1
         while end < len(lines) and lines[end].startswith("|"):
             end += 1
-        tables.append((start, end, header, columns))
-    review = [place for place, found in enumerate(tables) if found[3] is not None]
+        review.append((start, end, header, columns))
     if not review:
-        return ["its tables that start with Reviewer have columns this script doesn't know"] if tables else []
+        return ["its tables that start with Reviewer have columns this script doesn't know"] if others else []
 
-    # Each Review table's own verdict line: first the nearest above each, then, for those still
-    # without one, the first below that no table has taken.
-    verdicts, taken = {}, set()
-    for place in review:
-        above = tables[place - 1][1] if place else 0
-        at = next((i for i in range(tables[place][0] - 1, above - 1, -1) if VERDICT.match(lines[i])), None)
-        if at is not None:
-            verdicts[place] = VERDICT.match(lines[at])
-            taken.add(at)
-    for place in review:
-        below = tables[place + 1][0] if place + 1 < len(tables) else len(lines)
-        at = next((i for i in range(tables[place][1], below) if i not in taken and VERDICT.match(lines[i])), None)
-        if place not in verdicts and at is not None:
-            verdicts[place] = VERDICT.match(lines[at])
-            taken.add(at)
+    # Each verdict line goes to the Review table nearest to it, the one after it when the one before
+    # is as near; a table keeps the nearest of the verdict lines that went to it.
+    verdicts = {}
+    for at, line in enumerate(lines):
+        found = VERDICT.match(line)
+        if not found:
+            continue
+        before = max((place for place, table in enumerate(review) if table[1] <= at), default=None)
+        after = min((place for place, table in enumerate(review) if table[0] > at), default=None)
+        to_before = None if before is None else at - review[before][1] + 1
+        to_after = None if after is None else review[after][0] - at
+        if to_after is not None and (to_before is None or to_after <= to_before):
+            place, distance = after, to_after
+        elif to_before is not None:
+            place, distance = before, to_before
+        else:
+            continue
+        if place not in verdicts or distance < verdicts[place][0]:
+            verdicts[place] = (distance, found)
 
     gates = []
-    for place in [p for p in review if p in verdicts] or review[:1]:
-        start, end, header, columns = tables[place]
-        if record_named(lines, end) not in recorded:
-            gates.append(table_gate(lines, start, end, header, columns, changed, verdicts.get(place)))
+    for place in [p for p in range(len(review)) if p in verdicts] or [0]:
+        start, end, header, columns = review[place]
+        folder, name = record_named(lines, end)
+        if name in recorded and folder in ("", task):
+            continue        # printed from one of this task's records: counted there
+        verdict = verdicts[place][1] if place in verdicts else None
+        gates.append(table_gate(lines, start, end, header, columns, changed, verdict))
     return gates
 
 
 def record_named(lines, end):
-    """The folder name in the "Record" line that follows the table ending at `end`, before anything
-    else starts; None when there is no such line."""
+    """The "Record" line that follows the table ending at `end`, before anything else starts: the
+    names of the folder its path ends in and of the folder above that ("" when the path has none).
+    (None, None) when there is no such line."""
     for line in lines[end:end + 15]:
         if TABLE_START.match(line) or line.startswith("#") or VERDICT.match(line):
-            return None
+            break
         found = RECORD_LINE.match(line)
         if found:
-            return os.path.basename(found.group(1).rstrip("/"))
-    return None
+            named = found.group(1).rstrip("/")
+            return os.path.basename(os.path.dirname(named)), os.path.basename(named)
+    return None, None
 
 
 def table_gate(lines, start, end, header, columns, changed, verdict):
@@ -470,7 +519,7 @@ def table_gate(lines, start, end, header, columns, changed, verdict):
     return {"source": "handoff", "date": datetime.date.fromtimestamp(changed).isoformat(),
             "level": verdict.group(1).lower() if verdict else "unknown", "result": "unknown",
             "rounds": rounds if stated is None else stated, "rows": rows,
-            "tagged": 0, "changes": {}, "lowered_checked": {}}
+            "tagged": 0, "differed": 0, "changes": {}, "lowered_checked": {}, "replies": {}}
 
 
 def add(counter, key, amount=1):
@@ -487,7 +536,7 @@ def totals(since, as_json):
             if not isinstance(found[0], str):
                 readable.setdefault(task, set()).add(os.path.basename(path))
         else:
-            found = gates_from_handoff(path, readable.get(task, set()))
+            found = gates_from_handoff(path, os.path.basename(task), readable.get(task, set()))
         for gate in found:
             if isinstance(gate, str):
                 unread.append({"path": path, "why": gate})
@@ -500,7 +549,8 @@ def totals(since, as_json):
               "first": min((g["date"] for g in gates), default=None),
               "last": max((g["date"] for g in gates), default=None),
               "levels": {}, "results": {}, "rounds": {}, "reviewers": {},
-              "tagged_by_reviewer": 0, "changed_tags": {}, "lowered_checked": {}, "unread": unread}
+              "tagged_by_reviewer": 0, "differed": 0, "changed_tags": {}, "lowered_checked": {}, "replies": {},
+              "unread": unread}
     fields = ("blockers", "follow_ups", "must_fix", "nits", "pre_existing", "rejected", "unique")
     for gate in gates:
         add(result["levels"], gate["level"])
@@ -508,6 +558,9 @@ def totals(since, as_json):
         if gate["source"] == "record":
             add(result["results"], gate["result"])
         result["tagged_by_reviewer"] += gate["tagged"]
+        result["differed"] += gate["differed"]
+        for reply, amount in gate["replies"].items():
+            add(result["replies"], reply, amount)
         for change, amount in gate["changes"].items():
             add(result["changed_tags"], change, amount)
         for how, amount in gate["lowered_checked"].items():
@@ -554,13 +607,14 @@ def totals(since, as_json):
             print("Must-fix: blockers and follow-ups together, from tables before review-gate 3.0.0.")
         print()
         if result["tagged_by_reviewer"]:
-            differed = sum(result["changed_tags"].values())
-            print(f"The author's tag against the reviewer's (review.json only): {differed} of "
+            print(f"The author's tag against the reviewer's (review.json only): {result['differed']} of "
                   f"{result['tagged_by_reviewer']} findings differed.")
             for change in sorted(result["changed_tags"], key=lambda c: (-result["changed_tags"][c], c)):
                 print(f"  {change}: {result['changed_tags'][change]}")
             if result["lowered_checked"]:
                 print(f"  How the lowered ones were checked: {listed(result['lowered_checked'], CHECKED)}.")
+            if result["replies"]:
+                print(f"  The reviewers' replies on blockers tagged lower: {listed(result['replies'], REPLIES)}.")
         else:
             print("No record here has the reviewers' own tags yet (review.json, from review-gate 4.1.0).")
     if unread:

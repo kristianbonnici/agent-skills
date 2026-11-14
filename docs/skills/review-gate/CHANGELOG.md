@@ -1,5 +1,14 @@
 # review-gate changelog
 
+## 4.2.0 (2026-11-14)
+
+- **A blocker the author tags lower goes back to its reviewer** (owner, 2026-11-14: "even if they don't agree, let's not block it, but let's make it visible"). When the author rejects a finding a reviewer tagged a blocker, or gives it a lower tag, it asks that reviewer whether it agrees, with the finding as reported and its own reason; a free or trial reviewer's goes to the round's paid reviewer. The question rides in that reviewer's next round, or launches alone with 10 minutes and no replacement. The answer is recorded (`reply`: `agrees`, `holds` or `no answer`), the Review section gets a "Replies" line and lists each blocker a reviewer held on with both sides, and the author's tag stands: a reply never holds back the merge, counts toward the stop rule or starts a fix or a round. Why not blocking, and what it is meant to show: [evidence.md](evidence.md#the-reviewers-reply-2026-11-14).
+- **`review-records` checks and counts the replies:** from 4.2.0 a record needs a `reply` wherever the author's tag is lower than the reviewer's blocker, `table` prints the "Replies" line, and `totals` adds the replies up.
+- **4.1.0's four open follow-ups, in `totals`:**
+  - a verdict line belongs to the Review table nearest to it (the one after it when the one before is as near), so an updated table no longer takes a verdict that sits under the table above it, and a "Reviewer" table that isn't a Review table no longer cuts a verdict off from its table;
+  - a "Record" line counts as this task's record only when it names a record folder in this task's folder, so one naming another task's record no longer hides its table;
+  - every entry of a finding has its two tags compared, once per reviewer and pair of tags, so a tag that differed only when the finding came back is counted.
+
 ## 4.1.0 (2026-11-14)
 
 - **Every gate leaves a record folder** (owner, 2026-11-14): each reviewer's report as it arrived, and `review.json` with one entry per finding per reviewer who raised it, holding the reviewer's tag beside the author's, how the author checked it, the commit that fixed it, and a line of why wherever the author rejected it or tagged it lower than the reviewer did. Until now the record was the author's account alone: the table counted findings by the author's tags, and a reviewer's own report survived in about 28 of 93 task folders ([evidence.md](evidence.md#the-record-2026-11-14)). In an orchestrated run the folder is the task's `review/`, which pruning keeps; otherwise it is under `~/.local/state/agent-skills/review-gate/`, so a gate run outside an orchestrated run leaves a record too, where it left none. The gate makes the folder with plain `mkdir` and takes the next number when the name exists, so two gates never write into one folder.

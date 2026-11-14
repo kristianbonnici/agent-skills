@@ -256,6 +256,52 @@ that record.*
 Not recorded: what a gate missed. A later fix to code a gate passed is in git, and the record names the
 commits the gate reviewed, so a study can look for it without a rule that costs every gate attention.
 
+## The reviewer's reply (2026-11-14)
+
+The owner's decision (2026-11-14): when the author tags a reviewer's blocker lower, give it back to the
+reviewer and see whether it agrees, but "even if they don't agree, let's not block it, but let's make it
+visible", to observe what happens.
+
+- **Why ask at all:** the author sorts the findings about its own change, and only its blockers hold back a
+  merge. Anthropic (the post above) has a separate group of agents vote on each finding before it is posted.
+  Before 4.1.0 the record couldn't show how often an author tagged a reviewer's blocker lower. In 4.1.0's own
+  gate it was 1 of 16 findings: the reviewer tagged a corner case in reading older handoffs a blocker, the
+  author a follow-up, and nothing asked the reviewer whether the author's reason held.
+- **Why it never blocks:** reviewers tag high. In the five reviews above, Hydrogen tagged some follow-ups as
+  blockers, and a reviewer asked about its own finding has a reason to hold. When every found defect counted
+  toward the stop rule, one night's run stopped 8 of 9 tasks (above). → *the author's tag stands; a reply
+  is recorded and reported, and starts no fix or round.*
+- **What it should show later:** how often a reviewer holds, and whether the findings it held on were fixed
+  afterwards. The record keeps both tags, the author's reason, the reply and the commits the gate reviewed,
+  so a study can look in git for a later fix. A count of "held" replies alone will overstate real problems.
+
+## The reviewers side by side (2026-11-14)
+
+`review-records totals` over 94 gates of 2026-11-01 to 2026-11-14 (93 from handoff tables, 1 record), with
+free and Go tiers of a model together. "Defects" are blockers and follow-ups, and must-fixes from tables
+before 3.0.0; "unique" are the defects no other reviewer of that gate raised.
+
+| Reviewer | Reviews | Defects per review | Unique per review | Blockers | Rejected, of all its findings |
+|---|---|---|---|---|---|
+| GPT-6.1 Terra | 89 | 6.0 | 4.4 | 62 | 3% |
+| Claude Sonnet 5.5 | 58 | 4.2 | 2.4 | 18 | 3% |
+| DeepSeek V4.1 Flash (free and Go) | 59 | 1.7 | 0.8 | 4 | 8% |
+| Claude Haiku 5.5 (trial) | 35 | 1.9 | 0.8 | 3 | 14% |
+| GPT-6 Luna (trial) | 24 | 1.0 | 0.2 | 0 | 9% |
+| Muse Spark 1.3 Contributor (trial) | 16 | 2.1 | 0.9 | 0 | 11% |
+
+- The paid reviewers aren't comparable with the rest on these counts: they review every round, the others
+  round 1 only and with 12 minutes, and the tags are the author's. Blockers have been counted apart only
+  since 3.0.0.
+- Among the cheap reviewers, Haiku and Muse found about as many defects per review as the flash model that
+  already reviews, and Luna about half as many, with few that nobody else found. Haiku had the largest share
+  of findings rejected.
+- Haiku and Luna are past the 20 reviews the trial asks for; Muse is at 16 and Hydrogen at 1, besides its
+  five reviews above.
+
+→ *no rule changes on these counts alone: the trial's study is due for Haiku and Luna, and it should read
+what each found, from the reports the record now keeps, not only how many.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:

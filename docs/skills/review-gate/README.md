@@ -20,6 +20,8 @@ flowchart TD
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
   sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
   second --> sort
+  sort -->|"the author rejects a reviewer's blocker,<br/>or tags it lower"| reply["That reviewer:<br/>agree or hold?"]
+  reply -->|"recorded; the author's tag stands"| sort
   sort -->|a fix changed logic| rereview["Re-review the fix's diff only,<br/>paid reviewers, no repeated findings"]
   rebase["Rebase: a conflict resolution<br/>that changed logic"] --> rereview
   rereview -->|"no fewer blockers two rounds in a row,<br/>the approach in dispute, or a blocker in round 5"| stop([Stop: report not converging,<br/>don't merge])
@@ -58,6 +60,23 @@ flowchart TD
   them with Terra and Sonnet: blockers and follow-ups found, those nobody else found, and findings rejected.
   One that holds up could take Terra's or Sonnet's place at Light, or stand in when Codex is short.
 
+## When the author tags a blocker lower
+
+The author decides each finding's tag, and only the author's blockers hold back a merge. That keeps a run
+moving, but it leaves the author judging findings about its own change. So when the author rejects a finding
+its reviewer tagged a blocker, or gives it a lower tag, the gate gives it back to that reviewer with the
+author's reason and asks: agree or hold? (A free or trial reviewer's goes to the round's paid reviewer.)
+
+- **It never blocks.** The author's tag stands whatever the answer. A reply doesn't hold back the merge,
+  count toward the stop rule or start a fix or another round, and a reviewer that doesn't answer in ten
+  minutes is recorded as "no answer".
+- **It is visible.** The reply goes in the record, the Review section counts the replies and lists each
+  blocker a reviewer held on with both sides, and the orchestrator's report puts those under "Worth checking
+  yourself".
+- **Why it is only recorded:** reviewers tag high, and a reviewer asked about its own finding will often
+  hold. The point is to see how often an author's reason doesn't convince the reviewer, and whether those
+  findings later turn out to matter ([evidence.md](evidence.md#the-reviewers-reply-2026-11-14)).
+
 ## The record
 
 Every gate ends with a Review section that starts with lines like these, printed from the gate's record, which later studies count:
@@ -72,6 +91,8 @@ Every gate ends with a Review section that starts with lines like these, printed
 
 *Tagged lower than the reviewer's blocker or follow-up: 1 (1 rejected).*
 
+*Replies on the blockers tagged lower: 1 agreed, 0 held, 0 no answer.*
+
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*
 
 *Record: ~/.local/state/agent-skills/long-horizon-orchestrator/run/task-B/review.*
@@ -82,8 +103,9 @@ reviewers said ([evidence.md](evidence.md#the-record-2026-11-14)):
 - **Each reviewer's report,** saved whole when it arrives.
 - **`review.json`:** the level, the result, the commits reviewed, and one entry per finding per reviewer who
   raised it: the reviewer's tag, the author's tag, how the author checked it (a test, a run, reading the code,
-  a second opinion), the commit that fixed it, and a line of why wherever the author rejected it or tagged it
-  lower than the reviewer did.
+  a second opinion), the commit that fixed it, a line of why wherever the author rejected it or tagged it
+  lower than the reviewer did, and, where that finding was the reviewer's blocker, what the reviewer answered
+  when asked.
 - **Where:** a task's `review/` folder in an orchestrated run, which the orchestrator's pruning keeps;
   otherwise `~/.local/state/agent-skills/review-gate/`, so a gate run by hand leaves a record too. Never in
   the repository under review. The gate makes the folder with plain `mkdir` and takes the next name when
