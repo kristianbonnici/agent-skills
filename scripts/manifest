@@ -93,6 +93,12 @@ $table_dirs
 EOF
 
 awk -F '\t' -v what="$what" '
+# Is there a folder at path? Quoted for sh, so any path is safe.
+function is_dir(path,    quoted) {
+  quoted = path
+  gsub(/'"'"'/, "'"'"'\\'"'"''"'"'", quoted)
+  return system("test -d '"'"'" quoted "'"'"'") == 0
+}
 function here(    parts, count) {
   count = split(FILENAME, parts, "/")
   return parts[count - 2] "/" parts[count - 1] "/" parts[count] ":" FNR
@@ -168,7 +174,9 @@ table == "skills" {
   }
   # Skills of the owner are in skills/, pinned copies of skills by others in vendor/, either one
   # in a group folder. A host sees a skill by its own name, so two groups cannot both have one.
-  source = root "/" ($1 == "vendor" ? "vendor" : "skills") "/" $2
+  # A retired pinned copy whose folder is still in vendor/ (parked, not removed) was linked from
+  # there, so its links are looked for there.
+  source = root "/" ($1 == "vendor" || ($1 == "retired" && is_dir(root "/vendor/" $2)) ? "vendor" : "skills") "/" $2
   name = $2
   sub(/^.*\//, "", name)
   pieces = split($3, named, / +/)

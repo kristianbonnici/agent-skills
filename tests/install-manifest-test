@@ -256,6 +256,10 @@ links_of --dir "$work/groups" >"$work/groups.out"
 grep -q "^alpha	link	vendor/someone-tools/four	~/.alpha/skills/four$" "$work/groups.out"
 grep -q "^beta	adapter	skills/mine/five	~/.beta/skills/five$" "$work/groups.out"
 grep -q "^gamma	retired	skills/someone-tools/old	~/.gamma/skills/old$" "$work/groups.out"
+# A retired pinned copy still in vendor/ (parked) is looked for where it was linked from.
+mkdir -p "$work/vendor/someone-tools/parked"
+printf 'retired\tsomeone-tools/parked\tgamma\n' >>"$work/groups/skills.tsv"
+links_of --dir "$work/groups" | grep -q "^gamma	retired	vendor/someone-tools/parked	~/.gamma/skills/parked$"
 "$manifest" skills --dir "$work/groups" | grep -q "^four	Alpha$"
 printf 'vendor\tother-tools/four\talpha\n' >>"$work/groups/skills.tsv"
 "$manifest" links --dir "$work/groups" >/dev/null 2>"$work/groups.err" && exit 1
