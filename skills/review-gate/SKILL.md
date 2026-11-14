@@ -104,6 +104,8 @@ Then run `scripts/review-records table <folder>`: it checks the record and print
 *Tagged lower than the reviewer's blocker or follow-up: <n> (<n> rejected).*
 
 *Skipped: <model>: <why: the limit error, or "Codex short">.*
+
+*Record: <the record folder's path>.*
 ```
 
 - Name each model in plain words, with its reasoning level: `Codex GPT-6.1 Terra, high`. Mark OpenCode's with `(free)` or `(Go)`, so the two tiers stay apart, and a trial reviewer, and Hydrogen at Light, with `(trial)`. The table takes the names from `review.json`.
@@ -111,6 +113,7 @@ Then run `scripts/review-records table <folder>`: it checks the record and print
 - "Unique defects" counts the blockers and follow-ups no other reviewer raised.
 - The "Tagged lower" line counts the findings a reviewer called a blocker or follow-up that you tagged lower or rejected. It is left out when there are none.
 - The skipped line names every model that was skipped or that a reviewer moved on from, separated by semicolons. It is left out when there are none.
+- The record line says where the record is. Keep it: a later count takes a table without it for a gate that has no record.
 
 Then list each blocker with its commit, each follow-up with its commit or, if open, the fix it needs, the open nits and pre-existing findings, and the rejected findings with their reasons.
 

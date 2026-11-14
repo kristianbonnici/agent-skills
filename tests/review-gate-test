@@ -44,7 +44,11 @@ assert example["gate"] == version, (example["gate"], version)
 good = save(os.path.join(work, "good"), example)
 done = run("table", good)
 assert done.returncode == 0 and done.stderr == "", (done.returncode, done.stderr)
-assert done.stdout.rstrip("\n") == shown, done.stdout
+printed = done.stdout.rstrip("\n").splitlines()
+# The last line says where the record is, so it differs from the document's by the folder alone.
+assert printed[:-1] == shown.splitlines()[:-1], done.stdout
+assert printed[-1] == f"*Record: {os.path.abspath(good)}.*" and printed[-2] == "", printed[-2:]
+assert shown.splitlines()[-1].startswith("*Record: /") and shown.splitlines()[-1].endswith(".*"), shown
 
 # SKILL.md's format has the same header and the same two lines after the table.
 skill_text = open(os.path.join(skill, "SKILL.md"), encoding="utf-8").read()
@@ -52,6 +56,7 @@ for line in shown.splitlines()[2:4]:
     assert line in skill_text, line
 assert "*Tagged lower than the reviewer's blocker or follow-up: <n> (<n> rejected).*" in skill_text
 assert "*Skipped: <model>: <why" in skill_text
+assert "*Record: <the record folder's path>.*" in skill_text
 
 # One round, nothing found, nobody skipped: a singular round, dashes, and no lines after the table.
 clean = copy.deepcopy(example)
@@ -60,7 +65,8 @@ clean["findings"], clean["skipped"], clean["level"] = [], [], "standard"
 done = run("table", save(os.path.join(work, "clean"), clean))
 assert done.returncode == 0, done.stderr
 lines = done.stdout.rstrip("\n").splitlines()
-assert lines[0] == "**Review: Standard, 1 round.**" and len(lines) == 5, lines
+assert lines[0] == "**Review: Standard, 1 round.**" and len(lines) == 7, lines
+assert lines[5] == "" and lines[6].startswith("*Record: ") and lines[6].endswith("/clean.*"), lines
 assert lines[4] == "| Codex GPT-6.1 Terra, high | 1 | – | – | – | – | – | – |", lines[4]
 
 # A look outside the rounds is named in the Rounds cell and doesn't count as a round; a finding that
@@ -242,14 +248,16 @@ write(os.path.join(runs, "run-1", "F", "handoff.md"), """| Reviewer | Rounds | B
 | Codex GPT-6.1 Terra, high | 1 | 1 (2 by my tag) | – | – | – | – | – |
 """)
 write(os.path.join(runs, "run-1", "G", "handoff.md"), "| Reviewer | Verdict |\n|---|---|\n| Terra | fine |\n")
-# H and M: a handoff whose table isn't a record's is another gate, counted too, whether it was last
-# changed before the task's record (H) or after it (M).
+# H, M and N: a handoff's table with no "Record" line under it wasn't printed from a record, so it is
+# another gate, counted too: whether the handoff was last changed before the task's record (H) or
+# after it (M), and even when its reviewers and counts are the same as the record's (N).
 save(os.path.join(runs, "run-1", "H", "review"), clean)
-write(os.path.join(runs, "run-1", "H", "handoff.md"), """**Review: Light, 1 round.** Wording only.
-
-| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+# Its verdict line is under its table, as one older handoff has it: still read.
+write(os.path.join(runs, "run-1", "H", "handoff.md"), """| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
 |---|---|---|---|---|---|---|---|
 | GLM-5.3 Flash (free), high | 1 | – | – | 1 | – | – | – |
+
+**Review: Light, 1 round.** Wording only.
 """)
 save(os.path.join(runs, "run-1", "M", "review"), clean)
 write(os.path.join(runs, "run-1", "M", "handoff.md"), """**Review: Standard, 2 rounds.** Ordinary code.
@@ -257,6 +265,45 @@ write(os.path.join(runs, "run-1", "M", "handoff.md"), """**Review: Standard, 2 r
 | Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
 |---|---|---|---|---|---|---|---|
 | Claude Sonnet 5.5, high | 1, 2 | – | 1 | – | – | – | 1 |
+""")
+save(os.path.join(runs, "run-1", "N", "review"), clean)
+write(os.path.join(runs, "run-1", "N", "handoff.md"), """**Review: Standard, 1 round.** Ordinary code.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Codex GPT-6.1 Terra, high | 1 | – | – | – | – | – | – |
+""")
+# P: an earlier gate's table kept above a later one's. The later one has its "Record" line and is
+# counted from its record; the earlier one is counted from the handoff, with the verdict above it.
+save(os.path.join(runs, "run-1", "P", "review"), clean)
+write(os.path.join(runs, "run-1", "P", "handoff.md"), """# Milestone 1
+
+**Review: Deep, 3 rounds.** It reads a socket.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Claude Opus 5.5, high | 1, 2, 3 | **1** | – | – | – | – | 1 |
+
+# Milestone 2
+
+**Review: Standard, 1 round.** Ordinary code.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Codex GPT-6.1 Terra, high | 1 | – | – | – | – | – | – |
+
+*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*
+
+*Record: /somewhere/run-1/P/review.*
+""")
+# R: a table with its "Record" line but no record beside it (pruned, or moved) isn't counted twice or at all.
+write(os.path.join(runs, "run-1", "R", "handoff.md"), """**Review: Light, 1 round.** Wording.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Gemini 4 Hydrogen, high (trial) | 1 | – | – | 5 | – | – | – |
+
+*Record: /somewhere/run-1/R/review.*
 """)
 # I: another table that starts with Reviewer comes first; the Review table after it is the one read.
 write(os.path.join(runs, "run-1", "I", "handoff.md"), """| Reviewer | Notes |
@@ -305,23 +352,24 @@ own["findings"] = [{"id": 1, "round": 1, "reviewer": "Gemini 4 Hydrogen, high (t
 save(os.path.join(root, "review-gate", "20261102-0900-notes-app"), own, reports=False)
 # A handoff's date is its last change: fixed days here, so the check reads the same in any year.
 for task, day in (("B", (2026, 11, 12)), ("C", (2026, 10, 1)), ("H", (2026, 10, 20)), ("I", (2026, 11, 12)),
-                  ("J", (2026, 11, 12)), ("M", (2026, 11, 12))):
+                  ("J", (2026, 11, 12)), ("M", (2026, 11, 12)), ("N", (2026, 11, 12)),
+                  ("P", (2026, 11, 12)), ("R", (2026, 11, 12))):
     at = time.mktime(day + (12, 0, 0, 0, 0, -1))
     os.utime(os.path.join(runs, "run-1", task, "handoff.md"), (at, at))
-# M's record is older than its handoff, H's newer: the dates decide nothing. A's handoff has the table
-# of A's first record: it is that gate again and isn't counted, though its dates say nothing either way.
+# M's record is older than its handoff, H's newer: the dates decide nothing. A's handoff has the lines
+# printed from A's first record, with their "Record" line: it is that gate again and isn't counted.
 before_handoff = time.mktime((2026, 10, 1, 12, 0, 0, 0, 0, -1))
 os.utime(os.path.join(runs, "run-1", "M", "review", "review.json"), (before_handoff, before_handoff))
 
 done = run("totals", "--json")
 assert done.returncode == 0, done.stderr
 total = json.loads(done.stdout)
-assert total["gates"] == 11 and total["from"] == {"review.json": 5, "handoff tables": 6}, total
-assert total["levels"] == {"deep": 3, "standard": 6, "light": 2}, total["levels"]
-assert total["results"] == {"passed": 3, "stopped": 1, "reported": 1}, total["results"]
-assert total["rounds"] == {"0": 1, "1": 6, "2": 3, "3": 1}, total["rounds"]
+assert total["gates"] == 15 and total["from"] == {"review.json": 7, "handoff tables": 8}, total
+assert total["levels"] == {"deep": 4, "standard": 9, "light": 2}, total["levels"]
+assert total["results"] == {"passed": 5, "stopped": 1, "reported": 1}, total["results"]
+assert total["rounds"] == {"0": 1, "1": 9, "2": 3, "3": 2}, total["rounds"]
 terra = total["reviewers"]["GPT-6.1 Terra"]
-assert terra == {"reviews": 6, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
+assert terra == {"reviews": 9, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
                  "rejected": 1, "unique": 6}, terra
 assert total["reviewers"]["DeepSeek V4.1 Flash (free)"]["follow_ups"] == 1
 assert total["reviewers"]["DeepSeek V4.1 Flash (Go)"] == {"reviews": 1, "blockers": 0, "follow_ups": 0, "must_fix": 1,
@@ -331,8 +379,9 @@ assert set(total["reviewers"]) == {"GPT-6.1 Terra", "Claude Sonnet 5.5", "GPT-6 
     "DeepSeek V4.1 Flash (free)", "DeepSeek V4.1 Flash (Go)", "Gemini 4 Hydrogen", "GLM-5.3 Flash (free)",
     "Claude Opus 5.5"}, set(total["reviewers"])
 assert total["reviewers"]["GLM-5.3 Flash (free)"]["nits"] == 1, total["reviewers"]
-assert total["reviewers"]["Claude Opus 5.5"] == {"reviews": 1, "blockers": 0, "follow_ups": 1, "must_fix": 0,
-    "nits": 0, "pre_existing": 0, "rejected": 0, "unique": 1}, total["reviewers"]
+assert total["reviewers"]["Claude Opus 5.5"] == {"reviews": 2, "blockers": 1, "follow_ups": 1, "must_fix": 0,
+    "nits": 0, "pre_existing": 0, "rejected": 0, "unique": 2}, total["reviewers"]
+assert total["reviewers"]["Gemini 4 Hydrogen"]["nits"] == 1, total["reviewers"]["Gemini 4 Hydrogen"]
 # The reviewers' tags against the author's: the example's three changes and the outside gate's one;
 # a finding its reviewer gave no tag isn't compared.
 assert total["tagged_by_reviewer"] == 6, total["tagged_by_reviewer"]
@@ -351,7 +400,7 @@ assert (total["first"], total["last"]) == ("2026-10-01", "2026-11-20"), (total["
 # --since keeps the gates dated that day or later: a record by its date, a handoff by its last change.
 done = run("totals", "--since", "2026-11-10", "--json")
 later = json.loads(done.stdout)
-assert later["gates"] == 8 and later["from"] == {"review.json": 4, "handoff tables": 4}, later
+assert later["gates"] == 12 and later["from"] == {"review.json": 6, "handoff tables": 6}, later
 # A handoff that repeats a record is left out even when --since leaves the record out too.
 done = run("totals", "--since", "2026-11-15", "--json")
 latest = json.loads(done.stdout)
@@ -366,12 +415,12 @@ assert "Left out, 5 that couldn't be read" in done.stdout, done.stdout
 done = run("totals")
 assert done.returncode == 0 and done.stderr == "", done.stderr
 out = done.stdout
-assert "11 gates, " in out and "5 from review.json, 6 from handoff tables." in out, out
-assert "By level: light 2, standard 6, deep 3." in out, out
-assert "By result (review.json only): passed 3, stopped 1, reported 1." in out, out
-assert "By rounds: 0 1, 1 6, 2 3, 3 1." in out, out
+assert "15 gates, " in out and "7 from review.json, 8 from handoff tables." in out, out
+assert "By level: light 2, standard 9, deep 4." in out, out
+assert "By result (review.json only): passed 5, stopped 1, reported 1." in out, out
+assert "By rounds: 0 1, 1 9, 2 3, 3 2." in out, out
 row = next(line for line in out.splitlines() if line.startswith("GPT-6.1 Terra"))
-assert row.split()[2:] == ["6", "3", "2", "4", "4", "1", "1", "6"], row
+assert row.split()[2:] == ["9", "3", "2", "4", "4", "1", "1", "6"], row
 assert "4 of 6 findings differed" in out and "  blocker to rejected: 1" in out, out
 assert "How the lowered ones were checked: run 1, read 1." in out, out
 assert "Left out, 5 that couldn't be read:" in out and "A second table" not in out, out

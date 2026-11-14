@@ -74,6 +74,8 @@ Every gate ends with a Review section that starts with lines like these, printed
 
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*
 
+*Record: ~/.local/state/agent-skills/long-horizon-orchestrator/run/task-B/review.*
+
 Behind those lines is a folder each gate leaves, so a study can check the author's account against what the
 reviewers said ([evidence.md](evidence.md#the-record-2026-11-14)):
 
@@ -91,7 +93,9 @@ reviewers said ([evidence.md](evidence.md#the-record-2026-11-14)):
 the two lines under it, so nobody counts them by hand. `scripts/review-records totals` adds up every record
 on the computer: gates by level, result and rounds, each reviewer's findings, and how often the author's tag
 differed from the reviewer's. For gates before 4.1.0 it reads the table in each task's handoff, which gives
-the counts but not the reviewers' own tags.
+the counts but not the reviewers' own tags. The "Record" line is how it tells the two apart: a handoff's
+table with that line under it was printed from a record and is counted there, and one without it is a gate
+that left no record.
 
 What a gate missed isn't recorded during a run. The record names the commits it reviewed, so a study can
 look in git for later fixes to the same code.

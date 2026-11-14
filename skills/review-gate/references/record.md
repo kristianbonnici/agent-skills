@@ -91,8 +91,12 @@ Each finding:
 *Tagged lower than the reviewer's blocker or follow-up: 2 (1 rejected).*
 
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*
+
+*Record: /Users/you/.local/state/agent-skills/review-gate/20261114-0930-notes-app.*
 ```
 
-A gate in which no reviewer reported prints `no round` and a table without rows. A record that fails its check prints what it lacks instead: fix the record and run it again. If the script can't run (no `python3`), write the same lines by hand.
+Keep the "Record" line: it says where the record is, and it tells a later count that this table is already in a record, so the handoff's copy isn't counted as another gate.
+
+A gate in which no reviewer reported prints `no round` and a table without rows. A record that fails its check prints what it lacks instead: fix the record and run it again. If the script can't run (no `python3`), write the same lines by hand, the "Record" line too.
 
 `scripts/review-records totals` adds up every record on this computer, for a study of the gate.
