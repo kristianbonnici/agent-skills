@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
-    "mcp-excalidraw-server": "2.1.2"
+    "jszip": "3.10.1",
+    "mcp-excalidraw-server": "2.1.2",
+    "pdf-lib": "1.17.1",
+    "pptxgenjs": "3.12.0"
   }
 }

@@ -25,7 +25,7 @@ The page is 1500 px wide with two columns, and `format` fixes its height:
 | `4:5` | 1500×1875 | Instagram portrait |
 | `a4` | 1500×2121 | printing |
 | `square` | 1500×1500 | a short page |
-| `16:9` | 1500×844 | a slide: one full-width panel, usually `"frame": false`; the title is the slide's point. Use larger type than on a page (labels 20 to 24, captions 18 or more), since slides are read from across a room |
+| `16:9` | 1500×844 | a slide: one full-width panel, usually `"frame": false`; the title is the slide's point. Use larger type than on a page (labels 20 to 24, captions 18 or more), since slides are read from across a room. A deck of them: [slides.md](slides.md) |
 | `auto` | grows to fit | drafts only |
 | `fit` | grows to fit, and narrows to the drawing | a single diagram ([diagrams.md](diagrams.md)) |
 
@@ -66,6 +66,8 @@ A hex value as `color` sets only the stroke, for example `"#dee2e6"` for a faint
 ## Elements
 
 Every element can take `id` (needed to connect arrows to it), `color`, `strokeColor`, `backgroundColor`, `strokeStyle` (`solid`, `dashed`, `dotted`), `strokeWidth`, `fillStyle` (`solid`, `hachure`, `cross-hatch`), `roughness` (0 to 2, default 1) and `opacity`.
+
+`step` (1, 2, 3...) makes an element appear on that click of a slide; everything without one shows from the first, and the footer comes with the last. A label bound to a shape goes with its shape. `--steps` writes the pictures ([slides.md](slides.md) on when a click is worth it).
 
 `group` (any name) marks elements that form one drawing, such as a cylinder made of a box and an ellipse, or a label with a line struck through it: they move together in Excalidraw, and the build lets their parts overlap.
 
@@ -116,8 +118,10 @@ The title is 56 px, the subtitle 21, headings 24 and takeaways 17, set by the bu
 ## Build options
 
 ```bash
-node scripts/build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 2] [--lint-only] [--obsidian | --no-obsidian] [--force]
+node scripts/build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 2] [--lint-only] [--obsidian | --no-obsidian] [--force] [--steps]
 ```
+
+`--steps`, for a slide whose elements have a `step`, also writes `<name>.step-1.png`, `<name>.step-2.png`... one per click before the last (which is `<name>.png`). Later parts are only hidden, so nothing moves between clicks. A build without `--steps` removes step pictures an earlier build left, so they never go stale.
 
 `--scale` sets the PNG's pixel density (1 to 4, default 2: a 3000 px wide image). `--lint-only` checks without writing files. `--name` names the outputs (default: the spec's file name, or in an Obsidian vault its title). Exit codes: 0 clean, 3 built with warnings, 1 error, 2 usage.
 
@@ -125,6 +129,14 @@ node scripts/build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 2] [--li
 |---|---|
 | anywhere else | `<name>.png` and `<name>.excalidraw` |
 | inside an Obsidian vault (`.obsidian` in it or above it), or with `--obsidian` | `<name>.excalidraw.png` and `<name>.excalidraw.md`, the Excalidraw plugin's files, with the JSON uncompressed |
+
+A spec may carry `notes`, the speaker notes for a slide: the build ignores them and `deck.mjs` uses them.
+
+```bash
+node scripts/deck.mjs <folder> [--title TITLE] [--name NAME] [--scale 2] [--no-build]
+```
+
+Every spec in the folder is a slide, in file-name order; notes come from each spec's `notes` or the folder's `notes.json` (by file name without `.json`). It builds each slide with `--steps` (`--no-build` uses the pictures already there) and writes `index.html` (the browser deck), `<name>.pdf` and `<name>.pptx` (`<name>` defaults to the folder's name). It warns about a slide that isn't `16:9` or has no notes, and passes on every slide's build warnings; exit codes as for a build.
 
 `--no-obsidian` writes the plain pair inside a vault too. If the drawing on disk has been saved in an editor since it was built (its `source` is no longer `excalidraw-drawing`), the build stops with exit 1 rather than replace those edits; `--force` replaces it anyway.
 

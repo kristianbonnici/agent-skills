@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+/* Presenter stage: one slide centred on a quiet ground, a thin control rail under it, speaker notes in a drawer below. */
+:root {
+  --ground: #ecebf3; --surface: #ffffff; --ink: #1e1d28; --muted: #5f5d72; --accent: #6741d9; --line: #d5d3e3;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-num: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground: #14131a; --surface: #1f1e28; --ink: #ecebf3; --muted: #a3a0b8; --accent: #a991ff; --line: #35333f; color-scheme: dark } }
+:root[data-theme="dark"] { --ground: #14131a; --surface: #1f1e28; --ink: #ecebf3; --muted: #a3a0b8; --accent: #a991ff; --line: #35333f; color-scheme: dark }
+html, body { height: 100%; }
+body { background: var(--ground); color: var(--ink); font: 15px/1.5 var(--font-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px;
+  box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.deck { width: 100%; max-width: min(1400px, calc((100vh - 150px) * 16 / 9)); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.stage { position: relative; width: 100%; aspect-ratio: 16 / 9; max-width: 100%; background: #fff; border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 8px 28px rgb(30 20 60 / .12); overflow: hidden; touch-action: pan-y; }
+.stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
+.stage button.zone { position: absolute; top: 0; bottom: 0; width: 30%; border: 0; background: transparent; cursor: pointer; }
+.zone.prev { left: 0; cursor: w-resize; } .zone.next { right: 0; cursor: e-resize; }
+.stage:fullscreen { border-radius: 0; background: #fff; box-shadow: none; }
+.rail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.count { font: 500 14px var(--font-num); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 5.5ch; }
+.steps { display: inline-flex; gap: 4px; align-items: center; min-width: 0; }
+.steps i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.steps i.on { background: var(--accent); }
+.where { flex: 1 1 220px; min-width: 0; color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.where small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+.btn { font: 500 13px var(--font-ui); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn:hover { border-color: var(--accent); }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.btn kbd { font: 500 11px var(--font-num); color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.btn:focus-visible, .zone:focus-visible, .thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.progress { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--accent); transition: width .2s ease; }
+.notes { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; max-width: 70ch; }
+.notes h2 { margin: 0 0 4px; font: 600 12px var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.notes p { margin: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; width: 100%; max-width: 1400px; }
+.thumb { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.thumb img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #fff; border-radius: 6px; border: 2px solid transparent; }
+.thumb[aria-current="true"] img { border-color: var(--accent); }
+.thumb span { font-size: 13px; color: var(--muted); }
+.thumb span b { font: 500 12px var(--font-num); color: var(--ink); margin-right: 6px; }
+@media (max-width: 560px) { .btn kbd { display: none; } .where small { display: none; } }
+@media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
+</style>
+</head>
+<body>
+<main class="deck" id="deck">
+  <div class="stage" id="stage">
+    <img id="slide" alt="">
+    <button class="zone prev" id="zprev" aria-label="Back"></button>
+    <button class="zone next" id="znext" aria-label="Next"></button>
+  </div>
+  <div class="progress" aria-hidden="true"><i id="bar"></i></div>
+  <div class="rail">
+    <button class="btn" id="prev" aria-label="Previous slide">Back</button>
+    <button class="btn" id="next" aria-label="Next slide">Next</button>
+    <span class="count" id="count"></span>
+    <span class="steps" id="steps" aria-hidden="true"></span>
+    <span class="where" id="where"></span>
+    <button class="btn" id="tbuild" aria-pressed="true" title="Reveal each slide's parts one click at a time">Builds <kbd>B</kbd></button>
+    <button class="btn" id="tnotes" aria-pressed="false">Notes <kbd>N</kbd></button>
+    <button class="btn" id="tgrid" aria-pressed="false">All slides <kbd>G</kbd></button>
+    <button class="btn" id="tfull">Full screen <kbd>F</kbd></button>
+  </div>
+  <section class="notes" id="notes" hidden><h2>Speaker notes</h2><p id="note"></p></section>
+</main>
+<section class="grid" id="grid" hidden></section>
+
+<script>
+const SLIDES = __SLIDES__;
+const $ = id => document.getElementById(id);
+let i = 0, f = 0, builds = true;
+const frames = s => builds ? s.frames : [s.src];
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+function fromHash() { const m = /^#slide-(\d+)$/.exec(location.hash); const n = m ? +m[1] - 1 : 0; return Math.min(Math.max(n, 0), SLIDES.length - 1); }
+// Next reveals the slide's next part, then moves on; Back steps back, and lands on the previous slide complete.
+function show(n, push = true, at = 0) {
+  i = Math.min(Math.max(n, 0), SLIDES.length - 1);
+  const s = SLIDES[i], fr = frames(s);
+  f = at < 0 ? fr.length - 1 : Math.min(at, fr.length - 1);
+  $("slide").src = fr[f]; $("slide").alt = `Slide ${i + 1}: ${s.title}. ${s.sub}` + (fr.length > 1 ? ` Part ${f + 1} of ${fr.length}.` : "");
+  $("steps").innerHTML = fr.length > 1 ? fr.map((_, k) => `<i class="${k <= f ? "on" : ""}"></i>`).join("") : "";
+  $("count").textContent = `${i + 1} / ${SLIDES.length}`;
+  $("where").innerHTML = ""; $("where").append(s.title); const sm = document.createElement("small"); sm.textContent = s.sub; $("where").append(sm);
+  $("note").textContent = s.note;
+  $("bar").style.width = `${((i + 1) / SLIDES.length) * 100}%`;
+  document.querySelectorAll(".thumb").forEach((t, k) => t.setAttribute("aria-current", k === i ? "true" : "false"));
+  if (push && location.hash !== `#slide-${i + 1}`) history.replaceState(null, "", `#slide-${i + 1}`);
+  [...fr.slice(f + 1), ...(SLIDES[i + 1] ? frames(SLIDES[i + 1]).slice(0, 1) : []), ...(SLIDES[i - 1] ? [SLIDES[i - 1].src] : [])]
+    .forEach(src => { const im = new Image(); im.src = src; });
+}
+function go(d) {
+  const fr = frames(SLIDES[i]);
+  if ((d > 0 && i === SLIDES.length - 1 && f === fr.length - 1) || (d < 0 && i === 0 && f === 0)) return;   // the ends stay put
+  if (d > 0 && f < fr.length - 1) show(i, true, f + 1);
+  else if (d < 0 && f > 0) show(i, true, f - 1);
+  else if (d < 0) show(i - 1, true, -1);
+  else show(i + d);
+}
+function setBuilds(on) { builds = on; $("tbuild").setAttribute("aria-pressed", on); store.set("deck-builds", on ? "1" : "0"); show(i, false, on ? 0 : -1); }
+
+function setNotes(on) { $("notes").hidden = !on; $("tnotes").setAttribute("aria-pressed", on); store.set("deck-notes", on ? "1" : "0"); }
+function setGrid(on) { $("grid").hidden = !on; $("tgrid").setAttribute("aria-pressed", on); if (on) $("grid").querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest" }); }
+async function full() {
+  try { if (document.fullscreenElement) await document.exitFullscreen(); else await $("stage").requestFullscreen(); } catch { /* not allowed here */ }
+}
+
+SLIDES.forEach((s, k) => {
+  const b = document.createElement("button"); b.className = "thumb"; b.setAttribute("aria-label", `Go to slide ${k + 1}: ${s.title}`);
+  const im = document.createElement("img"); im.src = s.src; im.alt = ""; im.loading = "lazy";
+  const cap = document.createElement("span"); const num = document.createElement("b"); num.textContent = String(k + 1).padStart(2, "0");
+  cap.append(num, s.title); b.append(im, cap); b.onclick = () => { show(k); setGrid(false); $("stage").scrollIntoView({ block: "nearest" }); };
+  $("grid").append(b);
+});
+
+$("prev").onclick = $("zprev").onclick = () => go(-1);
+$("next").onclick = $("znext").onclick = () => go(1);
+$("tnotes").onclick = () => setNotes($("notes").hidden);
+$("tbuild").onclick = () => setBuilds(!builds);
+$("tgrid").onclick = () => setGrid($("grid").hidden);
+$("tfull").onclick = full;
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(k)) { e.preventDefault(); go(1); }
+  else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(k)) { e.preventDefault(); go(-1); }
+  else if (k === "Home") show(0); else if (k === "End") show(SLIDES.length - 1);
+  else if (k === "n" || k === "N") setNotes($("notes").hidden);
+  else if (k === "b" || k === "B") setBuilds(!builds);
+  else if (k === "g" || k === "G") setGrid($("grid").hidden);
+  else if (k === "f" || k === "F") full();
+  else if (k === "Escape") setGrid(false);
+});
+let x0 = null;
+$("stage").addEventListener("touchstart", e => { x0 = e.touches[0].clientX; }, { passive: true });
+$("stage").addEventListener("touchend", e => { if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0; if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1); x0 = null; });
+window.addEventListener("hashchange", () => show(fromHash(), false));
+
+setNotes(store.get("deck-notes") === "1");
+builds = store.get("deck-builds") !== "0"; $("tbuild").setAttribute("aria-pressed", builds);
+show(fromHash(), false);
+</script>
+</body>
+</html>

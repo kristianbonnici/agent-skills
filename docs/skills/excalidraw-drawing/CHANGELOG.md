@@ -1,5 +1,14 @@
 # excalidraw-drawing changelog
 
+## 3.2.0 (2026-11-14)
+
+Slide decks for talks. From building a 20-minute talk of about 35 slides with the skill, where everything beyond a single `16:9` slide had to be made by hand around it: planning the story, writing slides people can follow, revealing parts click by click, and the files a speaker needs.
+
+- New `references/slides.md`, loaded only for a deck: plan the talk before drawing (about a minute and 130 spoken words per slide, sections with a map slide, one point per slide with a title that says it), keep slides picture-first with the evidence in a small footer and the argument in the speaker notes, one visual language for the whole deck, type a room can read, real and familiar examples, numbers drawn rather than listed (a part of a number recoloured inside one grid, a separate experiment set apart), redrawn charts labelled as approximate with only the source's own figures exact, every figure checked against its primary source, and a whole-deck review of flow, words, facts and timing before calling it ready.
+- Elements take `step`: the click a part of a slide appears on, with the footer on the last. `build.mjs --steps` writes `<name>.step-1.png`... one picture per click before the last, with later parts hidden rather than removed, so nothing moves between clicks; a build removes step pictures it didn't write this time, so a deck never shows a stale one. The guidance: a click only where revealing something makes a point, since a first deck with reveals on 26 of its slides was too many.
+- New `scripts/deck.mjs`: builds every slide spec in a folder (in file-name order, notes from each spec's `notes` or the folder's `notes.json`) and writes `index.html` (a browser deck with notes, an overview, full screen and the steps, which B turns off), a PDF of the finished slides, and a PowerPoint whose steps fade in on clicks with the notes in the presenter view.
+- The runtime pins `pptxgenjs` 3.12.0, `pdf-lib` 1.17.1 and `jszip` 3.10.1 for the PDF and PowerPoint.
+
 ## 3.1.0 (2026-11-13)
 
 - New `16:9` format (1500×844) for slides: one spec per slide, a full-width panel without a frame, and larger type than on a page, since a slide is read from across a room. From turning a one-page infographic into a 20-minute teaching deck: every page format was portrait or square, so a slide would have left a band of empty space on a wide screen. The test builds a slide and checks that an overfull one warns.

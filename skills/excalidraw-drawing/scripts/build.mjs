@@ -2,10 +2,11 @@
 // Build an excalidraw-drawing page or diagram from a spec (JSON).
 //
 //   node build.mjs page.json [--out-dir DIR] [--name NAME] [--scale N] [--lint-only]
-//                            [--obsidian | --no-obsidian] [--force]
+//                            [--obsidian | --no-obsidian] [--force] [--steps]
 //
 // Writes <name>.excalidraw (editable in Excalidraw) and <name>.png next to the
-// spec, and prints a report: the size of every panel's drawing area, and
+// spec; with --steps, also <name>.step-1.png ... for a slide whose elements
+// carry a "step" (one picture per click before the last, which is <name>.png), and prints a report: the size of every panel's drawing area, and
 // warnings for anything that overflows, overlaps or got resized. Exit code 0
 // with no warnings, 1 on an error, 3 when the page built but has warnings.
 // Inside an Obsidian vault it writes the Excalidraw plugin's files instead:
@@ -236,7 +237,7 @@ function expand(el, pid, boxes, warnings) {
       break;
     }
     case 'line': case 'arrow': {
-      const { group: _g, curve, ...rest } = el;
+      const { group: _g, curve, step: _s, ...rest } = el;
       const l = { ...common, ...rest, id, _spec: el, strokeColor: el.strokeColor ?? strokeOf(el.color) ?? STYLE.ink };
       // Excalidraw draws a smooth curve through the points of a "round" line.
       if (curve) l.roundness = { type: 2 };
@@ -540,6 +541,9 @@ export async function build(spec, opts = {}) {
   const innerW = pageW - 2 * P.margin;
   const colW = (innerW - P.gap) / 2;
   const elements = [];
+  // The click each element appears on, by element id (absent = the first).
+  // Labels bound to a shape take the shape's step (stepOf below).
+  const stepById = new Map();
 
   const formatName = spec.format ?? '3:4';
   if (!(formatName in FORMATS)) throw new Error(`format must be one of ${Object.keys(FORMATS).join(', ')}`);
@@ -572,7 +576,14 @@ export async function build(spec, opts = {}) {
     const pad = framed ? PS.pad : 0;
     const areaW = w - 2 * pad;
     const boxes = {};
-    const raw = (p.elements ?? []).flatMap(el => expand(el, pid, boxes, warnings));
+    const raw = (p.elements ?? []).flatMap(el => {
+      const out = expand(el, pid, boxes, warnings);
+      if (el.step !== undefined) {
+        if (Number.isInteger(el.step) && el.step >= 1) for (const e of out) stepById.set(e.id, el.step);
+        else warnings.push(`${pid}: "step" is a whole number from 1 (${el.id ?? el.type}): ignored`);
+      }
+      return out;
+    });
     planSpread(raw.filter(el => (el.type === 'arrow' || el.type === 'line') && el._spec), pid, boxes);
     const skel = raw.map(el => (el.type === 'arrow' || el.type === 'line') && el._spec
       ? finishLinear(el, pid, boxes, warnings) : el).filter(Boolean);
@@ -657,7 +668,12 @@ export async function build(spec, opts = {}) {
 
   const finalElements = await prepare(elements);
   const missingGlyphs = lintGlyphs(finalElements, warnings);
-  return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs };
+  // Steps: everything else shows from the first click; the footer, the source
+  // line, comes with the last.
+  const steps = Math.max(1, ...stepById.values());
+  if (steps > 1 && footerEl) stepById.set(footerEl.id, steps);
+  const stepOf = el => stepById.get(el.id) ?? stepById.get(el.containerId) ?? 1;
+  return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs, steps, stepOf };
 }
 
 // Characters Excalifont lacks (arrows, check marks, emoji, CJK) render in a
@@ -787,7 +803,7 @@ const noteName = t => String(t ?? '').replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace
 
 async function main() {
   const args = process.argv.slice(2);
-  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 1-4] [--lint-only] [--obsidian | --no-obsidian] [--force]';
+  const usage = 'usage: build.mjs page.json [--out-dir DIR] [--name NAME] [--scale 1-4] [--lint-only] [--obsidian | --no-obsidian] [--force] [--steps]';
   const flag = (name, def) => {
     const i = args.indexOf(name);
     if (i < 0) return def;
@@ -797,6 +813,7 @@ async function main() {
   };
   const has = name => { const i = args.indexOf(name); if (i >= 0) args.splice(i, 1); return i >= 0; };
   const lintOnly = has('--lint-only'), force = has('--force'), obsidianOn = has('--obsidian'), obsidianOff = has('--no-obsidian');
+  const stepsOn = has('--steps');
   const outDir = flag('--out-dir', null), scale = Number(flag('--scale', 2)), name = flag('--name', null);
   const input = args[0];
   if (!input || args.length > 1) { console.error(usage); process.exit(2); }
@@ -815,7 +832,7 @@ async function main() {
   let built;
   try { built = await build(spec); }
   catch (e) { console.error(`Could not build ${input}: ${e.message}`); process.exit(1); }
-  const { elements, warnings, report, size, missingGlyphs } = built;
+  const { elements, warnings, report, size, missingGlyphs, steps, stepOf } = built;
   // Inside an Obsidian vault the outputs are the Excalidraw plugin's own: a
   // plain .excalidraw opens there only in compatibility mode, and the plugin's
   // auto-export writes <name>.excalidraw.png, which would leave a second PNG
@@ -834,6 +851,7 @@ async function main() {
     }
   }
   for (const r of report) console.log(r);
+  if (steps > 1) console.log(`steps: ${steps}` + (stepsOn ? '' : ' (build with --steps to write a picture for each click)'));
   if (!lintOnly) {
     // Hand edits made since the last build live only in that file: never replace them unasked.
     if (!force && savedByEditor(drawingFile)) {
@@ -872,6 +890,23 @@ async function main() {
     }
     for (const w of png.warnings) warnings.push(`renderer: ${w}`);
     console.log(`wrote ${drawingFile}\nwrote ${pngFile} (${png.width}×${png.height})`);
+    // One picture per click before the last: the finished drawing with what
+    // comes later made invisible, so nothing moves between clicks. Pictures
+    // of clicks this build doesn't have are removed, so a deck never shows a
+    // stale one.
+    const stepFile = k => `${stem}.step-${k}.png`;
+    const want = stepsOn ? steps - 1 : 0;
+    for (let k = 1; k <= want; k++) {
+      const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
+      const shot = await renderScene({ elements: frame, files: {} }, { format: 'png', scale, padding: 0, systemFonts: missingGlyphs });
+      fs.writeFileSync(stepFile(k), Buffer.from(shot.data, 'base64'));
+      console.log(`wrote ${stepFile(k)}`);
+    }
+    const prefix = `${base}.step-`;
+    for (const f of fs.readdirSync(dir)) {
+      const k = f.startsWith(prefix) && f.endsWith('.png') ? f.slice(prefix.length, -4) : '';
+      if (/^\d+$/.test(k) && Number(k) > want) fs.rmSync(path.join(dir, f), { force: true });
+    }
   }
   if (warnings.length) {
     console.log(`\n${warnings.length} warning(s):`);

@@ -5,7 +5,8 @@
 # text crossing another element, an element outside its panel, a character Excalifont lacks),
 # charts put every point where its numbers say, wrapped text keeps room to spare, a build into an
 # Obsidian vault writes the Excalidraw plugin's files, a hand-edited drawing is never replaced
-# unasked, and drawing.mjs keeps a drawing byte for byte while it edits and previews it.
+# unasked, drawing.mjs keeps a drawing byte for byte while it edits and previews it, a slide's steps
+# render one picture per click, and deck.mjs writes a browser deck, a PDF and a PowerPoint.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -429,5 +430,100 @@ set +e; node "$drawing" render "$work/packed.excalidraw.md" "$work/packed.png" >
 [ "$status" -eq 1 ] && grep -q "Compress Excalidraw JSON in Markdown" "$work/packed.out" || { cat "$work/packed.out"; fail "a compressed drawing should be refused with the setting to change, got $status"; }
 set +e; node "$drawing" render "$work/edit.excalidraw.md" >/dev/null 2>&1; status=$?; set -e
 [ "$status" -eq 2 ] || fail "render without an output should be a usage error, got $status"
+
+# 15. Steps: a slide's parts appear click by click; --steps writes a picture per click before the last,
+# the footer comes with the last, a bound label goes with its shape, and nothing about steps reaches the
+# drawing. A build without --steps removes step pictures an earlier one left; a bad step is a warning.
+mkdir -p "$work/steps"
+cat >"$work/steps/s.json" <<'JSON'
+{"title": "Clicks", "format": "16:9", "frame": false, "footer": "A source line.", "panels": [{"id": "s", "span": 2, "elements": [
+  {"type": "rectangle", "id": "a", "x": 0, "y": 40, "width": 260, "height": 90, "color": "blue", "label": "first"},
+  {"type": "rectangle", "id": "b", "x": 520, "y": 40, "width": 260, "height": 90, "color": "green", "label": "second", "step": 2},
+  {"type": "arrow", "id": "ab", "start": "a", "end": "b", "step": 2},
+  {"type": "text", "id": "c", "x": 0, "y": 260, "text": "The point.", "fontSize": 32, "step": 3}]}]}
+JSON
+node "$build" "$work/steps/s.json" --steps >"$work/steps.out" || { cat "$work/steps.out"; fail "a slide with steps should build cleanly"; }
+grep -q "^steps: 3$" "$work/steps.out" || { cat "$work/steps.out"; fail "the build should report 3 steps"; }
+[ -f "$work/steps/s.step-1.png" ] && [ -f "$work/steps/s.step-2.png" ] && [ ! -f "$work/steps/s.step-3.png" ] || fail "--steps should write step-1 and step-2 only"
+python3 -I - "$work/steps" <<'PY' || fail "step pictures should be the slide's size and differ from one click to the next"
+import struct, sys, zlib
+d = sys.argv[1]
+def png(f):
+    b = open(f"{d}/{f}", "rb").read()
+    assert b[:8] == b"\x89PNG\r\n\x1a\n"
+    w, h = struct.unpack(">II", b[16:24])
+    return (w, h), b
+shots = [png(f) for f in ("s.step-1.png", "s.step-2.png", "s.png")]
+assert len({size for size, _ in shots}) == 1, [size for size, _ in shots]
+assert len({body for _, body in shots}) == 3, "two clicks render the same picture"
+PY
+node --input-type=module -e "
+import fs from 'fs';
+import { build } from '$build';
+const spec = JSON.parse(fs.readFileSync('$work/steps/s.json', 'utf8'));
+const { elements, steps, stepOf } = await build(spec);
+const fail = m => { console.error(m); process.exit(1); };
+if (steps !== 3) fail('steps should be 3, got ' + steps);
+const byId = id => elements.find(e => e.id === id);
+if (stepOf(byId('page.footer')) !== 3) fail('the footer should come with the last click');
+if (stepOf(byId('page.title')) !== 1 || stepOf(byId('s.a')) !== 1) fail('parts without a step should show from the first click');
+const label = elements.find(e => e.containerId === 's.b');
+if (!label || stepOf(label) !== 2) fail('a bound label should take its shape\'s step');
+if (stepOf(byId('s.ab')) !== 2) fail('the arrow should appear on click 2');
+const scene = JSON.parse(fs.readFileSync('$work/steps/s.excalidraw', 'utf8'));
+if (scene.elements.some(e => 'step' in e)) fail('step should not reach the drawing');
+" || fail "steps are assigned wrongly"
+node "$build" "$work/steps/s.json" >"$work/steps2.out" || { cat "$work/steps2.out"; fail "a rebuild without --steps should be clean"; }
+grep -q "build with --steps" "$work/steps2.out" || fail "without --steps the build should say how to get the pictures"
+[ ! -f "$work/steps/s.step-1.png" ] && [ ! -f "$work/steps/s.step-2.png" ] || fail "a build without --steps should remove stale step pictures"
+python3 -I - "$work/steps/s.json" "$work/steps/bad.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["panels"][0]["elements"][1]["step"] = 0
+json.dump(s, open(sys.argv[2], "w"))
+PY
+set +e; node "$build" "$work/steps/bad.json" --lint-only >"$work/steps-bad.out"; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q '"step" is a whole number from 1' "$work/steps-bad.out" || { cat "$work/steps-bad.out"; fail "a bad step should be a warning, got $status"; }
+
+# 16. deck.mjs: a folder of slides becomes a browser deck, a PDF of the finished slides and a PowerPoint
+# whose steps fade in on clicks, with the notes from each spec or notes.json; a slide without notes warns.
+deck="$skill/scripts/deck.mjs"
+mkdir -p "$work/talk"
+cp "$work/steps/s.json" "$work/talk/02-clicks.json"
+python3 -I - "$work/talk" <<'PY'
+import json, sys
+d = sys.argv[1]
+s = json.load(open(f"{d}/02-clicks.json")); s["notes"] = "Then the second box, then the point."
+json.dump(s, open(f"{d}/02-clicks.json", "w"))
+json.dump({"title": "A test talk", "subtitle": "Two slides", "format": "16:9", "frame": False, "panels": [{"id": "s", "span": 2,
+           "elements": [{"type": "text", "id": "t", "x": 0, "y": 0, "text": "Opening picture", "fontSize": 40}]}]}, open(f"{d}/01-open.json", "w"))
+json.dump({"01-open": "Say what the talk is about."}, open(f"{d}/notes.json", "w"))
+PY
+node "$deck" "$work/talk" >"$work/deck.out" || { cat "$work/deck.out"; fail "a clean deck should build without warnings"; }
+grep -q "^2 slides, 2 steps after the first$" "$work/deck.out" || { cat "$work/deck.out"; fail "the deck should count 2 slides and 2 steps"; }
+python3 -I - "$work/talk" <<'PY' || fail "the deck's files are wrong"
+import json, re, sys, zipfile
+d = sys.argv[1]
+html = open(f"{d}/index.html").read()
+assert "<title>A test talk</title>" in html, "the deck's title comes from the first slide"
+data = json.loads(re.search(r"const SLIDES = (.*?);\n", html).group(1))
+assert [s["frames"] for s in data] == [["01-open.png"], ["02-clicks.step-1.png", "02-clicks.step-2.png", "02-clicks.png"]], data
+assert [s["note"] for s in data] == ["Say what the talk is about.", "Then the second box, then the point."], data
+pdf = open(f"{d}/talk.pdf", "rb").read()
+assert pdf[:5] == b"%PDF-" and len(re.findall(rb"/Type /Page\b(?!s)", pdf)) == 2, "the PDF should have one page per slide"
+z = zipfile.ZipFile(f"{d}/talk.pptx")
+names = z.namelist()
+assert not [n for n in names if n.endswith("/")], "no folder entries in the PowerPoint"
+slides = sorted(n for n in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
+assert len(slides) == 2 and len([n for n in names if re.fullmatch(r"ppt/notesSlides/notesSlide\d+\.xml", n)]) == 2
+first, second = (z.read(n).decode() for n in ("ppt/slides/slide1.xml", "ppt/slides/slide2.xml"))
+assert "<p:timing>" not in first and second.count('nodeType="clickEffect"') == 2, "two fade-ins on the slide with three steps"
+assert second.count("<p:pic>") == 3 and second.index("<p:timing>") > second.index("</p:clrMapOvr>")
+assert "Then the second box" in z.read("ppt/notesSlides/notesSlide2.xml").decode()
+PY
+rm "$work/talk/notes.json"
+set +e; node "$deck" "$work/talk" --no-build >"$work/deck2.out"; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q "01-open: no speaker notes" "$work/deck2.out" || { cat "$work/deck2.out"; fail "a slide without notes should warn, got $status"; }
+set +e; node "$deck" >/dev/null 2>&1; status=$?; set -e
+[ "$status" -eq 2 ] || fail "deck.mjs without a folder should be a usage error, got $status"
 
 echo "excalidraw-drawing: ok"

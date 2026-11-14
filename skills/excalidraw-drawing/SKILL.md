@@ -1,18 +1,19 @@
 ---
 name: excalidraw-drawing
-description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), or a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md) - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, or a change to an .excalidraw or .excalidraw.md drawing they have.
+description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table, or a slide deck for a talk (one hand-drawn slide per point, speaker notes, click-by-click reveals) - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md), and a deck also as a browser presentation, a PDF and a PowerPoint - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, slides or a presentation in this style, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 3.1.0
+  version: 3.2.0
 ---
 
 # Excalidraw Drawing
 
-You make one of two things, both in Excalidraw's hand-drawn style:
+You make one of three things, all in Excalidraw's hand-drawn style:
 
 - **A page** that explains one source: a title, a grid of panels that each make one point with a small diagram and a sentence or two, and a footer naming the source.
 - **A diagram**: one chart or picture, such as a line chart, a flowchart or a sequence diagram, from the user's data, description or example image.
+- **A deck** for a talk: one `16:9` slide per point, each with speaker notes, built into a browser deck, a PDF and a PowerPoint. Plan and write it with [references/slides.md](references/slides.md); this file's steps apply to every slide.
 
-Either way you write a JSON spec; `scripts/build.mjs` lays it out, draws it with Excalidraw's own renderer, checks it, and writes a PNG and an editable `.excalidraw` file. A drawing someone has since edited by hand you change in place instead (step 5).
+Each picture is a JSON spec; `scripts/build.mjs` lays it out, draws it with Excalidraw's own renderer, checks it, and writes a PNG and an editable `.excalidraw` file. A drawing someone has since edited by hand you change in place instead (step 5).
 
 The drawing is the easy part. The picture is only worth posting if everything on it is true to the source, in fewer words than the source took.
 
@@ -25,7 +26,7 @@ A source to summarize, or several points to make, is a page. One picture of one 
 Read all of the source. Then write:
 
 - **Title:** the topic in two to five words. **Subtitle:** who said it and what about, in one line ("A transit planner on why buses beat new rail lines in small cities").
-- **Shape:** 3:4 portrait (1500×2000) unless the user names another, or their example page has another shape. A slide for a talk is `16:9` (1500×844), one spec per slide. Other formats are in [references/spec.md](references/spec.md).
+- **Shape:** 3:4 portrait (1500×2000) unless the user names another, or their example page has another shape. A talk is a deck of `16:9` slides, not a page ([references/slides.md](references/slides.md)). Other formats are in [references/spec.md](references/spec.md).
 - **Six or seven panels, enough to fill the page.** A 3:4 page holds about four rows: three rows of two half panels and one full-width panel. Each panel has a heading that makes the point (not a topic label), a picture idea, and a takeaway of at most two sentences and about 30 words. The full-width panel holds the richest example.
 - **Footer:** the source (author, title, date) and any caveat the source gives, such as "design notes and a prototype, not a shipped product".
 
@@ -59,18 +60,20 @@ node scripts/build.mjs <folder>/page.json
 
 It prints each panel's drawing-area width (draw within it; height grows to fit) and writes `page.png` and `page.excalidraw` next to the spec. If the runtime is missing it says how to install it.
 
+**For a deck,** keep the slides' specs in one folder and run `node scripts/deck.mjs <folder>`: it builds every slide, with a picture per click for those with steps, and writes the browser deck, PDF and PowerPoint ([references/slides.md](references/slides.md)).
+
 **For an Obsidian vault** (a folder with `.obsidian` in it or above it), keep `page.json` in a folder of your own outside the vault, and build with `--out-dir <folder in the vault>`. The build sees the vault and writes the Excalidraw plugin's own files there, named after the title: `<title>.excalidraw.md`, which the plugin opens as a drawing (a plain `.excalidraw` opens only in compatibility mode), and `<title>.excalidraw.png`, the file the plugin's auto-export keeps up to date. `--name` gives another name; `--no-obsidian` writes the plain pair.
 
 ## 3. Check it, then fix it
 
 - **Fix every warning.** Exit code 3 means it built with warnings: the content is taller than the page (it says how many pixels to cut), something reaches outside its panel, overlaps something else, has an arrow running through its text, has an arrow too short to read as one, made a box grow because its label didn't fit, puts a chart point outside its axes, or uses a character Excalifont lacks (arrows such as →, check marks, emoji), which renders in a system font. Draw arrows and ticks as elements instead.
-- **Then look at the PNG** (open the image file): does the eye follow the arrows the right way, does every arrow and line start and end on something, are arrowheads clear of each other, is any label crowded against a border or an arrow, do panels in a row look balanced, does each heading match its picture? Is a page full, or is a panel mostly empty? Fix the spec and build again. Two or three rounds is normal.
+- **Then look at the PNG** (open the image file): does the eye follow the arrows the right way, does every arrow and line start and end on something, are arrowheads clear of each other, is any label crowded against a border or an arrow, do panels in a row look balanced, does each heading match its picture? Is a page full, or is a panel mostly empty? Fix the spec and build again. Two or three rounds is normal. On a slide with steps, look at each step's picture too: each must read on its own.
 - **With an example image, compare the two side by side,** part by part: same panels or nodes, same arrows, similar density. Say what still differs.
 - **Read the words once more against the source,** on the picture as drawn.
 
 ## 4. Deliver
 
-Give the user the PNG and the drawing's path, and the plan's one-line summary. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits (an `.excalidraw.md` opens in Obsidian), and that after hand edits that file, not `page.json`, is the picture: you can carry on from their edits, and the build won't replace a drawing saved in an editor since.
+Give the user the PNG and the drawing's path, and the plan's one-line summary; for a deck, the three files `deck.mjs` wrote and what each is for. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits (an `.excalidraw.md` opens in Obsidian), and that after hand edits that file, not `page.json`, is the picture: you can carry on from their edits, and the build won't replace a drawing saved in an editor since.
 
 Recreating someone else's published page or diagram is fine as a private study or test; don't offer one for posting. Their layout, wording and branding are theirs.
 
