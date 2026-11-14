@@ -97,9 +97,13 @@ if (!noBuild) {
   await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) results.push(await buildOne(queue.shift())); }));
   for (const { s, code, out } of results.sort((a, b) => byName(a.s.base, b.s.base))) {
     if (code !== 0 && code !== 3) {
-      console.error(`${s.base}: the build failed\n${out}` + (/--force/.test(out)
-        ? `\ndeck.mjs's --force replaces only the deck's own files, never a slide's: carry a hand edit into the slide's spec, ` +
-          `or move the file in the way; build.mjs ${s.base}.json --force replaces it, if that is what the user wants.` : ''));
+      const again = `node ${path.join(here, 'build.mjs')} ${path.join(dir, `${s.base}.json`)} --steps --no-obsidian --force`;
+      const hint = /saved in an editor/.test(out)
+        ? `\ndeck.mjs's --force replaces only the deck's own files, never a slide's drawing: carry the hand edit into ${s.base}.json; ` +
+          `to throw the edit away instead, run ${again}`
+        : /step picture's name/.test(out)
+          ? `\ndeck.mjs's --force replaces only the deck's own files: move that picture, or replace it with ${again}` : '';
+      console.error(`${s.base}: the build failed\n${out}${hint}`);
       process.exit(1);
     }
     for (const line of out.split('\n')) if (line.startsWith('- ')) warnings.push(`${s.base}: ${line.slice(2)}`);
@@ -112,10 +116,14 @@ for (const s of slides) {
   // with its click and the slide's count of clicks. A file merely at such a name isn't one.
   const steps = [];
   const first = readStepMark(path.join(dir, `${s.base}.step-1.png`));
-  if (first) {
+  if (first && first.slide && first.slide !== s.base) {
+    warnings.push(`${s.base}.step-1.png is a step picture of ${first.slide}, not of this slide: left out of the deck`);
+  } else if (first) {
     for (let k = 1; k < first.of; k++) {
       const mark = readStepMark(path.join(dir, `${s.base}.step-${k}.png`));
-      if (!mark || mark.k !== k || mark.of !== first.of) { steps.length = 0; warnings.push(`${s.base}: its step pictures don't match: build it again`); break; }
+      if (!mark || mark.k !== k || mark.of !== first.of || mark.build !== first.build || mark.slide !== first.slide) {
+        steps.length = 0; warnings.push(`${s.base}: its step pictures don't match: build it again`); break;
+      }
       steps.push(`${s.base}.step-${k}.png`);
     }
   } else if (fs.existsSync(path.join(dir, `${s.base}.step-1.png`))) {
@@ -212,6 +220,7 @@ const pptxBytes = await flat.generateAsync({ type: 'nodebuffer', compression: 'D
 
 async function ours(file) {
   if (!fs.existsSync(file)) return true;
+  if (!fs.statSync(file).isFile()) return false;
   const bytes = fs.readFileSync(file);
   if (file.endsWith('.pptx')) {
     try { return (await (await JSZip.loadAsync(bytes)).file('docProps/core.xml')?.async('string') ?? '').includes(MARK); }
@@ -239,7 +248,6 @@ try {
   for (const [f, b] of outputs) fs.writeFileSync(f + tmp, b);
   for (const [f] of outputs) if (fs.existsSync(f)) { fs.renameSync(f, f + bak); setAside.push(f); }
   for (const [f] of outputs) { fs.renameSync(f + tmp, f); placed.push(f); }
-  for (const f of setAside) fs.rmSync(f + bak, { force: true });
 } catch (e) {
   for (const f of placed) fs.rmSync(f, { force: true });
   for (const f of setAside) { try { fs.renameSync(f + bak, f); } catch { /* reported below */ } }
@@ -248,6 +256,10 @@ try {
   console.error(`Could not write the deck in ${folder}: ${e.message}` +
     (lost.length ? `\nThe earlier ${lost.map(f => path.basename(f)).join(' and ')} could not be put back: see ${lost.map(f => f + bak).join(', ')}` : ''));
   process.exit(1);
+}
+// The new set is in place: only now remove the earlier one. One that can't be removed stays, and is reported.
+for (const f of setAside) {
+  try { fs.rmSync(f + bak, { recursive: true, force: true }); } catch (e) { warnings.push(`could not remove the earlier ${path.basename(f)} at ${f + bak}: ${e.message}`); }
 }
 
 const total = clicks.reduce((a, b) => a + b, 0);

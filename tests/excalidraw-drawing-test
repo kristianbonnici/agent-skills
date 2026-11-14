@@ -653,5 +653,27 @@ node "$build" "$work/edited/01-open.json" >/dev/null
 python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["source"]="https://excalidraw.com"; json.dump(d, open(sys.argv[1], "w"))' "$work/edited/01-open.excalidraw"
 set +e; node "$deck" "$work/edited" --force >"$work/edited.out" 2>&1; status=$?; set -e
 [ "$status" -eq 1 ] && grep -q "replaces only the deck's own files" "$work/edited.out" || { cat "$work/edited.out"; fail "a hand-edited slide should stop the deck and explain --force, got $status"; }
+grep -q '"source": "https://excalidraw.com"' "$work/edited/01-open.excalidraw" || fail "the deck replaced a hand-edited drawing"
+
+# 21. A slide's step pictures must come from one build of that slide: a picture from another build of it, or
+# a step picture of another slide renamed to it, is left out with a warning, not shown as a click.
+mkdir -p "$work/mixed"
+cp "$work/talk/02-clicks.json" "$work/mixed/02-clicks.json"
+node "$build" "$work/mixed/02-clicks.json" --steps >/dev/null
+cp "$work/mixed/02-clicks.step-2.png" "$work/mixed/old-step-2.png"
+node "$build" "$work/mixed/02-clicks.json" --steps >/dev/null           # a second build: new build id
+cp "$work/mixed/old-step-2.png" "$work/mixed/02-clicks.step-2.png"      # one picture from the first build
+rm "$work/mixed/old-step-2.png"
+set +e; node "$deck" "$work/mixed" --no-build >"$work/mixed.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q "02-clicks: its step pictures don't match" "$work/mixed.out" || { cat "$work/mixed.out"; fail "step pictures from two builds should be reported, got $status"; }
+python3 -I -c 'import json,re,sys; d=json.loads(re.search(r"const SLIDES = (.*?);\n", open(sys.argv[1]).read()).group(1)); sys.exit(d[0]["frames"] != ["02-clicks.png"])' "$work/mixed/index.html" \
+  || fail "mixed step pictures became clicks"
+mkdir -p "$work/renamed"
+cp "$work/talk/02-clicks.json" "$work/renamed/03-other.json"
+node "$build" "$work/renamed/03-other.json" --steps >/dev/null
+mv "$work/renamed/03-other.step-1.png" "$work/renamed/03-other.step-1.keep"
+cp "$work/mixed/02-clicks.step-1.png" "$work/renamed/03-other.step-1.png"   # another slide's first step
+set +e; node "$deck" "$work/renamed" --no-build >"$work/renamed.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q "is a step picture of 02-clicks, not of this slide" "$work/renamed.out" || { cat "$work/renamed.out"; fail "another slide's step picture should be left out, got $status"; }
 
 echo "excalidraw-drawing: ok"

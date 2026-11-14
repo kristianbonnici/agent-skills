@@ -891,11 +891,11 @@ async function main() {
         `didn't write ${foreign.length > 1 ? 'them' : 'it'}: rename ${foreign.length > 1 ? 'them' : 'it'}, or pass --force to replace ${foreign.length > 1 ? 'them' : 'it'}.`);
       process.exit(1);
     }
-    const frames = [];
+    const frames = [], buildId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
     for (let k = 1; k <= want; k++) {
       const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
       const shot = await renderScene({ elements: frame, files: {} }, { format: 'png', scale, padding: 0, systemFonts: missingGlyphs });
-      frames.push([stepFile(k), markStep(Buffer.from(shot.data, 'base64'), k, steps)]);
+      frames.push([stepFile(k), markStep(Buffer.from(shot.data, 'base64'), k, steps, buildId, base)]);
     }
     const scene = { type: 'excalidraw', version: 2, source: SOURCE,
       elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };

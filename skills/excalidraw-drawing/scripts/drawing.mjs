@@ -34,20 +34,25 @@ export const runtimePackage = path.join(runtimeRoot, 'node_modules/mcp-excalidra
 const STEP_KEY = 'excalidraw-drawing-step';
 const CRC = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c; });
 const crc32 = buf => { let c = -1; for (const b of buf) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ -1) >>> 0; };
-export function markStep(png, k, of) {
-  const data = Buffer.from(`${STEP_KEY}\0${k} of ${of}.`, 'latin1'), type = Buffer.from('tEXt');
+export function markStep(png, k, of, build = '', slide = '') {
+  // "<click> of <count> <build id> <slide>": the build id ties a slide's pictures to one build, the
+  // slide's name to that slide. Read back by the chunk's own length, so nothing after it can run on.
+  const data = Buffer.from(`${STEP_KEY}\0${k} of ${of} ${build} ${encodeURIComponent(slide)}`, 'latin1'), type = Buffer.from('tEXt');
   const len = Buffer.alloc(4), crc = Buffer.alloc(4);
   len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
   const ihdrEnd = 8 + 8 + png.readUInt32BE(8) + 4;    // the signature, then IHDR: its length, type, data and CRC
   return Buffer.concat([png.subarray(0, ihdrEnd), len, type, data, crc, png.subarray(ihdrEnd)]);
 }
-// The click and the count a step picture's marker records ({ k, of }), or null for a file without one.
+// What a step picture's marker records ({ k, of, build, slide }), or null for a file without one.
 export function readStepMark(file) {
   try {
-    const fd = fs.openSync(file, 'r'), head = Buffer.alloc(256);
-    const n = fs.readSync(fd, head, 0, 256, 0); fs.closeSync(fd);
-    const m = new RegExp(`tEXt${STEP_KEY}\\0(\\d+) of (\\d+)\\.`).exec(head.subarray(0, n).toString('latin1'));
-    return m ? { k: Number(m[1]), of: Number(m[2]) } : null;
+    const fd = fs.openSync(file, 'r'), head = Buffer.alloc(512);
+    const n = fs.readSync(fd, head, 0, 512, 0); fs.closeSync(fd);
+    const at = head.subarray(0, n).indexOf(`tEXt${STEP_KEY}\0`, 0, 'latin1');
+    if (at < 4) return null;
+    const text = head.subarray(at + 4, at + 4 + head.readUInt32BE(at - 4)).toString('latin1').slice(STEP_KEY.length + 1);
+    const m = /^(\d+) of (\d+)(?: (\S*) (\S*))?\.?$/.exec(text);
+    return m ? { k: Number(m[1]), of: Number(m[2]), build: m[3] ?? '', slide: decodeURIComponent(m[4] ?? '') } : null;
   } catch { return null; }
 }
 export const isStepPicture = file => readStepMark(file) !== null;
