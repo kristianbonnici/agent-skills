@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
+<meta name="generator" content="__MARK__">
 <style>
 /* Presenter stage: one slide centred on a quiet ground, a thin control rail under it, speaker notes in a drawer below. */
 :root {
@@ -14,6 +15,7 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --ground: #14131a; --surface: #1f1e28; --ink: #ecebf3; --muted: #a3a0b8; --accent: #a991ff; --line: #35333f; color-scheme: dark } }
 :root[data-theme="dark"] { --ground: #14131a; --surface: #1f1e28; --ink: #ecebf3; --muted: #a3a0b8; --accent: #a991ff; --line: #35333f; color-scheme: dark }
+[hidden] { display: none !important; }   /* the grid and notes set a display of their own, which would beat [hidden] */
 html, body { height: 100%; }
 body { background: var(--ground); color: var(--ink); font: 15px/1.5 var(--font-ui);
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px;

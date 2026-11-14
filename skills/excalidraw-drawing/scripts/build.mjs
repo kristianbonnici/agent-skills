@@ -6,7 +6,8 @@
 //
 // Writes <name>.excalidraw (editable in Excalidraw) and <name>.png next to the
 // spec; with --steps, also <name>.step-1.png ... for a slide whose elements
-// carry a "step" (one picture per click before the last, which is <name>.png), and prints a report: the size of every panel's drawing area, and
+// carry a "step" (one picture per click before the last, which is <name>.png;
+// --force also replaces a file at one of those names that a build didn't write), and prints a report: the size of every panel's drawing area, and
 // warnings for anything that overflows, overlaps or got resized. Exit code 0
 // with no warnings, 1 on an error, 3 when the page built but has warnings.
 // Inside an Obsidian vault it writes the Excalidraw plugin's files instead:
@@ -62,6 +63,9 @@ const COLORS = {
   blue: ['#a5d8ff', '#1971c2'], purple: ['#d0bfff', '#7048e8'], yellow: ['#ffec99', '#f08c00'],
   gray: ['#e9ecef', '#868e96'], cyan: ['#99e9f2', '#0c8599'], white: ['#ffffff', '#1e1e1e']
 };
+
+// A slide reveals its parts over at most this many clicks: more is a typo, or a slide to split.
+const MAX_STEPS = 12;
 
 // ---------- text ----------
 
@@ -576,14 +580,20 @@ export async function build(spec, opts = {}) {
     const pad = framed ? PS.pad : 0;
     const areaW = w - 2 * pad;
     const boxes = {};
+    const linked = [];
     const raw = (p.elements ?? []).flatMap(el => {
       const out = expand(el, pid, boxes, warnings);
       if (el.step !== undefined) {
-        if (Number.isInteger(el.step) && el.step >= 1) for (const e of out) stepById.set(e.id, el.step);
-        else warnings.push(`${pid}: "step" is a whole number from 1 (${el.id ?? el.type}): ignored`);
-      }
+        if (Number.isInteger(el.step) && el.step >= 1 && el.step <= MAX_STEPS) for (const e of out) stepById.set(e.id, el.step);
+        else warnings.push(`${pid}: "step" is a whole number from 1 to ${MAX_STEPS} (${el.id ?? el.type}): ignored`);
+      } else if ((el.type === 'arrow' || el.type === 'line') && (el.start || el.end)) linked.push([el, out]);
       return out;
     });
+    // An arrow joined to shapes, with no step of its own, appears with the later of them, never before.
+    for (const [el, out] of linked) {
+      const k = Math.max(...[el.start, el.end].filter(Boolean).map(t => stepById.get(`${pid}.${t}`) ?? 1));
+      if (k > 1) for (const e of out) stepById.set(e.id, k);
+    }
     planSpread(raw.filter(el => (el.type === 'arrow' || el.type === 'line') && el._spec), pid, boxes);
     const skel = raw.map(el => (el.type === 'arrow' || el.type === 'line') && el._spec
       ? finishLinear(el, pid, boxes, warnings) : el).filter(Boolean);
@@ -671,6 +681,9 @@ export async function build(spec, opts = {}) {
   // Steps: everything else shows from the first click; the footer, the source
   // line, comes with the last.
   const steps = Math.max(1, ...stepById.values());
+  for (let k = 2; k <= steps; k++) {
+    if (![...stepById.values()].includes(k)) warnings.push(`page: nothing appears on click ${k}: number the steps without gaps`);
+  }
   if (steps > 1 && footerEl) stepById.set(footerEl.id, steps);
   const stepOf = el => stepById.get(el.id) ?? stepById.get(el.containerId) ?? 1;
   return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs, steps, stepOf };
@@ -794,6 +807,28 @@ function crosses(l, r) {
 }
 const shortId = (el, p) => `"${String(el.id).replace(`${p.pid}.`, '')}"`;
 
+// ---------- step pictures ----------
+
+// A step picture carries a PNG text chunk saying so, the way a build knows a
+// file at a step picture's name is its own before it replaces or deletes it.
+const STEP_KEY = 'excalidraw-drawing-step';
+const CRC = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c; });
+const crc32 = buf => { let c = -1; for (const b of buf) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+export function markStep(png, k, of) {
+  const data = Buffer.from(`${STEP_KEY}\0${k} of ${of}`, 'latin1'), type = Buffer.from('tEXt');
+  const len = Buffer.alloc(4), crc = Buffer.alloc(4);
+  len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
+  const ihdrEnd = 8 + 8 + png.readUInt32BE(8) + 4;    // the signature, then IHDR: its length, type, data and CRC
+  return Buffer.concat([png.subarray(0, ihdrEnd), len, type, data, crc, png.subarray(ihdrEnd)]);
+}
+export function isStepPicture(file) {
+  try {
+    const fd = fs.openSync(file, 'r'), head = Buffer.alloc(256);
+    const n = fs.readSync(fd, head, 0, 256, 0); fs.closeSync(fd);
+    return head.subarray(0, n).includes(`tEXt${STEP_KEY}\0`, 0, 'latin1');
+  } catch { return false; }
+}
+
 // ---------- CLI ----------
 
 // A title as an Obsidian note name: without the characters Obsidian refuses in
@@ -859,6 +894,25 @@ async function main() {
         `replace those edits. Change that file instead (references/editing.md), or pass --force to replace it.`);
       process.exit(1);
     }
+    // Step pictures: rendered before anything is written, and written in the same
+    // set as the drawing and its PNG, so a failure leaves the earlier set whole.
+    // Each carries a marker; a file at a step picture's name without one isn't
+    // this build's (another drawing's PNG, say), and is never replaced or deleted.
+    const stepFile = k => `${stem}.step-${k}.png`;
+    const want = stepsOn ? steps - 1 : 0;
+    const foreign = [];
+    for (let k = 1; k <= want; k++) if (fs.existsSync(stepFile(k)) && !isStepPicture(stepFile(k))) foreign.push(stepFile(k));
+    if (foreign.length && !force) {
+      console.error(`${foreign.join(', ')} ${foreign.length > 1 ? 'are' : 'is'} at a step picture's name but this build ` +
+        `didn't write ${foreign.length > 1 ? 'them' : 'it'}: rename ${foreign.length > 1 ? 'them' : 'it'}, or pass --force to replace ${foreign.length > 1 ? 'them' : 'it'}.`);
+      process.exit(1);
+    }
+    const frames = [];
+    for (let k = 1; k <= want; k++) {
+      const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
+      const shot = await renderScene({ elements: frame, files: {} }, { format: 'png', scale, padding: 0, systemFonts: missingGlyphs });
+      frames.push([stepFile(k), markStep(Buffer.from(shot.data, 'base64'), k, steps)]);
+    }
     const scene = { type: 'excalidraw', version: 2, source: SOURCE,
       elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };
     // Render first: if it fails, neither file is touched, so the PNG and the
@@ -871,7 +925,7 @@ async function main() {
     // both beside their targets, move the earlier pair aside, move the new one
     // in; if any step fails, put the earlier pair back as it was.
     const outputs = [[pngFile, Buffer.from(png.data, 'base64')],
-      [drawingFile, vault ? toMarkdown(scene) : JSON.stringify(scene, null, 1)]];
+      [drawingFile, vault ? toMarkdown(scene) : JSON.stringify(scene, null, 1)], ...frames];
     const tmp = `.${process.pid}.tmp`, bak = `.${process.pid}.bak`;
     const setAside = [], placed = [];
     try {
@@ -890,22 +944,14 @@ async function main() {
     }
     for (const w of png.warnings) warnings.push(`renderer: ${w}`);
     console.log(`wrote ${drawingFile}\nwrote ${pngFile} (${png.width}×${png.height})`);
-    // One picture per click before the last: the finished drawing with what
-    // comes later made invisible, so nothing moves between clicks. Pictures
-    // of clicks this build doesn't have are removed, so a deck never shows a
-    // stale one.
-    const stepFile = k => `${stem}.step-${k}.png`;
-    const want = stepsOn ? steps - 1 : 0;
-    for (let k = 1; k <= want; k++) {
-      const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
-      const shot = await renderScene({ elements: frame, files: {} }, { format: 'png', scale, padding: 0, systemFonts: missingGlyphs });
-      fs.writeFileSync(stepFile(k), Buffer.from(shot.data, 'base64'));
-      console.log(`wrote ${stepFile(k)}`);
-    }
+    for (const [f] of frames) console.log(`wrote ${f}`);
+    // Step pictures this build doesn't have: removed, so a deck never shows a
+    // stale one; only ones a build wrote.
     const prefix = `${base}.step-`;
     for (const f of fs.readdirSync(dir)) {
       const k = f.startsWith(prefix) && f.endsWith('.png') ? f.slice(prefix.length, -4) : '';
-      if (/^\d+$/.test(k) && Number(k) > want) fs.rmSync(path.join(dir, f), { force: true });
+      const file = path.join(dir, f);
+      if (/^\d+$/.test(k) && Number(k) > want && isStepPicture(file)) fs.rmSync(file, { force: true });
     }
   }
   if (warnings.length) {

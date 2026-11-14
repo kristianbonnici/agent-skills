@@ -278,6 +278,18 @@ if [ "$host" = all ] || printf '%s\n' "$rows" | awk -F '\t' -v h="$host" -v s="$
   else
     fail "mcp-excalidraw-server is $version, the runtime pins $excalidraw_pin"
   fi
+  # deck.mjs's libraries, for a deck's PDF and PowerPoint.
+  for package in pptxgenjs pdf-lib jszip; do
+    pin=$(pinned_version "$repo_root/runtime/excalidraw/package.json" "$package")
+    version=$(installed_version "$repo_root/runtime/excalidraw/node_modules/$package/package.json")
+    if [ -z "$version" ]; then
+      fail "$package is not installed in runtime/excalidraw (run ./scripts/bootstrap)"
+    elif [ "$version" = "$pin" ]; then
+      pass "excalidraw-drawing runtime $package $version"
+    else
+      fail "$package is $version, the runtime pins $pin"
+    fi
+  done
 fi
 
 if [ "$host" = all ] || [ "$host" = opencode ]; then

@@ -36,7 +36,7 @@ Check every figure against its primary source before it goes on a slide: the num
 
 ## Steps: what each click reveals
 
-Give an element `"step": n` to make it appear on click `n` (spec.md). Everything without one shows from the first click, and the footer comes with the last. `build.mjs --steps` writes one picture per click; `deck.mjs` does this for every slide.
+Give an element `"step": n` to make it appear on click `n`, from 1 to 12 without gaps (spec.md). Everything without one shows from the first click, an arrow joined to a later shape waits for it, and the footer comes with the last. `build.mjs --steps` writes one picture per click; `deck.mjs` does this for every slide.
 
 - **A click must reveal a point.** Good uses: a sequence told in order (a cycle, a pipeline, a timeline), before then after, a whole then the part that matters (the nested numbers above), a build-up the speaker narrates (a pyramid from the bottom).
 - **No clicks for:** a chart that makes one point, a single picture, map slides, the sources slide. Most slides need none; two or three clicks is plenty for one that does.
@@ -51,7 +51,7 @@ Write the specs from one script instead of by hand: helpers for the recurring sy
 node scripts/deck.mjs <folder>
 ```
 
-It builds every slide with its steps (warnings as for any build: fix them all), and writes `index.html`, `<folder>.pdf` and `<folder>.pptx` in the folder.
+It builds every slide with its steps (warnings as for any build: fix them all), and writes `index.html`, `<folder>.pdf` and `<folder>.pptx` in the folder. It won't replace a file of those names it didn't write: give another `--name`, or `--force` when the user says to replace it. Change a slide in its spec, not in Excalidraw: a slide's drawing saved in an editor stops the deck, as it stops a build, so carry such an edit into the spec first.
 
 ## Check the whole deck before calling it ready
 
@@ -67,4 +67,4 @@ Tell the user what you checked and what you couldn't (for example, the PowerPoin
 
 - `index.html`: open it in a browser; arrows or swipe to move, N for notes, G for all slides, F for full screen, B to turn the steps off. Published as a web page it works the same.
 - `<name>.pdf`: every slide finished, for a handout.
-- `<name>.pptx`: for PowerPoint or Keynote, with the notes in the presenter view and each step fading in on a click. Its slides are pictures: to change one, change its spec and run `deck.mjs` again.
+- `<name>.pptx`: for PowerPoint, with the notes in the presenter view and each step fading in on a click. Keynote opens it too, but may show each slide finished instead of playing the clicks. Its slides are pictures: to change one, change its spec and run `deck.mjs` again.

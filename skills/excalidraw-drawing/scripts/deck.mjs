@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Turn a folder of slide specs into a deck: a browser deck, a PDF and a PowerPoint.
 //
-//   node deck.mjs <folder> [--title TITLE] [--name NAME] [--scale 1-4] [--no-build]
+//   node deck.mjs <folder> [--title TITLE] [--name NAME] [--scale 1-4] [--no-build] [--force]
 //
 // Every spec in the folder (a .json with "panels") is one slide, in file-name
 // order: number them, 01-title.json, 02-problem.json, and insert one later as
@@ -17,7 +17,10 @@
 //   NAME.pptx    one full-slide picture per slide, each later step fading in on
 //                a click, the notes in PowerPoint's notes; the pictures can't be
 //                edited there: change the specs and run this again
-// NAME defaults to the folder's name. Exit code 0, 1 on an error, 3 when a
+// NAME defaults to the folder's name. The three are written together, once all
+// are ready, and never over a file of that name deck.mjs didn't write (unless
+// --force). A slide edited by hand in Excalidraw stops the deck, as it stops a
+// build: carry the change into its spec. Exit code 0, 1 on an error, 3 when a
 // slide built with warnings (fix them, as for any build).
 
 import fs from 'fs';
@@ -28,7 +31,8 @@ import { fileURLToPath } from 'url';
 import { runtimeRoot } from './drawing.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const usage = 'usage: deck.mjs <folder> [--title TITLE] [--name NAME] [--scale 1-4] [--no-build]';
+const usage = 'usage: deck.mjs <folder> [--title TITLE] [--name NAME] [--scale 1-4] [--no-build] [--force]';
+const MARK = 'excalidraw-drawing deck';      // in each output, so a later run knows the file is its own
 
 const args = process.argv.slice(2);
 const flag = (name, def) => {
@@ -39,7 +43,7 @@ const flag = (name, def) => {
   return value;
 };
 const has = name => { const i = args.indexOf(name); if (i >= 0) args.splice(i, 1); return i >= 0; };
-const noBuild = has('--no-build');
+const noBuild = has('--no-build'), force = has('--force');
 const titleArg = flag('--title', null), nameArg = flag('--name', null), scale = flag('--scale', '2');
 const folder = args[0];
 if (!folder || args.length > 1) { console.error(usage); process.exit(2); }
@@ -63,14 +67,17 @@ const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } c
 const notesFile = path.join(dir, 'notes.json');
 const notes = fs.existsSync(notesFile) ? readJson(notesFile) : {};
 const byName = (a, b) => a.localeCompare(b, 'en', { numeric: true });
+const warnings = [];
 const slides = fs.readdirSync(dir).filter(f => f.endsWith('.json') && f !== 'notes.json').sort(byName)
   .map(f => ({ base: f.slice(0, -5), spec: readJson(path.join(dir, f)) }))
-  .filter(s => Array.isArray(s.spec.panels));
+  .filter(s => {
+    if (Array.isArray(s.spec?.panels)) return true;
+    warnings.push(`${s.base}.json has no "panels" list, so it isn't a slide: left out of the deck`);
+    return false;
+  });
 if (!slides.length) { console.error(`${folder} has no slide specs (a .json with "panels")`); process.exit(1); }
-
-const warnings = [];
 for (const s of slides) {
-  if (s.spec.format !== '16:9') warnings.push(`${s.base}: format is ${s.spec.format ?? '3:4'}, not 16:9: it will be letterboxed`);
+  if (s.spec.format !== '16:9') warnings.push(`${s.base}: format is ${s.spec.format ?? '3:4'}, not 16:9: the deck and the PowerPoint show it with bars at the sides or top, and its PDF page takes its own shape`);
 }
 for (const k of Object.keys(notes)) {
   if (!slides.some(s => s.base === k)) warnings.push(`notes.json: "${k}" is not a slide in the folder`);
@@ -89,7 +96,7 @@ if (!noBuild) {
   const queue = [...slides], results = [];
   await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) results.push(await buildOne(queue.shift())); }));
   for (const { s, code, out } of results.sort((a, b) => byName(a.s.base, b.s.base))) {
-    if (code === 1 || code === 2) { console.error(`${s.base}: the build failed\n${out}`); process.exit(1); }
+    if (code !== 0 && code !== 3) { console.error(`${s.base}: the build failed\n${out}`); process.exit(1); }
     for (const line of out.split('\n')) if (line.startsWith('- ')) warnings.push(`${s.base}: ${line.slice(2)}`);
   }
 }
@@ -99,7 +106,10 @@ for (const s of slides) {
   const steps = [];
   for (let k = 1; fs.existsSync(path.join(dir, `${s.base}.step-${k}.png`)); k++) steps.push(`${s.base}.step-${k}.png`);
   s.frames = [...steps, s.png];
-  s.note = String(s.spec.notes ?? notes[s.base] ?? '');
+  const own = s.spec.notes, listed = notes[s.base];
+  if (own !== undefined && typeof own !== 'string') warnings.push(`${s.base}: "notes" should be text`);
+  if (listed !== undefined && typeof listed !== 'string') warnings.push(`notes.json: "${s.base}" should be text`);
+  s.note = typeof own === 'string' && own.trim() ? own : typeof listed === 'string' ? listed : '';
   if (!s.note.trim()) warnings.push(`${s.base}: no speaker notes`);
   s.title = String(s.spec.title ?? s.base);
   s.alt = s.title + (s.spec.subtitle ? `. ${s.spec.subtitle}` : '');
@@ -110,32 +120,37 @@ const name = nameArg ?? path.basename(dir);
 // ---------- the browser deck ----------
 
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const data = slides.map(s => ({ src: s.png, frames: s.frames, title: s.title, sub: String(s.spec.subtitle ?? ''), note: s.note }));
+// File names go into the page as URLs: "#", "?" and "%" in one must not cut it short.
+const url = f => encodeURIComponent(f);
+const data = slides.map(s => ({ src: url(s.png), frames: s.frames.map(url), title: s.title, sub: String(s.spec.subtitle ?? ''), note: s.note }));
 const page = fs.readFileSync(path.join(here, '..', 'assets', 'deck.html'), 'utf8')
   .replace('__TITLE__', () => esc(deckTitle))
+  .replace('__MARK__', () => MARK)
   .replace('__SLIDES__', () => JSON.stringify(data).replace(/</g, '\\u003c'));
-fs.writeFileSync(path.join(dir, 'index.html'), page);
 
 // ---------- PDF: every slide finished ----------
 
 const pdf = await PDFDocument.create();
-pdf.setTitle(deckTitle);
+pdf.setTitle(deckTitle); pdf.setCreator(MARK);
 for (const s of slides) {
   const img = await pdf.embedPng(fs.readFileSync(path.join(dir, s.png)));
   const w = 960, h = Math.round(w * img.height / img.width);    // 13.33 x 7.5 in for a 16:9 slide
   pdf.addPage([w, h]).drawImage(img, { x: 0, y: 0, width: w, height: h });
 }
-fs.writeFileSync(path.join(dir, `${name}.pdf`), await pdf.save({ useObjectStreams: false }));
+const pdfBytes = await pdf.save({ useObjectStreams: false });
 
 // ---------- PowerPoint: one picture per step, each later one fading in on a click ----------
 
 const pres = new pptxgen();
 pres.layout = 'LAYOUT_WIDE';                                    // 13.333 x 7.5 in
-pres.title = deckTitle;
+pres.title = deckTitle; pres.subject = MARK;
 const clicks = [];
 for (const s of slides) {
   const slide = pres.addSlide();
-  s.frames.forEach((f, k) => slide.addImage({ path: path.join(dir, f), x: 0, y: 0, w: 13.333, h: 7.5, objectName: `step ${k + 1}`,
+  // Fitted to the slide by its own shape, centred: a slide that isn't 16:9 is never stretched.
+  const png = fs.readFileSync(path.join(dir, s.png)), aspect = png.readUInt32BE(16) / png.readUInt32BE(20);
+  const w = Math.min(13.333, 7.5 * aspect), h = w / aspect, x = (13.333 - w) / 2, y = (7.5 - h) / 2;
+  s.frames.forEach((f, k) => slide.addImage({ path: path.join(dir, f), x, y, w, h, objectName: `step ${k + 1}`,
     altText: s.frames.length > 1 ? `${s.alt} (step ${k + 1} of ${s.frames.length})` : s.alt }));
   if (s.note) slide.addNotes(s.note);
   clicks.push(s.frames.length - 1);
@@ -175,7 +190,39 @@ const flat = new JSZip();
 for (const [f, entry] of Object.entries(zip.files)) {
   if (!entry.dir) flat.file(f, await entry.async('uint8array'), { createFolders: false });
 }
-fs.writeFileSync(path.join(dir, `${name}.pptx`), await flat.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+const pptxBytes = await flat.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+
+// ---------- write the three together, never over a file deck.mjs didn't write ----------
+
+async function ours(file) {
+  if (!fs.existsSync(file)) return true;
+  const bytes = fs.readFileSync(file);
+  if (file.endsWith('.pptx')) {
+    try { return (await (await JSZip.loadAsync(bytes)).file('docProps/core.xml')?.async('string') ?? '').includes(MARK); }
+    catch { return false; }
+  }
+  if (file.endsWith('.pdf')) {
+    try { return (await PDFDocument.load(bytes, { updateMetadata: false })).getCreator() === MARK; }
+    catch { return false; }
+  }
+  return bytes.includes(MARK);
+}
+const outputs = [['index.html', page], [`${name}.pdf`, pdfBytes], [`${name}.pptx`, pptxBytes]].map(([f, b]) => [path.join(dir, f), b]);
+const theirs = [];
+for (const [f] of outputs) if (!(await ours(f))) theirs.push(path.basename(f));
+if (theirs.length && !force) {
+  console.error(`${theirs.join(', ')} ${theirs.length > 1 ? 'are' : 'is'} in ${folder} but deck.mjs didn't write ` +
+    `${theirs.length > 1 ? 'them' : 'it'}: move ${theirs.length > 1 ? 'them' : 'it'}, choose another --name, or pass --force to replace ${theirs.length > 1 ? 'them' : 'it'}.`);
+  process.exit(1);
+}
+const tmp = `.${process.pid}.tmp`;
+try {
+  for (const [f, b] of outputs) fs.writeFileSync(f + tmp, b);
+  for (const [f] of outputs) fs.renameSync(f + tmp, f);
+} catch (e) {
+  for (const [f] of outputs) fs.rmSync(f + tmp, { force: true });
+  console.error(`Could not write the deck in ${folder}: ${e.message}`); process.exit(1);
+}
 
 const total = clicks.reduce((a, b) => a + b, 0);
 console.log(`${slides.length} slides, ${total} step${total === 1 ? '' : 's'} after the first`);

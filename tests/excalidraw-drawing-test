@@ -526,4 +526,84 @@ set +e; node "$deck" "$work/talk" --no-build >"$work/deck2.out"; status=$?; set 
 set +e; node "$deck" >/dev/null 2>&1; status=$?; set -e
 [ "$status" -eq 2 ] || fail "deck.mjs without a folder should be a usage error, got $status"
 
+# 17. Neither command replaces or deletes a file it didn't write. A picture at a step picture's name that
+# the build didn't write (here, a separate drawing's finished PNG) stops a --steps build and survives a
+# build without --steps; an index.html, PDF or PowerPoint deck.mjs didn't write stops it, until --force.
+# The browser deck's "All slides" grid starts hidden: an author display rule can't override [hidden].
+mkdir -p "$work/own"
+cp "$work/steps/s.json" "$work/own/s.json"
+cp "$work/steps/s.png" "$work/own/s.step-1.png"    # someone else's drawing, named like a step picture
+foreign_sum=$(cksum <"$work/own/s.step-1.png")
+set +e; node "$build" "$work/own/s.json" --steps >"$work/own.out" 2>&1; status=$?; set -e
+[ "$status" -eq 1 ] && grep -q "didn't write" "$work/own.out" || { cat "$work/own.out"; fail "a --steps build should refuse to replace a picture it didn't write, got $status"; }
+[ "$(cksum <"$work/own/s.step-1.png")" = "$foreign_sum" ] || fail "a refused build changed the other picture"
+node "$build" "$work/own/s.json" >"$work/own2.out" 2>&1 || { cat "$work/own2.out"; fail "a build without --steps should succeed"; }
+[ "$(cksum <"$work/own/s.step-1.png")" = "$foreign_sum" ] || fail "a build without --steps deleted a picture it didn't write"
+mkdir -p "$work/owndeck"
+cp "$work/talk/01-open.json" "$work/talk/02-clicks.json" "$work/owndeck/"
+echo '<p>my own page</p>' >"$work/owndeck/index.html"
+set +e; node "$deck" "$work/owndeck" >"$work/owndeck.out" 2>&1; status=$?; set -e
+[ "$status" -eq 1 ] && grep -q "index.html" "$work/owndeck.out" || { cat "$work/owndeck.out"; fail "deck.mjs should refuse to replace an index.html it didn't write, got $status"; }
+grep -q "my own page" "$work/owndeck/index.html" && [ ! -f "$work/owndeck/owndeck.pdf" ] && [ ! -f "$work/owndeck/owndeck.pptx" ] || fail "a refused deck should write none of its files"
+set +e; node "$deck" "$work/owndeck" --force >"$work/owndeck2.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] || { cat "$work/owndeck2.out"; fail "deck.mjs --force should replace it (exit 3 for the missing notes), got $status"; }
+set +e; node "$deck" "$work/owndeck" --no-build >"$work/owndeck3.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] || { cat "$work/owndeck3.out"; fail "deck.mjs should replace its own files without --force, got $status"; }
+python3 -I - "$skill/assets/deck.html" <<'PY' || fail "the deck's grid must start hidden: an author display rule beats [hidden]"
+import re, sys
+css = open(sys.argv[1]).read().split("</style>")[0]
+assert re.search(r"\[hidden\]\s*\{[^}]*display:\s*none\s*!important", css), "no [hidden] { display: none !important } rule"
+PY
+
+# 18. Steps are numbered 1 to 12 without gaps, and an arrow joined to a box that comes later waits for it.
+python3 -I - "$work/steps/s.json" "$work/steps" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+big = json.loads(json.dumps(s)); big["panels"][0]["elements"][3]["step"] = 13
+gap = json.loads(json.dumps(s)); gap["panels"][0]["elements"][3]["step"] = 4
+late = json.loads(json.dumps(s)); del late["panels"][0]["elements"][2]["step"]    # the arrow from a (click 1) to b (click 2)
+for name, spec in (("big", big), ("gap", gap), ("late", late)):
+    json.dump(spec, open(f"{sys.argv[2]}/{name}.json", "w"))
+PY
+set +e; node "$build" "$work/steps/big.json" --lint-only >"$work/big.out"; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q '"step" is a whole number from 1 to 12' "$work/big.out" || { cat "$work/big.out"; fail "a step above 12 should be a warning"; }
+set +e; node "$build" "$work/steps/gap.json" --lint-only >"$work/gap.out"; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q "nothing appears on click 3" "$work/gap.out" || { cat "$work/gap.out"; fail "a gap in the steps should be a warning"; }
+node --input-type=module -e "
+import fs from 'fs';
+import { build } from '$build';
+const { elements, stepOf } = await build(JSON.parse(fs.readFileSync('$work/steps/late.json', 'utf8')));
+if (stepOf(elements.find(e => e.id === 's.ab')) !== 2) { console.error('an arrow to a box on click 2 should wait for it'); process.exit(1); }
+" || fail "an arrow appears before the box it points to"
+
+# 19. deck.mjs: the PowerPoint animates exactly the later steps' pictures; a slide that isn't 16:9 keeps its
+# shape there; file names are URL-encoded in the browser deck; a .json that isn't a slide is reported.
+mkdir -p "$work/deck2"
+python3 -I - "$work/steps/s.json" "$work/deck2" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1])); s["notes"] = "n"
+json.dump(s, open(f"{sys.argv[2]}/01 #a%b.json", "w"))
+json.dump({"title": "Tall", "format": "3:4", "frame": False, "notes": "n", "panels": [{"id": "s", "span": 2,
+           "elements": [{"type": "text", "id": "t", "x": 0, "y": 0, "text": "A tall page", "fontSize": 30}]}]}, open(f"{sys.argv[2]}/02-tall.json", "w"))
+json.dump({"title": "Not a slide", "panel": []}, open(f"{sys.argv[2]}/03-typo.json", "w"))
+PY
+set +e; node "$deck" "$work/deck2" >"$work/deck2.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q '03-typo.json has no "panels"' "$work/deck2.out" && grep -q "02-tall: format is 3:4" "$work/deck2.out" \
+  || { cat "$work/deck2.out"; fail "deck.mjs should report the stray .json and the 3:4 slide, got $status"; }
+python3 -I - "$work/deck2" <<'PY' || fail "the deck's animations, shapes or file names are wrong"
+import json, re, sys, zipfile
+d = sys.argv[1]
+html = open(f"{d}/index.html").read()
+data = json.loads(re.search(r"const SLIDES = (.*?);\n", html).group(1))
+assert data[0]["frames"] == ["01%20%23a%25b.step-1.png", "01%20%23a%25b.step-2.png", "01%20%23a%25b.png"], data[0]["frames"]
+z = zipfile.ZipFile(f"{d}/deck2.pptx")
+first = z.read("ppt/slides/slide1.xml").decode()
+pics = dict(re.findall(r'<p:cNvPr id="(\d+)" name="step (\d+)"', first))
+targets = re.findall(r'<p:spTgt spid="(\d+)"/></p:tgtEl><p:attrNameLst>', first)
+assert targets == [i for i, k in pics.items() if k in ("2", "3")], (pics, targets)
+tall = z.read("ppt/slides/slide2.xml").decode()
+cx, cy = map(int, re.search(r'<p:pic>.*?<a:ext cx="(\d+)" cy="(\d+)"', tall, re.S).groups())
+assert abs(cx / cy - 3 / 4) < 0.01, f"a 3:4 slide is {cx}x{cy} in the PowerPoint"
+PY
+
 echo "excalidraw-drawing: ok"
