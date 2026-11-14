@@ -103,7 +103,7 @@ def shape_problems(record):
         problems.append(f'"result" isn\'t one of {", ".join(RESULTS)}')
 
     reviewers = record.get("reviewers")
-    names = []
+    names, answered_only = [], set()
     if not isinstance(reviewers, list):
         problems.append('"reviewers" isn\'t a list')
         reviewers = []
@@ -120,6 +120,8 @@ def shape_problems(record):
         if not isinstance(rounds, list) or not rounds or not all(
                 (is_int(r) and r >= 1) or text(r) for r in rounds):
             problems.append(f'{where}: "rounds" isn\'t a list of round numbers or named looks')
+        elif all(look == "reply" for look in rounds):
+            answered_only.add(reviewer["name"])
         reports = reviewer.get("reports")
         if not isinstance(reports, list) or not reports or not all(text(r) for r in reports):
             problems.append(f'{where}: "reports" isn\'t a list of file names')
@@ -153,6 +155,10 @@ def shape_problems(record):
             bad = True
         if finding.get("reviewer") not in names:
             problems.append(f'{where}: "reviewer" isn\'t one of the reviewers\' names')
+            bad = True
+        elif finding["reviewer"] in answered_only:
+            problems.append(f"{where}: its reviewer was launched only to answer about a tag: give that reviewer "
+                            "the round it reviewed in")
             bad = True
         if finding.get("reviewer_tag") not in REVIEWER_TAGS:
             problems.append(f'{where}: "reviewer_tag" isn\'t one of {", ".join(REVIEWER_TAGS)}')
@@ -270,10 +276,11 @@ def lowered_defects(record):
 
 def replies(record):
     """What reviewers replied on blockers the author tagged lower: for each finding and each
-    reviewer that raised it, the latest reply."""
+    reviewer that answered about it, the latest reply. One answer given for two reviewers' entries
+    of a finding counts once."""
     latest = {}
     for finding in record["findings"]:
-        key = (finding["id"], finding["reviewer"])
+        key = (finding["id"], finding.get("reply_from", finding["reviewer"]))
         asked = "reply" in finding and finding["reviewer_tag"] == "blocker" and lowered(finding)
         if asked and finding["round"] >= latest.get(key, (0, None))[0]:
             latest[key] = (finding["round"], finding["reply"])

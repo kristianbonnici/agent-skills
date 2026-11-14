@@ -49,7 +49,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 ## Worth checking yourself
 <Only if some checks couldn't run, from the tasks' "unchecked" lines, for example real-screen checks while the screen was locked, or a reviewer held on a blocker that a task tagged lower.>
 - **<Where to look>:** what to try, and what it should do.
-- **<Task>: its reviewer held on a blocker the task tagged lower:** what the reviewer says goes wrong and when, the task's reason for its tag, and where to look. Nothing waited on it.
+- **<Task>: its reviewer held on a blocker the task tagged lower:** what the reviewer says goes wrong and when, the task's reason for its tag, and where to look. No merge waited on it.
 
 ## Side effects on your computer
 <Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed and restored, services reinstalled, files left or removed (test builds' sandbox containers, which need your password to delete, are safe to remove), disk space used and freed (with what pruning older runs freed at the start, when the contract asked for it), and anything the run couldn't restore.>

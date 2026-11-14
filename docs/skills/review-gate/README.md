@@ -70,8 +70,8 @@ author's reason and asks: agree or hold? (A free or trial reviewer's goes to the
 - **It never blocks.** The author's tag stands whatever the answer. A reply can't turn a finding into a
   blocker, hold back the merge, count toward the stop rule or start a fix or another round in that gate. If
   it convinces the author, the most that happens is that the finding is listed as an open follow-up, which
-  is fixed after the merge like any other. A reviewer that
-  doesn't answer in ten minutes is recorded as "no answer".
+  is fixed after the merge like any other. A reviewer that doesn't answer in ten minutes is recorded as "no
+  answer".
 - **It is visible.** The reply goes in the record, the Review section counts the replies and lists each
   blocker a reviewer held on with both sides, and the orchestrator's report puts those under "Worth checking
   yourself".
@@ -120,8 +120,9 @@ differed from the reviewer's. For gates before 4.1.0 it reads the table in each 
 the counts but not the reviewers' own tags. The "Record" line is how it tells the two apart: a handoff's
 table with that line under it is counted from the record the line names, when that is one of this task's
 records in this run or a record kept under `review-gate/`, and one without it is a gate that left no record.
-If the named record is gone, can't be read or is another task's, the handoff's table counts instead. A handoff table with no verdict line of its own (an updated table, one more look) adds to
-another gate and isn't counted as one.
+If the named record is gone, can't be read or is another task's, the handoff's table counts instead. A
+handoff table with no verdict line of its own (an updated table, one more look) adds to another gate and
+isn't counted as one.
 
 What a gate missed isn't recorded during a run. The record names the commits it reviewed, so a study can
 look in git for later fixes to the same code.

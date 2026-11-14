@@ -146,6 +146,21 @@ folder = save(os.path.join(work, "only"), only)
 done = run("table", folder)
 assert done.returncode == 0 and "Opus" not in done.stdout and "**Review: Deep, 2 rounds.**" in done.stdout, done.stdout
 assert "*Replies on the blockers tagged lower: 1 agreed, 1 held, 0 no answer.*" in done.stdout, done.stdout
+# Such a reviewer has no findings: one given to it is refused, since the table would leave it out.
+def found_while_answering(record):
+    record["reviewers"].append({"name": "Claude Opus 5.5, high", "rounds": ["reply"], "reports": ["reply-3-opus.md"]})
+    record["findings"].append({"id": 9, "round": 1, "reviewer": "Claude Opus 5.5, high", "reviewer_tag": "blocker",
+                               "tag": "blocker", "checked": "test", "commit": "9c4e2aa", "title": "Another defect"})
+fails("reply-only-finding", found_while_answering,
+      'finding 6: its reviewer was launched only to answer about a tag: give that reviewer the round it reviewed in')
+# Two trial reviewers called one finding a blocker and the paid reviewer answered for both, once:
+# its answer is on both entries and counts once.
+shared = copy.deepcopy(example)
+shared["reviewers"].append({"name": "Claude Haiku 5.5, high (trial)", "rounds": [1], "reports": ["round-1-haiku.md"]})
+shared["findings"].append(dict(shared["findings"][3], reviewer="Claude Haiku 5.5, high (trial)"))
+done = run("table", save(os.path.join(work, "shared"), shared))
+assert done.returncode == 0, done.stderr
+assert "*Replies on the blockers tagged lower: 1 agreed, 1 held, 0 no answer.*" in done.stdout, done.stdout
 # Two reviewers called one finding a blocker and were each asked: both answers count.
 both = copy.deepcopy(example)
 both["findings"].insert(3, dict(both["findings"][2], reviewer="Claude Sonnet 5.5, high", reply="agrees"))
@@ -229,6 +244,7 @@ back = copy.deepcopy(example)
 back["findings"].append(dict(back["findings"][0], round=2, reviewer_tag="follow-up"))
 assert [row["reviewer"] for row in module.gate_from_record(folder)["rows"]] == ["GPT-6.1 Terra", "Claude Sonnet 5.5",
                                                                               "GPT-6 Luna"]
+assert module.gate_from_record(os.path.join(work, "shared"))["replies"] == {"holds": 1, "agrees": 1}
 gate = module.gate_from_record(save(os.path.join(work, "back"), back))
 assert gate["changes"] == {"follow-up to blocker": 2, "blocker to follow-up": 1, "blocker to rejected": 1}, gate["changes"]
 assert (gate["tagged"], gate["differed"]) == (5, 4), (gate["tagged"], gate["differed"])

@@ -63,7 +63,7 @@ The gate:
 - `author`: the model that made the change, with its reasoning level.
 - `level`: `light`, `standard` or `deep`.
 - `result`: `passed` (no blocker left), `stopped` (the review didn't converge), `no reviewer` (none had room; `reviewers` and `findings` are then empty), or `reported` (the user asked for a review only, and you changed nothing).
-- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder, its replies about tags among them. A reviewer launched only to answer about a tag has `"rounds": ["reply"]`: it reviewed nothing, so it gets no row in the table and no review in the totals.
+- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder, its replies about tags among them. A reviewer launched only to answer about a tag has `"rounds": ["reply"]`: it reviewed nothing, so it gets no row in the table and no review in the totals, and no finding is its own. If it reports a defect while answering, give it the round it did that in.
 - `skipped`: every model that was skipped or that a reviewer moved on from, and why.
 - `note`: optional, one line on what a reader of the record must know and no field holds. When no reviewer had room and you read the diff yourself in a fresh pass, say that here and what you found: your own pass isn't a review, so it has no reviewer and no findings.
 
