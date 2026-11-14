@@ -46,5 +46,6 @@ A rule that is no longer needed never causes an incident, so the newer-model che
 directly. Rules written to patch an older model's weaknesses go stale as models improve: Anthropic
 removed over 80% of Claude Code's system prompt for newer models with no measurable loss on its
 coding evaluations ([Thariq Shihipar, July 2026](https://claude.dev/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models/)),
-and in one migration test removing prompting patterns that "hobble" newer models cut cost by a further 9%
+and in one migration test, six prompts each planted with one pattern that "hobbles" newer models,
+removing them cut cost by a further 9% on average
 ([Lance Martin, September 2026](https://claude.com/blog/reducing-cost-and-improving-performance-with-claude-platform)).
