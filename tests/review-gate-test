@@ -153,6 +153,13 @@ def found_while_answering(record):
                                "tag": "blocker", "checked": "test", "commit": "9c4e2aa", "title": "Another defect"})
 fails("reply-only-finding", found_while_answering,
       'finding 6: its reviewer was launched only to answer about a tag: give that reviewer the round it reviewed in')
+# One reviewer is asked once about a finding in a round, its own report of it included: a record
+# with two different answers from it there is refused, since only one could be counted.
+def two_answers(record):
+    record["findings"].append(dict(record["findings"][2], reviewer="GPT-6 Luna, high (trial)", reply="agrees",
+                                   reply_from="Codex GPT-6.1 Terra, high"))
+fails("two-answers", two_answers,
+      'finding 6: finding 2 has another reply from the same reviewer in round 1: ask once, and record that one answer')
 # Two trial reviewers called one finding a blocker and the paid reviewer answered for both, once:
 # its answer is on both entries and counts once.
 shared = copy.deepcopy(example)

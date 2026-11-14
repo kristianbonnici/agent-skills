@@ -13,8 +13,8 @@ something to say, and a "Record" line with the folder's path. It first checks th
   - every field and tag it knows, and each finding's reviewer among the reviewers;
   - each report file in the folder, and not empty;
   - a reason wherever the author's tag is lower than the reviewer's;
-  - from review-gate 5.0.0, the reviewer's reply wherever the author tagged its blocker lower, and
-    no reply anywhere else;
+  - from review-gate 5.0.0, the reviewer's reply wherever the author tagged its blocker lower, no
+    reply anywhere else, and one answer from a reviewer for a finding in a round;
   - for a gate that passed, a commit for every blocker, in the latest round that raised it.
 A record that fails prints what it lacks, one line each, and no table.
 
@@ -140,7 +140,7 @@ def shape_problems(record):
     if not isinstance(findings, list):
         problems.append('"findings" isn\'t a list')
         findings = []
-    tag_of, seen, latest = {}, set(), {}
+    tag_of, seen, latest, answers = {}, set(), {}, {}
     for place, finding in enumerate(findings, 1):
         where = f"finding {place}"
         if not isinstance(finding, dict):
@@ -202,6 +202,12 @@ def shape_problems(record):
             problems.append(f'{where}: "reply" is missing, though your tag is lower than the reviewer\'s blocker')
         if "reply_from" in finding and finding["reply_from"] not in names:
             problems.append(f'{where}: "reply_from" isn\'t one of the reviewers\' names')
+        elif finding.get("reply") in REPLIES:
+            # One question and one answer for a finding, a round and the reviewer that answers.
+            asked_of = (finding["id"], finding["round"], finding.get("reply_from", finding["reviewer"]))
+            if answers.setdefault(asked_of, finding["reply"]) != finding["reply"]:
+                problems.append(f"{where}: finding {finding['id']} has another reply from the same reviewer in "
+                                f"round {finding['round']}: ask once, and record that one answer")
     if record.get("result") == "passed":
         for finding_id in sorted(i for i, tag in tag_of.items() if tag == "blocker" and not latest[i][1]):
             problems.append(f'finding {finding_id} is a blocker with no "commit" in round {latest[finding_id][0]}, '

@@ -42,4 +42,4 @@ Do you agree with the author's tag? Start your answer with "agree" or "hold". If
 
 An answer that starts with "agree", in any letter case, is `agrees`; one that starts with "hold" is `holds`; and none in its 10 minutes, or one that says neither, is `no answer`. Save it in the record folder as `reply-<the finding's id>-<reviewer>.md`; if you ask about the finding again in a later round, as `reply-<id>-<reviewer>-round-<n>.md`.
 
-Ask once for a finding and the reviewer that answers. When two reviewers called the same finding a blocker and their questions go to the same reviewer (two free or trial reviewers', to the round's paid one), send one question with both reports, and record its one answer on both entries.
+Ask once in a round for a finding and the reviewer that answers. When the questions about one finding go to the same reviewer (its own report of the finding and a trial reviewer's, or two free or trial reviewers'), send one question with every report of it, and record its one answer on each of those entries, with `reply_from` on every entry that reviewer didn't raise.

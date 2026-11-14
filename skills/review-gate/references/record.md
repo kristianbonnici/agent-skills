@@ -76,7 +76,7 @@ Each finding:
 - `commit`: the commit that fixed it. Leave it out while the finding is open or needs no change. A finding that came back "not fixed" carries, on its later entry, the commit that settled it then.
 - `title`: the finding in a few words.
 - `why`: one line, needed when you rejected the finding or gave it a lower tag than the reviewer did (a blocker as a follow-up, a follow-up as a nit or pre-existing).
-- `reply`: needed when the reviewer's tag was `blocker` and yours is lower or `rejected`: what the reviewer answered when you asked (SKILL.md, section 4): `agrees`, `holds` or `no answer`. Give it nowhere else. `reply_from`: the reviewer that answered, when it wasn't the one that raised the finding.
+- `reply`: needed when the reviewer's tag was `blocker` and yours is lower or `rejected`: what the reviewer answered when you asked (SKILL.md, section 4): `agrees`, `holds` or `no answer`. Give it nowhere else. `reply_from`: the reviewer that answered, on every entry it didn't raise itself. A reviewer gives one answer about a finding in a round, so the entries it answered for carry the same `reply`.
 
 ## The Review lines
 
