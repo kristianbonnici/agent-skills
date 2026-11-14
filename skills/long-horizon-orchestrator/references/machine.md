@@ -64,7 +64,7 @@ Right after approval, while the user is still at the computer (about five minute
 3. Run each check again and show the result, for example "7 of 7 granted". Record it in the ledger, and in the owner's profile under this computer's "Machine" section with the date.
 4. Start keeping the computer awake (section 4).
 
-If the user doesn't wait for the warm-up, launch anyway: the one-off wake you scheduled before posting the admin block (the skill's Prepare step) brings you back about 10 minutes later if nobody answers. Tasks then skip what isn't granted and list it under "Couldn't check".
+If the user doesn't wait for the warm-up, launch anyway: the one-off wake you scheduled before posting the admin block ([prepare.md](prepare.md)) brings you back about 10 minutes later if nobody answers. Tasks then skip what isn't granted and list it under "Couldn't check".
 
 ## 4. Keeping the computer awake
 
@@ -154,7 +154,7 @@ In the 2026-10-12 run, a test build opened by a bare link spoke through the user
 
 On every wake:
 
-- **`scripts/run-watch` first** (on a heartbeat, through `scripts/heartbeat`). It reports a password dialog, free disk falling 10 GB in 5 minutes or below 20 GB, swap above 20 GB, a stopped keep-awake or sampler, a process not the run's above 80% of a core for 10 minutes, a virtual machine started since the run began, and a sleep of the Mac (SKILL.md, "On every wake", step 2).
+- **`scripts/run-watch` first** (on a heartbeat, through `scripts/heartbeat`). It reports a password dialog, free disk falling 10 GB in 5 minutes or below 20 GB, swap above 20 GB, a stopped keep-awake or sampler, a process not the run's above 80% of a core for 10 minutes, a virtual machine started since the run began, and a sleep of the Mac ([run-watch.md](run-watch.md) says what to do about each).
 - **The user's settings:** compare them with the start snapshot, which takes a second (on macOS, `defaults export <domain> - | diff <snapshot>.xml -`). Restore what a test build changed at once, key by key (`defaults write` or `defaults delete` of that key; importing the whole snapshot would also undo what the user's own copy wrote since), note it, and tell the task that did it, so it changes how it runs the step. Keys the user's own running copy writes in normal use are its own state: note them, and leave them. In four runs between 2026-10-13 and 2026-10-15, test builds sharing the user's settings cleared a chosen model, and wrote first-run state and a window's last page.
 - **Processes:** stop a stray process only by its process ID, after checking with `ps -p <pid> -o command=` that it is the run's.
 - **A password dialog on the screen** means a task ran something that asks for one, and nobody will answer it. On macOS, `ps -axo pid=,comm= | grep " /System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent$"` finds it: the system's own SecurityAgent, not a test's stand-in by that name elsewhere. Find the command and stop it, tell the task, and note it for the report.

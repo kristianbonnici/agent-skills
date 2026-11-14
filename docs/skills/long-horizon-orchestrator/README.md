@@ -31,7 +31,11 @@ flowchart TD
 
 ## Where the rules are
 
-- `SKILL.md`: the workflow, the contract and what every wake checks.
+- `SKILL.md`: the workflow, the routing rules, what every wake checks, and the principles.
+- `references/contract.md`, `references/prepare.md`: the contract's parts, and the steps before the first launch.
+- `references/run-watch.md`: what each line of the wake's first check means.
+- `references/finish.md`: the finish, and what happens when the user comes back.
+- `references/ledger.md`: what the ledger holds.
 - `references/routing.md`: which model does what, capacity, limits and the review gate's place.
 - `references/task-brief.md`: the brief and the common file every task reads.
 - `references/final-report.md`: the report and its charts.

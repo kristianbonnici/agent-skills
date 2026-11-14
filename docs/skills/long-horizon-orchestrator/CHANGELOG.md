@@ -1,5 +1,18 @@
 # long-horizon-orchestrator changelog
 
+## 5.3.0 (2026-11-14)
+
+A restructure, with no rule changed (owner, 2026-11-14: the skill "has become very big with a lot of different things"). `SKILL.md` had grown to 8,143 words, three to eight times the other skills here, and the orchestrator reads all of it at the start and again after every context summary. It is now 4,260 words: the role, the host table, the routing rules, the workflow and the wake loop, the ledger's place and the principles. Minor, not patch, because a rule that moved to a reference is read at a different moment.
+
+- **Text needed once per run moved to references, word for word:** the contract's parts to `references/contract.md`, the steps between approval and the first launch to `references/prepare.md`, the finish and "When the user comes back" to `references/finish.md`, and what the ledger holds to `references/ledger.md`. `SKILL.md` keeps a line naming each step, when the run is finished, and the two rules about the report (it is posted in the chat, and it ends the run).
+- **What each `run-watch` line means moved to `references/run-watch.md`.** The wake loop names the kinds of line and says to read the reference before acting on one for the first time, and always before stopping a process.
+- **The routing section names no helper or reviewer model.** It was a second copy of `routing.md` (951 words), and most releases that changed a model edited both. It keeps the rules (home harness, capacity by plan size, soft strengths, Opus for tasks and Fable rarely, the Fable second opinion, reasoning levels, helpers inside tasks, quota pauses work) and says Fable and Opus without their version numbers; `routing.md` has every name, limit and budget. The quota rule, stated three times, is stated once, with the four kinds of work that move.
+- **The contract's trial reviewers are the `review-gate` skill's,** split evenly, instead of a second list of the four models here.
+- **Two dated incidents left the principles** (the approval prompts of 2026-10-23 and 2026-10-27), and the owner's note of 12 Nov 2026 on medium reasoning left the routing section: [evidence.md](evidence.md) and `routing.md` already hold them. The rules they led to are unchanged.
+- **The password-dialog command is no longer in the wake loop:** `run-watch` runs it on every wake, and `machine.md` gives it.
+- Pointers to the moved text follow it: integration.md, machine.md, routing.md, and the header comments of `run-watch` and `prune-runs`.
+- **Checked:** every sentence of 5.2.2's `SKILL.md` is in the new `SKILL.md` or a reference word for word, apart from the 40 changed above, and every link and anchor in the skill resolves. Not yet through the review gate.
+
 ## 5.2.2 (2026-11-13)
 
 Three defects Gemini 4 Hydrogen found when it reviewed earlier releases for its evaluation, still in the code ([review-gate's evidence](../review-gate/evidence.md#gemini-4-hydrogen-as-a-reviewer-2026-11-13)):

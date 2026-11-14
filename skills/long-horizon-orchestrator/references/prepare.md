@@ -1,0 +1,19 @@
+# Prepare
+
+What you do between the user's approval and the first launch, in this order.
+
+- Confirm the integration checkout: it is on the integration branch and has no tracked modifications. Record its path and HEAD.
+- Create the ledger and the run directory (SKILL.md, "Ledger", says where; [ledger.md](ledger.md) what it holds), and record the contract in the ledger.
+- If the contract named older runs to shrink, run `scripts/prune-runs --apply` once, and record what it freed in the ledger.
+- Record your own harness, model and reasoning level, read from the host rather than remembered (in T3, `t3_thread_configure` without a `modelSelection`, which only reads). The report's charts need it.
+- Record the version of this skill and of `review-gate` (`metadata.version` in each `SKILL.md`), so later studies can compare runs by version, and the absolute path of this skill's folder, so a wake after a context summary can read the skill and its `scripts/` again.
+- If your thread's title doesn't say plainly which run this is, rename it so the user can tell runs apart (in T3, [host-t3.md](host-t3.md#name-your-own-thread)).
+- Allocate exclusive resources per task: unique test ports, temporary directories and branch names.
+  - Never use the user's own dev-server ports.
+  - Never stop processes you didn't start.
+- Snapshot the user's own state into the run directory before the warm-up changes anything (it may turn off screen lock or Stage Manager), and set up the leases for shared resources ([machine.md](machine.md#5-the-users-own-things)).
+- Keep the computer awake from now until the finish ([machine.md](machine.md#4-keeping-the-computer-awake)), and record how.
+- Start the usage sampler in the background, detached from your shell, and record its process ID ([machine.md](machine.md#9-the-usage-sampler)): `nohup <skill folder>/scripts/usage-sampler <run directory>/usage >/dev/null 2>&1 & echo $!` in one shell call (the next call is a new shell), then confirm it runs with `ps -p <pid>`. It uses no model tokens and next to no processor time, and the final report draws its usage graphs from that folder.
+- Write `<run directory>/watch.json`, which `scripts/run-watch` and `scripts/heartbeat` read on every wake: `{"started": "<now, ISO 8601>", "repo": "<integration checkout>", "integration_branch": "<branch>", "keep_awake_pid": <pid>, "sampler_pid": <pid>, "orchestrator_thread": "<your own thread or session ID>", "tasks": {}}`. Keep it in step with the ledger: launches add tasks, and a task that stops running gets its `status`.
+- Run the warm-up while the user is still there ([machine.md](machine.md#3-the-warm-up)): the admin block, every approved prompt made to appear once, each permission checked. Record the results in the ledger and the owner's profile. It must not hold up the run: before you post the admin block, set up a wake about 10 minutes later, as your host reference's "Warm-up wake" says, and record it in the ledger. If the user answers first, delete it and go on. If it fires, check again what the warm-up can read without them, record what is missing, delete it, finish the rest of Prepare (the common file), and launch.
+- Write the common file that every brief points to, with the rules all tasks share ([task-brief.md](task-brief.md#one-common-file-for-every-brief)).

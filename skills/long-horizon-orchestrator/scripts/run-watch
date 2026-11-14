@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The orchestrator's first check on every wake: reads files and processes only (no model, no
-network) and prints one line per finding, nothing when all is well. SKILL.md ("On every wake",
-step 2) says what to do with each line.
+network) and prints one line per finding, nothing when all is well. references/run-watch.md says
+what to do with each line.
 
 Usage: run-watch <run directory> [--watch <file>]
 

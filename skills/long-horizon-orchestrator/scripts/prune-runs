@@ -2,8 +2,8 @@
 """Keep the orchestrator's run folders small: delete a merged task's scratch folder, and shrink
 finished older runs to their write-ups.
 
-SKILL.md ("Prepare", "On every wake", "Finish") says when to use it, and machine.md ("Disk")
-what it keeps.
+references/prepare.md, SKILL.md ("On every wake") and references/finish.md say when to use it, and
+machine.md ("Disk") what it keeps.
 
 Usage:
   prune-runs [--older-than <days>] [--apply]

@@ -11,7 +11,7 @@ With more than about four tasks merging into one branch, every merge sends the o
 
 - **A clean rebase needs only a re-check.** Once the full check has passed on a head of the task's, a later rebase that applies cleanly needs only a build, its focused tests and the tests of any file both sides changed; then it merges at once. A rebase with conflicts, or one that changes code the task calls, needs the full check again. Every later merge that night went through without another queue.
 - **Timing limits under load** fail at random, a different test each run: the task runs the failing ones once more alone, and merges with both outputs under "Couldn't check" when they pass or differ; one that fails alone, twice, is real.
-- **The full check runs once at the finish,** on the integration branch (SKILL.md, "Finish"), and what it finds goes to the task that owns it or to a follow-up task.
+- **The full check runs once at the finish,** on the integration branch ([finish.md](finish.md), step 4), and what it finds goes to the task that owns it or to a follow-up task.
 
 If fast-forwards still race after that (a task fails its fast-forward twice running), declare a one-slot `merge` lease ([machine.md](machine.md#6-shared-resources-and-disk)): a task takes it after its review and its GPU, VM or screen checks, for its last rebase, the re-check and the fast-forward only, and never waits on another lease while it holds it.
 
