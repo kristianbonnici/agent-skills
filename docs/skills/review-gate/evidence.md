@@ -302,6 +302,60 @@ before 3.0.0; "unique" are the defects no other reviewer of that gate raised.
 → *no rule changes on these counts alone: the trial's study is due for Haiku and Luna, and it should read
 what each found, from the reports the record now keeps, not only how many.*
 
+## The trial reviewers' study (2026-11-14)
+
+The study the trial promised once a reviewer had about 20 reviews: 92 gates of 2026-11-01 to 2026-11-12, from
+their handoffs. Haiku had 34 reviews, Luna 24 and Muse 16; Hydrogen had none in these gates (its five
+scored reviews are above). DeepSeek V4.1 Flash, the cheap reviewer that already has a place, is the one to
+compare with: 58 reviews. Trial and free reviewers all review round 1 only, in 12 to 15 minutes.
+
+**Counted, from the Review tables** (the tags are the author's):
+
+| Reviewer | Reviews | Gates with a defect from it | Gates where it alone found one | Defects per review | Found alone, per review | Blockers | Rejected, of its findings |
+|---|---|---|---|---|---|---|---|
+| DeepSeek V4.1 Flash | 58 | 79% | 50% | 1.7 | 0.8 | 4 | 9% |
+| Claude Haiku 5.5 | 34 | 85% | 50% | 1.9 | 0.8 | 3 | 14% |
+| Muse Spark 1.3 Contributor | 16 | 81% | 62% | 2.1 | 0.9 | 0 | 11% |
+| GPT-6 Luna | 24 | 62% | 25% | 1.0 | 0.2 | 0 | 9% |
+
+- **On the same gates as DeepSeek:** Haiku found 48 defects to DeepSeek's 41 over 25 gates (13 alone to
+  20), Muse 28 to 27 over 12 gates (13 alone to 13), and Luna 16 to 27 over 15 gates (3 alone to 10), with
+  fewer than DeepSeek in 8 of the 15.
+- **Luna reported nothing at all in 3 of its 24 reviews;** Haiku in none, Muse in one.
+- **Cost isn't what separates them:** in the two runs with a cost report, a review by any of them came to a
+  few cents at API list prices.
+
+**Read, from the findings the handoffs list by reviewer** (a model read each Review section; a fifth to a quarter of
+the defects aren't attributed to a reviewer there, two fifths for Muse, and DeepSeek's are from every second
+handoff):
+
+| Reviewer | Defects read | Found alone | Of those, would plausibly have mattered to a user | On a common path | Rejected claims that were wrong about the code |
+|---|---|---|---|---|---|
+| DeepSeek V4.1 Flash (29 reviews) | 35 | 12 | about 6 | 1 | 9 of 12 |
+| Claude Haiku 5.5 (34) | 50 | 19 | about 5 | 3 | 11 of 26 |
+| Muse Spark 1.3 Contributor (16) | 18 | 7 | about 2 | 2, both shared | 6 of 7 |
+| GPT-6 Luna (24) | 18 | 6 | 1 or 2 | 1 | 1 of 3 |
+
+- **What they find:** corner cases and missing hardening, in all four. Most of each one's defects (61% to
+  74%) needed a corner case or rare timing, and a common-path defect was rare.
+- **Where they differ:** DeepSeek found more hazards to the user's data than the others, two of them alone.
+  Haiku found the one security defect any of them found alone, and most of the defects in docs and rules.
+  Muse found small state and ordering slips, and nothing in security, data, tests or release. Luna's hits on
+  serious defects were all shared with another reviewer.
+- **What they cost the author:** from Haiku a rejected claim for every two or three defects, from DeepSeek
+  and Muse one for every four, and from Luna one for every eight. Half or more of those claims were wrong
+  about code that already handled the case.
+
+→ *none of them can stand in for a paid reviewer: the best of them found a user-facing defect alone in one
+review of five, Luna in about one of fifteen, and almost none found a common-path defect. Luna has had its trial and adds least: half the defects
+of the others, fewer than DeepSeek on the same gates, and little found alone that mattered. Haiku holds up
+as well as DeepSeek does. Muse looks level with both on 16 reviews, four short of the trial's 20. Any change
+of the reviewers is the owner's decision; none is made here.*
+
+Limits: the "would have mattered" column is a model's judgment of the author's own summaries, on small
+numbers. From 4.1.0 a gate keeps each reviewer's report, so the next study can read what a reviewer said
+rather than what the author made of it.
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
