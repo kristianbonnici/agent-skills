@@ -238,8 +238,10 @@ const outputs = [['index.html', page], [`${name}.pdf`, pdfBytes], [`${name}.pptx
 // Something that isn't a file at an output's name (a folder, say) is never moved or deleted, even with --force.
 const notFiles = outputs.map(([f]) => f).filter(f => fs.existsSync(f) && !fs.lstatSync(f).isFile());
 if (notFiles.length) {
-  console.error(`${notFiles.map(f => path.basename(f)).join(', ')} in ${folder} isn't a file, so the deck can't go there: ` +
-    `move it, or choose another --name.`);
+  // --name renames only the PDF and PowerPoint: index.html has to be moved.
+  const renamable = notFiles.every(f => !f.endsWith('index.html'));
+  console.error(`${notFiles.map(f => path.basename(f)).join(', ')} in ${folder} isn't a plain file, so the deck can't go there: ` +
+    `move it${renamable ? ', or choose another --name' : ''}.`);
   process.exit(1);
 }
 const theirs = [];
