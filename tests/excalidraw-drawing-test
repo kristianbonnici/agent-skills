@@ -675,5 +675,26 @@ mv "$work/renamed/03-other.step-1.png" "$work/renamed/03-other.step-1.keep"
 cp "$work/mixed/02-clicks.step-1.png" "$work/renamed/03-other.step-1.png"   # another slide's first step
 set +e; node "$deck" "$work/renamed" --no-build >"$work/renamed.out" 2>&1; status=$?; set -e
 [ "$status" -eq 3 ] && grep -q "is a step picture of 02-clicks, not of this slide" "$work/renamed.out" || { cat "$work/renamed.out"; fail "another slide's step picture should be left out, got $status"; }
+python3 -I -c 'import json,re,sys; d=json.loads(re.search(r"const SLIDES = (.*?);\n", open(sys.argv[1]).read()).group(1)); sys.exit(d[0]["frames"] != ["03-other.png"])' "$work/renamed/index.html" \
+  || fail "another slide's step picture became a click"
+
+# 22. Something that isn't a file at an output's name (a folder) is never moved or deleted, even with --force;
+# a slide with a long non-ASCII name keeps its step pictures recognised.
+mkdir -p "$work/dirout/index.html"
+echo keep >"$work/dirout/index.html/keep.txt"
+cp "$work/talk/01-open.json" "$work/dirout/"
+python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1])); s["notes"]="n"; json.dump(s, open(sys.argv[1], "w"))' "$work/dirout/01-open.json"
+for extra in "" --force; do
+  set +e; node "$deck" "$work/dirout" $extra >"$work/dirout.out" 2>&1; status=$?; set -e
+  [ "$status" -eq 1 ] && grep -q "isn't a file" "$work/dirout.out" || { cat "$work/dirout.out"; fail "a folder at index.html should be refused${extra:+ with $extra}, got $status"; }
+  [ -f "$work/dirout/index.html/keep.txt" ] || fail "a folder at index.html was moved or deleted${extra:+ with $extra}"
+done
+long="$(python3 -I -c 'print("é" * 100)')"
+mkdir -p "$work/longname"
+cp "$work/talk/02-clicks.json" "$work/longname/$long.json"
+node "$build" "$work/longname/$long.json" --steps >/dev/null || fail "a slide with a long non-ASCII name should build"
+node "$build" "$work/longname/$long.json" --steps >"$work/longname.out" 2>&1 || { cat "$work/longname.out"; fail "a rebuild should recognise its own step pictures of a long non-ASCII name"; }
+node "$deck" "$work/longname" --no-build >"$work/longname-deck.out" 2>&1 || { cat "$work/longname-deck.out"; fail "a deck of a long non-ASCII slide name should be clean"; }
+grep -q "^1 slides, 2 steps after the first$" "$work/longname-deck.out" || { cat "$work/longname-deck.out"; fail "a long non-ASCII slide name lost its steps"; }
 
 echo "excalidraw-drawing: ok"

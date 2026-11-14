@@ -116,8 +116,10 @@ for (const s of slides) {
   // with its click and the slide's count of clicks. A file merely at such a name isn't one.
   const steps = [];
   const first = readStepMark(path.join(dir, `${s.base}.step-1.png`));
-  if (first && first.slide && first.slide !== s.base) {
-    warnings.push(`${s.base}.step-1.png is a step picture of ${first.slide}, not of this slide: left out of the deck`);
+  if (first && (!first.build || first.slide !== s.base)) {
+    warnings.push(first.slide && first.slide !== s.base
+      ? `${s.base}.step-1.png is a step picture of ${first.slide}, not of this slide: left out of the deck`
+      : `${s.base}'s step pictures are from an older build: build it again`);
   } else if (first) {
     for (let k = 1; k < first.of; k++) {
       const mark = readStepMark(path.join(dir, `${s.base}.step-${k}.png`));
@@ -233,6 +235,13 @@ async function ours(file) {
   return bytes.includes(MARK);
 }
 const outputs = [['index.html', page], [`${name}.pdf`, pdfBytes], [`${name}.pptx`, pptxBytes]].map(([f, b]) => [path.join(dir, f), b]);
+// Something that isn't a file at an output's name (a folder, say) is never moved or deleted, even with --force.
+const notFiles = outputs.map(([f]) => f).filter(f => fs.existsSync(f) && !fs.lstatSync(f).isFile());
+if (notFiles.length) {
+  console.error(`${notFiles.map(f => path.basename(f)).join(', ')} in ${folder} isn't a file, so the deck can't go there: ` +
+    `move it, or choose another --name.`);
+  process.exit(1);
+}
 const theirs = [];
 for (const [f] of outputs) if (!(await ours(f))) theirs.push(path.basename(f));
 if (theirs.length && !force) {
@@ -259,7 +268,7 @@ try {
 }
 // The new set is in place: only now remove the earlier one. One that can't be removed stays, and is reported.
 for (const f of setAside) {
-  try { fs.rmSync(f + bak, { recursive: true, force: true }); } catch (e) { warnings.push(`could not remove the earlier ${path.basename(f)} at ${f + bak}: ${e.message}`); }
+  try { fs.rmSync(f + bak, { force: true }); } catch (e) { warnings.push(`could not remove the earlier ${path.basename(f)} at ${f + bak}: ${e.message}`); }
 }
 
 const total = clicks.reduce((a, b) => a + b, 0);

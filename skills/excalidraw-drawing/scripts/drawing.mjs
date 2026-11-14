@@ -46,13 +46,20 @@ export function markStep(png, k, of, build = '', slide = '') {
 // What a step picture's marker records ({ k, of, build, slide }), or null for a file without one.
 export function readStepMark(file) {
   try {
-    const fd = fs.openSync(file, 'r'), head = Buffer.alloc(512);
-    const n = fs.readSync(fd, head, 0, 512, 0); fs.closeSync(fd);
-    const at = head.subarray(0, n).indexOf(`tEXt${STEP_KEY}\0`, 0, 'latin1');
-    if (at < 4) return null;
-    const text = head.subarray(at + 4, at + 4 + head.readUInt32BE(at - 4)).toString('latin1').slice(STEP_KEY.length + 1);
-    const m = /^(\d+) of (\d+)(?: (\S*) (\S*))?\.?$/.exec(text);
-    return m ? { k: Number(m[1]), of: Number(m[2]), build: m[3] ?? '', slide: decodeURIComponent(m[4] ?? '') } : null;
+    const fd = fs.openSync(file, 'r');
+    try {
+      // The marker sits right after IHDR (byte 33); read its whole chunk, however long the slide's name.
+      const head = Buffer.alloc(41);
+      if (fs.readSync(fd, head, 0, 41, 0) < 41 || head.toString('latin1', 37, 41) !== 'tEXt') return null;
+      const len = head.readUInt32BE(33);
+      if (len > 65536) return null;
+      const data = Buffer.alloc(len);
+      if (fs.readSync(fd, data, 0, len, 41) < len) return null;
+      const text = data.toString('latin1');
+      if (!text.startsWith(`${STEP_KEY}\0`)) return null;
+      const m = /^(\d+) of (\d+)(?: (\S*) (\S*))?\.?$/.exec(text.slice(STEP_KEY.length + 1));
+      return m ? { k: Number(m[1]), of: Number(m[2]), build: m[3] ?? '', slide: decodeURIComponent(m[4] ?? '') } : null;
+    } finally { fs.closeSync(fd); }
   } catch { return null; }
 }
 export const isStepPicture = file => readStepMark(file) !== null;
