@@ -7,7 +7,7 @@
 
 ### Many tasks merging at once
 
-With more than about four tasks merging into one branch, every merge sends the others back to rebase, and a full check after each rebase makes them queue for build slots: on 2026-11-10 three tasks ran the full check on the same base while five waited, one on its second, about 30 to 45 minutes and the matching usage each. So the common file carries from the start ([task-brief.md](task-brief.md#common-file-template)):
+With more than about four tasks merging into one branch, every merge sends the others back to rebase, and a full check after each rebase makes them queue for build slots. So the common file carries from the start ([task-brief.md](task-brief.md#common-file-template)):
 
 - **A clean rebase needs only a re-check.** Once the full check has passed on a head of the task's, a later rebase that applies cleanly needs only a build, its focused tests and the tests of any file both sides changed; then it merges at once. A rebase with conflicts, or one that changes code the task calls, needs the full check again. Every later merge that night went through without another queue.
 - **Timing limits under load** fail at random, a different test each run: the task runs the failing ones once more alone, and merges with both outputs under "Couldn't check" when they pass or differ; one that fails alone, twice, is real.
@@ -23,7 +23,7 @@ Work merges only when every check passes. There is one exception, and you decide
 - a follow-up task is launched for the miss, within the contract (from the reserve, or as a new task with the same scope);
 - the report names the miss and its follow-up.
 
-Then tell the task to merge (it reports again once merged), or do the gate yourself. If any condition fails, the task stays `ready` and the report lists it under "Not finished". Never loosen, skip or re-baseline the check to make it pass. In the 2026-10-15 run, two tasks merged this way, each with a follow-up, and both checks were later made to pass as they stood.
+Then tell the task to merge (it reports again once merged), or do the gate yourself. If any condition fails, the task stays `ready` and the report lists it under "Not finished". Never loosen, skip or re-baseline the check to make it pass.
 
 ## Verifying a "merged" report
 
@@ -89,7 +89,7 @@ Launch the dependents as soon as the merge is verified; they don't need the old 
    Also the helpers it used that outlive it, such as a computer-use service or its `cua_node` processes, a browser or app of the kit's, a `tail -F`: stop them by process ID once no other running task uses them ([machine.md](machine.md#8-leftover-processes)).
 3. **Its leases.** `lease status` (in the run's lease folder, normally the run directory) should show none held by the task. Release a merged task's lease only after its processes are gone; releasing it earlier hands the resource to another task while the old job still uses it.
 
-If anything still runs, leave the cleanup for a later wake; the heartbeat or the task's next report will bring you back. A job that would never end on its own (a server, a watcher) after the task's turn has stopped: ask the task to stop it, or stop it yourself by its process ID, once `ps -p <pid> -o command=` shows it is the task's. In the 2026-10-12 run, removing a worktree stopped a 24-minute measurement. On 2026-10-15, a thread showed completed while its background screen check still ran; its worktree was removed and its lease released, and another task's screen check overlapped it for two minutes and had to be redone.
+If anything still runs, leave the cleanup for a later wake; the heartbeat or the task's next report will bring you back. A job that would never end on its own (a server, a watcher) after the task's turn has stopped: ask the task to stop it, or stop it yourself by its process ID, once `ps -p <pid> -o command=` shows it is the task's.
 
 Then clean up:
 

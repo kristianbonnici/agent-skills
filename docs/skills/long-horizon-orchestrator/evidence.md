@@ -4,7 +4,7 @@ The skill states its rules without their reasons, to keep the model's context fo
 
 Last checked: new work 2026-11-04; sources 2026-11-04.
 
-## Our own runs (2026-10-04 to 2026-11-07)
+## Our own runs (2026-10-04 to 2026-11-13)
 
 The skill grew from its overnight runs; the review gate's [study](../review-gate/evidence.md) covers 263
 handoffs from 21 of them. The incidents below each changed a rule. The per-run details stay in the owner's
@@ -79,6 +79,108 @@ private records.
   → *the cleanup removes a task's harness temp folders, the finish lists what is left and the report's size
   line counts it, briefs say the harness's scratchpad isn't scratch and reviewers build into the task's
   scratch or not at all, and run-watch's disk line names the folder that grows.*
+- **Prompts nobody answered** (2026-10-12): a task's check of the login items put seven password prompts on
+  the screen, and the owner had to turn on Developer mode in the middle of the night; a task answered "Don't
+  Allow" to an automation prompt, because nothing told it the permission was wanted; a package download put
+  a keychain prompt on the screen. Tasks were allowed to hand any prompt to Codex computer use, and none
+  did: a task whose command waits on a dialog sees only a hang. → *whatever needs the user goes into the
+  contract and the warm-up; briefs name the prompts that are approved.*
+- **The run reached the owner's own things** (2026-10-12 and -14): a test build opened by a bare link spoke
+  through the owner's live speech service and wrote into their app's history; tests left about 5,700
+  settings files and the sound volume at zero; one task's `pkill -f` stopped two other tasks' builds and a
+  `pkill -x` quit one of the owner's apps; a cleanup's case-insensitive `grep` over the registered apps
+  matched another app's folder and unregistered it; deleting test containers in Finder put password dialogs
+  on the screen. → *a snapshot of the owner's state compared at the finish, test builds kept apart from the
+  owner's copy, and processes stopped only by a recorded process ID, never by name or pattern.*
+- **The display and sleep:** a display kept awake all day while every task rested made the Mac run warm
+  (2026-10-22); a run kept awake with `-i` alone had its display sleep after 10 idle minutes, and the screen
+  locked 10 minutes into the run although the lock setting read off, so the screen task blocked
+  (2026-10-23); the owner's daily automation put the Mac to sleep for 2.5 hours mid-run, a full check took
+  60 minutes instead of 25, and a heartbeat inside a dark wake said all was well (2026-11-07). → *`caffeinate
+  -i -d` while screen work remains and `-i` once none does; scheduled sleeps listed in Prepare; run-watch's
+  `slept` line.*
+- **Leftover processes** (2026-10-22 and 2026-11-07): a computer-use background service used 17–26% CPU for
+  two days, keeping a screen capture going, long after the run that needed it; a task left `tail -F` on its
+  log and another a measurement monitor; a task paused on its usage limit left its test build running; the
+  owner found an 8 GB virtual machine idle 4.5 days after the run whose tasks had restarted it. → *a process
+  snapshot at the start, leftovers stopped by process ID after each merge and at the finish, and run-watch's
+  `vm` line.*
+- **Leases held or waited on too long** (2026-11-07 and -08): three tasks ended their turns waiting for the
+  screen while the owner stayed at the computer, an hour each, with work that needed no screen still undone;
+  one task held all three cpu slots for about 20 minutes with `--all`, to pass a timing test, while six
+  waited. → *a task finishes everything that needs no screen before it queues for it; `lease` refuses `--all`
+  on the cpu.*
+- **Usage that outran its estimate:** three Codex tasks at high drained a fresh ChatGPT Plus 5-hour window
+  in about 20 minutes, twice, about 90% of a window per task-hour (2026-10-15); four multi-agent tasks
+  started 10 to 97 sub-agent lanes each and took Claude's week from 81% to 97% in about 16 minutes, and one
+  async Argon lane took Argon's week from 0 to 80 points against a budget of 30 (2026-11-03); a contract
+  judged "a few percent" from a run that had used 9% of the week in 12 hours with four Opus tasks, and nine
+  Claude tasks at once, three on Fable, used 15 points in 77 minutes (2026-11-10); the same night an
+  orchestrator on Fable re-read its large context five to twelve times a wake and used about a point of the
+  Fable week every 15 to 20 minutes with no task on Fable. → *capacity as plan size times room left; a lane
+  cap in a multi-agent task's brief and Argon only in `wait` mode; the run's Claude estimate from its own
+  tasks, with a budget; an idle heartbeat in one call.*
+- **Many tasks merging into one branch** (2026-11-10): three tasks ran the full check on the same base while
+  five waited, one on its second, about 30 to 45 minutes and the matching usage each. → *the cheaper
+  re-check after a clean rebase, and the full check once at the finish.* Earlier (2026-10-15), two tasks
+  merged on a narrow, measured miss, each with a follow-up, and both checks were later made to pass as they
+  stood. → *the narrow-miss exception.*
+- **Two runs at once** (2026-10-15): two runs shared one checkout, one Claude plan and the screen for about
+  four hours without trouble, because they agreed how. Both kept one common file for their briefs and used
+  it to spread rules learned along the way. → *the steps for running beside another orchestrator; one common
+  file for every brief.*
+- **A goal queued behind every brief** (an audit of the 33 Claude tasks of the 2026-10-14 and -15 runs): it
+  never made a task finish required work. It started only when the brief's first turn ended, in about half
+  the tasks after the merge and the report, and before a report it never pushed; what kept tasks going was
+  Claude Code waking a thread when its own background jobs and subagents finished, which it does with or
+  without a goal. After the reports its checker rejected "Couldn't check" lists, kept tasks working for
+  about 3.8 hours in all, caused 19 extra reports, and pushed tasks into breaking their rules, a question to
+  the owner while they slept among them. Its useful catches were reports claiming checks for the final
+  commit that had run on an earlier one, which the handoff's rule on commits covers. → *the brief is the
+  task's only message.*
+- **Helpers:** one helper of each provider did a read-only collection job correctly, and an OpenCode helper
+  connected to the owner's running app through the owner's MCP configuration (2026-10-15); about 12 of 15
+  requests to GLM-5.3 Flash in three minutes failed with `429` (2026-10-16); on Copilot, a lookup in one
+  file (3 model calls, 68,000 input tokens) took 0.7 of the month's 200 units and a research lane that read
+  three long files (6 calls, 241,000 input tokens, 77% cached) took 1.8 units in 30 seconds, both answers
+  right and one line number 3 lines off, with GPT-5.6 Luna the only model its Auto routing offered; a
+  one-word reply to a 22,000-token prompt used about 0.9% of Argon's week (2026-10-17); one Hydrogen call
+  with about 28,000 input tokens took the Gemini 5-hour window from 0% to 0.2% and its week from 2.4% to
+  2.5%, and left Argon's alone (2026-11-13). → *helpers stay read-only and away from the owner's apps;
+  switch, don't wait; budgets for Copilot and Argon; Hydrogen counted on the Gemini windows.*
+- **Codex computer use** (2026-10-04 and -12): the owner confirmed it works under T3. In one run, four
+  hand-offs clicked through and judged screens: three passed, and the fourth couldn't turn VoiceOver on. The
+  tasks did most other screen checks themselves, through the accessibility API and screenshots. →
+  *computer-use steps handed to Codex; VoiceOver checks left to the task or the user.*
+- **Settling threads** (2026-10-12): a call to settle threads that passed a list in the wrong field acted on
+  the orchestrator's own thread, and about 40 finished threads stayed open. → *one thread per call, always
+  with its `threadId`.*
+- **The usage sampler's cost** (measured 2026-10-29, OpenCode Go's reading 2026-11-02): a Mac sample 0.06 s
+  of processor time, a cached reading 0.14 s with half a second waiting for Go, a live reading 22 s; about
+  30 s an hour in all. The known limits of the Claude API credits' report were left after five review rounds
+  (2026-10-30). → *the sampler runs for the whole run.*
+
+### The owner's decisions
+
+Rules that are the owner's choice, with when they made it:
+
+- **2026-10:** Codex's computer use is stronger, so its steps go there; from 2026-10-28 on GPT-6.1 Terra,
+  which is cheaper than Sol and faster at computer use.
+- **2026-10-16:** fast helpers are used freely for research and retrieval, and only two of OpenCode's free
+  models are good enough for it.
+- **2026-10-17:** bounded harder sub-tasks may go to Gemini 4 Argon, within a budget.
+- **2026-10-30:** a task on a free model moves along the free and low-cost pool always, and then to a paid
+  model without asking ("the run is mostly on paid subscriptions anyway"). The owner's API account had no
+  payment method then, which is what makes the API credits safe to use.
+- **2026-11-01:** OpenCode Go backs up the free tier, and a whole task given to that pool starts on Go.
+- **2026-11-11:** Fable only "when the demand is such that it would probably clearly be the best, but
+  otherwise, for most even complex tasks, Opus is more than good enough".
+- **2026-11-12:** "we can more easily use medium reasoning than what we would normally use", with high kept
+  for demanding tasks; Fable's budget stays a quarter of what is left of its week; the one-call heartbeat is
+  T3's only; and for a task's options, "one image with the options should be enough, not this huge list of
+  images with the same options in many different images".
+- **2026-11-13:** Gemini 4 Hydrogen replaces Gemini 3.8 Flash as Antigravity's fast helper and takes harder
+  sub-tasks before Argon; the orchestrator asks Fable for a second opinion on its hardest decisions.
 
 ## Outside sources
 

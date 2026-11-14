@@ -86,7 +86,7 @@ schedule_task({
 })
 ```
 
-- **An idle wake is one call.** `scripts/heartbeat` runs `run-watch`, reads the integration branch, the computer and the usage sampler's last readings (live when a running task's `model` in `watch.json` names Fable), and adds its line to the ledger. On 2026-11-10 an orchestrator on Fable re-read its large context five to twelve times a wake (`run-watch`, git, usage, a ledger note, ten thread reads) and used about a point of the Fable week every 15 to 20 minutes with no task on Fable; one call ended that. `run-watch` already flags an approval prompt (`approval`) and a silent task (`quiet`) for Claude Code and Codex tasks, so a thread read is needed only for a task it names, or one on another harness (`blind`): the heartbeat names such a task on every wake and is never idle while it runs, so a run of tasks on other harnesses pays a full wake each time. The one-call heartbeat is T3's only: Claude Code and Codex wakes still start with `run-watch` (the owner's decision, 12 Nov 2026).
+- **An idle wake is one call.** `scripts/heartbeat` runs `run-watch`, reads the integration branch, the computer and the usage sampler's last readings (live when a running task's `model` in `watch.json` names Fable), and adds its line to the ledger. `run-watch` already flags an approval prompt (`approval`) and a silent task (`quiet`) for Claude Code and Codex tasks, so a thread read is needed only for a task it names, or one on another harness (`blind`): the heartbeat names such a task on every wake and is never idle while it runs, so a run of tasks on other harnesses pays a full wake each time. The one-call heartbeat is T3's only: Claude Code and Codex wakes still start with `run-watch`.
 
 - **Interval:** 15 minutes or less while tasks run, so an approval prompt or a dead task waits at most that long (the skill's principles). While nothing runs, waiting only for a reset, it may be longer.
 - **Record it:** keep the returned ID in the ledger, and delete the heartbeat with `delete_scheduled_task` when the run finishes.
@@ -179,7 +179,7 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 Keep the user's thread list clear of this run's tasks. Use `t3_thread_organize`:
 
-- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. In the 2026-10-12 run, that marked the orchestrator's thread to settle and left about 40 finished threads open. Always pass `threadId`, and never call it without one during a run, since that means your own thread. At the finish, check the run's thread IDs as below.
+- **One thread per call.** `t3_thread_organize` takes a single `threadId`. A list passed in another field is ignored, and the call then acts on your own thread. Always pass `threadId`, and never call it without one during a run, since that means your own thread. At the finish, check the run's thread IDs as below.
 - **Your own thread:**
   - Pin it (omit `threadId`) when the first wave launches, so it's easy to find during the run.
   - Keep it pinned after the final report. The user unpins it after reading.

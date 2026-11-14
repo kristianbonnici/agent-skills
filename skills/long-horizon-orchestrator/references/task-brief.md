@@ -6,11 +6,7 @@ A task agent starts with no memory of your conversation. Its brief, with the run
 
 Send the brief as the task's only message, on every host. Don't queue a `/goal` after it. The brief's stop conditions and its report-back define the end, and the heartbeat ([host-t3.md](host-t3.md#heartbeat-a-backup-for-silent-tasks)) catches a task that goes quiet without reporting. A subagent's final message is its report.
 
-Earlier runs queued a goal behind every brief. An audit of the 33 Claude tasks of the 2026-10-14 and 2026-10-15 runs found that it never made a task finish required work:
-- It started only when the brief's first turn ended, in about half the tasks after the merge and the report. Before a report, it never pushed.
-- What kept tasks going was Claude Code waking a thread when its own background jobs and subagents finished, which it does with or without a goal.
-- After the reports, its checker rejected "Couldn't check" lists, though the goal said they counted as done. It kept tasks working for about 3.8 hours in all and caused 19 extra reports. It pushed tasks into breaking their rules: a global shortcut while the owner's app ran, a re-signed app copy with an injected library on the real screen, the screen lease taken after a merge, and a question to the owner while they slept.
-- Its useful catches were reports claiming checks for the final commit that had run on an earlier one. The handoff's rule on commits covers that.
+A queued goal never made a task finish required work: it started only when the brief's first turn ended, and after the report it kept tasks working and pushed them into breaking their rules.
 
 A planner packet's prompt may begin with `/goal`: drop that line, put its checks into the brief's Validation, and its blockers into "Blocked".
 
@@ -19,8 +15,6 @@ A planner packet's prompt may begin with `/goal`: drop that line, put its checks
 Much of a brief is the same for every task: the rules about the owner's things, the permissions the warm-up granted, the leases, the ports already taken, the help sections, and the rules the run learns as it goes. Put all of that into one file, `<run directory>/briefs/common.md` (template below), and keep in each brief only what is the task's own. Each brief tells its agent to read the common file first. Save the briefs next to it, as `<run directory>/briefs/<task ID>.md`.
 
 When a rule changes during the run, add it to the common file with the time, so that tasks launched later get it. A running task read the file at its start: send it the new rule too. A queued follow-up reaches it only when its current turn ends, so send a rule that matters now, such as a safety rule, as a steer (in T3, `t3_thread_send` in mode `steer`), which reaches the running turn.
-
-In the 2026-10-15 runs, both orchestrators did this, and used it to spread rules learned along the way, such as "renewing a lease doesn't extend your turn".
 
 ## Brief template
 

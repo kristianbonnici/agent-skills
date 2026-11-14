@@ -1,5 +1,11 @@
 # long-horizon-orchestrator changelog
 
+## 5.3.1 (2026-11-14)
+
+- **The references carry no dated notes.** 72 of them (37 in `routing.md`, 24 in `machine.md`, 11 in four others) said when a run went wrong, when a figure was measured or when the owner decided something. `AGENTS.md` puts that in the docs: the skill states the rule, [evidence.md](evidence.md) says where it came from. Each rule stays, and so does each figure a rule depends on (about 90% of a small plan's window per heavy task-hour, 0.75 Copilot units per 100,000 input tokens, about 0.9% of Argon's week for a 22,000-token prompt, a Hydrogen call's cost of the Gemini windows, the sampler's 30 seconds an hour); the stories and dates left. `routing.md` is 350 words shorter and `machine.md` 690. No rule changed. Files: routing.md, machine.md, host-t3.md, integration.md, task-brief.md, final-report.md.
+- **Three stories became the rule they taught:** routing.md's account of one run's Codex hand-offs is now two rules (VoiceOver checks stay with the task or the user; a hand-off never answers a permission prompt), task-brief.md's audit of queued goals is one sentence on why the brief is the task's only message, and machine.md's lists of what went wrong in two runs are gone, since the sections after them already hold the rules.
+- **[evidence.md](evidence.md) gained what left:** thirteen entries under "Our own runs" that it didn't have yet, and a list of the owner's decisions with their dates.
+
 ## 5.3.0 (2026-11-14)
 
 A restructure, with no rule changed (owner, 2026-11-14: the skill "has become very big with a lot of different things"). `SKILL.md` had grown to 8,143 words, three to eight times the other skills here, and the orchestrator reads all of it at the start and again after every context summary. It is now 4,260 words: the role, the host table, the routing rules, the workflow and the wake loop, the ledger's place and the principles. Minor, not patch, because a rule that moved to a reference is read at a different moment.
