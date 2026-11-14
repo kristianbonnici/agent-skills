@@ -137,6 +137,15 @@ for wrote in ("4.1.0", "4.1", "4.1.0 (round 3)", "the first"):
     done = run("table", save(os.path.join(work, "earlier"), earlier))
     assert done.returncode == 0 and "Tagged lower" in done.stdout and "Replies" not in done.stdout, (wrote, done.stderr)
 fails("short-version", lambda r: (r.update(gate="5.0"), r["findings"][2].pop("reply")), 'finding 3: "reply" is missing')
+fails("v-version", lambda r: (r.update(gate="v5.0.0"), r["findings"][2].pop("reply")), 'finding 3: "reply" is missing')
+# A reviewer launched only to answer about a tag reviewed nothing: no row in the table, no review in the totals.
+only = copy.deepcopy(example)
+only["reviewers"].append({"name": "Claude Opus 5.5, high", "rounds": ["reply"], "reports": ["reply-3-opus.md"]})
+only["findings"][3]["reply_from"] = "Claude Opus 5.5, high"
+folder = save(os.path.join(work, "only"), only)
+done = run("table", folder)
+assert done.returncode == 0 and "Opus" not in done.stdout and "**Review: Deep, 2 rounds.**" in done.stdout, done.stdout
+assert "*Replies on the blockers tagged lower: 1 agreed, 1 held, 0 no answer.*" in done.stdout, done.stdout
 # Two reviewers called one finding a blocker and were each asked: both answers count.
 both = copy.deepcopy(example)
 both["findings"].insert(3, dict(both["findings"][2], reviewer="Claude Sonnet 5.5, high", reply="agrees"))
@@ -218,6 +227,8 @@ def places(value, here=()):
 # finding and its reviewer, and the finding counts once among those that differed.
 back = copy.deepcopy(example)
 back["findings"].append(dict(back["findings"][0], round=2, reviewer_tag="follow-up"))
+assert [row["reviewer"] for row in module.gate_from_record(folder)["rows"]] == ["GPT-6.1 Terra", "Claude Sonnet 5.5",
+                                                                              "GPT-6 Luna"]
 gate = module.gate_from_record(save(os.path.join(work, "back"), back))
 assert gate["changes"] == {"follow-up to blocker": 2, "blocker to follow-up": 1, "blocker to rejected": 1}, gate["changes"]
 assert (gate["tagged"], gate["differed"]) == (5, 4), (gate["tagged"], gate["differed"])

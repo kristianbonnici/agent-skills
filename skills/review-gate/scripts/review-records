@@ -57,7 +57,7 @@ TAGS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
 REVIEWER_TAGS = ("blocker", "follow-up", "nit", "pre-existing", "none")
 CHECKED = ("test", "run", "read", "second opinion")
 REPLIES = ("agrees", "holds", "no answer")
-VERSION = re.compile(r"^\s*(\d{1,4})\.(\d{1,4})(?:\.(\d{1,4}))?")
+VERSION = re.compile(r"^\s*v?(\d{1,4})\.(\d{1,4})(?:\.(\d{1,4}))?", re.I)
 REPLY_SINCE = (5, 0, 0)     # the first version whose gates ask the reviewer about a blocker tagged lower
 # How much a tag holds back: a nit and a pre-existing finding are both listed, neither above the other.
 RANK = {"blocker": 3, "follow-up": 2, "nit": 1, "pre-existing": 1, "rejected": 0}
@@ -91,7 +91,7 @@ def shape_problems(record):
     for key in ("gate", "repository", "base", "head", "author"):
         if not text(record.get(key)):
             problems.append(f'"{key}" is missing or empty')
-    # The gate's version, however it is written ("5.0", "5.0.0 (round 2)"). One this can't read is
+    # The gate's version, however it is written ("5.0", "v5.0.0", "5.0.0 (round 2)"). One this can't read is
     # taken for an earlier one, as every record of 4.1.0 must still be read.
     version = VERSION.match(record["gate"]) if text(record.get("gate")) else None
     asks = bool(version) and tuple(int(part or 0) for part in version.groups()) >= REPLY_SINCE
@@ -239,12 +239,15 @@ def round_count(record):
 
 
 def counts(record):
-    """Each reviewer's findings by the author's tag, and the defects only that reviewer raised."""
+    """Each reviewer's findings by the author's tag, and the defects only that reviewer raised. A
+    reviewer launched only to answer about a tag reviewed nothing and has no row."""
     raised_by = {}
     for finding in record["findings"]:
         raised_by.setdefault(finding["id"], set()).add(finding["reviewer"])
     rows = []
     for reviewer in record["reviewers"]:
+        if all(look == "reply" for look in reviewer["rounds"]):
+            continue
         mine = {}
         for finding in record["findings"]:
             if finding["reviewer"] == reviewer["name"]:
