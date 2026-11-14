@@ -7,6 +7,8 @@ Every gate leaves one folder: what each reviewer said, and what you did with eac
 - **In an orchestrated run:** `<run directory>/<your task ID>/review/`. A second gate of the same task (a later milestone, or a gate run again once a reviewer has room) goes in `review-2/`, then `review-3/`.
 - **Otherwise:** `${XDG_STATE_HOME:-~/.local/state}/agent-skills/review-gate/<YYYYMMDD-HHMM>-<the repository's folder name>/`, named for when the gate started.
 
+Make the folder yourself with plain `mkdir`, after `mkdir -p` on the folder above it, never `mkdir -p` on the folder itself. If `mkdir` fails because the folder exists, another gate has that name: add `-2`, then `-3`, until it succeeds. Write only into a record folder this gate made.
+
 Never inside the repository under review: the reports quote its code, and the record isn't part of the change.
 
 ## The reports
