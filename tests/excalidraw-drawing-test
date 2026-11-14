@@ -606,4 +606,52 @@ cx, cy = map(int, re.search(r'<p:pic>.*?<a:ext cx="(\d+)" cy="(\d+)"', tall, re.
 assert abs(cx / cy - 3 / 4) < 0.01, f"a 3:4 slide is {cx}x{cy} in the PowerPoint"
 PY
 
+# 20. Round 2 of 3.2.0's review: the deck refuses a PDF or PowerPoint it didn't write too; a PDF page keeps a
+# 3:4 slide's shape; a file merely named like a step picture never becomes a frame; an arrow joined to a
+# figure, or by from/to or {id}, waits for its shape; a slide's build refusing explains deck.mjs's --force.
+python3 -I - "$work/deck2" <<'PY' || fail "a 3:4 slide's PDF page should keep its shape"
+import re, sys
+pdf = open(f"{sys.argv[1]}/deck2.pdf", "rb").read()
+boxes = [tuple(map(float, m)) for m in re.findall(rb"/MediaBox \[\s*0 0 ([\d.]+) ([\d.]+)\s*\]", pdf)]
+assert len(boxes) == 2 and abs(boxes[1][0] / boxes[1][1] - 3 / 4) < 0.01, boxes
+PY
+for other in pdf pptx; do
+  mkdir -p "$work/foreign-$other"
+  cp "$work/talk/01-open.json" "$work/talk/02-clicks.json" "$work/foreign-$other/"
+  echo "not a deck" >"$work/foreign-$other/foreign-$other.$other"
+  set +e; node "$deck" "$work/foreign-$other" >"$work/foreign-$other.out" 2>&1; status=$?; set -e
+  [ "$status" -eq 1 ] && grep -q "foreign-$other.$other is in" "$work/foreign-$other.out" && grep -q "not a deck" "$work/foreign-$other/foreign-$other.$other" \
+    || { cat "$work/foreign-$other.out"; fail "deck.mjs should refuse to replace a .$other it didn't write"; }
+done
+mkdir -p "$work/stray"
+cp "$work/talk/01-open.json" "$work/stray/"
+python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1])); s["notes"]="n"; json.dump(s, open(sys.argv[1], "w"))' "$work/stray/01-open.json"
+cp "$work/steps/s.png" "$work/stray/01-open.step-1.png"      # another drawing, named like a step picture
+set +e; node "$deck" "$work/stray" >"$work/stray.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] && grep -q "01-open.step-1.png isn't a step picture" "$work/stray.out" || { cat "$work/stray.out"; fail "a stray step picture should be reported, got $status"; }
+python3 -I -c 'import json,re,sys; d=json.loads(re.search(r"const SLIDES = (.*?);\n", open(sys.argv[1]).read()).group(1)); sys.exit(d[0]["frames"] != ["01-open.png"])' "$work/stray/index.html" \
+  || fail "a stray step picture became a frame"
+cat >"$work/steps/joined.json" <<'JSON'
+{"title": "Joined", "format": "16:9", "frame": false, "panels": [{"id": "s", "span": 2, "elements": [
+  {"type": "rectangle", "id": "a", "x": 0, "y": 0, "width": 200, "height": 80, "label": "a"},
+  {"type": "person", "id": "p", "x": 500, "y": 0, "step": 2},
+  {"type": "rectangle", "id": "c", "x": 800, "y": 0, "width": 200, "height": 80, "label": "c", "step": 3},
+  {"type": "arrow", "id": "ap", "start": "a", "end": "p"},
+  {"type": "arrow", "id": "ac", "from": "a", "to": {"id": "c"}}]}]}
+JSON
+node --input-type=module -e "
+import fs from 'fs';
+import { build } from '$build';
+const { elements, stepOf } = await build(JSON.parse(fs.readFileSync('$work/steps/joined.json', 'utf8')));
+const at = id => stepOf(elements.find(e => e.id === id));
+if (at('s.ap') !== 2) { console.error('an arrow to a figure on click 2 is on click ' + at('s.ap')); process.exit(1); }
+if (at('s.ac') !== 3) { console.error('an arrow from/to {id} on click 3 is on click ' + at('s.ac')); process.exit(1); }
+" || fail "an arrow appears before the shape it joins"
+mkdir -p "$work/edited"
+cp "$work/talk/01-open.json" "$work/edited/"
+node "$build" "$work/edited/01-open.json" >/dev/null
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); d["source"]="https://excalidraw.com"; json.dump(d, open(sys.argv[1], "w"))' "$work/edited/01-open.excalidraw"
+set +e; node "$deck" "$work/edited" --force >"$work/edited.out" 2>&1; status=$?; set -e
+[ "$status" -eq 1 ] && grep -q "replaces only the deck's own files" "$work/edited.out" || { cat "$work/edited.out"; fail "a hand-edited slide should stop the deck and explain --force, got $status"; }
+
 echo "excalidraw-drawing: ok"

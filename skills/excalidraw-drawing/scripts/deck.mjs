@@ -28,7 +28,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
-import { runtimeRoot } from './drawing.mjs';
+import { readStepMark, runtimeRoot } from './drawing.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const usage = 'usage: deck.mjs <folder> [--title TITLE] [--name NAME] [--scale 1-4] [--no-build] [--force]';
@@ -96,15 +96,31 @@ if (!noBuild) {
   const queue = [...slides], results = [];
   await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) results.push(await buildOne(queue.shift())); }));
   for (const { s, code, out } of results.sort((a, b) => byName(a.s.base, b.s.base))) {
-    if (code !== 0 && code !== 3) { console.error(`${s.base}: the build failed\n${out}`); process.exit(1); }
+    if (code !== 0 && code !== 3) {
+      console.error(`${s.base}: the build failed\n${out}` + (/--force/.test(out)
+        ? `\ndeck.mjs's --force replaces only the deck's own files, never a slide's: carry a hand edit into the slide's spec, ` +
+          `or move the file in the way; build.mjs ${s.base}.json --force replaces it, if that is what the user wants.` : ''));
+      process.exit(1);
+    }
     for (const line of out.split('\n')) if (line.startsWith('- ')) warnings.push(`${s.base}: ${line.slice(2)}`);
   }
 }
 for (const s of slides) {
   s.png = `${s.base}.png`;
   if (!fs.existsSync(path.join(dir, s.png))) { console.error(`${s.png} is missing: build the slide (or drop --no-build)`); process.exit(1); }
+  // Only step pictures a build wrote for this slide, all from one build: each marked
+  // with its click and the slide's count of clicks. A file merely at such a name isn't one.
   const steps = [];
-  for (let k = 1; fs.existsSync(path.join(dir, `${s.base}.step-${k}.png`)); k++) steps.push(`${s.base}.step-${k}.png`);
+  const first = readStepMark(path.join(dir, `${s.base}.step-1.png`));
+  if (first) {
+    for (let k = 1; k < first.of; k++) {
+      const mark = readStepMark(path.join(dir, `${s.base}.step-${k}.png`));
+      if (!mark || mark.k !== k || mark.of !== first.of) { steps.length = 0; warnings.push(`${s.base}: its step pictures don't match: build it again`); break; }
+      steps.push(`${s.base}.step-${k}.png`);
+    }
+  } else if (fs.existsSync(path.join(dir, `${s.base}.step-1.png`))) {
+    warnings.push(`${s.base}.step-1.png isn't a step picture a build wrote: left out of the deck`);
+  }
   s.frames = [...steps, s.png];
   const own = s.spec.notes, listed = notes[s.base];
   if (own !== undefined && typeof own !== 'string') warnings.push(`${s.base}: "notes" should be text`);
@@ -215,13 +231,23 @@ if (theirs.length && !force) {
     `${theirs.length > 1 ? 'them' : 'it'}: move ${theirs.length > 1 ? 'them' : 'it'}, choose another --name, or pass --force to replace ${theirs.length > 1 ? 'them' : 'it'}.`);
   process.exit(1);
 }
-const tmp = `.${process.pid}.tmp`;
+// Write the new set beside the old, move the old aside, move the new in; on any
+// failure, put the old set back as it was, so the folder never mixes two decks.
+const tmp = `.${process.pid}.tmp`, bak = `.${process.pid}.bak`;
+const setAside = [], placed = [];
 try {
   for (const [f, b] of outputs) fs.writeFileSync(f + tmp, b);
-  for (const [f] of outputs) fs.renameSync(f + tmp, f);
+  for (const [f] of outputs) if (fs.existsSync(f)) { fs.renameSync(f, f + bak); setAside.push(f); }
+  for (const [f] of outputs) { fs.renameSync(f + tmp, f); placed.push(f); }
+  for (const f of setAside) fs.rmSync(f + bak, { force: true });
 } catch (e) {
+  for (const f of placed) fs.rmSync(f, { force: true });
+  for (const f of setAside) { try { fs.renameSync(f + bak, f); } catch { /* reported below */ } }
   for (const [f] of outputs) fs.rmSync(f + tmp, { force: true });
-  console.error(`Could not write the deck in ${folder}: ${e.message}`); process.exit(1);
+  const lost = setAside.filter(f => !fs.existsSync(f));
+  console.error(`Could not write the deck in ${folder}: ${e.message}` +
+    (lost.length ? `\nThe earlier ${lost.map(f => path.basename(f)).join(' and ')} could not be put back: see ${lost.map(f => f + bak).join(', ')}` : ''));
+  process.exit(1);
 }
 
 const total = clicks.reduce((a, b) => a + b, 0);

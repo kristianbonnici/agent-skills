@@ -21,7 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { SOURCE, findVault, runtimePackage as pkg, runtimeRoot, savedByEditor, toMarkdown } from './drawing.mjs';
+import { SOURCE, findVault, isStepPicture, markStep, runtimePackage as pkg, runtimeRoot, savedByEditor, toMarkdown } from './drawing.mjs';
 
 // ---------- runtime ----------
 
@@ -584,14 +584,20 @@ export async function build(spec, opts = {}) {
     const raw = (p.elements ?? []).flatMap(el => {
       const out = expand(el, pid, boxes, warnings);
       if (el.step !== undefined) {
-        if (Number.isInteger(el.step) && el.step >= 1 && el.step <= MAX_STEPS) for (const e of out) stepById.set(e.id, el.step);
+        if (Number.isInteger(el.step) && el.step >= 1 && el.step <= MAX_STEPS) {
+          for (const e of out) stepById.set(e.id, el.step);
+          // Under the spec element's own id too: a figure or a stack expands into parts with other ids.
+          if (el.id !== undefined) stepById.set(`${pid}.${el.id}`, el.step);
+        }
         else warnings.push(`${pid}: "step" is a whole number from 1 to ${MAX_STEPS} (${el.id ?? el.type}): ignored`);
-      } else if ((el.type === 'arrow' || el.type === 'line') && (el.start || el.end)) linked.push([el, out]);
+      } else if (el.type === 'arrow' || el.type === 'line') linked.push([el, out]);
       return out;
     });
     // An arrow joined to shapes, with no step of its own, appears with the later of them, never before.
     for (const [el, out] of linked) {
-      const k = Math.max(...[el.start, el.end].filter(Boolean).map(t => stepById.get(`${pid}.${t}`) ?? 1));
+      // Ends are named as the arrow routing reads them: start or from, end or to, an id or {id}.
+      const ends = [el.start ?? el.from, el.end ?? el.to].map(r => (typeof r === 'string' ? r : r?.id)).filter(Boolean);
+      const k = Math.max(1, ...ends.map(t => stepById.get(`${pid}.${t}`) ?? 1));
       if (k > 1) for (const e of out) stepById.set(e.id, k);
     }
     planSpread(raw.filter(el => (el.type === 'arrow' || el.type === 'line') && el._spec), pid, boxes);
@@ -806,28 +812,6 @@ function crosses(l, r) {
   return false;
 }
 const shortId = (el, p) => `"${String(el.id).replace(`${p.pid}.`, '')}"`;
-
-// ---------- step pictures ----------
-
-// A step picture carries a PNG text chunk saying so, the way a build knows a
-// file at a step picture's name is its own before it replaces or deletes it.
-const STEP_KEY = 'excalidraw-drawing-step';
-const CRC = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c; });
-const crc32 = buf => { let c = -1; for (const b of buf) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ -1) >>> 0; };
-export function markStep(png, k, of) {
-  const data = Buffer.from(`${STEP_KEY}\0${k} of ${of}`, 'latin1'), type = Buffer.from('tEXt');
-  const len = Buffer.alloc(4), crc = Buffer.alloc(4);
-  len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
-  const ihdrEnd = 8 + 8 + png.readUInt32BE(8) + 4;    // the signature, then IHDR: its length, type, data and CRC
-  return Buffer.concat([png.subarray(0, ihdrEnd), len, type, data, crc, png.subarray(ihdrEnd)]);
-}
-export function isStepPicture(file) {
-  try {
-    const fd = fs.openSync(file, 'r'), head = Buffer.alloc(256);
-    const n = fs.readSync(fd, head, 0, 256, 0); fs.closeSync(fd);
-    return head.subarray(0, n).includes(`tEXt${STEP_KEY}\0`, 0, 'latin1');
-  } catch { return false; }
-}
 
 // ---------- CLI ----------
 

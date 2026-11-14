@@ -27,6 +27,31 @@ export const runtimeRoot = process.env.EXCALIDRAW_DRAWING_RUNTIME
   || path.resolve(here, '../../../runtime/excalidraw');
 export const runtimePackage = path.join(runtimeRoot, 'node_modules/mcp-excalidraw-server');
 
+// ---------- step pictures ----------
+
+// A step picture carries a PNG text chunk saying so, the way a build knows a
+// file at a step picture's name is its own before it replaces or deletes it.
+const STEP_KEY = 'excalidraw-drawing-step';
+const CRC = new Int32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c; });
+const crc32 = buf => { let c = -1; for (const b of buf) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+export function markStep(png, k, of) {
+  const data = Buffer.from(`${STEP_KEY}\0${k} of ${of}.`, 'latin1'), type = Buffer.from('tEXt');
+  const len = Buffer.alloc(4), crc = Buffer.alloc(4);
+  len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
+  const ihdrEnd = 8 + 8 + png.readUInt32BE(8) + 4;    // the signature, then IHDR: its length, type, data and CRC
+  return Buffer.concat([png.subarray(0, ihdrEnd), len, type, data, crc, png.subarray(ihdrEnd)]);
+}
+// The click and the count a step picture's marker records ({ k, of }), or null for a file without one.
+export function readStepMark(file) {
+  try {
+    const fd = fs.openSync(file, 'r'), head = Buffer.alloc(256);
+    const n = fs.readSync(fd, head, 0, 256, 0); fs.closeSync(fd);
+    const m = new RegExp(`tEXt${STEP_KEY}\\0(\\d+) of (\\d+)\\.`).exec(head.subarray(0, n).toString('latin1'));
+    return m ? { k: Number(m[1]), of: Number(m[2]) } : null;
+  } catch { return null; }
+}
+export const isStepPicture = file => readStepMark(file) !== null;
+
 // The "source" build.mjs writes. Excalidraw, excalidraw.com and the Obsidian
 // plugin each write their own when they save, so another value means someone
 // has edited the drawing since it was built.
