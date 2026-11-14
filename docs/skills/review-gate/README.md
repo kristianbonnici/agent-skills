@@ -70,4 +70,27 @@ Every gate ends with a verdict line and a table like these, which later studies 
 | Claude Sonnet 5.5, high | 1 | **1** | – | 4 | – | 2 | – |
 | GPT-6 Luna, high (trial) | 1 | – | – | 2 | – | 1 | – |
 
+*Tagged lower than the reviewer's blocker or follow-up: 1 (1 rejected).*
+
 *Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*
+
+Behind those lines is a folder each gate leaves, so a study can check the author's account against what the
+reviewers said ([evidence.md](evidence.md#the-record-2026-11-14)):
+
+- **Each reviewer's report,** saved whole when it arrives.
+- **`review.json`:** the level, the result, the commits reviewed, and one entry per finding per reviewer who
+  raised it: the reviewer's tag, the author's tag, how the author checked it (a test, a run, reading the code,
+  a second opinion), the commit that fixed it, and a line of why wherever the author rejected it or tagged it
+  lower than the reviewer did.
+- **Where:** a task's `review/` folder in an orchestrated run, which the orchestrator's pruning keeps;
+  otherwise `~/.local/state/agent-skills/review-gate/`, so a gate run by hand leaves a record too. Never in
+  the repository under review.
+
+`scripts/review-records table <folder>` checks the record and prints the verdict line's start, the table and
+the two lines under it, so nobody counts them by hand. `scripts/review-records totals` adds up every record
+on the computer: gates by level, result and rounds, each reviewer's findings, and how often the author's tag
+differed from the reviewer's. For gates before 4.1.0 it reads the table in each task's handoff, which gives
+the counts but not the reviewers' own tags.
+
+What a gate missed isn't recorded during a run. The record names the commits it reviewed, so a study can
+look in git for later fixes to the same code.

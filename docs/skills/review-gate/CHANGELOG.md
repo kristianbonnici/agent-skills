@@ -1,5 +1,13 @@
 # review-gate changelog
 
+## 4.1.0 (2026-11-14)
+
+- **Every gate leaves a record folder** (owner, 2026-11-14): each reviewer's report as it arrived, and `review.json` with one entry per finding per reviewer who raised it, holding the reviewer's tag beside the author's, how the author checked it, the commit that fixed it, and a line of why wherever the author rejected it or tagged it lower than the reviewer did. Until now the record was the author's account alone: the table counted findings by the author's tags, and a reviewer's own report survived in about 28 of 93 task folders ([evidence.md](evidence.md#the-record-2026-11-14)). In an orchestrated run the folder is the task's `review/`, which pruning keeps; otherwise it is under `~/.local/state/agent-skills/review-gate/`, so a gate run outside an orchestrated run leaves a record too, where it left none.
+- **`scripts/review-records table <folder>` prints the Review section's first lines** from `review.json`, after checking it: known tags, each finding's reviewer among the reviewers, each report file present, a reason for every lowered or rejected finding, a commit for every blocker of a gate that passed. The agent no longer counts the table by hand, and reviewers' names come from one place: eight models had been written 25 ways.
+- **A new line under the table,** "Tagged lower than the reviewer's blocker or follow-up: n (n rejected)", left out when there are none. Who decides a finding's tag is unchanged: the author does.
+- **`scripts/review-records totals` adds up every record on the computer:** gates by level, result and rounds, each reviewer's findings, and how often the author's tag differed from the reviewer's. For earlier gates it reads the table in each task's handoff. No script read the tables before; the study of 2026-10-30 had a model sort its findings from prose.
+- `tests/review-gate-test` checks the script, and that the record shown in `references/record.md` prints the lines shown under it.
+
 ## 4.0.0 (2026-11-13)
 
 Major because Light reviews now spend Antigravity's Gemini window by default, where they spent nothing before.

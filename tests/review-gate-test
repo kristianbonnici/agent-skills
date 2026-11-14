@@ -1,0 +1,269 @@
+#!/bin/sh
+# Checks review-gate's review-records script in a made-up state folder: the example record in
+# references/record.md prints the Review lines shown there, a record that fails its check prints
+# what it lacks and no table, and totals adds up records from an orchestrated run, from a gate run
+# outside one and from older handoff tables, groups reviewers written in different ways, keeps to
+# --since, and leaves out what it can't read without stopping.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/review-gate-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+python3 -I - "$repo_root/skills/review-gate" "$work" <<'EOF'
+import copy, json, os, re, subprocess, sys, time
+skill, work = sys.argv[1], sys.argv[2]
+script = os.path.join(skill, "scripts", "review-records")
+state = os.path.join(work, "state")
+root = os.path.join(state, "agent-skills")
+env = dict(os.environ, XDG_STATE_HOME=state)
+
+def run(*args):
+    return subprocess.run([sys.executable, "-I", script, *args], capture_output=True, text=True, env=env, timeout=60)
+
+def write(path, content):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+def save(folder, record, reports=True):
+    write(os.path.join(folder, "review.json"), json.dumps(record))
+    if reports:
+        for reviewer in record.get("reviewers", []):
+            for name in reviewer.get("reports", []):
+                write(os.path.join(folder, name), "1. A finding, as the reviewer wrote it.\n")
+    return folder
+
+# The example in references/record.md is a record that passes, and prints the lines shown under it.
+doc = open(os.path.join(skill, "references", "record.md"), encoding="utf-8").read()
+example = json.loads(re.search(r"```json\n(.*?)\n```", doc, re.S).group(1))
+shown = re.search(r"```markdown\n(.*?)\n```", doc, re.S).group(1)
+version = re.search(r"^  version: (\S+)$", open(os.path.join(skill, "SKILL.md"), encoding="utf-8").read(), re.M).group(1)
+assert example["gate"] == version, (example["gate"], version)
+good = save(os.path.join(work, "good"), example)
+done = run("table", good)
+assert done.returncode == 0 and done.stderr == "", (done.returncode, done.stderr)
+assert done.stdout.rstrip("\n") == shown, done.stdout
+
+# SKILL.md's format has the same header and the same two lines after the table.
+skill_text = open(os.path.join(skill, "SKILL.md"), encoding="utf-8").read()
+for line in shown.splitlines()[2:4]:
+    assert line in skill_text, line
+assert "*Tagged lower than the reviewer's blocker or follow-up: <n> (<n> rejected).*" in skill_text
+assert "*Skipped: <model>: <why" in skill_text
+
+# One round, nothing found, nobody skipped: a singular round, dashes, and no lines after the table.
+clean = copy.deepcopy(example)
+clean["reviewers"] = [{"name": "Codex GPT-6.1 Terra, high", "rounds": [1], "reports": ["round-1-terra.md"]}]
+clean["findings"], clean["skipped"], clean["level"] = [], [], "standard"
+done = run("table", save(os.path.join(work, "clean"), clean))
+assert done.returncode == 0, done.stderr
+lines = done.stdout.rstrip("\n").splitlines()
+assert lines[0] == "**Review: Standard, 1 round.**" and len(lines) == 5, lines
+assert lines[4] == "| Codex GPT-6.1 Terra, high | 1 | – | – | – | – | – | – |", lines[4]
+
+# A look outside the rounds is named in the Rounds cell and doesn't count as a round; a finding that
+# comes back "not fixed" counts once for its reviewer.
+again = copy.deepcopy(example)
+again["reviewers"][1]["rounds"] = [1, "second opinion"]
+again["reviewers"][1]["reports"].append("look-1-sonnet.md")
+again["findings"].append(dict(again["findings"][0], round=2))
+done = run("table", save(os.path.join(work, "again"), again))
+assert done.returncode == 0, done.stderr
+assert "**Review: Deep, 2 rounds.**" in done.stdout
+assert "| Claude Sonnet 5.5, high | 1, second opinion | **1** |" in done.stdout, done.stdout
+assert "| Codex GPT-6.1 Terra, high | 1, 2 | **1** | 1 |" in done.stdout, done.stdout
+
+# No reviewer had room: a record with no reviewers, when it says so.
+none = copy.deepcopy(example)
+none["reviewers"], none["findings"], none["result"] = [], [], "no reviewer"
+done = run("table", save(os.path.join(work, "none"), none))
+assert done.returncode == 0 and "**Review: Deep, no round.**" in done.stdout, (done.stdout, done.stderr)
+assert "*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*" in done.stdout
+
+# What the check catches: each prints its reason and no table.
+def fails(name, change, *expected, reports=True):
+    record = copy.deepcopy(example)
+    change(record)
+    done = run("table", save(os.path.join(work, "bad", name), record, reports))
+    assert done.returncode == 64 and done.stdout == "", (name, done.returncode, done.stdout)
+    for text in expected:
+        assert text in done.stderr, (name, text, done.stderr)
+
+def drop_why(index):
+    return lambda r: r["findings"][index].pop("why")
+
+fails("lowered-no-why", drop_why(2), 'finding 3: "why" is missing')
+fails("rejected-no-why", drop_why(3), 'finding 4: "why" is missing')
+fails("blocker-open", lambda r: [f.pop("commit") for f in r["findings"][:2]],
+      'finding 1 is a blocker with no "commit", and "result" is "passed"')
+fails("unknown-reviewer", lambda r: r["findings"][0].update(reviewer="Somebody"), "isn't one of the reviewers' names")
+fails("bad-tag", lambda r: r["findings"][4].update(tag="minor"), '"tag" isn\'t one of blocker')
+fails("bad-reviewer-tag", lambda r: r["findings"][4].update(reviewer_tag="minor"), '"reviewer_tag" isn\'t one of')
+fails("bad-checked", lambda r: r["findings"][4].update(checked="trust"), '"checked" isn\'t one of test')
+fails("bad-commit", lambda r: r["findings"][4].update(commit="the fix"), "isn't a commit's hash")
+fails("two-tags", lambda r: r["findings"][1].update(tag="follow-up"), "finding 1 has two different tags of yours")
+fails("twice", lambda r: r["findings"].append(dict(r["findings"][4])), "listed twice for one reviewer and round")
+fails("rejected-commit", lambda r: r["findings"][3].update(commit="9c4e2aa"), "a rejected finding has a commit")
+fails("bad-level", lambda r: r.update(level="Deep"), '"level" isn\'t one of light, standard, deep')
+fails("bad-result", lambda r: r.update(result="merged"), '"result" isn\'t one of passed')
+fails("bad-date", lambda r: r.update(date="14 November"), '"date" isn\'t a day')
+fails("no-author", lambda r: r.pop("author"), '"author" is missing or empty')
+fails("no-reviewers", lambda r: r.update(reviewers=[], findings=[]), 'no reviewer is listed')
+fails("bool-id", lambda r: r["findings"][4].update(id=True), '"id" isn\'t a number')
+fails("skipped-shape", lambda r: r.update(skipped=["DeepSeek"]), '"skipped" isn\'t a list')
+fails("no-report", lambda r: None, 'report "round-1-terra.md" isn\'t a file in the record\'s folder', reports=False)
+fails("report-path", lambda r: r["reviewers"][0].update(reports=["../good/round-1-terra.md"]),
+      "isn't a plain file name in the record's folder")
+# Several problems are all listed.
+fails("several", lambda r: (r.pop("author"), r.update(level="x"), r["findings"][3].pop("why")),
+      '"author" is missing', '"level" isn\'t one of', 'finding 4: "why" is missing')
+
+# An empty report, a report that is a link, a file that isn't JSON, and a folder with no record.
+empty = save(os.path.join(work, "bad", "empty-report"), example)
+write(os.path.join(empty, "round-1-luna.md"), "")
+done = run("table", empty)
+assert done.returncode == 64 and 'report "round-1-luna.md" is empty' in done.stderr, done.stderr
+linked = save(os.path.join(work, "bad", "linked-report"), example)
+os.remove(os.path.join(linked, "round-1-luna.md"))
+os.symlink(os.path.join(good, "round-1-luna.md"), os.path.join(linked, "round-1-luna.md"))
+done = run("table", linked)
+assert done.returncode == 64 and 'report "round-1-luna.md" isn\'t a file' in done.stderr, done.stderr
+write(os.path.join(work, "bad", "not-json", "review.json"), "{not json")
+done = run("table", os.path.join(work, "bad", "not-json"))
+assert done.returncode == 64 and "isn't valid JSON" in done.stderr and done.stdout == "", done.stderr
+write(os.path.join(work, "bad", "a-list", "review.json"), "[]")
+done = run("table", os.path.join(work, "bad", "a-list"))
+assert done.returncode == 64 and "isn't an object" in done.stderr, done.stderr
+done = run("table", os.path.join(work, "nowhere"))
+assert done.returncode == 64 and "no review.json" in done.stderr, done.stderr
+
+# A mistake in the command prints the usage.
+for args in ((), ("table",), ("table", good, "extra"), ("totals", "--since", "yesterday"), ("totals", "--all"), ("sum",)):
+    done = run(*args)
+    assert done.returncode == 64 and done.stderr.startswith("Usage:") and done.stdout == "", (args, done.stderr)
+
+# With no records at all, totals says so.
+done = run("totals")
+assert done.returncode == 0 and "No review records under" in done.stdout, done.stdout
+
+# Totals. An orchestrated run: task A has a record and a second gate, task B only a handoff with a
+# 3.x table, task C a handoff with a 2.x table, task D a handoff without a Review table, task E a
+# record that can't be read. One gate run outside an orchestrated run.
+runs = os.path.join(root, "long-horizon-orchestrator")
+save(os.path.join(runs, "run-1", "A", "review"), example)
+second = copy.deepcopy(clean)
+second["date"], second["result"] = "2026-11-20", "stopped"
+save(os.path.join(runs, "run-1", "A", "review-2"), second)
+# A handoff beside a record isn't counted twice.
+write(os.path.join(runs, "run-1", "A", "handoff.md"), "**Review: Deep, 2 rounds.** x\n\n" + shown.split("\n", 2)[2] + "\n")
+write(os.path.join(runs, "run-1", "B", "handoff.md"), """# Handoff
+
+**Review: Standard, 2 rounds.** Ordinary code. One blocker, fixed.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| GPT-6.1 Terra, high (fresh look) | 1, 2 | **2** | 1 | 3 | – | 1 | 2 |
+| Claude Haiku 5.5 (trial), high | 1 | – | – | 2 | - | 1 | – |
+| OpenCode DeepSeek V4.1 Flash (free), high | 1 | – | 1 | – | – | – | 1 |
+
+*Skipped: GLM-5.3 Flash (free): no answer in its time.*
+
+Then the rest of the handoff.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| A second table that isn't counted | 9 | **9** | 9 | 9 | 9 | 9 | 9 |
+""")
+write(os.path.join(runs, "run-1", "C", "handoff.md"), """**Review: Deep, 3 rounds.** It reads a socket.
+
+| Reviewer | Rounds | Must-fix | Nits | Pre-existing | Rejected | Unique must-fix |
+|---|---|---|---|---|---|---|
+| Codex GPT-6.1 Terra, high — fresh look at main | 1, 2, 3 | 4 | 1 | 1 | – | 3 |
+| DeepSeek V4.1 Flash, high (Go) | 1 | 1 | – | – | 2 | – |
+""")
+write(os.path.join(runs, "run-1", "D", "handoff.md"), "# Handoff\n\nNo review yet.\n")
+write(os.path.join(runs, "run-1", "E", "review", "review.json"), "{")
+write(os.path.join(runs, "run-1", "F", "handoff.md"), """| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Codex GPT-6.1 Terra, high | 1 | 1 (2 by my tag) | – | – | – | – | – |
+""")
+write(os.path.join(runs, "run-1", "G", "handoff.md"), "| Reviewer | Verdict |\n|---|---|\n| Terra | fine |\n")
+# Not records: a review.json deeper in a task's files, and a folder that only looks like a record's.
+save(os.path.join(runs, "run-1", "A", "scratch", "review"), example)
+save(os.path.join(runs, "run-1", "A", "reviews"), example)
+# A linked run folder is never followed.
+save(os.path.join(work, "elsewhere", "Z", "review"), example)
+os.symlink(os.path.join(work, "elsewhere"), os.path.join(runs, "run-linked"))
+own = copy.deepcopy(example)
+own["date"], own["level"], own["result"] = "2026-11-02", "light", "reported"
+own["reviewers"] = [{"name": "Gemini 4 Hydrogen, high (trial)", "rounds": [1], "reports": ["round-1-hydrogen.md"]}]
+own["findings"] = [{"id": 1, "round": 1, "reviewer": "Gemini 4 Hydrogen, high (trial)", "reviewer_tag": "nit",
+                    "tag": "follow-up", "checked": "run", "title": "A missing guard"},
+                   {"id": 2, "round": 1, "reviewer": "Gemini 4 Hydrogen, high (trial)", "reviewer_tag": "none",
+                    "tag": "nit", "checked": "read", "title": "A word"}]
+# Totals count a record whose reports were pruned: only table asks for the files.
+save(os.path.join(root, "review-gate", "20261102-0900-notes-app"), own, reports=False)
+# A handoff's date is its last change: fixed days here, so the check reads the same in any year.
+for task, day in (("B", (2026, 11, 12)), ("C", (2026, 10, 1))):
+    at = time.mktime(day + (12, 0, 0, 0, 0, -1))
+    os.utime(os.path.join(runs, "run-1", task, "handoff.md"), (at, at))
+
+done = run("totals", "--json")
+assert done.returncode == 0, done.stderr
+total = json.loads(done.stdout)
+assert total["gates"] == 5 and total["from"] == {"review.json": 3, "handoff tables": 2}, total
+assert total["levels"] == {"deep": 2, "standard": 2, "light": 1}, total["levels"]
+assert total["results"] == {"passed": 1, "stopped": 1, "reported": 1}, total["results"]
+assert total["rounds"] == {"1": 2, "2": 2, "3": 1}, total["rounds"]
+terra = total["reviewers"]["GPT-6.1 Terra"]
+assert terra == {"reviews": 4, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
+                 "rejected": 1, "unique": 6}, terra
+assert total["reviewers"]["DeepSeek V4.1 Flash (free)"]["follow_ups"] == 1
+assert total["reviewers"]["DeepSeek V4.1 Flash (Go)"] == {"reviews": 1, "blockers": 0, "follow_ups": 0, "must_fix": 1,
+    "nits": 0, "pre_existing": 0, "rejected": 2, "unique": 0}, total["reviewers"]
+assert total["reviewers"]["Claude Haiku 5.5"]["rejected"] == 1 and total["reviewers"]["GPT-6 Luna"]["rejected"] == 1
+assert set(total["reviewers"]) == {"GPT-6.1 Terra", "Claude Sonnet 5.5", "GPT-6 Luna", "Claude Haiku 5.5",
+    "DeepSeek V4.1 Flash (free)", "DeepSeek V4.1 Flash (Go)", "Gemini 4 Hydrogen"}, set(total["reviewers"])
+# The reviewers' tags against the author's: the example's three changes and the outside gate's one;
+# a finding its reviewer gave no tag isn't compared.
+assert total["tagged_by_reviewer"] == 6, total["tagged_by_reviewer"]
+assert total["changed_tags"] == {"blocker to follow-up": 1, "blocker to rejected": 1, "follow-up to blocker": 1,
+                                 "nit to follow-up": 1}, total["changed_tags"]
+assert total["lowered_checked"] == {"run": 1, "read": 1}, total["lowered_checked"]
+why = {os.path.relpath(item["path"], runs): item["why"] for item in total["unread"]}
+assert set(why) == {"run-1/E/review", "run-1/F/handoff.md", "run-1/G/handoff.md"}, why
+assert "isn't valid JSON" in why["run-1/E/review"] and "isn't a count" in why["run-1/F/handoff.md"]
+assert "columns this script doesn't know" in why["run-1/G/handoff.md"]
+assert (total["first"], total["last"]) == ("2026-10-01", "2026-11-20"), (total["first"], total["last"])
+
+# --since keeps the gates dated that day or later: a record by its date, a handoff by its last change.
+done = run("totals", "--since", "2026-11-10", "--json")
+later = json.loads(done.stdout)
+assert later["gates"] == 3 and later["from"] == {"review.json": 2, "handoff tables": 1}, later
+assert "Gemini 4 Hydrogen" not in later["reviewers"] and later["reviewers"]["GPT-6.1 Terra"]["must_fix"] == 0
+done = run("totals", "--since", "2999-01-01")
+assert done.returncode == 0 and "No review records under" in done.stdout and "since 2999-01-01" in done.stdout
+assert "Left out, 3 that couldn't be read" in done.stdout, done.stdout
+
+# The plain report says the same.
+done = run("totals")
+assert done.returncode == 0 and done.stderr == "", done.stderr
+out = done.stdout
+assert "5 gates, " in out and "3 from review.json, 2 from handoff tables." in out, out
+assert "By level: light 1, standard 2, deep 2." in out, out
+assert "By result (review.json only): passed 1, stopped 1, reported 1." in out, out
+assert "By rounds: 1 2, 2 2, 3 1." in out, out
+row = next(line for line in out.splitlines() if line.startswith("GPT-6.1 Terra"))
+assert row.split()[2:] == ["4", "3", "2", "4", "4", "1", "1", "6"], row
+assert "4 of 6 findings differed" in out and "  blocker to rejected: 1" in out, out
+assert "How the lowered ones were checked: run 1, read 1." in out, out
+assert "Left out, 3 that couldn't be read:" in out and "A second table" not in out, out
+
+# It only reads: nothing under the state folder changed.
+before = sorted(os.path.join(d, f) for d, _, files in os.walk(root) for f in files)
+run("totals"); run("table", os.path.join(runs, "run-1", "A", "review"))
+assert before == sorted(os.path.join(d, f) for d, _, files in os.walk(root) for f in files)
+print("review-gate-test: ok")
+EOF

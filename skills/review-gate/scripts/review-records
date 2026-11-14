@@ -1,0 +1,523 @@
+#!/usr/bin/env python3
+"""Print a review gate's Review lines from its record, and total the records of past gates.
+
+SKILL.md (section 6) says when to use it, and references/record.md what a record holds.
+
+Usage:
+  review-records table <record folder>
+  review-records totals [--since <YYYY-MM-DD>] [--json]
+
+table: reads <record folder>/review.json and prints the Review section's first lines: the start of
+the verdict line, the table, and the "Tagged lower" and "Skipped" lines when there is something to
+say. It first checks the record: every field and tag it knows, each finding's reviewer among the
+reviewers, each report file in the folder and not empty, a reason wherever the author's tag is
+lower than the reviewer's, and a commit for every blocker of a gate that passed. A record that
+fails prints what it lacks, one line each, and no table.
+
+totals: reads every record under ${XDG_STATE_HOME:-~/.local/state}/agent-skills:
+  - long-horizon-orchestrator/<run>/<task>/review/review.json (and review-2/, review-3/ ...);
+  - review-gate/<gate>/review.json, the gates run outside an orchestrated run;
+  - for a task with no review.json, the Review table in its handoff.md, which is all that gates
+    before review-gate 4.1.0 left. Those give each reviewer's counts but not the reviewers' own
+    tags, and a 2.x table's "Must-fix" is blockers and follow-ups together.
+It prints the gates by level, result and rounds, one line per reviewer, and how often the author's
+tag differed from the reviewer's. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra,
+high" and "GPT-6.1 Terra, high (fresh look)" are one reviewer. A record it can't read is listed
+and left out, never fatal. --since keeps gates dated that day or later (a record's "date"; a
+handoff's last change). --json prints the same totals as JSON.
+
+It only reads. Links are never followed.
+
+Exit 0: done; 64: a mistake in the command, or (table) a record that fails its check.
+"""
+
+import datetime
+import json
+import os
+import re
+import sys
+
+LEVELS = ("light", "standard", "deep")
+RESULTS = ("passed", "stopped", "no reviewer", "reported")
+TAGS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
+REVIEWER_TAGS = ("blocker", "follow-up", "nit", "pre-existing", "none")
+CHECKED = ("test", "run", "read", "second opinion")
+# How much a tag holds back: a nit and a pre-existing finding are both listed, neither above the other.
+RANK = {"blocker": 3, "follow-up": 2, "nit": 1, "pre-existing": 1, "rejected": 0}
+COLUMNS = ("blocker", "follow-up", "nit", "pre-existing", "rejected")
+HEADER = "| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |"
+COMMIT = re.compile(r"^[0-9a-f]{7,40}$")
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+RECORD_FOLDER = re.compile(r"^review(-[1-9]\d*)?$")
+MAX_BYTES = 10 * 1024 * 1024
+
+
+def is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def text(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def lowered(finding):
+    """Whether the author's tag holds back less than the reviewer's."""
+    theirs = finding["reviewer_tag"]
+    return theirs != "none" and RANK[finding["tag"]] < RANK[theirs]
+
+
+def shape_problems(record):
+    """What is wrong with the record itself, apart from its report files."""
+    if not isinstance(record, dict):
+        return ["review.json isn't an object"]
+    problems = []
+    for key in ("gate", "repository", "base", "head", "author"):
+        if not text(record.get(key)):
+            problems.append(f'"{key}" is missing or empty')
+    if not (isinstance(record.get("date"), str) and DATE.match(record["date"])):
+        problems.append('"date" isn\'t a day written as YYYY-MM-DD')
+    if record.get("level") not in LEVELS:
+        problems.append(f'"level" isn\'t one of {", ".join(LEVELS)}')
+    if record.get("result") not in RESULTS:
+        problems.append(f'"result" isn\'t one of {", ".join(RESULTS)}')
+
+    reviewers = record.get("reviewers")
+    names = []
+    if not isinstance(reviewers, list):
+        problems.append('"reviewers" isn\'t a list')
+        reviewers = []
+    for place, reviewer in enumerate(reviewers, 1):
+        where = f"reviewer {place}"
+        if not isinstance(reviewer, dict) or not text(reviewer.get("name")):
+            problems.append(f'{where} has no "name"')
+            continue
+        where = f'reviewer "{reviewer["name"]}"'
+        if reviewer["name"] in names:
+            problems.append(f"{where} is listed twice")
+        names.append(reviewer["name"])
+        rounds = reviewer.get("rounds")
+        if not isinstance(rounds, list) or not rounds or not all(
+                (is_int(r) and r >= 1) or text(r) for r in rounds):
+            problems.append(f'{where}: "rounds" isn\'t a list of round numbers or named looks')
+        reports = reviewer.get("reports")
+        if not isinstance(reports, list) or not reports or not all(text(r) for r in reports):
+            problems.append(f'{where}: "reports" isn\'t a list of file names')
+    if not names and record.get("result") in ("passed", "stopped", "reported"):
+        problems.append('no reviewer is listed, and "result" isn\'t "no reviewer"')
+
+    skipped = record.get("skipped", [])
+    if not isinstance(skipped, list) or not all(
+            isinstance(s, dict) and text(s.get("name")) and text(s.get("why")) for s in skipped):
+        problems.append('"skipped" isn\'t a list of {"name", "why"}')
+
+    findings = record.get("findings")
+    if not isinstance(findings, list):
+        problems.append('"findings" isn\'t a list')
+        findings = []
+    tag_of, seen = {}, set()
+    for place, finding in enumerate(findings, 1):
+        where = f"finding {place}"
+        if not isinstance(finding, dict):
+            problems.append(f"{where} isn't an object")
+            continue
+        bad = False
+        if not (is_int(finding.get("id")) and finding["id"] >= 1):
+            problems.append(f'{where}: "id" isn\'t a number from 1 up')
+            bad = True
+        if not (is_int(finding.get("round")) and finding["round"] >= 1):
+            problems.append(f'{where}: "round" isn\'t a round number')
+            bad = True
+        if finding.get("reviewer") not in names:
+            problems.append(f'{where}: "reviewer" isn\'t one of the reviewers\' names')
+            bad = True
+        if finding.get("reviewer_tag") not in REVIEWER_TAGS:
+            problems.append(f'{where}: "reviewer_tag" isn\'t one of {", ".join(REVIEWER_TAGS)}')
+            bad = True
+        if finding.get("tag") not in TAGS:
+            problems.append(f'{where}: "tag" isn\'t one of {", ".join(TAGS)}')
+            bad = True
+        if finding.get("checked") not in CHECKED:
+            problems.append(f'{where}: "checked" isn\'t one of {", ".join(CHECKED)}')
+        if not text(finding.get("title")):
+            problems.append(f'{where}: "title" is missing or empty')
+        commit = finding.get("commit")
+        if commit is not None and not (isinstance(commit, str) and COMMIT.match(commit)):
+            problems.append(f'{where}: "commit" isn\'t a commit\'s hash (7 to 40 hex digits)')
+        if bad:
+            continue
+        key = (finding["id"], finding["round"], finding["reviewer"])
+        if key in seen:
+            problems.append(f"{where}: finding {finding['id']} is listed twice for one reviewer and round")
+        seen.add(key)
+        if tag_of.setdefault(finding["id"], finding["tag"]) != finding["tag"]:
+            problems.append(f"{where}: finding {finding['id']} has two different tags of yours")
+        if finding["tag"] == "rejected" and commit is not None:
+            problems.append(f"{where}: a rejected finding has a commit")
+        if (finding["tag"] == "rejected" or lowered(finding)) and not text(finding.get("why")):
+            problems.append(f'{where}: "why" is missing, though your tag is lower than the reviewer\'s '
+                            "or rejects the finding")
+    if record.get("result") == "passed":
+        fixed = {f["id"] for f in findings if isinstance(f, dict) and f.get("commit")}
+        for finding_id in sorted(i for i, tag in tag_of.items() if tag == "blocker" and i not in fixed):
+            problems.append(f'finding {finding_id} is a blocker with no "commit", and "result" is "passed"')
+    return problems
+
+
+def file_problems(record, folder):
+    """Report files the record names that aren't in the folder."""
+    problems = []
+    for reviewer in record["reviewers"]:
+        for name in reviewer["reports"]:
+            path = os.path.join(folder, name)
+            if os.path.basename(name) != name or name in (".", "..") or "\0" in name:
+                problems.append(f'report "{name}" isn\'t a plain file name in the record\'s folder')
+            elif os.path.islink(path) or not os.path.isfile(path):
+                problems.append(f'report "{name}" isn\'t a file in the record\'s folder')
+            elif os.path.getsize(path) == 0:
+                problems.append(f'report "{name}" is empty')
+    return problems
+
+
+def read_json(path):
+    """The record, or a string saying why it can't be read."""
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return "no review.json"
+        if os.path.getsize(path) > MAX_BYTES:
+            return "review.json is over 10 MB"
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, UnicodeDecodeError) as error:
+        return f"review.json can't be read ({error.__class__.__name__})"
+    except (ValueError, RecursionError) as error:
+        return f"review.json isn't valid JSON ({str(error)[:80]})"
+
+
+def round_count(record):
+    numbers = [r for reviewer in record["reviewers"] for r in reviewer["rounds"] if is_int(r)]
+    return max(numbers, default=0)
+
+
+def counts(record):
+    """Each reviewer's findings by the author's tag, and the defects only that reviewer raised."""
+    raised_by = {}
+    for finding in record["findings"]:
+        raised_by.setdefault(finding["id"], set()).add(finding["reviewer"])
+    rows = []
+    for reviewer in record["reviewers"]:
+        mine = {}
+        for finding in record["findings"]:
+            if finding["reviewer"] == reviewer["name"]:
+                mine[finding["id"]] = finding["tag"]
+        row = {tag: sum(1 for t in mine.values() if t == tag) for tag in COLUMNS}
+        row["unique"] = sum(1 for i, t in mine.items()
+                            if t in ("blocker", "follow-up") and len(raised_by[i]) == 1)
+        row["name"] = reviewer["name"]
+        row["rounds"] = reviewer["rounds"]
+        rows.append(row)
+    return rows
+
+
+def lowered_defects(record):
+    """Findings a reviewer tagged blocker or follow-up that the author tagged lower: all, and rejected."""
+    ids = {f["id"]: f["tag"] for f in record["findings"]
+           if f["reviewer_tag"] in ("blocker", "follow-up") and lowered(f)}
+    return len(ids), sum(1 for tag in ids.values() if tag == "rejected")
+
+
+def cell(number, bold=False):
+    if number == 0:
+        return "–"
+    return f"**{number}**" if bold else str(number)
+
+
+def one_line(value):
+    return " ".join(str(value).split()).replace("|", "/")
+
+
+def table(folder):
+    record = read_json(os.path.join(folder, "review.json"))
+    problems = [record] if isinstance(record, str) else shape_problems(record)
+    if not problems:
+        problems = file_problems(record, folder)
+    if problems:
+        print(f"{folder}: the record fails its check:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 64
+    rounds = round_count(record)
+    said = "no round" if rounds == 0 else "1 round" if rounds == 1 else f"{rounds} rounds"
+    print(f"**Review: {record['level'].capitalize()}, {said}.**")
+    print()
+    print(HEADER)
+    print("|" + "---|" * 8)
+    for row in counts(record):
+        cells = [one_line(row["name"]), one_line(", ".join(str(r) for r in row["rounds"])),
+                 cell(row["blocker"], bold=True)]
+        cells += [cell(row[tag]) for tag in COLUMNS[1:]] + [cell(row["unique"])]
+        print("| " + " | ".join(cells) + " |")
+    changed, rejected = lowered_defects(record)
+    if changed:
+        print()
+        print(f"*Tagged lower than the reviewer's blocker or follow-up: {changed} ({rejected} rejected).*")
+    skipped = record.get("skipped", [])
+    if skipped:
+        print()
+        print("*Skipped: " + "; ".join(f"{one_line(s['name'])}: {one_line(s['why'])}" for s in skipped) + ".*")
+    return 0
+
+
+# Totals.
+
+EFFORT = re.compile(r",\s*(low|medium|high|extra[- ]high|xhigh|max)\b", re.I)
+HOST = re.compile(r"^(Codex|OpenCode)\s+", re.I)
+VERDICT = re.compile(r"^\*\*Review: (Light|Standard|Deep), (\d+) rounds?", re.I | re.M)
+TABLE_START = re.compile(r"^\|\s*Reviewer\s*\|")
+NUMBER = re.compile(r"^\d+$")
+
+
+def reviewer_key(name):
+    """A reviewer's model and tier, without its host, reasoning level and notes."""
+    name = re.split(r"\s[—–]\s", name, maxsplit=1)[0]
+    notes = [part.strip().lower() for group in re.findall(r"\(([^)]*)\)", name) for part in group.split(",")]
+    name = EFFORT.sub("", re.sub(r"\([^)]*\)", "", name))
+    name = HOST.sub("", " ".join(name.split()).strip(" ,"))
+    tier = " (free)" if "free" in notes else " (Go)" if "go" in notes else ""
+    return (name or "?") + tier
+
+
+def state_root():
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "agent-skills")
+
+
+def folders(path):
+    try:
+        with os.scandir(path) as entries:
+            return sorted(e.path for e in entries if e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
+
+
+def sources(root):
+    """("record", folder) for each review.json, ("handoff", file) for a task that has only a handoff."""
+    for run in folders(os.path.join(root, "long-horizon-orchestrator")):
+        for task in folders(run):
+            records = [f for f in folders(task) if RECORD_FOLDER.match(os.path.basename(f))
+                       and os.path.lexists(os.path.join(f, "review.json"))]
+            for folder in records:
+                yield "record", folder
+            handoff = os.path.join(task, "handoff.md")
+            if not records and os.path.isfile(handoff) and not os.path.islink(handoff):
+                yield "handoff", handoff
+    for folder in folders(os.path.join(root, "review-gate")):
+        if os.path.lexists(os.path.join(folder, "review.json")):
+            yield "record", folder
+
+
+def gate_from_record(folder):
+    """A gate's totals from its review.json, or a string saying why it can't be read."""
+    record = read_json(os.path.join(folder, "review.json"))
+    if isinstance(record, str):
+        return record
+    problems = shape_problems(record)
+    if problems:
+        return problems[0] + (f" (and {len(problems) - 1} more)" if len(problems) > 1 else "")
+    rows = []
+    for row in counts(record):
+        rows.append({"reviewer": reviewer_key(row["name"]), "blockers": row["blocker"],
+                     "follow_ups": row["follow-up"], "must_fix": 0, "nits": row["nit"],
+                     "pre_existing": row["pre-existing"], "rejected": row["rejected"], "unique": row["unique"]})
+    changes, how = {}, {}
+    seen = set()
+    for finding in record["findings"]:
+        key = (finding["id"], finding["reviewer"])
+        if key in seen or finding["reviewer_tag"] == "none":
+            continue
+        seen.add(key)
+        if finding["reviewer_tag"] != finding["tag"]:
+            change = f"{finding['reviewer_tag']} to {finding['tag']}"
+            changes[change] = changes.get(change, 0) + 1
+            if lowered(finding):
+                how[finding["checked"]] = how.get(finding["checked"], 0) + 1
+    return {"source": "record", "date": record["date"], "level": record["level"],
+            "result": record["result"], "rounds": round_count(record), "rows": rows,
+            "tagged": len(seen), "changes": changes, "lowered_checked": how}
+
+
+def number(cell_text):
+    value = cell_text.strip().strip("*").strip()
+    if value in ("", "–", "-", "—"):
+        return 0
+    return int(value) if NUMBER.match(value) else None
+
+
+def gate_from_handoff(path):
+    """A gate's totals from a handoff's Review table; None when it has no table; a string when unreadable."""
+    try:
+        if os.path.getsize(path) > MAX_BYTES:
+            return "handoff.md is over 10 MB"
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+        changed = os.path.getmtime(path)
+    except OSError as error:
+        return f"handoff.md can't be read ({error.__class__.__name__})"
+    lines = content.splitlines()
+    start = next((i for i, line in enumerate(lines) if TABLE_START.match(line)), None)
+    if start is None:
+        return None
+    names = {"blockers": "blockers", "follow-ups": "follow_ups", "must-fix": "must_fix", "nits": "nits",
+             "pre-existing": "pre_existing", "rejected": "rejected"}
+    header = [c.strip().lower() for c in lines[start].strip().strip("|").split("|")]
+    columns = {}
+    for place, title in enumerate(header):
+        if title in names:
+            columns[place] = names[title]
+        elif title.startswith("unique"):
+            columns[place] = "unique"
+        elif title.startswith("rounds"):
+            columns[place] = "rounds"
+    if "rounds" not in columns.values() or not ({"blockers", "must_fix"} & set(columns.values())):
+        return "its Review table has columns this script doesn't know"
+    rows, rounds = [], 0
+    for line in lines[start + 1:]:
+        if not line.startswith("|"):
+            break
+        cells = line.strip().strip("|").split("|")
+        if all(set(c.strip()) <= set("-: ") for c in cells):
+            continue
+        if len(cells) != len(header):
+            return "a row of its Review table has a different number of cells than its header"
+        row = {"reviewer": reviewer_key(cells[0].strip()), "blockers": 0, "follow_ups": 0, "must_fix": 0,
+               "nits": 0, "pre_existing": 0, "rejected": 0, "unique": 0}
+        for place, name in columns.items():
+            if name == "rounds":
+                rounds = max([rounds] + [int(n) for n in re.findall(r"\d+", cells[place])][:20])
+                continue
+            value = number(cells[place])
+            if value is None:
+                return f'a cell of its Review table isn\'t a count: "{one_line(cells[place])[:40]}"'
+            row[name] = value
+        rows.append(row)
+    if not rows:
+        return "its Review table has no rows"
+    verdict = VERDICT.search(content)
+    return {"source": "handoff", "date": datetime.date.fromtimestamp(changed).isoformat(),
+            "level": verdict.group(1).lower() if verdict else "unknown", "result": "unknown",
+            "rounds": int(verdict.group(2)) if verdict else rounds, "rows": rows,
+            "tagged": 0, "changes": {}, "lowered_checked": {}}
+
+
+def add(counter, key, amount=1):
+    counter[key] = counter.get(key, 0) + amount
+
+
+def totals(since, as_json):
+    root = state_root()
+    gates, unread = [], []
+    for kind, path in sources(root):
+        gate = gate_from_record(path) if kind == "record" else gate_from_handoff(path)
+        if gate is None:
+            continue
+        if isinstance(gate, str):
+            unread.append({"path": path, "why": gate})
+        elif since is None or gate["date"] >= since:
+            gates.append(gate)
+
+    result = {"root": root, "gates": len(gates),
+              "from": {"review.json": sum(1 for g in gates if g["source"] == "record"),
+                       "handoff tables": sum(1 for g in gates if g["source"] == "handoff")},
+              "first": min((g["date"] for g in gates), default=None),
+              "last": max((g["date"] for g in gates), default=None),
+              "levels": {}, "results": {}, "rounds": {}, "reviewers": {},
+              "tagged_by_reviewer": 0, "changed_tags": {}, "lowered_checked": {}, "unread": unread}
+    fields = ("blockers", "follow_ups", "must_fix", "nits", "pre_existing", "rejected", "unique")
+    for gate in gates:
+        add(result["levels"], gate["level"])
+        add(result["rounds"], str(gate["rounds"]))
+        if gate["source"] == "record":
+            add(result["results"], gate["result"])
+        result["tagged_by_reviewer"] += gate["tagged"]
+        for change, amount in gate["changes"].items():
+            add(result["changed_tags"], change, amount)
+        for how, amount in gate["lowered_checked"].items():
+            add(result["lowered_checked"], how, amount)
+        reviewed = set()
+        for row in gate["rows"]:
+            entry = result["reviewers"].setdefault(row["reviewer"], dict({f: 0 for f in fields}, reviews=0))
+            if row["reviewer"] not in reviewed:
+                entry["reviews"] += 1
+                reviewed.add(row["reviewer"])
+            for field in fields:
+                entry[field] += row[field]
+
+    if as_json:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False, sort_keys=True)
+        print()
+        return 0
+
+    def listed(counter, order=None):
+        keys = [k for k in (order or sorted(counter)) if k in counter]
+        keys += [k for k in sorted(counter) if k not in keys]
+        return ", ".join(f"{key} {counter[key]}" for key in keys) or "none"
+
+    if not gates:
+        print(f"No review records under {root}" + (f" since {since}." if since else "."))
+    else:
+        span = result["first"] if result["first"] == result["last"] else f"{result['first']} to {result['last']}"
+        print(f"{len(gates)} gates, {span}: {result['from']['review.json']} from review.json, "
+              f"{result['from']['handoff tables']} from handoff tables.")
+        print(f"By level: {listed(result['levels'], LEVELS)}.")
+        if result["results"]:
+            print(f"By result (review.json only): {listed(result['results'], RESULTS)}.")
+        print("By rounds: " + listed(result["rounds"], sorted(result["rounds"], key=int)) + ".")
+        print()
+        titles = ("Reviewer", "Reviews", "Blockers", "Follow-ups", "Must-fix", "Nits", "Pre-existing",
+                  "Rejected", "Unique")
+        ordered = sorted(result["reviewers"].items(), key=lambda item: (-item[1]["reviews"], item[0]))
+        width = max([len(titles[0])] + [len(name) for name, _ in ordered])
+        print("  ".join([titles[0].ljust(width)] + [t.rjust(len(t)) for t in titles[1:]]))
+        for name, entry in ordered:
+            values = [entry["reviews"]] + [entry[f] for f in fields]
+            print("  ".join([name.ljust(width)] + [str(v).rjust(len(t)) for v, t in zip(values, titles[1:])]))
+        if result["from"]["handoff tables"]:
+            print("Must-fix: blockers and follow-ups together, from tables before review-gate 3.0.0.")
+        print()
+        if result["tagged_by_reviewer"]:
+            differed = sum(result["changed_tags"].values())
+            print(f"The author's tag against the reviewer's (review.json only): {differed} of "
+                  f"{result['tagged_by_reviewer']} findings differed.")
+            for change in sorted(result["changed_tags"], key=lambda c: (-result["changed_tags"][c], c)):
+                print(f"  {change}: {result['changed_tags'][change]}")
+            if result["lowered_checked"]:
+                print(f"  How the lowered ones were checked: {listed(result['lowered_checked'], CHECKED)}.")
+        else:
+            print("No record here has the reviewers' own tags yet (review.json, from review-gate 4.1.0).")
+    if unread:
+        print()
+        print(f"Left out, {len(unread)} that couldn't be read:")
+        for item in unread:
+            print(f"  {item['path']}: {item['why']}")
+    return 0
+
+
+def main(argv):
+    if len(argv) == 2 and argv[0] == "table":
+        return table(argv[1])
+    if argv and argv[0] == "totals":
+        rest, since, as_json = argv[1:], None, False
+        while rest:
+            if rest[0] == "--json":
+                as_json, rest = True, rest[1:]
+            elif rest[0] == "--since" and len(rest) > 1 and DATE.match(rest[1]):
+                since, rest = rest[1], rest[2:]
+            else:
+                break
+        if not rest:
+            return totals(since, as_json)
+    print("Usage:" + __doc__.split("Usage:")[1].split("\n\n")[0].rstrip(), file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 4.0.0
+  version: 4.1.0
 ---
 
 # Review Gate
@@ -87,7 +87,12 @@ Then report that the review didn't converge, list the open blockers and follow-u
 
 ## 6. Record the result
 
-Put a Review section in your handoff, or in your reply to the user, starting with a verdict line and a table in this format, since later studies of the gate count them:
+Keep the gate's record in one folder outside the repository: in an orchestrated run, `<run directory>/<your task ID>/review/`; otherwise under `${XDG_STATE_HOME:-~/.local/state}/agent-skills/review-gate/`. [references/record.md](references/record.md) has the names and the format. It holds:
+
+- **each reviewer's report,** whole and unedited, saved when it arrives;
+- **`review.json`:** the gate's facts and one entry per finding per reviewer who raised it, with the reviewer's tag beside yours, how you checked it, the commit that fixed it, and a line of why wherever you rejected it or tagged it lower than the reviewer did.
+
+Then run `scripts/review-records table <folder>`: it checks the record and prints the first lines of the Review section. Put a Review section in your handoff, or in your reply to the user, starting with those lines as printed, since later studies of the gate count them, and finish the verdict line yourself:
 
 ```markdown
 **Review: <Light, Standard or Deep>, <1 round or n rounds>.** <Why that level, in a few words.> <What the table adds up to, and what is still open.>
@@ -96,16 +101,19 @@ Put a Review section in your handoff, or in your reply to the user, starting wit
 |---|---|---|---|---|---|---|---|
 | <model>, <level> | <1, 2> | <n> | <n> | <n> | <n> | <n> | <n> |
 
+*Tagged lower than the reviewer's blocker or follow-up: <n> (<n> rejected).*
+
 *Skipped: <model>: <why: the limit error, or "Codex short">.*
 ```
 
-- Name each model in plain words, with its reasoning level: `Codex GPT-6.1 Terra, high`. Mark OpenCode's with `(free)` or `(Go)`, so the two tiers stay apart, and a trial reviewer, and Hydrogen at Light, with `(trial)`.
-- Write a zero as `–`, and put a blocker count above zero in bold.
+- Name each model in plain words, with its reasoning level: `Codex GPT-6.1 Terra, high`. Mark OpenCode's with `(free)` or `(Go)`, so the two tiers stay apart, and a trial reviewer, and Hydrogen at Light, with `(trial)`. The table takes the names from `review.json`.
+- A zero is `–`, and a blocker count above zero is bold.
 - "Unique defects" counts the blockers and follow-ups no other reviewer raised.
-- The skipped line names every model that was skipped or that a reviewer moved on from, separated by semicolons. Leave it out when there are none.
+- The "Tagged lower" line counts the findings a reviewer called a blocker or follow-up that you tagged lower or rejected. It is left out when there are none.
+- The skipped line names every model that was skipped or that a reviewer moved on from, separated by semicolons. It is left out when there are none.
 
 Then list each blocker with its commit, each follow-up with its commit or, if open, the fix it needs, the open nits and pre-existing findings, and the rejected findings with their reasons.
 
 ## When the user asks for a review
 
-Run the same gate. If they asked for a review only, show the blockers, follow-ups and pre-existing findings and wait for their answer before changing code.
+Run the same gate, with its record. If they asked for a review only, show the blockers, follow-ups and pre-existing findings and wait for their answer before changing code.

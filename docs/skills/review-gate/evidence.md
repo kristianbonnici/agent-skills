@@ -221,6 +221,36 @@ was of the rare-timing or rare-input kind. → *only blockers hold back the merg
 follow-ups are fixed when cheap or listed; a stop needs two rounds without a fall, a disputed approach or a
 blocker in round 5.*
 
+## The record (2026-11-14)
+
+What the gate had left on one computer by 2026-11-12, and what a study could do with it:
+
+- **The table is written.** All 93 task handoffs saved since the gate shipped carry the Review table.
+- **It is the author's account alone.** The table counts findings by the author's tags. A reviewer's own
+  report was kept in about 28 of the 93 task folders (counted by file name), since no rule asked for it. So a
+  study could rarely see what a reviewer had said, the tag it gave, or whether a rejection held. One handoff
+  wrote the difference into a cell by hand: "3 (1 by my tag)".
+- **Nothing read the tables.** The study of 2026-10-30 had a model sort about 3,690 findings from prose. In
+  the tables, eight reviewer models were written 25 ways (the reasoning level before or after "(trial)", with
+  or without the host's name, with a note such as "fresh look").
+- **A gate outside an orchestrated run left no file,** only its reply in the conversation.
+- **Anthropic** (the post above) judges its reviewer's noise by how the author answered each comment: fixed,
+  wrong, intended, or not worth fixing. There a separate group of agents votes on each finding before it is
+  posted; here the author judges the findings, so the author's answer needs the reviewer's words beside it to
+  be checked later.
+
+→ *each reviewer's report saved as it arrives; one entry per finding with the reviewer's tag, the author's,
+how it was checked and why it was lowered; the Review lines printed from that file; a script that totals the
+records.*
+
+The first totals, over the handoff tables of 2026-11-01 to 2026-11-12 (`review-records totals` read 92 of
+the 93; one had the cell above): 87 reviews by Terra, 57 by Sonnet, 58 by DeepSeek V4.1 Flash (31 free, 27
+on Go), and by the trial reviewers 34 by Haiku, 24 by Luna and 16 by Muse. Rounds: 14 gates took one, 25
+two, 24 three, 13 four and 16 five.
+
+Not recorded: what a gate missed. A later fix to code a gate passed is in git, and the record names the
+commits the gate reviewed, so a study can look for it without a rule that costs every gate attention.
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
