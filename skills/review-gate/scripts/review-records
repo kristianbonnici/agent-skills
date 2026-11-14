@@ -18,10 +18,10 @@ totals: reads every record under ${XDG_STATE_HOME:-~/.local/state}/agent-skills:
   - long-horizon-orchestrator/<run>/<task>/review/review.json (and review-2/, review-3/ ...);
   - review-gate/<gate>/review.json, the gates run outside an orchestrated run;
   - the Review table in a task's handoff.md, which is all that gates before review-gate 4.1.0
-    left, when the task has no review.json or the handoff was last changed before any of them was
-    (an earlier gate; a handoff changed after a record repeats it). Those give each reviewer's
-    counts but not the reviewers' own tags, and a 2.x table's "Must-fix" is blockers and
-    follow-ups together.
+    left, unless one of the task's records has the same reviewers and counts (the handoff then
+    repeats that gate; a handoff table written by hand that differs from its record counts as
+    another gate). Those give each reviewer's counts but not the reviewers' own tags, and a 2.x
+    table's "Must-fix" is blockers and follow-ups together.
 It prints the gates by level, result and rounds, one line per reviewer, and how often the author's
 tag differed from the reviewer's. Reviewers are grouped by model and tier: "Codex GPT-6.1 Terra,
 high" and "GPT-6.1 Terra, high (fresh look)" are one reviewer. A record it can't read is listed
@@ -312,17 +312,8 @@ def folders(path):
         return []
 
 
-def older(handoff, records):
-    """Whether the handoff was last changed before every one of the task's records was."""
-    try:
-        changed = os.lstat(handoff).st_mtime_ns
-        return all(changed < os.lstat(os.path.join(folder, "review.json")).st_mtime_ns for folder in records)
-    except OSError:
-        return False
-
-
 def sources(root):
-    """("record", folder) for each review.json, ("handoff", file) for a task that has only a handoff."""
+    """("record", folder) for each review.json and ("handoff", file) for each task's handoff, after its records."""
     for run in folders(os.path.join(root, "long-horizon-orchestrator")):
         for task in folders(run):
             records = [f for f in folders(task) if RECORD_FOLDER.match(os.path.basename(f))
@@ -330,7 +321,7 @@ def sources(root):
             for folder in records:
                 yield "record", folder
             handoff = os.path.join(task, "handoff.md")
-            if os.path.isfile(handoff) and not os.path.islink(handoff) and older(handoff, records):
+            if os.path.isfile(handoff) and not os.path.islink(handoff):
                 yield "handoff", handoff
     for folder in folders(os.path.join(root, "review-gate")):
         if os.path.lexists(os.path.join(folder, "review.json")):
@@ -434,20 +425,31 @@ def gate_from_handoff(path):
             "tagged": 0, "changes": {}, "lowered_checked": {}}
 
 
+def same_rows(gate):
+    """A gate's reviewers and counts, to tell a handoff's table that repeats a record."""
+    return sorted(tuple(sorted(row.items())) for row in gate["rows"])
+
+
 def add(counter, key, amount=1):
     counter[key] = counter.get(key, 0) + amount
 
 
 def totals(since, as_json):
     root = state_root()
-    gates, unread = [], []
+    gates, unread, recorded = [], [], {}
     for kind, path in sources(root):
         gate = gate_from_record(path) if kind == "record" else gate_from_handoff(path)
         if gate is None:
             continue
         if isinstance(gate, str):
             unread.append({"path": path, "why": gate})
-        elif since is None or gate["date"] >= since:
+            continue
+        task = os.path.dirname(path)
+        if kind == "record":
+            recorded.setdefault(task, []).append(same_rows(gate))
+        elif same_rows(gate) in recorded.get(task, []):
+            continue
+        if since is None or gate["date"] >= since:
             gates.append(gate)
 
     result = {"root": root, "gates": len(gates),

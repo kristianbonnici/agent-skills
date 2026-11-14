@@ -242,13 +242,21 @@ write(os.path.join(runs, "run-1", "F", "handoff.md"), """| Reviewer | Rounds | B
 | Codex GPT-6.1 Terra, high | 1 | 1 (2 by my tag) | – | – | – | – | – |
 """)
 write(os.path.join(runs, "run-1", "G", "handoff.md"), "| Reviewer | Verdict |\n|---|---|\n| Terra | fine |\n")
-# H: a handoff last changed before the task's record was written is an earlier gate, counted too.
+# H and M: a handoff whose table isn't a record's is another gate, counted too, whether it was last
+# changed before the task's record (H) or after it (M).
 save(os.path.join(runs, "run-1", "H", "review"), clean)
 write(os.path.join(runs, "run-1", "H", "handoff.md"), """**Review: Light, 1 round.** Wording only.
 
 | Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
 |---|---|---|---|---|---|---|---|
 | GLM-5.3 Flash (free), high | 1 | – | – | 1 | – | – | – |
+""")
+save(os.path.join(runs, "run-1", "M", "review"), clean)
+write(os.path.join(runs, "run-1", "M", "handoff.md"), """**Review: Standard, 2 rounds.** Ordinary code.
+
+| Reviewer | Rounds | Blockers | Follow-ups | Nits | Pre-existing | Rejected | Unique defects |
+|---|---|---|---|---|---|---|---|
+| Claude Sonnet 5.5, high | 1, 2 | – | 1 | – | – | – | 1 |
 """)
 # I: another table that starts with Reviewer comes first; the Review table after it is the one read.
 write(os.path.join(runs, "run-1", "I", "handoff.md"), """| Reviewer | Notes |
@@ -297,22 +305,23 @@ own["findings"] = [{"id": 1, "round": 1, "reviewer": "Gemini 4 Hydrogen, high (t
 save(os.path.join(root, "review-gate", "20261102-0900-notes-app"), own, reports=False)
 # A handoff's date is its last change: fixed days here, so the check reads the same in any year.
 for task, day in (("B", (2026, 11, 12)), ("C", (2026, 10, 1)), ("H", (2026, 10, 20)), ("I", (2026, 11, 12)),
-                  ("J", (2026, 11, 12))):
+                  ("J", (2026, 11, 12)), ("M", (2026, 11, 12))):
     at = time.mktime(day + (12, 0, 0, 0, 0, -1))
     os.utime(os.path.join(runs, "run-1", task, "handoff.md"), (at, at))
-# A's handoff was written after its records, as a gate's handoff is: it repeats them and isn't counted.
-after = time.time() + 60
-os.utime(os.path.join(runs, "run-1", "A", "handoff.md"), (after, after))
+# M's record is older than its handoff, H's newer: the dates decide nothing. A's handoff has the table
+# of A's first record: it is that gate again and isn't counted, though its dates say nothing either way.
+before_handoff = time.mktime((2026, 10, 1, 12, 0, 0, 0, 0, -1))
+os.utime(os.path.join(runs, "run-1", "M", "review", "review.json"), (before_handoff, before_handoff))
 
 done = run("totals", "--json")
 assert done.returncode == 0, done.stderr
 total = json.loads(done.stdout)
-assert total["gates"] == 9 and total["from"] == {"review.json": 4, "handoff tables": 5}, total
-assert total["levels"] == {"deep": 3, "standard": 4, "light": 2}, total["levels"]
-assert total["results"] == {"passed": 2, "stopped": 1, "reported": 1}, total["results"]
-assert total["rounds"] == {"0": 1, "1": 5, "2": 2, "3": 1}, total["rounds"]
+assert total["gates"] == 11 and total["from"] == {"review.json": 5, "handoff tables": 6}, total
+assert total["levels"] == {"deep": 3, "standard": 6, "light": 2}, total["levels"]
+assert total["results"] == {"passed": 3, "stopped": 1, "reported": 1}, total["results"]
+assert total["rounds"] == {"0": 1, "1": 6, "2": 3, "3": 1}, total["rounds"]
 terra = total["reviewers"]["GPT-6.1 Terra"]
-assert terra == {"reviews": 5, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
+assert terra == {"reviews": 6, "blockers": 3, "follow_ups": 2, "must_fix": 4, "nits": 4, "pre_existing": 1,
                  "rejected": 1, "unique": 6}, terra
 assert total["reviewers"]["DeepSeek V4.1 Flash (free)"]["follow_ups"] == 1
 assert total["reviewers"]["DeepSeek V4.1 Flash (Go)"] == {"reviews": 1, "blockers": 0, "follow_ups": 0, "must_fix": 1,
@@ -342,7 +351,11 @@ assert (total["first"], total["last"]) == ("2026-10-01", "2026-11-20"), (total["
 # --since keeps the gates dated that day or later: a record by its date, a handoff by its last change.
 done = run("totals", "--since", "2026-11-10", "--json")
 later = json.loads(done.stdout)
-assert later["gates"] == 6 and later["from"] == {"review.json": 3, "handoff tables": 3}, later
+assert later["gates"] == 8 and later["from"] == {"review.json": 4, "handoff tables": 4}, later
+# A handoff that repeats a record is left out even when --since leaves the record out too.
+done = run("totals", "--since", "2026-11-15", "--json")
+latest = json.loads(done.stdout)
+assert latest["gates"] == 1 and latest["from"] == {"review.json": 1, "handoff tables": 0}, latest
 assert "GLM-5.3 Flash (free)" not in later["reviewers"], later["reviewers"]
 assert "Gemini 4 Hydrogen" not in later["reviewers"] and later["reviewers"]["GPT-6.1 Terra"]["must_fix"] == 0
 done = run("totals", "--since", "2999-01-01")
@@ -353,12 +366,12 @@ assert "Left out, 5 that couldn't be read" in done.stdout, done.stdout
 done = run("totals")
 assert done.returncode == 0 and done.stderr == "", done.stderr
 out = done.stdout
-assert "9 gates, " in out and "4 from review.json, 5 from handoff tables." in out, out
-assert "By level: light 2, standard 4, deep 3." in out, out
-assert "By result (review.json only): passed 2, stopped 1, reported 1." in out, out
-assert "By rounds: 0 1, 1 5, 2 2, 3 1." in out, out
+assert "11 gates, " in out and "5 from review.json, 6 from handoff tables." in out, out
+assert "By level: light 2, standard 6, deep 3." in out, out
+assert "By result (review.json only): passed 3, stopped 1, reported 1." in out, out
+assert "By rounds: 0 1, 1 6, 2 3, 3 1." in out, out
 row = next(line for line in out.splitlines() if line.startswith("GPT-6.1 Terra"))
-assert row.split()[2:] == ["5", "3", "2", "4", "4", "1", "1", "6"], row
+assert row.split()[2:] == ["6", "3", "2", "4", "4", "1", "1", "6"], row
 assert "4 of 6 findings differed" in out and "  blocker to rejected: 1" in out, out
 assert "How the lowered ones were checked: run 1, read 1." in out, out
 assert "Left out, 5 that couldn't be read:" in out and "A second table" not in out, out

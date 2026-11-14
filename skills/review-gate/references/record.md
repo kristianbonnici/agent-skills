@@ -4,10 +4,10 @@ Every gate leaves one folder: what each reviewer said, and what you did with eac
 
 ## Where
 
-- **In an orchestrated run:** `<run directory>/<your task ID>/review/`. A second gate of the same task (a later milestone, or a gate run again once a reviewer has room) goes in `review-2/`, then `review-3/`.
-- **Otherwise:** `${XDG_STATE_HOME:-~/.local/state}/agent-skills/review-gate/<YYYYMMDD-HHMM>-<the repository's folder name>/`, named for when the gate started.
+- **In an orchestrated run:** `<run directory>/<your task ID>/review/`. A later gate of the same task (a later milestone, or a gate run again once a reviewer has room) goes in `review-2/`, then `review-3/`, and so on.
+- **Otherwise:** `${XDG_STATE_HOME:-~/.local/state}/agent-skills/review-gate/<YYYYMMDD-HHMM>-<the repository's folder name>/`, named for when the gate started; if that name is taken, the same name with `-2`, then `-3`, and so on.
 
-Make the folder yourself with plain `mkdir`, after `mkdir -p` on the folder above it, never `mkdir -p` on the folder itself. If `mkdir` fails because the folder exists, another gate has that name: add `-2`, then `-3`, until it succeeds. Write only into a record folder this gate made.
+Make the folder yourself with plain `mkdir`, after `mkdir -p` on the folder above it, never `mkdir -p` on the folder itself. If `mkdir` fails because the folder exists, another gate has that name: try the next number in the same sequence (after `review-2/` comes `review-3/`, never `review-2-2/`) until it succeeds. Write only into a record folder this gate made.
 
 Never inside the repository under review: the reports quote its code, and the record isn't part of the change.
 
