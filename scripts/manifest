@@ -156,6 +156,8 @@ function is_file(path,    quoted) {
 function same_path(path) {
   if (substr(path, 1, 2) == "~/") path = ENVIRON["HOME"] substr(path, 2)
   gsub(/\/+/, "/", path)
+  while (gsub(/\/\.\//, "/", path)) {}
+  sub(/\/\.$/, "", path)
   sub(/\/$/, "", path)
   return path
 }

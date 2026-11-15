@@ -89,16 +89,13 @@ is_built() {
   return 1
 }
 
-# Has the built file $1 changed since bootstrap wrote it: is the rest of it other than its
-# marker's checksum says? A marker without a checksum counts as changed, to be safe.
+# Has the built file $1 changed since bootstrap wrote it? Its first line must be the marker this
+# build writes, word for word, with the checksum of the rest of the file as it is now. Anything else,
+# a marker without a checksum included, counts as changed, to be safe.
 is_changed() {
   first_line=
   IFS= read -r first_line <"$1" || true
-  case "$first_line" in
-    *" Checksum: "*" -->") recorded=${first_line##* Checksum: }; recorded=${recorded% -->} ;;
-    *) return 0 ;;
-  esac
-  [ "$recorded" != "$(body_sum "$1")" ]
+  [ "$first_line" != "$marker_head$(body_sum "$1") -->" ]
 }
 
 # A free name beside $1, ending in $2 and the time, for a file that is about to be replaced.
@@ -148,6 +145,9 @@ while IFS= read -r row; do
   set +f
   IFS=$old_ifs
   build "$built" "$@"
+  # The marker as this build writes it, up to its checksum.
+  marker_head=$(head -n 1 "$built")
+  marker_head="${marker_head% Checksum: *} Checksum: "
 
   case "$action" in
     check)
@@ -207,6 +207,8 @@ while IFS= read -r row; do
         fi
         verb=REBUILT
         ! is_changed "$target_path" || keep_as=changed
+        # What was judged, to see a change made between this check and the move.
+        cp -p "$target_path" "$scratch/judged"
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
         if [ "$adopt" -eq 0 ]; then
           echo "NOT ADOPTED $target_path: your own file, so bootstrap leaves it. To build it from install/instructions.tsv, keeping yours as a backup beside it, run scripts/bootstrap --adopt-instructions" >&2
@@ -244,6 +246,12 @@ while IFS= read -r row; do
           cp -p "$target_path" "$backup"
         fi
         if [ "$verb" = ADOPTED ]; then note="; your file is kept as $backup"; else note="; the change made in it is kept as $backup"; fi
+      fi
+      # Changed since it was judged unchanged: kept after all.
+      if [ "$verb" = REBUILT ] && [ -z "$backup" ] && ! cmp -s "$scratch/judged" "$target_path"; then
+        backup=$(backup_name "$target_path" changed)
+        cp -p "$target_path" "$backup"
+        note="; the change made in it is kept as $backup"
       fi
       mv "$next_file" "$target_path"
       next_file=

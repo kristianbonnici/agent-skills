@@ -143,6 +143,14 @@ cp "$test_home/old-marker" "$on_home/.codex/AGENTS.md"
 on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/rebuild.out" 2>&1
 expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/rebuild.out"
 rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/rebuild.out")"
+# A change to the marker line alone counts too.
+sed '1s/Edit there/Edit only there/' "$on_home/.codex/AGENTS.md" >"$test_home/marker-edit"
+cp "$test_home/marker-edit" "$on_home/.codex/AGENTS.md"
+on studio-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor.out" 2>&1 || true
+expect "^FAIL $on_home/.codex/AGENTS.md was changed since bootstrap built it" "$test_home/doctor.out"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/rebuild.out" 2>&1
+expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/rebuild.out"
+rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/rebuild.out")"
 # A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
 (TMPDIR="$test_home/no-such-folder"; export TMPDIR; on studio-mac "$repo_root/scripts/doctor" --host claude) >"$test_home/doctor.out" 2>&1 || true
 expect "^FAIL the instruction files could not be checked (scripts/instructions check exited [1-9]" "$test_home/doctor.out"
@@ -264,7 +272,10 @@ bad_row 'nowhere-mac|claude|~/.claude/CLAUDE.md|title' 'no computers.tsv names a
 printf 'studio-mac\tclaude\t~/.claude/CLAUDE.md\ttitle\nstudio-mac\tcodex\t~/.claude/CLAUDE.md\ttitle\n' >"$private/install/instructions.tsv"
 on studio-mac "$repo_root/scripts/manifest" instructions >"$test_home/bad.out" 2>&1 && fail "manifest took a file named twice"
 expect "is named twice for studio-mac" "$test_home/bad.out"
-# Also when the two rows spell the same file differently.
+# Also when the two rows spell the same file differently: through $HOME, a doubled slash or a "." step.
+printf 'studio-mac\tclaude\t~/.claude/CLAUDE.md\ttitle\nstudio-mac\tcodex\t~/./.claude/./CLAUDE.md\ttitle\n' >"$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/manifest" instructions >"$test_home/bad.out" 2>&1 && fail "manifest took a file named twice with . steps"
+expect "is named twice for studio-mac" "$test_home/bad.out"
 printf 'studio-mac\tclaude\t~/.claude/CLAUDE.md\ttitle\nstudio-mac\tcodex\t%s//.claude/CLAUDE.md\ttitle\n' "$on_home" >"$private/install/instructions.tsv"
 on studio-mac "$repo_root/scripts/manifest" instructions >"$test_home/bad.out" 2>&1 && fail "manifest took a file named twice in two spellings"
 expect "is named twice for studio-mac" "$test_home/bad.out"
