@@ -269,10 +269,16 @@ while IFS= read -r row; do
         # The file there now gets a second name beside it, a hard link: whatever is written into it
         # until the move replaces it stays in it, and it is judged again once the move is done.
         held=$(mktemp "$target_dir/.agent-skills-instructions-held.XXXXXX")
-        ln -f "$target_path" "$held"
+        # A folder that takes no hard links (some network shares) gets a copy instead, as before:
+        # then a change written after the copy is not kept.
+        held_by_copy=0
+        if ! ln -f "$target_path" "$held" 2>/dev/null; then
+          cp -p "$target_path" "$held"
+          held_by_copy=1
+        fi
         # Replaced by another file since (an editor that saves by renaming): that file is the newest
         # text, so it is left for the next run to judge.
-        if ! [ "$target_path" -ef "$held" ]; then
+        if [ "$held_by_copy" -eq 0 ] && ! [ "$target_path" -ef "$held" ]; then
           rm -f "$held" "$next_file"
           held=
           next_file=
@@ -304,7 +310,8 @@ EOF
 # The files the record says bootstrap built that no row builds any more.
 orphans=
 if [ -s "$record" ]; then
-  orphans=$(awk -F '\t' -v c="$computer" 'NR == FNR { current[$2] = 1; next } NF == 3 && $1 == c && !($3 in current) { print $2 "\t" $3 }' "$scratch/current" "$record")
+  # By the file's name, not NR == FNR: with no row left for this computer, the first file is empty.
+  orphans=$(awk -F '\t' -v c="$computer" 'FILENAME == ARGV[1] { current[$2] = 1; next } NF == 3 && $1 == c && !($3 in current) { print $2 "\t" $3 }' "$scratch/current" "$record")
 fi
 : >"$scratch/kept"
 while IFS="$tab" read -r orphan_host orphan_path; do

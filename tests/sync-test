@@ -246,7 +246,8 @@ git -C "$private" remote set-url origin "$work/remotes/agent-skills-private.git"
 git -C "$private" config --unset core.sshCommand
 
 # What the schedule runs: a line with the time before and after, for doctor; the pinned runtimes are
-# installed only when the pull changed them. Stand-in npm and node record what they are asked.
+# installed only when one isn't installed from its lockfile as it is now, so a failed install is
+# tried again. Stand-in npm and node record what they are asked.
 printf '#!/bin/sh\necho "$*" >>"%s/npm.log"\n' "$work" >"$work/bin/npm"
 printf '#!/bin/sh\necho 26\n' >"$work/bin/node"
 chmod +x "$work/bin/npm" "$work/bin/node"
@@ -260,6 +261,17 @@ echo '{}' >"$work/seeds/agent-skills/runtime/playwright/package-lock.json"
 commit_seed agent-skills "A runtime pin"
 "$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
 expect "^ci --prefix $public/runtime/playwright" "$work/npm.log"
+# The stand-in installed nothing, as a failed install would: the next run tries again.
+: >"$work/npm.log"
+"$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
+expect "^ci --prefix $public/runtime/playwright" "$work/npm.log"
+# Installed from the lockfile as it is: left alone.
+mkdir -p "$public/runtime/playwright/node_modules"
+touch -t 203001010000 "$public/runtime/playwright/node_modules/.package-lock.json"
+: >"$work/npm.log"
+"$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
+test ! -s "$work/npm.log" || fail "a scheduled sync reinstalled a runtime that is current"
+rm -rf "$public/runtime/playwright/node_modules"
 # A failed run says so in its last line.
 git -C "$public" commit -q --allow-empty -m "Local"
 echo newer >>"$work/seeds/agent-skills/skills/demo/SKILL.md"

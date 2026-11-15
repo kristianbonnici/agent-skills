@@ -381,6 +381,17 @@ assert "added a section for travel-mac" in finish(writer)
 kept = read()
 assert "- `~/Studio/new` (2026-11-16): added by another round." in kept and "## Machine: travel-mac\n" in kept, kept
 
+# a file made by hand while init, which found none, is between reading and writing: init starts
+# over from it, so its entry is kept
+os.remove(shared)
+writer = start("travel-mac", "init", pause=1)
+time.sleep(0.3)
+with open(shared, "w") as handle:
+    handle.write(laid + "- `~/made/by-hand` (2026-11-16): kept.\n")
+assert "added a section for travel-mac" in finish(writer)
+kept = read()
+assert "- `~/made/by-hand` (2026-11-16): kept." in kept and "## Machine: travel-mac\n" in kept, kept
+
 # many at once, without pauses: every section arrives
 with open(shared, "w") as handle:
     handle.write(laid)

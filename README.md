@@ -112,8 +112,10 @@ a file whose row is taken out of the table (or whose host the computer now leave
 known: doctor warns about it, and bootstrap and uninstall remove it when it still carries the marker
 and its checksum, or keep it and say so when someone changed it. Just before it replaces a file,
 bootstrap gives it a second name (a hard link) and compares that with what it judged afterwards, so
-a change written into the file in between is kept as the backup; a file another program replaced
-in that moment is left for the next run, which fails until then. `./scripts/manifest instructions` prints this computer's
+a change written into the file in between, or a file another program put in its place before then,
+is kept as the backup; a file put in its place after the second name was given is left for the
+next run, which fails until then. Only a replacement in the instant between that last check and the
+move can still be lost. A folder that takes no hard links gets a copy instead. `./scripts/manifest instructions` prints this computer's
 rows, each section as its path; it refuses a row with a section that has no file, a host the
 computer leaves out, a target written with a `..` step, or one file named twice for a computer.
 
@@ -135,7 +137,8 @@ leave the runtimes alone). A pull that cannot fast-forward fails sync after boot
 it installs the launch agent `com.agent-skills.sync` in `~/Library/LaunchAgents`: it runs this
 checkout's `scripts/sync --from-schedule` with no input, appends its output to
 `~/Library/Logs/agent-skills-sync.log`, between a line with the time it started and one with the
-time it finished and how, and installs the pinned runtimes only when the pull changed them. Its
+time it finished and how, and installs the pinned runtimes only when one isn't installed from its
+lockfile as it is now (after a pull changed it, or an install that failed). Its
 PATH is the installing shell's, limited to folders that exist, so run it from a shell that finds
 git, node and npm; `AGENT_SKILLS_PRIVATE`, `AGENT_SKILLS_STATE`, `AGENT_SKILLS_COMPUTER` and
 `XDG_STATE_HOME` go with it when they are set. A time missed while the Mac slept runs when it wakes.

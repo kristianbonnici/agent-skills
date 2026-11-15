@@ -26,7 +26,7 @@
 #   sync --unschedule         remove the schedule
 #   sync --from-schedule      what the schedule runs: a line with the time before and after the run,
 #                             for doctor to read from the log, and the pinned runtimes installed only
-#                             when the pull changed them
+#                             when one isn't installed from its lockfile as it is now
 set -u
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -35,7 +35,6 @@ parent=$(dirname -- "$repo_root")
 bootstrap_args=--all
 skip_dependencies=0
 from_schedule=0
-runtime_changed=0
 failures=0
 
 usage() {
@@ -149,10 +148,6 @@ sync_one() {
     fi
     if [ "$pull_status" -eq 0 ]; then
       count=$(in_repo rev-list --count "$before..HEAD")
-      # A scheduled run installs the pinned runtimes only when this pull changed them.
-      if [ "$sync_root" = "$repo_root" ] && [ "$count" -gt 0 ] && ! in_repo diff --quiet "$before" HEAD -- runtime; then
-        runtime_changed=1
-      fi
       if [ "$count" -eq 0 ]; then
         echo "OK $name is up to date with origin/$default"
       else
@@ -180,8 +175,22 @@ sync_one "$repo_root"
 sync_one "$private_repo"
 sync_one "$state_repo"
 
+# Is a pinned runtime not installed from its lockfile as it is now? npm ci leaves a copy of the
+# lockfile in node_modules; a pull that changes the lockfile makes it newer than that copy, and a
+# failed install leaves no copy, so the next scheduled run tries again.
+runtimes_stale() {
+  for lockfile in "$repo_root"/runtime/*/package-lock.json; do
+    [ -f "$lockfile" ] || continue
+    installed="${lockfile%/package-lock.json}/node_modules/.package-lock.json"
+    if [ ! -f "$installed" ] || [ "$lockfile" -nt "$installed" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Bootstrap as the pull left it: the new scripts and tables.
-if [ "$skip_dependencies" -eq 1 ] || { [ "$from_schedule" -eq 1 ] && [ "$runtime_changed" -eq 0 ]; }; then
+if [ "$skip_dependencies" -eq 1 ] || { [ "$from_schedule" -eq 1 ] && ! runtimes_stale; }; then
   bootstrap_args="$bootstrap_args --skip-dependencies"
 fi
 # shellcheck disable=SC2086

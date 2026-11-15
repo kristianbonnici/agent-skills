@@ -188,6 +188,18 @@ test "$(cat "$on_home/.codex/AGENTS.md")" = "Saved by an editor" || fail "the fi
 test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
 rm "$on_home/.codex/AGENTS.md"
 on studio-mac "$repo_root/scripts/instructions" install --host codex >/dev/null 2>&1
+# A folder that takes no hard links (a stand-in ln that refuses them) gets a copy instead: the
+# rebuild still works, and a change made before the copy is still kept.
+printf '#!/bin/sh\ncase "$1" in -f) exit 1 ;; esac\nexec /bin/ln "$@"\n' >"$test_home/hold-bin/ln"
+printf '## Long responses\n\nEnd a long reply with a TLDR, short.\n' >"$sections/long-responses.md"
+(PATH="$test_home/hold-bin:$PATH"; export PATH; on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1 || { cat "$test_home/held.out" >&2; fail "a rebuild without hard links failed"; }
+expect "^REBUILT $on_home/.codex/AGENTS.md$" "$test_home/held.out"
+(LATE_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/hold-bin:$test_home/late-bin:$PATH"; export LATE_TARGET PATH
+  printf '## Long responses\n\nEnd a long reply with a TLDR, shorter.\n' >"$sections/long-responses.md"
+  on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1
+expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/held.out"
+rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/held.out")"
+test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
 # A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
 (TMPDIR="$test_home/no-such-folder"; export TMPDIR; on studio-mac "$repo_root/scripts/doctor" --host claude) >"$test_home/doctor.out" 2>&1 || true
 expect "^FAIL the instruction files could not be checked (scripts/instructions check exited [1-9]" "$test_home/doctor.out"
@@ -321,6 +333,19 @@ expect "^REMOVED $on_home/.config/opencode/AGENTS.md: no row of install/instruct
 expect "^REMOVED $on_home/.claude/CLAUDE.md" "$test_home/orphan.out"
 test ! -e "$on_home/.config/opencode/AGENTS.md" && test ! -e "$on_home/.claude/CLAUDE.md" && test ! -e "$on_home/.codex/AGENTS.md"
 refuse "^studio-mac	" "$record"
+# The last row of this computer removed: its files are still known, and removed.
+cp "$test_home/instructions.full" "$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+grep -v "^studio-mac	" "$test_home/instructions.full" >"$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor.out" 2>&1 || true
+expect "^WARN $on_home/.claude/CLAUDE.md was built by bootstrap, but no row" "$test_home/doctor.out"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/orphan.out" 2>&1
+for file in .claude/CLAUDE.md .codex/AGENTS.md .config/opencode/AGENTS.md; do
+  expect "^REMOVED $on_home/$file: no row of install/instructions.tsv builds it any more" "$test_home/orphan.out"
+  test ! -e "$on_home/$file" || fail "$file is still there with no row for this computer"
+done
+refuse "^studio-mac	" "$record"
+grep -q "^travel-mac	" "$record" || fail "travel-mac's entries went from the shared record"
 cp "$test_home/instructions.full" "$private/install/instructions.tsv"
 
 # No row for this computer, and no table: nothing is built and nothing is reported.
