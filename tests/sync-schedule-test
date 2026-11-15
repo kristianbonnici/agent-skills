@@ -203,7 +203,7 @@ mv "$HOME/.local/state/agent-skills-sync" "$work/backups"
 : >"$HOME/.local/state/agent-skills-sync"
 : >"$work/launchctl.log"
 if "$sync" --schedule >"$work/out" 2>&1; then fail "--schedule passed with no room for a copy"; fi
-expect "^FAIL could not keep a copy of the launch agent $plist" "$work/out"
+expect "^FAIL could not make $HOME/.local/state/agent-skills-sync to keep the launch agents in, so nothing was changed" "$work/out"
 cmp -s "$plist" "$work/hand-made.plist" || fail "the hand-made agent was replaced without a copy"
 refuse "^bootout" "$work/launchctl.log"
 if "$sync" --unschedule >"$work/out" 2>&1; then fail "--unschedule passed with no room for a copy"; fi
@@ -211,6 +211,22 @@ cmp -s "$plist" "$work/hand-made.plist" || fail "the hand-made agent was removed
 rm "$HOME/.local/state/agent-skills-sync"
 mv "$work/backups" "$HOME/.local/state/agent-skills-sync"
 "$sync" --schedule >"$work/out" 2>&1 || fail "--schedule failed once there was room"
+
+# A file that can't be moved aside (locked here with chflags) stops it before anything changes: the
+# one already moved goes back, and launchd is not asked to unload anything.
+if command -v chflags >/dev/null 2>&1; then
+  cp "$work/hand-made.plist" "$plist"
+  cp "$work/hand-made.plist" "$HOME/Library/LaunchAgents/zz-by-hand.plist"
+  chflags uchg "$HOME/Library/LaunchAgents/zz-by-hand.plist"
+  : >"$work/launchctl.log"
+  if "$sync" --schedule >"$work/out" 2>&1; then chflags nouchg "$HOME/Library/LaunchAgents/zz-by-hand.plist"; fail "--schedule passed with a file it can't move"; fi
+  chflags nouchg "$HOME/Library/LaunchAgents/zz-by-hand.plist"
+  expect "^FAIL could not move the launch agent $HOME/Library/LaunchAgents/zz-by-hand.plist" "$work/out"
+  cmp -s "$plist" "$work/hand-made.plist" || fail "the agent moved aside first did not go back"
+  refuse "^bootout" "$work/launchctl.log"
+  rm "$HOME/Library/LaunchAgents/zz-by-hand.plist"
+  "$sync" --schedule >"$work/out" 2>&1 || fail "--schedule failed once the file could move"
+fi
 
 # Never from a linked worktree, which goes away when its work is done.
 git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null

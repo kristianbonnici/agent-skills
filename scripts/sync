@@ -177,9 +177,13 @@ sync_one "$state_repo"
 # Is a pinned runtime not installed from its lockfile as it is now? npm ci leaves a copy of the
 # lockfile in node_modules; a pull that changes the lockfile makes it newer than that copy, and a
 # failed install leaves no copy, so the next scheduled run tries again.
+# A runtime bootstrap skips on this computer (excalidraw's, below Node 20) never counts, or every
+# run would reinstall them all.
 runtimes_stale() {
+  node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
   for lockfile in "$repo_root"/runtime/*/package-lock.json; do
     [ -f "$lockfile" ] || continue
+    case "$lockfile" in */runtime/excalidraw/*) [ "$node_major" -ge 20 ] 2>/dev/null || continue ;; esac
     installed="${lockfile%/package-lock.json}/node_modules/.package-lock.json"
     if [ ! -f "$installed" ] || [ "$lockfile" -nt "$installed" ]; then
       return 0

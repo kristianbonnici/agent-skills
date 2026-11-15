@@ -208,6 +208,23 @@ expect "^REBUILT $on_home/.codex/AGENTS.md$" "$test_home/held.out"
 expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/held.out"
 rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/held.out")"
 test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
+# Without hard links, a file that appears just before the new one is moved in is never moved over:
+# a stand-in mv makes it appear then.
+mkdir -p "$test_home/appear-bin"
+printf '#!/bin/sh\ncase "$1" in -n) printf "Saved by an editor\\n" >"$APPEAR_TARGET" ;; esac\nexec /bin/mv "$@"\n' >"$test_home/appear-bin/mv"
+chmod +x "$test_home/appear-bin/mv"
+printf '## Long responses\n\nEnd a long reply with a TLDR, appeared.\n' >"$sections/long-responses.md"
+if (APPEAR_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/appear-bin:$test_home/hold-bin:$PATH"; export APPEAR_TARGET PATH
+  on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1; then
+  fail "a rebuild that found a new file in its place passed"
+fi
+expect "^KEEP $on_home/.codex/AGENTS.md: another program wrote it while bootstrap was rebuilding it" "$test_home/held.out"
+test "$(cat "$on_home/.codex/AGENTS.md")" = "Saved by an editor" || fail "the editor's file was moved over"
+find "$on_home/.codex" -name 'AGENTS.md.changed-*' | grep -q . || fail "the file moved aside was not kept"
+find "$on_home/.codex" -name 'AGENTS.md.changed-*' -exec rm {} +
+test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
+rm "$on_home/.codex/AGENTS.md"
+on studio-mac "$repo_root/scripts/instructions" install --host codex >/dev/null 2>&1
 # A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
 (TMPDIR="$test_home/no-such-folder"; export TMPDIR; on studio-mac "$repo_root/scripts/doctor" --host claude) >"$test_home/doctor.out" 2>&1 || true
 expect "^FAIL the instruction files could not be checked (scripts/instructions check exited [1-9]" "$test_home/doctor.out"

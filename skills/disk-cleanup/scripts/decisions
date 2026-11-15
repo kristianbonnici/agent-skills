@@ -61,7 +61,10 @@ UNASSIGNED = "## Unassigned"
 LISTS = ("Keep", "Undecided", "Cleared")
 # How long a command waits for another one's lock, and how often it starts over when the file
 # changed under it.
-LOCK_WAIT = float(os.environ.get("DISK_CLEANUP_LOCK_WAIT") or 60)
+try:
+    LOCK_WAIT = float(os.environ.get("DISK_CLEANUP_LOCK_WAIT") or 60)
+except ValueError:
+    LOCK_WAIT = 60.0
 ATTEMPTS = 3
 USAGE = next(part for part in __doc__.split("\n\n") if part.startswith("Usage:"))
 

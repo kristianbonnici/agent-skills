@@ -271,6 +271,21 @@ touch -t 203001010000 "$public/runtime/playwright/node_modules/.package-lock.jso
 : >"$work/npm.log"
 "$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
 test ! -s "$work/npm.log" || fail "a scheduled sync reinstalled a runtime that is current"
+# A pull changes the lockfile of an installed runtime: newer than the install, so installed again.
+touch -t 203101010000 "$public/runtime/playwright/package-lock.json"
+"$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
+expect "^ci --prefix $public/runtime/playwright" "$work/npm.log"
+# A runtime bootstrap skips here (excalidraw's, below Node 20) doesn't make every run reinstall.
+touch -t 203201010000 "$public/runtime/playwright/node_modules/.package-lock.json"
+mkdir -p "$public/runtime/excalidraw"
+echo '{}' >"$public/runtime/excalidraw/package-lock.json"
+printf '#!/bin/sh\necho 18\n' >"$work/bin/node"
+: >"$work/npm.log"
+"$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
+test ! -s "$work/npm.log" || fail "a runtime bootstrap skips made a scheduled sync reinstall"
+rm -rf "$public/runtime/excalidraw"
+printf '#!/bin/sh\necho 26\n' >"$work/bin/node"
+git -C "$public" checkout -q -- runtime
 rm -rf "$public/runtime/playwright/node_modules"
 # A failed run says so in its last line.
 git -C "$public" commit -q --allow-empty -m "Local"

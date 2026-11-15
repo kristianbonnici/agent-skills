@@ -308,8 +308,19 @@ while IFS= read -r row; do
           status=1
           continue
         else
-          # A folder that takes no hard links (some network shares): moved in instead.
-          mv "$next_file" "$target_path"
+          # A folder that takes no hard links (some network shares): moved in instead, never over a
+          # file that appeared meanwhile.
+          mv -n "$next_file" "$target_path" 2>/dev/null || true
+          if [ -e "$next_file" ]; then
+            rm -f "$next_file"
+            next_file=
+            echo "KEEP $target_path: another program wrote it while bootstrap was rebuilding it, or it can't be written; run scripts/bootstrap again" >&2
+            status=1
+            # What was moved aside goes back, or stays as a backup if something took its place.
+            release_held
+            held=
+            continue
+          fi
         fi
       fi
       next_file=
