@@ -7,6 +7,10 @@
 #                  the computers it is on (names separated by spaces; none means every computer)
 #   computers.tsv  optional: which hosts each computer has: computer, hosts. A computer with no row,
 #                  or no table at all, has every host.
+#   instructions.tsv  optional: the instruction files bootstrap builds on each computer (a host's
+#                  global AGENTS.md or CLAUDE.md): computer, host, target, sections. The sections
+#                  are names separated by spaces, each a file instructions/sections/<name>.md of
+#                  the same repository, joined in that order with a blank line between them.
 # The tables are read from this repository and, when it exists, the owner's private one
 # (AGENT_SKILLS_PRIVATE, by default agent-skills-private next to this repository; set it empty to
 # leave it out). bootstrap, doctor and uninstall read their links from here, so only this script
@@ -24,6 +28,8 @@
 #   manifest computer  this computer's name
 #   manifest computers every computer computers.tsv names
 #   manifest unhosted  every host with links that no row of computers.tsv names (none without one)
+#   manifest instructions  every instruction file this computer has: host, target, then the path of
+#                      each of its sections, all separated by tabs (none without a row for it)
 #   manifest folders   every folder a host of this computer reads skills from: host, mode, folder
 #   manifest skills    every installed skill and the hosts that get it, by their labels, on any computer
 #   manifest roots     every repository read, this one first
@@ -33,7 +39,9 @@
 #
 # Exits 1, printing nothing but the reasons, on a row it cannot read, a host no table names, a
 # skill named twice for one host, a path claimed by two sources or both installed and retired, a
-# computer named twice, and an external link on a computer no computers.tsv names.
+# computer named twice, an external link or instruction file on a computer no computers.tsv names,
+# and an instruction file for a host its computer leaves out, named twice for one computer, at a
+# path a link claims, or with a section that has no file.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -44,12 +52,12 @@ nl='
 '
 
 usage() {
-  echo "Usage: manifest [links | away | hosts | left-out | computer | computers | unhosted | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
+  echo "Usage: manifest [links | away | hosts | left-out | computer | computers | unhosted | instructions | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    links|away|hosts|left-out|computer|computers|unhosted|folders|skills|roots) what=$1; shift ;;
+    links|away|hosts|left-out|computer|computers|unhosted|instructions|folders|skills|roots) what=$1; shift ;;
     --dir) [ "$#" -ge 2 ] || { usage; exit 2; }; dirs="$dirs$2$nl"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -125,6 +133,13 @@ while IFS= read -r dir; do
 done <<EOF
 $table_dirs
 EOF
+# Instruction files after computers, so that a row is checked against its computer's hosts.
+while IFS= read -r dir; do
+  [ -n "$dir" ] || continue
+  [ ! -f "$dir/instructions.tsv" ] || set -- "$@" table=instructions root="$(dirname -- "$dir")" "$dir/instructions.tsv"
+done <<EOF
+$table_dirs
+EOF
 
 awk -F '\t' -v what="$what" -v computer="$computer" '
 # Is there a folder at path? Quoted for sh, so any path is safe.
@@ -132,6 +147,11 @@ function is_dir(path,    quoted) {
   quoted = path
   gsub(/'"'"'/, "'"'"'\\'"'"''"'"'", quoted)
   return system("test -d '"'"'" quoted "'"'"'") == 0
+}
+function is_file(path,    quoted) {
+  quoted = path
+  gsub(/'"'"'/, "'"'"'\\'"'"''"'"'", quoted)
+  return system("test -f '"'"'" quoted "'"'"'") == 0
 }
 function here(    parts, count) {
   count = split(FILENAME, parts, "/")
@@ -274,7 +294,44 @@ table == "computers" {
   next
 }
 
+table == "instructions" {
+  if (NF != 4) { refuse("expected four columns: computer, host, target, sections"); next }
+  if ($1 == "" || $1 ~ / /) { refuse("not a computer name: \"" $1 "\""); next }
+  if (!($2 in host_named)) { refuse("no table names a host \"" $2 "\""); next }
+  if ($3 !~ /^(~\/|\/)./) { refuse("not a path that starts with ~/ or /: \"" $3 "\""); next }
+  if (($1, $3) in instruction_where) { refuse($3 " is named twice for " $1 " (first at " instruction_where[$1, $3] ")"); next }
+  if ($3 in live_source) { refuse($3 " is also a link (" live_where[$3] ")"); next }
+  if ($1 in computer_where && !(($1, $2) in computer_host)) { refuse($1 " leaves out " $2 " in computers.tsv"); next }
+  paths = ""
+  pieces = split($4, named, / +/)
+  used = 0
+  bad = 0
+  for (piece = 1; piece <= pieces; piece++) {
+    if (named[piece] == "") continue
+    used++
+    if (named[piece] !~ /^[a-z0-9]+(-[a-z0-9]+)*$/) { refuse("not a section name: \"" named[piece] "\""); bad = 1; continue }
+    section = root "/instructions/sections/" named[piece] ".md"
+    if (!is_file(section)) { refuse("no section file " section); bad = 1; continue }
+    paths = paths "\t" section
+  }
+  if (used == 0) refuse($3 " names no section")
+  if (used == 0 || bad) next
+  instruction_where[$1, $3] = here()
+  instructions++
+  instruction_computer[instructions] = $1
+  instruction_host[instructions] = $2
+  instruction_target[instructions] = $3
+  instruction_paths[instructions] = paths
+  next
+}
+
 END {
+  # A computer an instruction file names must have a row, when there is a table, as for links.
+  for (row = 1; row <= instructions; row++) {
+    if (computer_count == 0 || instruction_computer[row] in computer_where) continue
+    printf "manifest: %s: no computers.tsv names a computer \"%s\"\n", instruction_where[instruction_computer[row], instruction_target[row]], instruction_computer[row] > "/dev/stderr"
+    refused = 1
+  }
   # A computer an external link names must have a row, when there is a table: a misspelt name
   # would leave the link expected nowhere.
   for (row = 1; row <= rows; row++) {
@@ -302,6 +359,10 @@ END {
       if (what == "links" ? !row_here[row] : (row_here[row] || row_target[row] in here_target)) continue
       printf "%s\t%s\t%s\t%s\n", row_host[row], row_mode[row], row_source[row], row_target[row]
     }
+  } else if (what == "instructions") {
+    for (row = 1; row <= instructions; row++)
+      if (computer != "" && instruction_computer[row] == computer)
+        printf "%s\t%s%s\n", instruction_host[row], instruction_target[row], instruction_paths[row]
   } else if (what == "computers") {
     for (named_computer = 1; named_computer <= computer_count; named_computer++) print computer_names[named_computer]
   } else if (what == "unhosted") {

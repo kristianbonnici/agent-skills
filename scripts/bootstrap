@@ -12,18 +12,23 @@ host=all
 dry_run=0
 install_links=1
 install_dependencies=1
+adopt_instructions=0
 
 usage() {
   # The hosts are the ones the install manifests give this computer, not a second list kept here.
   hosts=$("$script_dir/manifest" hosts 2>/dev/null | paste -sd, - | sed 's/,/, /g')
   cat >&2 <<EOF
-Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies]
+Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies] [--adopt-instructions]
        bootstrap --dependencies [--dry-run]
 
 Hosts: $hosts
 
 A host this computer leaves out (install/computers.tsv) gets nothing, and --all removes the links
 an earlier bootstrap made for it.
+
+Also builds this computer's instruction files (a host's global AGENTS.md or CLAUDE.md) from the
+sections install/instructions.tsv names. A file already there that bootstrap didn't build is left
+as it is; --adopt-instructions takes it over, copying it first to a backup beside it.
 
 Also links the files of a private state repository (AGENT_SKILLS_STATE, by default
 agent-skills-state next to this repository) into \${XDG_STATE_HOME:-~/.local/state}/agent-skills.
@@ -41,6 +46,7 @@ while [ "$#" -gt 0 ]; do
     --dry-run) dry_run=1; shift ;;
     --skip-dependencies) install_dependencies=0; shift ;;
     --dependencies) install_links=0; install_dependencies=1; shift ;;
+    --adopt-instructions) adopt_instructions=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -219,6 +225,12 @@ EOF
   else
     echo "No private state repository at $state_repo; skills keep their state locally."
   fi
+
+  # The instruction files install/instructions.tsv gives this computer; nothing without a row.
+  set -- --host "$host"
+  [ "$dry_run" -eq 0 ] || set -- "$@" --dry-run
+  [ "$adopt_instructions" -eq 0 ] || set -- "$@" --adopt
+  "$script_dir/instructions" install "$@"
 fi
 
 if [ "$install_dependencies" -eq 1 ] && { [ "$install_links" -eq 0 ] || [ "$selected_product_design" -eq 1 ] || [ "$host" = all ]; }; then

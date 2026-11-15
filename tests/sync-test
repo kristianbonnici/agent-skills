@@ -1,0 +1,171 @@
+#!/bin/sh
+# Checks scripts/sync and doctor's warning about a default branch ahead of or behind origin, with
+# three made-up repositories (a public one holding this repository's scripts and a one-skill table,
+# a private one and a state one), each cloned from a made-up remote into a made-up home. Sync pulls
+# a repository that is behind, skips one with an uncommitted change and one off its default branch,
+# reports unpushed commits, pushes nothing, says when a pull cannot fast-forward, and then runs
+# bootstrap. Doctor warns, from what the last fetch saw, with the count and the command to run.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/sync-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+work=$(CDPATH= cd -- "$work" && pwd)
+
+fail() { echo "sync-test: $*" >&2; exit 1; }
+expect() { grep -q -- "$1" "$2" || { echo "sync-test: expected \"$1\" in $2:" >&2; cat "$2" >&2; exit 1; }; }
+refuse() { if grep -q -- "$1" "$2"; then echo "sync-test: did not expect \"$1\" in $2:" >&2; cat "$2" >&2; exit 1; fi; }
+
+# Git as in a new home: none of the owner's settings, hooks or signing.
+export HOME="$work/home"
+export XDG_CONFIG_HOME="$HOME/.config"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_TERMINAL_PROMPT=0
+export AGENT_SKILLS_NO_UPDATE_CHECK=1
+export AGENT_SKILLS_COMPUTER=studio-mac
+mkdir -p "$HOME"
+git config --global user.name test
+git config --global user.email test@example.invalid
+git config --global commit.gpgsign false
+git config --global init.defaultBranch main
+# Doctor asks the OpenCode CLI which skills it sees: a stand-in answers.
+mkdir -p "$work/bin"
+printf '#!/bin/sh\necho "{\\"data\\": []}"\n' >"$work/bin/opencode"
+chmod +x "$work/bin/opencode"
+export PATH="$work/bin:$PATH"
+
+developer="$HOME/Developer"
+public="$developer/agent-skills"
+private="$developer/agent-skills-private"
+state="$developer/agent-skills-state"
+export AGENT_SKILLS_PRIVATE="$private"
+export AGENT_SKILLS_STATE="$state"
+export XDG_STATE_HOME="$HOME/.local/state"
+
+# A remote and a seed checkout that pushes to it, then the clone sync works on.
+make_repo() {
+  name=$1
+  git init -q --bare "$work/remotes/$name.git"
+  git clone -q "$work/remotes/$name.git" "$work/seeds/$name" 2>/dev/null
+}
+commit_seed() {
+  git -C "$work/seeds/$1" add -A
+  git -C "$work/seeds/$1" commit -q -m "$2"
+  git -C "$work/seeds/$1" push -q origin main
+}
+mkdir -p "$work/remotes" "$work/seeds" "$developer"
+make_repo agent-skills
+cp -R "$repo_root/scripts" "$work/seeds/agent-skills/"
+mkdir -p "$work/seeds/agent-skills/install" "$work/seeds/agent-skills/skills/demo"
+printf 'claude\tClaude Code\tlink\t~/.claude/skills\n' >"$work/seeds/agent-skills/install/hosts.tsv"
+printf 'install\tdemo\tclaude\n' >"$work/seeds/agent-skills/install/skills.tsv"
+echo demo >"$work/seeds/agent-skills/skills/demo/SKILL.md"
+commit_seed agent-skills "A release"
+make_repo agent-skills-private
+mkdir -p "$work/seeds/agent-skills-private/install"
+: >"$work/seeds/agent-skills-private/install/skills.tsv"
+echo notes >"$work/seeds/agent-skills-private/README.md"
+commit_seed agent-skills-private "Private"
+make_repo agent-skills-state
+mkdir -p "$work/seeds/agent-skills-state/demo"
+echo state >"$work/seeds/agent-skills-state/demo/notes.md"
+commit_seed agent-skills-state "State"
+for name in agent-skills agent-skills-private agent-skills-state; do
+  git clone -q "$work/remotes/$name.git" "$developer/$name"
+done
+
+remote_heads() {
+  for name in agent-skills agent-skills-private agent-skills-state; do
+    git --git-dir "$work/remotes/$name.git" for-each-ref --format='%(refname) %(objectname)' refs/heads
+  done
+}
+
+# All three current: each is up to date, and bootstrap runs.
+"$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }
+expect "^OK agent-skills is up to date with origin/main$" "$work/sync.out"
+expect "^OK agent-skills-private is up to date" "$work/sync.out"
+expect "^OK agent-skills-state is up to date" "$work/sync.out"
+expect "^Bootstrap complete" "$work/sync.out"
+test "$(readlink "$HOME/.claude/skills/demo")" = "$public/skills/demo"
+test "$(readlink "$XDG_STATE_HOME/agent-skills/demo/notes.md")" = "$state/demo/notes.md"
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^PASS agent-skills main matches origin/main as of the last fetch" "$work/doctor.out"
+expect "^PASS agent-skills-state main matches origin/main" "$work/doctor.out"
+
+# The public repository falls behind: a new skill lands on the remote. Doctor sees it only after a
+# fetch, since it never uses the network.
+mkdir -p "$work/seeds/agent-skills/skills/newer"
+echo newer >"$work/seeds/agent-skills/skills/newer/SKILL.md"
+printf 'install\tnewer\tclaude\n' >>"$work/seeds/agent-skills/install/skills.tsv"
+commit_seed agent-skills "A new skill"
+echo more >>"$work/seeds/agent-skills/skills/newer/SKILL.md"
+commit_seed agent-skills "More"
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+refuse "WARN agent-skills main" "$work/doctor.out"
+git -C "$public" fetch -q
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^WARN agent-skills main is 2 commit(s) behind origin/main as of the last fetch: run scripts/sync$" "$work/doctor.out"
+refuse "FAIL.*behind" "$work/doctor.out"
+
+# The private repository has an uncommitted change, and the state one is on another branch, with
+# two commits on its main that were never pushed.
+echo "work in progress" >>"$private/README.md"
+git -C "$state" commit -q --allow-empty -m "Unpushed one"
+git -C "$state" commit -q --allow-empty -m "Unpushed two"
+git -C "$state" switch -q -c experiment
+echo seed-change >>"$work/seeds/agent-skills-private/README.md"
+commit_seed agent-skills-private "Private, newer"
+git -C "$private" fetch -q
+private_before=$(git -C "$private" rev-parse HEAD)
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^WARN agent-skills-state main is 2 commit(s) ahead of origin/main as of the last fetch: no other computer has them until you push: git -C $state push origin main$" "$work/doctor.out"
+expect "^WARN agent-skills-private main is 1 commit(s) behind" "$work/doctor.out"
+
+"$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }
+expect "^PULLED agent-skills: 2 new commit(s) from origin/main$" "$work/sync.out"
+expect "^SKIP agent-skills-private: it has uncommitted changes, so it is not pulled" "$work/sync.out"
+expect "^SKIP agent-skills-state: on experiment, not main, so it is not pulled: switch back to main" "$work/sync.out"
+expect "^UNPUSHED agent-skills-state: 2 commit(s) on main are not on origin, .*sync never pushes: git -C $state push origin main$" "$work/sync.out"
+refuse "UNPUSHED agent-skills:\|UNPUSHED agent-skills-private" "$work/sync.out"
+test "$(git -C "$public" rev-parse HEAD)" = "$(git -C "$work/seeds/agent-skills" rev-parse HEAD)"
+test "$(git -C "$private" rev-parse HEAD)" = "$private_before"
+grep -q "work in progress" "$private/README.md"
+test "$(git -C "$state" symbolic-ref --short HEAD)" = experiment
+# Bootstrap ran from the pulled tables: the new skill is linked.
+test "$(readlink "$HOME/.claude/skills/newer")" = "$public/skills/newer"
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^PASS agent-skills main matches origin/main" "$work/doctor.out"
+
+# Clean again, with a commit of its own on the private main: pulled where it can fast-forward
+# (it cannot: both moved), reported as unpushed, never pushed.
+git -C "$private" checkout -q -- README.md
+git -C "$state" switch -q main
+git -C "$private" commit -q --allow-empty -m "Private, local"
+if "$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1; then
+  fail "sync passed when a pull could not fast-forward"
+fi
+expect "^FAIL agent-skills-private: git pull --ff-only failed; if main and origin/main have both moved on, rebase or merge by hand" "$work/sync.out"
+expect "^UNPUSHED agent-skills-private: 1 commit(s) on main" "$work/sync.out"
+expect "^OK agent-skills-state is up to date with origin/main$" "$work/sync.out"
+expect "^UNPUSHED agent-skills-state: 2 commit(s) on main" "$work/sync.out"
+# A failed pull doesn't stop bootstrap.
+expect "^Bootstrap complete" "$work/sync.out"
+expect "^sync: 1 step(s) failed" "$work/sync.out"
+
+# Nothing was ever pushed: the remotes hold what the seeds pushed, and nothing from the clones.
+for name in agent-skills agent-skills-private agent-skills-state; do
+  test "$(git --git-dir "$work/remotes/$name.git" rev-parse main)" = "$(git -C "$work/seeds/$name" rev-parse HEAD)" ||
+    fail "$name's remote changed: sync pushed"
+done
+# No branch was pushed either, such as the state repository's experiment.
+remote_heads | awk '{ print $1 }' >"$work/remotes.after"
+test "$(sort -u "$work/remotes.after" | paste -sd' ' -)" = refs/heads/main || fail "a branch was pushed"
+
+# A private repository left out (set empty) and a state repository that isn't there are skipped.
+rm -rf "$state"
+AGENT_SKILLS_PRIVATE= "$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }
+expect "^SKIP $state: not there" "$work/sync.out"
+refuse "agent-skills-private" "$work/sync.out"
+
+echo "sync-test: passed"

@@ -233,6 +233,52 @@ else
   echo "SKIP no private state repository at $state_repo"
 fi
 
+# The instruction files install/instructions.tsv gives this computer: built and current. The
+# owner's own file at a target is a warning until it is adopted; nothing without a row.
+instructions_out=$("$script_dir/instructions" check --host "$host" 2>&1) || true
+while IFS= read -r line; do
+  case "$line" in
+    "") ;;
+    FAIL\ *) fail "${line#FAIL }" ;;
+    *) echo "$line" ;;
+  esac
+done <<EOF
+$instructions_out
+EOF
+
+# Each repository's default branch against origin's, as of the last fetch: no network. Commits
+# never pushed live on one computer only; commits not pulled leave this computer behind the others.
+check_upstream() {
+  upstream_root=$1
+  upstream_name=$(basename -- "$upstream_root")
+  [ -d "$upstream_root" ] || return 0
+  upstream_top=$(git -C "$upstream_root" rev-parse --show-toplevel 2>/dev/null) || return 0
+  [ "$(CDPATH= cd -- "$upstream_top" && pwd -P)" = "$(CDPATH= cd -- "$upstream_root" && pwd -P)" ] || return 0
+  upstream_default=$(git -C "$upstream_root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || upstream_default=
+  upstream_default=${upstream_default#origin/}
+  [ -n "$upstream_default" ] || upstream_default=main
+  git -C "$upstream_root" rev-parse --verify --quiet "refs/heads/$upstream_default" >/dev/null || return 0
+  if ! git -C "$upstream_root" rev-parse --verify --quiet "refs/remotes/origin/$upstream_default" >/dev/null; then
+    echo "SKIP $upstream_name has no origin/$upstream_default to compare $upstream_default with"
+    return 0
+  fi
+  counts=$(git -C "$upstream_root" rev-list --left-right --count "refs/heads/$upstream_default...refs/remotes/origin/$upstream_default" 2>/dev/null) || return 0
+  ahead=$(printf '%s\n' "$counts" | awk '{ print $1 }')
+  behind=$(printf '%s\n' "$counts" | awk '{ print $2 }')
+  if [ "$ahead" -eq 0 ] && [ "$behind" -eq 0 ]; then
+    pass "$upstream_name $upstream_default matches origin/$upstream_default as of the last fetch"
+    return 0
+  fi
+  [ "$ahead" -eq 0 ] || echo "WARN $upstream_name $upstream_default is $ahead commit(s) ahead of origin/$upstream_default as of the last fetch: no other computer has them until you push: git -C $upstream_root push origin $upstream_default"
+  [ "$behind" -eq 0 ] || echo "WARN $upstream_name $upstream_default is $behind commit(s) behind origin/$upstream_default as of the last fetch: run scripts/sync"
+}
+while IFS= read -r root; do
+  [ -z "$root" ] || check_upstream "$root"
+done <<EOF
+$roots
+$state_repo
+EOF
+
 # Codex reads these folders; a computer that leaves Codex out has no Codex to hide it from.
 for forbidden in "$HOME/.agents/skills/product-design" "$HOME/.codex/skills/product-design"; do
   case " $left_out " in *" codex "*) break ;; esac

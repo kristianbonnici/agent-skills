@@ -118,3 +118,8 @@ if [ -d "$state_repo/.git" ]; then
     remove_link "$state_file" "$state_home/${state_file#"$state_repo"/}"
   done
 fi
+
+# The instruction files bootstrap built (they carry its marker); the owner's own files are kept.
+set -- --host "$host"
+[ "$dry_run" -eq 0 ] || set -- "$@" --dry-run
+"$script_dir/instructions" remove "$@"

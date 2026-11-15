@@ -15,6 +15,22 @@ Clone the repository at any path, then run:
 
 The scripts resolve the repository root relative to themselves. They do not depend on a username or a fixed `~/Developer` location.
 
+With the owner's two private repositories ([Private state](#private-state), [Private skills and
+other people's skills](#private-skills-and-other-peoples-skills)), clone all three side by side, sync
+them, and let bootstrap take over the instruction files the computer already has:
+
+```bash
+cd ~/Developer
+git clone https://github.com/<owner>/agent-skills.git
+git clone <the private repository> agent-skills-private
+git clone <the state repository> agent-skills-state
+./agent-skills/scripts/sync                                  # pull all three, then bootstrap
+./agent-skills/scripts/bootstrap --all --adopt-instructions  # build the instruction files, keeping the old ones as backups
+./agent-skills/scripts/doctor --all
+```
+
+Run `./scripts/sync` again whenever another computer may have pushed: it is how a computer catches up.
+
 Install one host only:
 
 ```bash
@@ -56,6 +72,45 @@ every computer. A computer named there needs a row in the table, so a misspelt n
 `./scripts/manifest computer` prints this computer's name, `hosts` and `left-out` the hosts it has
 and leaves out, `away` the links of the hosts it leaves out, `computers` the computers the table
 names, and `unhosted` the hosts no row names (doctor warns about those).
+
+### Instruction files
+
+A host's global instructions (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+`~/.config/opencode/AGENTS.md`) can be built by bootstrap, so that their text is kept once and every
+computer gets the same rules. The text lives in the private repository, as sections in
+`instructions/sections/<name>.md`, and an `install/instructions.tsv` there has one row per file to
+build: the computer (as `computers.tsv` names it), the host, the file, and its sections in order.
+
+```text
+studio-mac	claude	~/.claude/CLAUDE.md	title long-responses computer-use-studio voice
+travel-mac	claude	~/.claude/CLAUDE.md	title long-responses computer-use-travel
+```
+
+Bootstrap joins the sections with a blank line between two of them and writes a real file, not a
+link, whose first line is a marker: an HTML comment saying it is generated and where to edit it.
+Text that is the same everywhere is one section; text that differs by host or computer, such as the
+tools a Mac has for computer use, is a section of its own. Edit a section and run bootstrap, never the
+built file, which bootstrap rebuilds whenever it no longer matches its sections.
+
+A file already at a target without the marker is the owner's own. Bootstrap leaves it as it is and
+says `NOT ADOPTED` with the command that adopts it, and doctor warns about it without failing.
+`./scripts/bootstrap --adopt-instructions` takes such files over, copying each first to a backup
+beside it (`CLAUDE.md.before-agent-skills-<date>-<time>`, named in its output). Doctor fails while a
+built file is missing or out of date; uninstall removes only files that carry the marker. With no
+table, or no row for this computer, nothing is built and nothing is reported.
+`./scripts/manifest instructions` prints this computer's rows, each section as its path.
+
+### Keeping computers in step
+
+`./scripts/sync` brings the three repositories up to date. For each one on its default branch with no
+uncommitted change to a tracked file, it runs `git pull --ff-only`; one off its default branch or
+with a change is skipped, with the reason and the command to fix it. For each it reports the commits
+of its default branch that are not on `origin`, and it never pushes: push those yourself, so the
+other computers get them. Then it runs `bootstrap --all` (pass `--skip-dependencies` to leave the
+runtimes alone). A pull that cannot fast-forward fails sync after bootstrap has run.
+
+Doctor warns, without using the network, when a repository's default branch is ahead of or behind
+`origin` as of the last fetch, with the count and the command to run.
 
 ### Private state
 
@@ -109,7 +164,7 @@ agent-skills/
 ├── install/                Which hosts get each skill, and where each host looks for skills
 ├── docs/                   Versioning rules; each skill's changelog, flow and evidence
 ├── runtime/                Pinned shared tool dependencies
-├── scripts/                Bootstrap, doctor, uninstall, the manifest, vendored skills, upstream checks
+├── scripts/                Bootstrap, doctor, uninstall, sync, the manifest, instruction files, vendored skills, upstream checks
 └── tests/                  Disposable-home integration tests
 ```
 
@@ -123,6 +178,7 @@ The tables in `install/` say what is linked where; `scripts/bootstrap`, `scripts
 | `install/hosts.tsv` | folder a host reads skills from | host, its name in the table below, `link`, `adapter` or `retired`, the folder |
 | `install/links.tsv` | link that is not a skill's folder, such as a host's command file | host, mode, source, target; for an `external` row, optionally the computers it is on |
 | `install/computers.tsv` (optional) | computer | the computer's name, the hosts it has ([Computers with different hosts](#computers-with-different-hosts)) |
+| `install/instructions.tsv` (optional) | instruction file on a computer | computer, host, the file, its sections in order ([Instruction files](#instruction-files)) |
 
 To give a host a skill, add the host to the skill's row. To take a skill away, or after renaming or removing it, name it in a `retired` row: bootstrap then removes the links an earlier version installed. `./scripts/manifest` prints every link the tables declare, and refuses tables that contradict themselves.
 
@@ -155,6 +211,8 @@ Run the local checks before committing:
 ```bash
 ./tests/bootstrap-test
 ./tests/install-manifest-test
+./tests/instructions-test
+./tests/sync-test
 ./tests/vendor-test
 ./tests/skill-versions-test
 ./scripts/doctor --all

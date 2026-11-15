@@ -1,0 +1,114 @@
+#!/bin/sh
+# Brings this computer's skill repositories up to date, then installs what they declare.
+#
+# For each of the three repositories (this one, the owner's private one and the private state
+# one), sync pulls with `git pull --ff-only` when the checkout is on its default branch with no
+# uncommitted change to a tracked file, and skips it, saying why, when it is not. For each it says
+# how many commits of the default branch are not on origin: sync never pushes. Then it runs
+# bootstrap --all for this computer.
+#
+# The private repository is AGENT_SKILLS_PRIVATE (by default agent-skills-private next to this
+# one; set it empty to leave it out) and the state repository AGENT_SKILLS_STATE (by default
+# agent-skills-state next to this one). One that is missing is skipped.
+#
+# Exits 1 when a pull or bootstrap fails; a skipped repository is not a failure.
+set -u
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+parent=$(dirname -- "$repo_root")
+bootstrap_args=--all
+failures=0
+
+usage() {
+  echo "Usage: sync [--skip-dependencies]" >&2
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --skip-dependencies) bootstrap_args="$bootstrap_args --skip-dependencies"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [ "${AGENT_SKILLS_PRIVATE+set}" = set ]; then
+  private_repo=$AGENT_SKILLS_PRIVATE
+else
+  private_repo=$parent/agent-skills-private
+fi
+state_repo=${AGENT_SKILLS_STATE:-$parent/agent-skills-state}
+
+in_repo() {
+  git -C "$sync_root" "$@"
+}
+
+sync_one() {
+  sync_root=$1
+  [ -n "$sync_root" ] || return 0
+  name=$(basename -- "$sync_root")
+  if [ ! -d "$sync_root" ]; then
+    echo "SKIP $sync_root: not there"
+    return 0
+  fi
+  top=$(in_repo rev-parse --show-toplevel 2>/dev/null) || top=
+  if [ -z "$top" ] || [ "$(CDPATH= cd -- "$top" && pwd -P)" != "$(CDPATH= cd -- "$sync_root" && pwd -P)" ]; then
+    echo "SKIP $sync_root: not a git checkout of its own"
+    return 0
+  fi
+  if ! in_repo remote get-url origin >/dev/null 2>&1; then
+    echo "SKIP $name: it has no remote named origin"
+    return 0
+  fi
+  # The remote's default branch where a clone recorded it, main otherwise, as doctor reads it.
+  default=$(in_repo symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || default=
+  default=${default#origin/}
+  [ -n "$default" ] || default=main
+  branch=$(in_repo symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=
+
+  if [ "$branch" != "$default" ]; then
+    where=${branch:-a detached commit}
+    echo "SKIP $name: on $where, not $default, so it is not pulled: switch back to $default (git -C $sync_root switch $default) and run sync again"
+  elif ! changed=$(in_repo status --porcelain --untracked-files=no 2>/dev/null); then
+    echo "FAIL $name: git could not say whether it has uncommitted changes" >&2
+    failures=$((failures + 1))
+  elif [ -n "$changed" ]; then
+    echo "SKIP $name: it has uncommitted changes, so it is not pulled: commit or discard them (git -C $sync_root status) and run sync again"
+  else
+    before=$(in_repo rev-parse HEAD)
+    if pull_out=$(in_repo pull --ff-only --quiet origin "$default" 2>&1); then
+      count=$(in_repo rev-list --count "$before..HEAD")
+      if [ "$count" -eq 0 ]; then
+        echo "OK $name is up to date with origin/$default"
+      else
+        echo "PULLED $name: $count new commit(s) from origin/$default"
+      fi
+    else
+      printf '%s\n' "$pull_out" | sed 's/^/  /' >&2
+      echo "FAIL $name: git pull --ff-only failed; if $default and origin/$default have both moved on, rebase or merge by hand (git -C $sync_root pull --rebase)" >&2
+      failures=$((failures + 1))
+    fi
+  fi
+
+  # Unpushed commits, also of a repository it skipped: they exist on this computer only.
+  if in_repo rev-parse --verify --quiet "refs/remotes/origin/$default" >/dev/null &&
+    in_repo rev-parse --verify --quiet "refs/heads/$default" >/dev/null; then
+    unpushed=$(in_repo rev-list --count "refs/remotes/origin/$default..refs/heads/$default")
+    if [ "$unpushed" -gt 0 ]; then
+      echo "UNPUSHED $name: $unpushed commit(s) on $default are not on origin, so no other computer has them; sync never pushes: git -C $sync_root push origin $default"
+    fi
+  fi
+}
+
+sync_one "$repo_root"
+sync_one "$private_repo"
+sync_one "$state_repo"
+
+# Bootstrap as the pull left it: the new scripts and tables.
+# shellcheck disable=SC2086
+"$script_dir/bootstrap" $bootstrap_args || failures=$((failures + 1))
+
+if [ "$failures" -gt 0 ]; then
+  echo "sync: $failures step(s) failed." >&2
+  exit 1
+fi
