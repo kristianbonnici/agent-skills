@@ -10,10 +10,13 @@ Usage:
 send runs on a computer that ran tasks, at its finish, after usage-sampler --final --machine-only and
 run-costs: it commits <run directory>/usage/machine.jsonl and <run directory>/costs.json, whichever exist,
 as computers/<name>/machine.jsonl and computers/<name>/costs.json on the briefs branch, and pushes that
-branch, never forced. A push the remote rejects (someone pushed meanwhile) is made again on the branch's
-new head, up to five times. It works in a temporary worktree of the state repository,
-<run directory>/share-usage.worktree, removed afterwards, and changes nothing else there. <name> is the
-computer's LocalHostName (scutil --get LocalHostName; hostname -s elsewhere) unless given.
+branch, never forced. The folder then holds exactly what this send found: a file an earlier send left
+there and this one didn't find (costs that failed this time) is removed, so the branch never pairs new
+samples with old costs. A push the remote rejects (someone pushed meanwhile) is made again on the
+branch's new head, up to five times. It works in a temporary worktree of the state repository, a new
+folder <run directory>/share-usage.<random>.worktree for each send, removed afterwards; it never touches
+another worktree, and changes nothing else there. <name> is the computer's LocalHostName
+(scutil --get LocalHostName; hostname -s elsewhere) unless given.
 
 fetch runs on the orchestrator's computer before the charts: it fetches the briefs branch and writes each
 computers/<name>/ folder it holds into <run directory>/computers/<name>/: usage/machine.jsonl, which
@@ -33,6 +36,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -84,13 +88,8 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
     if not found:
         print(f"share-usage: nothing to send: neither {run_dir / FILES[0][1]} nor {run_dir / FILES[1][1]} exists", file=sys.stderr)
         return 1
-    tree = run_dir / "share-usage.worktree"
-    if tree.exists():
-        listed = git(state, "worktree", "list", "--porcelain").stdout
-        if f"worktree {tree.resolve()}\n" not in listed + "\n":
-            print(f"share-usage: {tree} exists and isn't a worktree of {state}; move it away first", file=sys.stderr)
-            return 1
-        git(state, "worktree", "remove", "--force", str(tree))   # left by an earlier send that stopped
+    holder = Path(tempfile.mkdtemp(prefix="share-usage.", suffix=".worktree", dir=run_dir))   # this send's own, never another's
+    tree = holder / "tree"
     added = False
     try:
         for attempt in range(1, TRIES + 1):
@@ -104,6 +103,11 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
             folder.mkdir(parents=True, exist_ok=True)
             for dest, source in found:
                 shutil.copyfile(source, folder / dest)
+            sent, dropped = {dest for dest, _ in found}, []
+            for dest, _ in FILES:   # what an earlier send left and this one didn't find goes, so the folder is one snapshot
+                if dest not in sent and (folder / dest).exists():
+                    git(tree, "rm", "-q", "--", f"computers/{name}/{dest}")
+                    dropped.append(dest)
             git(tree, "add", "--", f"computers/{name}")
             if git(tree, "diff", "--cached", "--quiet", check=False).returncode == 0:
                 print(f"share-usage: {branch} already holds these files from {name}")
@@ -111,7 +115,7 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
             git(tree, "commit", "-q", "-m", f"usage: {name}'s machine samples and costs for {run}")
             pushed = git(tree, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)
             if pushed.returncode == 0:
-                what = " and ".join(dest for dest, _ in found)
+                what = " and ".join(dest for dest, _ in found) + (f", and removed the earlier {' and '.join(dropped)}" if dropped else "")
                 print(f"share-usage: sent {what} from {name} to {branch} ({git(tree, 'rev-parse', '--short', 'HEAD').stdout.strip()})")
                 return 0
             if attempt < TRIES:
@@ -120,7 +124,11 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
         return 1
     finally:
         if added:
-            git(state, "worktree", "remove", "--force", str(tree), check=False)
+            git(state, "worktree", "remove", "--force", str(tree), check=False)   # this send's own worktree, pushed or abandoned
+        try:
+            holder.rmdir()
+        except OSError:
+            pass
 
 
 def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:

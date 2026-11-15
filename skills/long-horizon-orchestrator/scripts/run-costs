@@ -20,7 +20,7 @@ Several computers: each line says which computer its thread ran on (--computer, 
 this computer's empty ones for the tasks that ran there (watch.json's "computer" of each task), so the
 total counts every task and its reviewers and helpers. A computer that tasks ran on but whose file
 didn't arrive is named, and those tasks are listed as not counted ("ran on <name>, whose costs didn't
-arrive").
+arrive"), and so is a task whose computer's file leaves it out ("ran on <name>, whose costs leave it out").
 
 Where the numbers come from (T3 Code's records; T3_USERDATA moves its folder, ~/.t3/userdata by default):
   - the threads: T3's statev2.sqlite, read only: each thread's title, model and parent (a reviewer or
@@ -659,21 +659,33 @@ def merge_computers(data: dict, run_dir: Path, own: str | None, watch: dict) -> 
         try:
             other = json.loads(path.read_text())
             lines = other.get("lines") if isinstance(other, dict) else None
-            if not isinstance(lines, list) or not all(isinstance(l, dict) and "owner" in l and "thread" in l for l in lines):
-                raise ValueError("no lines")
+            keys = ("owner", "thread", "role", "harness", "model", "usd")   # what the totals and the table read
+            if not isinstance(lines, list) or not all(isinstance(l, dict) and all(k in l for k in keys) for l in lines):
+                raise ValueError("its lines aren't run-costs lines")
         except (OSError, ValueError) as e:
             print(f"run-costs: can't read {path} ({e}); {name}'s costs are left out", file=sys.stderr)
             continue
         arrived[name] = [dict(l, computer=name) for l in lines]
         data["malformed"] = data.get("malformed", 0) + (other.get("malformed") or 0 if isinstance(other.get("malformed"), int) else 0)
     theirs = {l["thread"] for lines in arrived.values() for l in lines}
-    moved = {task for task, name in placed.items() if name in arrived}
+    # a task counts as brought over only when its computer's file has it: a file made without one of its
+    # --task options leaves that task named, not dropped
+    # (from whichever computer's folder: a name spelled otherwise than in watch.json still counts)
+    sent_by = {l["owner"]: name for name, lines in arrived.items() for l in lines}
+    moved = {task for task in placed if task in sent_by}
     data["lines"] = [l for l in data["lines"] if l["thread"] not in theirs and l["owner"] not in moved]
     for lines in arrived.values():
         data["lines"] += lines
     missing: dict[str, list] = {}
     for task, name in sorted(placed.items()):
+        if task in moved:
+            continue
         if name in arrived:
+            why = f"ran on {name}, whose costs leave it out"
+            for l in data["lines"]:
+                if l["owner"] == task:
+                    l.update(computer=name, tokens=None, usd=None, basis="not counted: " + why, missing=why)
+                    l.pop("reported_usd", None)
             continue
         missing.setdefault(name, []).append(task)
         why = f"ran on {name}, whose costs didn't arrive"

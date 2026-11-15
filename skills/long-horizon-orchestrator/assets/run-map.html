@@ -1441,13 +1441,16 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       });
       hover.push({ kind: "disk", y: Y, colour: "var(--rm-warn)" });
     }
-    if (t1 >= Math.floor(sampledTo) + 1) {  // the axis goes on to the report; the samples stopped here
+    // where sampling ended: one line through the panel, or, when the chosen computer stopped at another minute
+    // than the orchestrator's, its own line through its bands and the orchestrator's through the bands above
+    const own = M && M.sampled, macTop = Math.min(...bands.filter(b => ["busy", "mem", "disk"].includes(b.id)).map(b => b.y));
+    const apart = own && isFinite(macTop) && Math.floor(own[1]) !== Math.floor(sampledTo);
+    if (t1 >= Math.floor(sampledTo) + 1 && (!apart || macTop > SEC)) {  // the axis goes on to the report; the samples stopped here
       const x = X(Math.floor(sampledTo) + 1), side = w - PADR - x > 100;   // after the last sampled minute, whose point sits at its middle
-      ns("line", { class: "us-ended", x1: x, x2: x, y1: 0, y2: H }, over);
+      ns("line", { class: "us-ended", x1: x, x2: x, y1: 0, y2: apart ? macTop - SEC : H }, over);
       yt(side ? x + 5 : x - 5, 11, "Sampling ended", side ? "" : "r");
     }
-    const own = M && M.sampled, macTop = Math.min(...bands.filter(b => ["busy", "mem", "disk"].includes(b.id)).map(b => b.y));
-    if (own && isFinite(macTop) && Math.floor(own[1]) < Math.floor(sampledTo) && t1 >= Math.floor(own[1]) + 1) {   // this computer stopped earlier
+    if (apart && t1 >= Math.floor(own[1]) + 1) {   // this computer stopped at a minute of its own
       const x = X(Math.floor(own[1]) + 1), side = w - PADR - x > 160;
       ns("line", { class: "us-ended", x1: x, x2: x, y1: macTop, y2: H }, over);
       yt(side ? x + 5 : x - 5, macTop + 11, `${macName}'s sampling ended`, side ? "" : "r");
@@ -1481,7 +1484,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       k.append(name); v.innerHTML = value; r.append(k, v); parent.append(r);
     };
     const before = m < Math.floor(sampledFrom), past = m >= Math.floor(sampledTo) + 1;
-    if (before || past) tip.append(el("div", "gap", `Not sampled: sampling ${past ? "ended" : "began"} at ${clock(Math.floor(past ? sampledTo : sampledFrom))}`));
+    // the chosen computer's bands follow its own sampling, the subscriptions the orchestrator's
+    const own = M && M.sampled, macBefore = own ? m < Math.floor(own[0]) : before, macPast = own ? m >= Math.floor(own[1]) + 1 : past;
+    const macShown = mac && !macBefore && !macPast;
+    if (before || past) tip.append(el("div", "gap", `${own && macShown ? "Subscriptions not sampled" : "Not sampled"}: sampling ${past ? "ended" : "began"} at ${clock(Math.floor(past ? sampledTo : sampledFrom))}`));
     if (byId.subs && !before && !past) {
       tip.append(el("div", "sec", "Subscriptions"));
       hover.filter(h => h.kind === "sub").reverse().forEach(h => {
@@ -1501,9 +1507,8 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       row(tip, "Over the run", apiText.replace(/&/g, "&amp;").replace(/</g, "&lt;"));
       if ((A.corrections || []).length) row(tip, "Balance corrected", A.corrections.map(([e, v]) => `${sign(v)} at ${clock(Math.floor(e))}`).join(", "));
     }
-    const own = M && M.sampled, outside = own && (m < Math.floor(own[0]) || m >= Math.floor(own[1]) + 1);
-    if (mac && !before && !past && outside) { tip.append(el("div", "sec", macName)); tip.append(el("div", "gap", `Not sampled on ${macName} at this time`)); }
-    if (mac && !before && !past && !outside) {
+    if (mac && own && !macShown && !before && !past) { tip.append(el("div", "sec", macName)); tip.append(el("div", "gap", `Not sampled on ${macName} at this time`)); }
+    if (macShown) {
       tip.append(el("div", "sec", macName));
       const both = (name, avg, pkv, h, unit, colour) => { const a = macAt(avg, m), k = macAt(pkv, m); if (a == null) return;
         row(tip, name, `${fmt(a, 0)}${unit} <em>avg</em> · ${fmt(k, 0)}${unit} <em>peak</em>`, colour); dot(h.y(a), h.colour); };

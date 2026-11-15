@@ -572,25 +572,47 @@ def subscriptions_used(facts: dict) -> set[str]:
             if any(h == title.lower() or h.startswith(title.lower() + " ") for h in harnesses)}
 
 
-def zone_of(records: list[dict]):
-    """The offset the first record with one was written in, else None."""
+def clock_of(records: list[dict]):
+    """A function that reads another computer's sample time on the clock these records were written on:
+    each instant gets the offset of the latest of these records at or before it (the first one's before
+    them all), so a daylight-saving change during the run moves it with your own samples. Without a record
+    with an offset, this computer's own time zone."""
+    marks = []
     for record in records:
         try:
             moment = datetime.fromisoformat(str(record["t"]).replace("Z", "+00:00"))
         except ValueError:
             continue
         if moment.tzinfo is not None:
-            return moment.tzinfo
-    return None
+            marks.append((moment.timestamp(), moment.tzinfo))
+    marks.sort(key=lambda m: m[0])
+
+    def read(value):
+        try:
+            moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if moment.tzinfo is None:
+            return moment
+        if not marks:
+            return moment.astimezone().replace(tzinfo=None)
+        at = moment.timestamp()
+        zone = marks[0][1]
+        for when, tz in marks:
+            if when > at:
+                break
+            zone = tz
+        return moment.astimezone(zone).replace(tzinfo=None)
+    return read
 
 
-def mac_of(records: list[dict], minute, t0: float, t1: float, start: int, count: int, zone=None) -> dict | None:
+def mac_of(records: list[dict], minute, t0: float, t1: float, start: int, count: int, when=local_time) -> dict | None:
     """One computer's samples per minute of the axis: each measure's average and peak (the lowest for free
     disk), the memory's total and the number of samples; a measure with no reading at all (GPU on a Mac
     that doesn't report it) is left out, never drawn as zero. None when no sample falls on the axis."""
     buckets: dict[int, list[dict]] = {}
     for record in records:
-        m = minute(local_time(record["t"], zone))
+        m = minute(when(record["t"]))
         if m is not None and t0 <= m < t1 + 1:
             buckets.setdefault(int(m // 1) - start, []).append(record)
     if not buckets:
@@ -640,20 +662,20 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     helper labels, which name the models whose separate limits get a line too; asleep lists the stretches
     the Mac slept, whose samples (taken in dark wakes) are left out. computers, for a run on several: each
     {"name", "role", "folder"}, yours first (its samples are the folder's); each other one's machine.jsonl
-    is read on your clock (its times converted to the offset of your samples) and kept whole, since your
+    is read on your clock (each time converted to the offset your samples had then) and kept whole, since your
     Mac's sleeps aren't its own."""
     machine = read_lines(folder / "machine.jsonl")
     reads = read_lines(folder / "providers.jsonl")
     stamps = [local_time(r["t"]) for r in machine + reads]
     stamps = [s for s in stamps if s]
-    zone = zone_of(machine + reads) or datetime.now().astimezone().tzinfo   # your clock, which the facts' times use
+    ours = clock_of(machine + reads)   # another computer's times on your clock, which the facts' times use
     others = []   # (computer, its samples) for each of the other computers
     for c in list(computers)[1:]:
         rows = read_lines(c["folder"] / "machine.jsonl") if c.get("folder") else []
-        rows = [r for r in rows if local_time(r["t"], zone)]
+        rows = [r for r in rows if ours(r["t"])]
         others.append((c, rows))
         if not stamps:   # yours sent nothing: theirs set the day and the span
-            stamps += [local_time(r["t"], zone) for r in rows]
+            stamps += [ours(r["t"]) for r in rows]
     if not stamps:
         return None
     day = None
@@ -844,8 +866,8 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         own = list(computers)[0]
         machines.append({"name": own["name"], "role": own.get("role", ""), "mac": mac, "sampled": sampled})
         for c, rows in others:
-            theirs = [m for m in (minute(local_time(r["t"], zone)) for r in rows) if m is not None and t0 - 10 <= m <= t1 + 10]
-            machines.append({"name": c["name"], "role": c.get("role", ""), "mac": mac_of(rows, minute, t0, t1, start, count, zone),
+            theirs = [m for m in (minute(ours(r["t"])) for r in rows) if m is not None and t0 - 10 <= m <= t1 + 10]
+            machines.append({"name": c["name"], "role": c.get("role", ""), "mac": mac_of(rows, minute, t0, t1, start, count, ours),
                              "sampled": [round(min(theirs), 2), round(max(theirs), 2)] if theirs else None})
         for m in machines:
             if m["mac"]:
@@ -1034,11 +1056,13 @@ def usage_line(usage: dict) -> str:
         if sentence:
             text += " " + sentence + "."
     ended = sampling_ended(usage)
-    if ended is not None:
+    if ended is not None and not machines:
         text += f" Sampling ended at {clock_text(ended)}; the figures stop there."
-    for m in (machines or [])[1:]:   # another computer whose samples stop before the axis does
+    elif ended is not None:
+        text += f" Sampling on {machines[0]['name']} ended at {clock_text(ended)}; the subscriptions' figures and its own stop there."
+    for m in (machines or [])[1:]:   # another computer whose samples stop at another minute than yours, before the axis does
         last = (m.get("sampled") or [None, None])[1]
-        if last is not None and usage["t1"] >= last // 1 + 1 and (ended is None or last // 1 < ended // 1):
+        if last is not None and usage["t1"] >= last // 1 + 1 and (ended is None or last // 1 != ended // 1):
             text += f" {m['name']}'s sampling ended at {clock_text(last)}."
     return text
 
@@ -1482,7 +1506,9 @@ def run_map(facts: dict, data: dict, paths: list[str], folder: Path) -> tuple[in
     if data.get("usage"):  # the usage panel: its subscriptions band, the Mac's three and its frame
         u = data["usage"]
         extra = 140 + (190 if u["providers"] else 0) + (110 if u.get("api") else 0) + (250 if u["mac"] or any(m.get("mac") for m in u.get("computers") or []) else 0)
-        extra += 40 if u.get("computers") else 0   # the picker's row
+        if u.get("computers"):   # the picker: a row of about 1,100 pixels, at about 7 a character, wrapping
+            wide = sum(len(c["name"]) + len(c.get("role") or "") + (10 if c.get("missing") else 0) + 6 for c in u["computers"]) * 7
+            extra += 40 + 30 * (wide // 1100)
     extra += 560 if data.get("rounds") else 0   # the taller canvas a run in rounds gets
     return len(stub), 900 + 46 * lanes + extra  # the canvas, then a lane per agent; generous: html_render shrinks the frame to the page
 
