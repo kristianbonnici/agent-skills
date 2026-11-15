@@ -1,0 +1,7 @@
+interface:
+  display_name: "Reviewer Benchmark"
+  short_description: "Test how well a model reviews code, on past changes with known defects"
+  default_prompt: "Use $reviewer-benchmark to run this model through my reviewer benchmark and show me how it compares."
+
+policy:
+  allow_implicit_invocation: true

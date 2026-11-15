@@ -1,0 +1,539 @@
+#!/usr/bin/env python3
+"""Run reviewer models over the benchmark's past changes, hide which model wrote which report for scoring,
+and add up the scores.
+
+SKILL.md says when to use each command, references/set.md what the set and a key hold, and
+references/scoring.md what a score holds.
+
+Usage:
+  bench where
+  bench setup [<change> ...]
+  bench run <model> [<change> ...]
+  bench blind <model> [<model> ...]
+  bench unblind
+  bench totals [--json]
+
+where: prints the data folder, the cache folder and the set's version. The data is the owner's and private:
+<the private state repository>/reviewer-benchmark (AGENT_SKILLS_STATE, by default agent-skills-state beside
+the skills repository, with a .git), or, without one,
+${XDG_STATE_HOME:-~/.local/state}/agent-skills/reviewer-benchmark. It holds set.json, keys/<change>.json,
+runs/<model>/<change>.md and .json, scores/<change>.json and models.json (the owner's own models). The cache
+(${XDG_CACHE_HOME:-~/.cache}/agent-skills/reviewer-benchmark, or REVIEWER_BENCHMARK_CACHE) holds what can be
+made again: the copies to review and the blind copies of reports.
+
+setup: for each change of the set, makes work/<change> in the cache: a repository of two commits, the tree
+before the change and the tree its first review round read, taken from the key's repository with git archive.
+A reviewer sees the change and nothing that came after it. It only reads the key's repository.
+
+run: has one model review each change it hasn't reviewed yet, one at a time, read-only, from the copy's
+folder, with the review gate's brief. A model with "paid" gets no time line in its brief. The report is
+saved as it came, with how long it took and how it ended; a review that passes its minutes is stopped and
+recorded as timed out, and the run goes on. Models: the table below, and the owner's in models.json.
+
+blind: copies those models' reports of every change to blind/<change>/<letter>.md in the cache, in an order
+of its own for each change, and writes blind/<change>/scores.json for the scorer to fill. A review that timed
+out or left under 400 bytes gets no file. The letters' meaning is kept in blind/map.json, which scorers
+aren't given.
+
+unblind: reads each blind/<change>/scores.json and saves its reports' scores under their models' names in
+the data's scores/<change>.json, leaving other models' scores there as they are. A scores.json that doesn't
+fit its key (a known defect missing, a verdict it doesn't know) is refused with its reasons.
+
+totals: one line per model: reports of reviews tried, known defects found (1 for a defect described, a half
+for the right code without the failing case), blockers among them, defects only it found among the models
+that tried every change, and its other findings by verdict: real, true but minor or there before, and false.
+--json prints the same as JSON.
+
+Exit 0: done; 64: a mistake in the command or in a file it was given; 69: a tool a model needs isn't
+installed.
+"""
+
+import collections
+import json
+import os
+import random
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+AGY_ALLOW = ["git diff", "git log", "git show", "git status", "grep", "ls", "cat", "sed -n", "find"]
+MODELS = {
+    "deepseek": {"kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash#high"},
+    "glm": {"kind": "opencode", "model": "opencode-go/glm-5.3-flash#high"},
+    "muse": {"kind": "opencode", "model": "opencode-go/muse-spark-1.3-contributor#high"},
+    "haiku": {"kind": "claude", "model": "claude-haiku-5-5"},
+    "hydrogen": {"kind": "agy", "model": "gemini-4-hydrogen-high"},
+    "terra": {"kind": "codex", "model": "gpt-6.1-terra", "minutes": 30, "paid": True},
+    "sonnet": {"kind": "claude", "model": "claude-sonnet-5-5", "minutes": 30, "paid": True},
+    "opus": {"kind": "claude", "model": "claude-opus-5-5", "minutes": 30, "paid": True},
+}
+VERDICTS = ("real", "true-minor", "pre-existing", "wrong", "unclear")
+ISSUE = """Report each issue as:
+- a short title;
+- file and line;
+- what goes wrong and when, as a concrete case;
+- blocker (a defect this change introduces or exposes that causes data loss or corruption, a security or privacy hole, a crash, hang or wrong result on a common path, a broken build or test, or another serious defect on a common path), follow-up (a defect this change introduces or exposes that needs unusual timing, rare input or a corner case, or a missing hardening), nit (real but minor) or pre-existing (true, but not caused by this diff);
+- for a blocker or follow-up, the fix it needs;
+- how often it would happen, from 1 to 10, and how bad it would be, from 1 to 10;
+- confirmed (you traced it through the code or ran it) or suspected.
+
+Skip style preferences and theoretical cases you can't make concrete. If you find nothing serious, say so plainly and list what you checked."""
+GIT_ENV = {"GIT_AUTHOR_NAME": "bench", "GIT_AUTHOR_EMAIL": "bench@example.invalid", "GIT_COMMITTER_NAME": "bench",
+           "GIT_COMMITTER_EMAIL": "bench@example.invalid", "GIT_AUTHOR_DATE": "2026-01-01T12:00:00",
+           "GIT_COMMITTER_DATE": "2026-01-01T12:00:00", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+class Refused(Exception):
+    """A mistake in the command or in a file: its message is printed, and the exit is 64."""
+
+
+def data_folder():
+    repo = os.environ.get("AGENT_SKILLS_STATE")
+    if not repo:
+        here = os.path.dirname(os.path.realpath(__file__))
+        common = subprocess.run(["git", "-C", here, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True)
+        if common.returncode == 0:
+            repo = os.path.join(os.path.dirname(os.path.dirname(common.stdout.strip())), "agent-skills-state")
+    if repo and os.path.isdir(os.path.join(repo, ".git")):
+        return os.path.join(repo, "reviewer-benchmark")
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "agent-skills", "reviewer-benchmark")
+
+
+def cache_folder():
+    if os.environ.get("REVIEWER_BENCHMARK_CACHE"):
+        return os.environ["REVIEWER_BENCHMARK_CACHE"]
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(cache, "agent-skills", "reviewer-benchmark")
+
+
+def read(path, what):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except OSError:
+        raise Refused(f"no {what} at {path}")
+    except ValueError as error:
+        raise Refused(f"{path} isn't valid JSON ({str(error)[:80]})")
+
+
+def write(path, value):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".part", "w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=1, ensure_ascii=False)
+        handle.write("\n")
+    os.replace(path + ".part", path)
+
+
+def the_set(data):
+    found = read(os.path.join(data, "set.json"), "set")
+    if not (isinstance(found, dict) and isinstance(found.get("version"), str)
+            and isinstance(found.get("changes"), list) and all(plain(c) for c in found["changes"])):
+        raise Refused(f'{data}/set.json needs a "version" and a list of "changes", each a plain folder name')
+    return found
+
+
+def plain(name):
+    return isinstance(name, str) and name not in ("", ".", "..") and os.path.basename(name) == name and "\0" not in name
+
+
+def the_key(data, change):
+    key = read(os.path.join(data, "keys", change + ".json"), "key")
+    defects = key.get("defects") if isinstance(key, dict) else None
+    numbers = [d.get("n") for d in defects] if isinstance(defects, list) and all(isinstance(d, dict) for d in defects) else None
+    if not numbers or len(set(map(str, numbers))) != len(numbers) or any(
+            not isinstance(key.get(name), str) or not key[name] for name in ("repo", "base", "head", "objective")):
+        raise Refused(f'{change}: its key needs "repo", "base", "head", "objective" and "defects" numbered each once')
+    return key
+
+
+def models(data):
+    known = dict(MODELS)
+    path = os.path.join(data, "models.json")
+    if os.path.exists(path):
+        own = read(path, "models")
+        if not isinstance(own, dict) or not all(plain(n) and isinstance(s, dict) for n, s in own.items()):
+            raise Refused(f"{path} isn't an object of models")
+        known.update(own)
+    return known
+
+
+def wanted(found, given):
+    unknown = [c for c in given if c not in found["changes"]]
+    if unknown:
+        raise Refused("not in the set: " + ", ".join(unknown))
+    return given or found["changes"]
+
+
+# setup
+
+
+def git(folder, *args):
+    done = subprocess.run(["git", "-C", folder, *args], capture_output=True, text=True, env=dict(os.environ, **GIT_ENV))
+    if done.returncode:
+        raise Refused(f"git {' '.join(args[:2])} in {folder}: {done.stderr.strip()[:200]}")
+    return done.stdout.strip()
+
+
+def unpack(repo, commit, folder):
+    archive = subprocess.Popen(["git", "-C", repo, "archive", commit], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    tar = subprocess.run(["tar", "-x", "-C", folder], stdin=archive.stdout, capture_output=True)
+    if archive.wait() or tar.returncode:
+        raise Refused(f"{commit} of {repo} can't be read: {archive.stderr.read().decode()[:160].strip()}")
+
+
+def setup(data, cache, given):
+    found = the_set(data)
+    for change in wanted(found, given):
+        key = the_key(data, change)
+        work = os.path.join(cache, "work", change)
+        note = os.path.join(work, ".bench.json")
+        if os.path.exists(note) and read(note, "note").get("of") == [key["base"], key["head"]]:
+            continue
+        shutil.rmtree(work, ignore_errors=True)
+        os.makedirs(work)
+        git(work, "init", "-q", "-b", "main")
+        unpack(key["repo"], key["base"], work)
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "--allow-empty", "-m", "Before the change")
+        base = git(work, "rev-parse", "HEAD")
+        for name in git(work, "ls-files", "-z").split("\0"):
+            if name:
+                os.remove(os.path.join(work, name))
+        unpack(key["repo"], key["head"], work)
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "--allow-empty", "-m", "The change under review")
+        with open(os.path.join(work, ".git", "info", "exclude"), "a") as handle:
+            handle.write(".bench.json\n")       # the reviewer doesn't see this note
+        write(note, {"of": [key["base"], key["head"]], "base": base[:10], "head": git(work, "rev-parse", "HEAD")[:10]})
+        print(f"{change}: {git(work, 'diff', '--shortstat', 'HEAD~1', 'HEAD')}")
+    return 0
+
+
+# run
+
+
+def brief(key, work, note, spec):
+    kind, minutes = spec["kind"], spec.get("minutes", 15)
+    diff = (f"git diff {note['base']}...{note['head']}, run from that folder" if kind == "agy"
+            else f"git -C {work} diff {note['base']}...{note['head']}")
+    rules = f"{work}/{key['rules']}" if key.get("rules") else "none written down"
+    timed = "" if spec.get("paid") else (
+        f"You have {minutes - 3} minutes and about {spec.get('commands', 20)} commands. When you reach either, stop "
+        "and report what you have, and list what you didn't get to.")
+    if kind == "agy":
+        timed += (" Run one shell command at a time, without &&, ; or pipes, and only these: " + ", ".join(AGY_ALLOW)
+                  + ". Read files with your file-reading tool. Don't run tests or scripts: any other command ends "
+                  "your session before you can report.")
+    return (
+        "You are reviewing a code change before it merges. Review only: don't edit, create or delete files, don't "
+        "commit, and run only commands that read (git diff, git log, git show, reading files, running the existing "
+        "tests if that is quick and writes nothing outside a temporary folder). Don't ask anyone anything; answer "
+        "with your report.\n\n"
+        f"The change: {key['objective']}\n"
+        f"Where: {work}. The diff: {diff}. Read the related code and tests as well, not only the diff.\n"
+        f"The project's rules: {rules}.\n"
+        "Your focus: an open look. Report anything serious you find outside it too.\n"
+        + (timed + "\n" if timed else "") + "\n" + ISSUE)
+
+
+def command(spec, text, work, last):
+    """The command for a review, and whether the brief goes in on its standard input."""
+    kind, model = spec["kind"], spec.get("model", "")
+    if kind == "opencode":
+        return ["opencode", "run", "--agent", "plan", "-m", model, text], False
+    if kind == "claude":
+        # The brief goes in on standard input, since --allowedTools would take it for a tool's name. dontAsk
+        # refuses a tool that isn't allowed, where another mode raises an approval card and waits for a person.
+        return ["claude", "-p", "--model", model, "--effort", "high", "--permission-mode", "dontAsk",
+                "--allowedTools", CLAUDE_TOOLS], True
+    if kind == "codex":
+        return ["codex", "exec", "--sandbox", "read-only", "--ephemeral", "-m", model, "-c",
+                'model_reasoning_effort="high"', "-C", work, "--output-last-message", last, text], False
+    if kind == "agy":
+        settings = {"trustedWorkspaces": [work], "permissions": {"allow": [f"command({c})" for c in AGY_ALLOW]}}
+        return ["agy", "--mode", "plan", "--model", model, "--print-timeout", f"{spec.get('minutes', 15)}m",
+                "--settings", json.dumps(settings), "-p", text], False
+    if kind == "command" and isinstance(spec.get("argv"), list) and spec["argv"]:
+        return [str(part).replace("{work}", work).replace("{brief}", text) for part in spec["argv"]], bool(spec.get("stdin"))
+    raise Refused(f'a model\'s "kind" is opencode, claude, codex, agy or command with "argv", not {kind!r}')
+
+
+def stop(process):
+    """Stop a reviewer and what it started; where signalling its group isn't allowed, stop it alone."""
+    for sign in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, sign)
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            process.send_signal(sign)
+        try:
+            return process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            continue
+    try:
+        return process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        return -9
+
+
+def run(data, cache, name, given):
+    found, known = the_set(data), models(data)
+    if name not in known:
+        raise Refused(f"no model {name}: " + ", ".join(sorted(known)))
+    spec = known[name]
+    minutes = spec.get("minutes", 15)
+    if not (isinstance(minutes, int) and not isinstance(minutes, bool) and 1 <= minutes <= 120):
+        raise Refused(f'{name}: "minutes" is a whole number from 1 to 120')
+    limit = spec.get("seconds", minutes * 60)       # "seconds": a shorter limit, for a check of this script
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
+        raise Refused(f'{name}: "seconds" is a number above 0')
+    folder = os.path.join(data, "runs", name)
+    os.makedirs(folder, exist_ok=True)
+    for change in wanted(found, given):
+        meta = os.path.join(folder, change + ".json")
+        if os.path.exists(meta):
+            continue
+        key = the_key(data, change)
+        work = os.path.join(cache, "work", change)
+        note = read(os.path.join(work, ".bench.json"), f"copy of {change} (run setup first)")
+        if note.get("of") != [key["base"], key["head"]]:
+            raise Refused(f"{change}: its copy is of other commits than its key's: run setup")
+        report, last = os.path.join(folder, change + ".md"), os.path.join(cache, f"last-{name}-{change}")
+        text = brief(key, work, note, spec)
+        argv, by_stdin = command(spec, text, work, last)
+        log = os.path.join(cache, "logs", name)
+        os.makedirs(log, exist_ok=True)
+        started = time.time()
+        try:
+            with open(report, "wb") as out, open(os.path.join(log, change + ".err"), "wb") as err:
+                process = subprocess.Popen(argv, cwd=work, stdout=out, stderr=err, start_new_session=True,
+                                           stdin=subprocess.PIPE if by_stdin else subprocess.DEVNULL)
+                if by_stdin:
+                    try:
+                        process.stdin.write(text.encode())
+                        process.stdin.close()
+                    except OSError:
+                        pass
+                try:
+                    code, timed_out = process.wait(timeout=limit), False
+                except subprocess.TimeoutExpired:
+                    code, timed_out = stop(process), True
+        except FileNotFoundError:
+            os.remove(report)
+            print(f"bench: {argv[0]} isn't installed", file=sys.stderr)
+            return 69
+        if spec["kind"] == "codex" and os.path.exists(last):
+            os.replace(last, report)        # Codex prints its whole session; its last message is the report
+        result = {"model": name, "change": change, "seconds": round(time.time() - started), "returncode": code,
+                  "timed_out": timed_out, "bytes": os.path.getsize(report), "set": found["version"]}
+        write(meta, result)
+        print(json.dumps(result), flush=True)
+    return 0
+
+
+# blind and unblind
+
+
+def usable(meta):
+    return not meta.get("timed_out") and meta.get("bytes", 0) >= 400
+
+
+def blind(data, cache, names):
+    found, known = the_set(data), models(data)
+    unknown = [n for n in names if n not in known]
+    if unknown or not names:
+        raise Refused("blind takes the models to score: " + ", ".join(sorted(known)))
+    if len(set(names)) > 26:
+        raise Refused("at most 26 models at once")
+    folder = os.path.join(cache, "blind")
+    shutil.rmtree(folder, ignore_errors=True)
+    mapping, shuffler = {}, random.Random()
+    for change in found["changes"]:
+        key = the_key(data, change)
+        there = []
+        for name in sorted(set(names)):
+            meta = os.path.join(data, "runs", name, change + ".json")
+            if os.path.exists(meta) and usable(read(meta, "run")):
+                there.append(name)
+        shuffler.shuffle(there)
+        os.makedirs(os.path.join(folder, change))
+        mapping[change] = {}
+        template = {"id": change, "reports": {}}
+        for letter, name in zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", there):
+            shutil.copyfile(os.path.join(data, "runs", name, change + ".md"), os.path.join(folder, change, letter + ".md"))
+            mapping[change][letter] = name
+            template["reports"][letter] = {"is_review": True, "known": {str(d["n"]): 0 for d in key["defects"]},
+                                           "others": [], "nits_unchecked": 0}
+        write(os.path.join(folder, change, "scores.json"), template)
+    write(os.path.join(folder, "map.json"), mapping)
+    print(f"{sum(len(v) for v in mapping.values())} reports of {len(mapping)} changes in {folder}")
+    return 0
+
+
+def score_problems(change, letter, report, key):
+    problems, where = [], f"{change} {letter}"
+    if not isinstance(report, dict):
+        return [f"{where}: not an object"]
+    if not isinstance(report.get("is_review"), bool):
+        problems.append(f'{where}: "is_review" is true or false')
+    known = report.get("known")
+    numbers = [str(d["n"]) for d in key["defects"]]
+    if not isinstance(known, dict) or sorted(known) != sorted(numbers):
+        problems.append(f'{where}: "known" needs one score for each of the key\'s defects: {", ".join(numbers)}')
+    elif any(isinstance(v, bool) or v not in (0, 0.5, 1) for v in known.values()):
+        problems.append(f'{where}: a score in "known" is 0, 0.5 or 1')
+    others = report.get("others")
+    if not isinstance(others, list) or not all(isinstance(o, dict) for o in others):
+        problems.append(f'{where}: "others" is a list of findings')
+    else:
+        for place, other in enumerate(others, 1):
+            if other.get("verdict") not in VERDICTS:
+                problems.append(f'{where}: finding {place} of "others": "verdict" is one of {", ".join(VERDICTS)}')
+            if not isinstance(other.get("title"), str) or not other["title"].strip():
+                problems.append(f'{where}: finding {place} of "others" has no "title"')
+    nits = report.get("nits_unchecked", 0)
+    if isinstance(nits, bool) or not isinstance(nits, int) or nits < 0:
+        problems.append(f'{where}: "nits_unchecked" is a count')
+    return problems
+
+
+def unblind(data, cache):
+    folder = os.path.join(cache, "blind")
+    mapping = read(os.path.join(folder, "map.json"), "blind map (run blind first)")
+    problems, ready = [], {}
+    for change, letters in mapping.items():
+        key = the_key(data, change)
+        scores = read(os.path.join(folder, change, "scores.json"), "scores")
+        reports = scores.get("reports") if isinstance(scores, dict) else None
+        if not isinstance(reports, dict) or sorted(reports) != sorted(letters):
+            problems.append(f"{change}: scores.json needs exactly the reports {', '.join(sorted(letters)) or 'none'}")
+            continue
+        for letter in sorted(letters):
+            problems += score_problems(change, letter, reports[letter], key)
+        ready[change] = {letters[letter]: reports[letter] for letter in letters}
+    if problems:
+        raise Refused("the scores don't fit:\n  - " + "\n  - ".join(problems))
+    for change, by_model in ready.items():
+        path = os.path.join(data, "scores", change + ".json")
+        kept = read(path, "scores") if os.path.exists(path) else {"id": change, "reports": {}}
+        kept["reports"].update(by_model)
+        write(path, kept)
+    print(f"scores of {sum(len(v) for v in ready.values())} reports saved under their models' names")
+    return 0
+
+
+# totals
+
+
+def totals(data, as_json):
+    found = the_set(data)
+    stats, hits = collections.defaultdict(collections.Counter), collections.defaultdict(dict)
+    blockers = total = 0
+    for change in found["changes"]:
+        key = the_key(data, change)
+        defects = {str(d["n"]): d for d in key["defects"]}
+        total += len(defects)
+        blockers += sum(1 for d in defects.values() if d.get("tag") == "blocker")
+        path = os.path.join(data, "scores", change + ".json")
+        scores = read(path, "scores")["reports"] if os.path.exists(path) else {}
+        for name in sorted(os.listdir(os.path.join(data, "runs")) if os.path.isdir(os.path.join(data, "runs")) else []):
+            meta = os.path.join(data, "runs", name, change + ".json")
+            if not plain(name) or not os.path.exists(meta):
+                continue
+            meta, s = read(meta, "run"), stats[name]
+            s["tried"] += 1
+            s["seconds"] += meta.get("seconds", 0)
+            report = scores.get(name)
+            if not usable(meta) or not isinstance(report, dict):
+                s["unscored"] += usable(meta)
+                continue
+            if not report.get("is_review", True):
+                continue
+            s["reports"] += 1
+            for n, defect in defects.items():
+                score = report.get("known", {}).get(n, 0)
+                s["points"] += score
+                s["blockers"] += score if defect.get("tag") == "blocker" else 0
+                if score == 1:
+                    hits[(change, n)][name] = True
+            for other in report.get("others", []):
+                verdict = {"minor": "true-minor"}.get(other.get("verdict"), other.get("verdict"))
+                s[verdict] += 1
+            s["nits"] += report.get("nits_unchecked", 0)
+            s["hits"] += sum(1 for v in report.get("known", {}).values() if v)
+    whole = [name for name, s in stats.items() if s["tried"] == len(found["changes"])]
+    for who in hits.values():
+        among = [name for name in who if name in whole]
+        if len(among) == 1:
+            stats[among[0]]["alone"] += 1
+    rows = []
+    for name, s in sorted(stats.items(), key=lambda item: -item[1]["points"]):
+        outside = s["real"] + s["true-minor"] + s["pre-existing"] + s["wrong"] + s["unclear"]
+        claims = s["hits"] + outside
+        rows.append({"model": name, "tried": s["tried"], "reports": s["reports"], "unscored": s["unscored"],
+                     "known": s["points"], "known_share": round(100 * s["points"] / total, 1) if total else 0,
+                     "blockers": s["blockers"], "alone": s["alone"] if name in whole else None, "real": s["real"],
+                     "minor": s["true-minor"] + s["pre-existing"], "false": s["wrong"], "unclear": s["unclear"],
+                     "false_share": round(100 * s["wrong"] / claims, 1) if claims else 0, "nits_unchecked": s["nits"],
+                     "minutes": round(s["seconds"] / 60 / s["tried"], 1) if s["tried"] else 0})
+    result = {"set": found["version"], "changes": len(found["changes"]), "defects": total, "blockers": blockers,
+              "found_by_any": sum(1 for who in hits.values() if who), "models": rows}
+    if as_json:
+        json.dump(result, sys.stdout, indent=1)
+        print()
+        return 0
+    print(f"Set {found['version']}: {len(found['changes'])} changes, {total} known defects ({blockers} blockers); "
+          f"{result['found_by_any']} found in full by at least one model.")
+    print()
+    titles = ("Model", "Reports", "Known found", "Blockers", "Alone", "Real", "Minor", "False", "False share", "Min/review")
+    table = [titles]
+    for row in rows:
+        table.append((row["model"], f"{row['reports']} of {row['tried']}", f"{row['known']:g} ({row['known_share']:g}%)",
+                      f"{row['blockers']:g} of {blockers}", "-" if row["alone"] is None else str(row["alone"]),
+                      str(row["real"]), str(row["minor"]), str(row["false"]), f"{row['false_share']:g}%", f"{row['minutes']:g}"))
+    widths = [max(len(line[i]) for line in table) for i in range(len(titles))]
+    for line in table:
+        print("  ".join(cell.ljust(width) if i == 0 else cell.rjust(width) for i, (cell, width) in enumerate(zip(line, widths))))
+    print()
+    print("Known found: 1 for a defect described, a half for the right code without the failing case. Alone: known "
+          "defects only it found in full, among the models that tried every change. Real, Minor, False: its findings "
+          "outside the key that it called a blocker or follow-up, as checked against the code. False share: of all "
+          "its blockers and follow-ups.")
+    unscored = [row["model"] for row in rows if row["unscored"]]
+    if unscored:
+        print("Reports not scored yet: " + ", ".join(unscored) + ".")
+    return 0
+
+
+def main(argv):
+    data, cache = data_folder(), cache_folder()
+    try:
+        if argv == ["where"]:
+            version = the_set(data)["version"] if os.path.exists(os.path.join(data, "set.json")) else "no set yet"
+            print(f"data: {data}\ncache: {cache}\nset: {version}")
+            return 0
+        if argv[:1] == ["setup"]:
+            return setup(data, cache, argv[1:])
+        if argv[:1] == ["run"] and len(argv) > 1:
+            return run(data, cache, argv[1], argv[2:])
+        if argv[:1] == ["blind"]:
+            return blind(data, cache, argv[1:])
+        if argv == ["unblind"]:
+            return unblind(data, cache)
+        if argv in (["totals"], ["totals", "--json"]):
+            return totals(data, len(argv) == 2)
+    except Refused as error:
+        print(f"bench: {error}", file=sys.stderr)
+        return 64
+    print("Usage:" + __doc__.split("Usage:")[1].split("\n\n")[0].rstrip(), file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

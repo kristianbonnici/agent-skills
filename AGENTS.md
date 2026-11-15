@@ -56,6 +56,7 @@ Before saying a skill is installed, run:
 ./tests/skill-evolution-test        # skill-evolution's lessons script: two computers sharing the private lessons, one file per entry
 ./tests/evidence-test               # every evidence file has skill-evidence's "Last checked" line and "Left out" section
 ./tests/disk-cleanup-test           # disk-cleanup's scan script in a made-up home folder
+./tests/reviewer-benchmark-test     # reviewer-benchmark's bench script with a made-up set: the copy holds the change and nothing after it, a review is saved, skipped or stopped at its time, scoring is blind, and the totals add up
 ./tests/review-gate-test            # review-gate's review-records script: the documented record prints the documented Review lines, a bad record is refused, and totals add up records and older handoff tables
 ./tests/excalidraw-drawing-test     # every documented pattern and diagram and the example page build cleanly, charts place points by their numbers, the checks catch what they claim, vault builds write the Obsidian plugin's files, hand edits are never overwritten, and drawing.mjs edits and previews a drawing
 ```

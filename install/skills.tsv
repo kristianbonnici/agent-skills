@@ -12,5 +12,6 @@ install	review-gate	codex claude
 install	skill-evolution	codex claude
 install	skill-evidence	codex claude
 install	disk-cleanup	codex claude
+install	reviewer-benchmark	codex claude
 install	excalidraw-drawing	codex claude
 retired	sketch-infographic	codex claude

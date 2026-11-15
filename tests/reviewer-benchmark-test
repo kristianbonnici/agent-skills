@@ -1,0 +1,206 @@
+#!/bin/sh
+# Checks reviewer-benchmark's bench script with a made-up set: a repository with a change and a commit
+# after it, a key, and models that are plain commands. setup makes a copy that holds the change and not
+# what came after; run saves a report and how it ended, skips a review already saved and stops one that
+# passes its time; blind hides the models' names and leaves out a review with no report; unblind refuses
+# scores that don't fit the key and saves the rest under the models' names; totals adds them up.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/reviewer-benchmark-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 python3 -I - "$repo_root/skills/reviewer-benchmark/scripts/bench" "$work" <<'EOF'
+import json, os, subprocess, sys
+script, work = sys.argv[1], os.path.realpath(sys.argv[2])
+state, cache, app = os.path.join(work, "agent-skills-state"), os.path.join(work, "cache"), os.path.join(work, "app")
+data = os.path.join(state, "reviewer-benchmark")
+env = dict(os.environ, AGENT_SKILLS_STATE=state, REVIEWER_BENCHMARK_CACHE=cache, XDG_STATE_HOME=os.path.join(work, "xdg"))
+
+def bench(*args):
+    return subprocess.run([sys.executable, "-I", script, *args], capture_output=True, text=True, env=env, timeout=120)
+
+def git(folder, *args):
+    done = subprocess.run(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, (args, done.stderr)
+    return done.stdout.strip()
+
+def put(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as handle:
+        handle.write(text)
+
+# A repository: a base, the change the first review read, and a later fix that no reviewer may see.
+os.makedirs(app)
+git(app, "init", "-q", "-b", "main")
+put(os.path.join(app, "count.py"), "def count(items):\n    return len(items)\n")
+put(os.path.join(app, "gone.py"), "old = True\n")
+git(app, "add", "-A"); git(app, "commit", "-q", "-m", "base")
+base = git(app, "rev-parse", "HEAD")
+put(os.path.join(app, "count.py"), "def count(items):\n    return len(items) + 1\n")
+os.remove(os.path.join(app, "gone.py"))
+put(os.path.join(app, "AGENTS.md"), "Rules.\n")
+git(app, "add", "-A"); git(app, "commit", "-q", "-m", "the change")
+head = git(app, "rev-parse", "HEAD")
+put(os.path.join(app, "count.py"), "def count(items):\n    return len(items)  # THE LATER FIX\n")
+git(app, "add", "-A"); git(app, "commit", "-q", "-m", "the fix, after the review")
+
+# Without a set, every command that needs one says so; where says there is none yet.
+os.makedirs(os.path.join(state, ".git"))
+done = bench("where")
+assert done.returncode == 0 and f"data: {data}" in done.stdout and "set: no set yet" in done.stdout, done.stdout
+done = bench("setup")
+assert done.returncode == 64 and "no set at" in done.stderr, done.stderr
+# Without a private state repository the data is under the state home.
+done = subprocess.run([sys.executable, "-I", script, "where"], capture_output=True, text=True,
+                      env=dict(env, AGENT_SKILLS_STATE=os.path.join(work, "nowhere")))
+assert "data: " + os.path.join(work, "xdg", "agent-skills", "reviewer-benchmark") in done.stdout, done.stdout
+
+key = {"id": "one", "repo": app, "base": base, "head": head, "objective": "Count the items.", "rules": "AGENTS.md",
+       "defects": [{"n": 1, "title": "Off by one", "where": "count.py", "case": "count([]) is 1", "tag": "blocker"},
+                   {"n": 2, "title": "No test", "where": "count.py", "case": "nothing checks it", "tag": "follow-up"}]}
+put(os.path.join(data, "keys", "one.json"), json.dumps(key))
+put(os.path.join(data, "keys", "two.json"), json.dumps(dict(key, id="two", defects=key["defects"][:1])))
+put(os.path.join(data, "set.json"), json.dumps({"version": "1.0", "changes": ["one", "two"]}))
+report = "A finding.\n" + "It says what goes wrong and when, at some length, so that it is a report.\n" * 8
+put(os.path.join(data, "models.json"), json.dumps({
+    "good": {"kind": "command", "argv": ["sh", "-c", f"printf '%s' '{report}'; cat count.py; test -f gone.py && echo GONE-IS-THERE; git log --oneline"]},
+    "echo": {"kind": "command", "stdin": True, "paid": True, "argv": ["sh", "-c", "cat; echo; echo {work}"]},
+    "slow": {"kind": "command", "seconds": 1, "argv": ["sh", "-c", "sleep 30"]},
+    "short": {"kind": "command", "argv": ["sh", "-c", "echo no"]},
+    "absent": {"kind": "command", "argv": ["no-such-reviewer-tool"]}}))
+
+# setup: two commits, the change between them, and nothing of the later fix.
+done = bench("setup")
+assert done.returncode == 0 and "one: " in done.stdout and "two: " in done.stdout, (done.stdout, done.stderr)
+copy = os.path.join(cache, "work", "one")
+assert git(copy, "rev-list", "--count", "HEAD") == "2"
+assert open(os.path.join(copy, "count.py")).read().endswith("len(items) + 1\n") and not os.path.exists(os.path.join(copy, "gone.py"))
+assert "LATER FIX" not in subprocess.run(["git", "-C", copy, "log", "-p", "--all"], capture_output=True, text=True).stdout
+assert git(copy, "status", "--porcelain") == "", git(copy, "status", "--porcelain")
+assert "count.py" in git(copy, "diff", "--stat", "HEAD~1", "HEAD") and "gone.py" in git(copy, "diff", "--stat", "HEAD~1", "HEAD")
+assert bench("setup").stdout == "", "a copy already made is left alone"
+assert git(app, "status", "--porcelain") == "" and git(app, "rev-list", "--count", "HEAD") == "3", "the repository is only read"
+done = bench("setup", "three")
+assert done.returncode == 64 and "not in the set: three" in done.stderr, done.stderr
+
+# run: a report and how it ended; a second run skips it; the brief names the copy, its diff and the rules.
+done = bench("run", "good")
+assert done.returncode == 0 and done.stdout.count('"model": "good"') == 2, (done.stdout, done.stderr)
+text = open(os.path.join(data, "runs", "good", "one.md")).read()
+assert text.startswith("A finding.") and "len(items) + 1" in text and "GONE-IS-THERE" not in text and "LATER" not in text, text
+meta = json.load(open(os.path.join(data, "runs", "good", "one.json")))
+assert meta["timed_out"] is False and meta["returncode"] == 0 and meta["bytes"] > 400 and meta["set"] == "1.0", meta
+assert bench("run", "good").stdout == "", "a review already saved isn't run again"
+done = bench("run", "echo", "one")
+sent = open(os.path.join(data, "runs", "echo", "one.md")).read()
+assert done.returncode == 0 and "The change: Count the items." in sent and f"Where: {copy}." in sent, sent
+assert f"The project's rules: {copy}/AGENTS.md." in sent and "...HEAD" not in sent and f"git -C {copy} diff " in sent, sent
+assert "You have 12 minutes" not in sent, "a paid model's brief has no time line"
+assert sent.rstrip().endswith(copy), "{work} in a command is the copy's folder"
+assert not os.path.exists(os.path.join(data, "runs", "echo", "two.json")), "only the change named was reviewed"
+# A review that passes its time is stopped, recorded, and the run goes on to the next change.
+done = bench("run", "slow")
+metas = [json.load(open(os.path.join(data, "runs", "slow", c + ".json"))) for c in ("one", "two")]
+assert done.returncode == 0 and all(m["timed_out"] and m["seconds"] < 20 for m in metas), (metas, done.stderr)
+bench("run", "short")
+done = bench("run", "absent")
+assert done.returncode == 69 and "isn't installed" in done.stderr and not os.path.exists(os.path.join(data, "runs", "absent", "one.json")), done.stderr
+done = bench("run", "nobody")
+assert done.returncode == 64 and "no model nobody" in done.stderr, done.stderr
+# A cheap model's brief has the time line.
+put(os.path.join(data, "models.json"), json.dumps(dict(json.load(open(os.path.join(data, "models.json"))),
+    cheap={"kind": "command", "stdin": True, "argv": ["sh", "-c", "cat"]})))
+bench("run", "cheap", "one")
+assert "You have 12 minutes and about 20 commands." in open(os.path.join(data, "runs", "cheap", "one.md")).read()
+# A copy of other commits than the key's is refused until setup makes it again.
+put(os.path.join(data, "keys", "two.json"), json.dumps(dict(key, id="two", base=head, defects=key["defects"][:1])))
+done = bench("run", "echo", "two")
+assert done.returncode == 64 and "run setup" in done.stderr, done.stderr
+assert "two: " in bench("setup").stdout and bench("run", "echo", "two").returncode == 0
+
+# blind: letters for the reports there are, none for a review that timed out or left almost nothing.
+done = bench("blind", "good", "echo", "slow", "short")
+assert done.returncode == 0 and "4 reports of 2 changes" in done.stdout, (done.stdout, done.stderr)
+blind = os.path.join(cache, "blind")
+mapping = json.load(open(os.path.join(blind, "map.json")))
+assert sorted(mapping["one"].values()) == ["echo", "good"] and sorted(mapping["one"]) == ["A", "B"], mapping
+for letter, name in mapping["one"].items():
+    assert open(os.path.join(blind, "one", letter + ".md")).read() == open(os.path.join(data, "runs", name, "one.md")).read()
+assert sorted(os.listdir(os.path.join(blind, "one"))) == ["A.md", "B.md", "scores.json"]
+template = json.load(open(os.path.join(blind, "one", "scores.json")))
+assert template["reports"]["A"]["known"] == {"1": 0, "2": 0} and "good" not in json.dumps(template), template
+assert bench("blind", "nobody").returncode == 64 and bench("blind").returncode == 64
+
+# unblind: scores that don't fit the key are refused, all of them named, and nothing is saved.
+def fill(change, **by_model):
+    path = os.path.join(blind, change, "scores.json")
+    scores = json.load(open(path))
+    for letter, name in mapping[change].items():
+        if name in by_model:
+            scores["reports"][letter] = by_model[name]
+    put(path, json.dumps(scores))
+
+fill("one", good={"is_review": True, "known": {"1": 1}, "others": [{"title": "x", "verdict": "sort of"}], "nits_unchecked": 0})
+done = bench("unblind")
+assert done.returncode == 64 and '"known" needs one score for each' in done.stderr and '"verdict" is one of' in done.stderr, done.stderr
+assert not os.path.exists(os.path.join(data, "scores")), "nothing is saved while a score doesn't fit"
+fill("one",
+     good={"is_review": True, "known": {"1": 1, "2": 0.5}, "nits_unchecked": 3, "others": [
+         {"title": "a real one", "their_tag": "follow-up", "verdict": "real", "why": "count.py"},
+         {"title": "a small one", "their_tag": "follow-up", "verdict": "true-minor", "why": "count.py"},
+         {"title": "an old one", "their_tag": "none", "verdict": "pre-existing", "why": "count.py"},
+         {"title": "a false one", "their_tag": "blocker", "verdict": "wrong", "why": "count.py"}]},
+     echo={"is_review": False, "known": {"1": 0, "2": 0}, "others": [], "nits_unchecked": 0})
+fill("two", good={"is_review": True, "known": {"1": 1}, "others": [], "nits_unchecked": 0},
+     echo={"is_review": True, "known": {"1": 1}, "others": [], "nits_unchecked": 1})
+done = bench("unblind")
+assert done.returncode == 0 and "scores of 4 reports saved" in done.stdout, (done.stdout, done.stderr)
+saved = json.load(open(os.path.join(data, "scores", "one.json")))["reports"]
+assert sorted(saved) == ["echo", "good"] and saved["good"]["known"] == {"1": 1, "2": 0.5}, saved
+# Another model scored later is added beside them, not in their place.
+bench("run", "cheap", "two")
+bench("blind", "cheap")
+mapping = json.load(open(os.path.join(blind, "map.json")))
+fill("one", cheap={"is_review": True, "known": {"1": 0, "2": 1}, "others": [], "nits_unchecked": 0})
+fill("two", cheap={"is_review": True, "known": {"1": 0}, "others": [], "nits_unchecked": 0})
+assert bench("unblind").returncode == 0
+assert sorted(json.load(open(os.path.join(data, "scores", "one.json")))["reports"]) == ["cheap", "echo", "good"]
+
+# totals.
+done = bench("totals", "--json")
+assert done.returncode == 0, done.stderr
+total = json.loads(done.stdout)
+assert (total["set"], total["changes"], total["defects"], total["blockers"]) == ("1.0", 2, 3, 2), total
+rows = {row["model"]: row for row in total["models"]}
+good = rows["good"]
+assert (good["tried"], good["reports"], good["known"], good["blockers"]) == (2, 2, 2.5, 2), good
+assert (good["real"], good["minor"], good["false"], good["nits_unchecked"]) == (1, 2, 1, 3), good
+# Its blockers and follow-ups: three hits of the key and four outside it; one of the seven is false.
+assert good["false_share"] == 14.3 and good["known_share"] == 83.3, good
+# echo's first report is no review; its second found the one defect of that change.
+assert (rows["echo"]["tried"], rows["echo"]["reports"], rows["echo"]["known"]) == (2, 1, 1), rows["echo"]
+assert (rows["slow"]["tried"], rows["slow"]["reports"], rows["slow"]["known"]) == (2, 0, 0), rows["slow"]
+# Found in full by one model alone: defect 2 of "one" by cheap, and defect 1 of "one" by good (echo's report
+# of that change was no review). Defect 1 of "two" was found by two.
+assert rows["cheap"]["alone"] == 1 and good["alone"] == 1 and rows["echo"]["alone"] == 0, (rows["cheap"], good)
+assert total["found_by_any"] == 3, total["found_by_any"]
+assert [row["model"] for row in total["models"]][0] == "good", "the most known defects first"
+done = bench("totals")
+assert done.returncode == 0 and "Set 1.0: 2 changes, 3 known defects (2 blockers)" in done.stdout, done.stdout
+line = next(l for l in done.stdout.splitlines() if l.startswith("good"))
+assert line.split()[1:] == ["2", "of", "2", "2.5", "(83.3%)", "2", "of", "2", "1", "1", "2", "1", "14.3%", "0"], line
+
+# A mistake in the command prints the usage; a broken file names itself.
+for args in ((), ("run",), ("totals", "--all"), ("unblind", "x"), ("sum",)):
+    done = bench(*args)
+    assert done.returncode == 64 and done.stderr.startswith("Usage:"), (args, done.stderr)
+put(os.path.join(data, "set.json"), "{")
+done = bench("totals")
+assert done.returncode == 64 and "set.json isn't valid JSON" in done.stderr, done.stderr
+put(os.path.join(data, "set.json"), json.dumps({"version": "1.0", "changes": ["../one"]}))
+assert bench("setup").returncode == 64
+print("reviewer-benchmark-test: ok")
+EOF
