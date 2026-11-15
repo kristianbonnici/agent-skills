@@ -3561,6 +3561,11 @@ head -1 "$multi/studio/run-x/usage/providers.jsonl" > "$multi/studio/run-x/usage
 python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"] = {"folder": "run-x/usage-early", "computers": [{"name": "studio-mac"}, {"name": "den-mac", "folder": "run-x/computers/den-mac/usage"}]}; json.dump(f, open(sys.argv[2], "w"))' \
   "$multi/studio/facts-two.json" "$multi/studio/facts-early.json"
 "$scripts/run-charts" "$multi/studio/facts-early.json" "$multi/charts-early" >/dev/null
+mkdir -p "$multi/studio/run-x/usage-bare"   # the same with no subscription readings: the hover names your computer
+cp "$multi/studio/run-x/usage-early/machine.jsonl" "$multi/studio/run-x/usage-bare/machine.jsonl"
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["folder"] = "run-x/usage-bare"; json.dump(f, open(sys.argv[2], "w"))' \
+  "$multi/studio/facts-early.json" "$multi/studio/facts-bare.json"
+"$scripts/run-charts" "$multi/studio/facts-bare.json" "$multi/charts-bare" >/dev/null
 # a computers list that can't be drawn is refused with one sentence
 python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["computers"] = [{"name": "a"}, {"name": "a"}]; json.dump(f, open(sys.argv[2], "w"))' \
   "$multi/studio/facts-two.json" "$multi/studio/facts-twice.json"
@@ -3584,8 +3589,11 @@ if [ -n "$chrome" ]; then
   grep -q '>den-mac</div>' "$work/dom.html" && grep -q "den-mac's sampling ended" "$work/dom.html" && grep -q 'Not sampled on den-mac at this time' "$work/dom.html"
   if grep -q '>GPU<' "$work/dom.html"; then exit 1; fi
   dump_dom "file://$multi/charts-early/run-map.html#fit&computer=den-mac&cross=02:30"
-  grep -q 'Subscriptions not sampled: sampling ended at 01:59' "$work/dom.html" && grep -q '<em>avg</em>' "$work/dom.html"
+  grep -q 'Subscriptions not sampled: sampling ended at 01:59' "$work/dom.html" && grep -Eq 'class="v">[0-9]+% <em>avg</em>' "$work/dom.html"
   grep -q "den-mac's sampling ended" "$work/dom.html" && grep -q '>Sampling ended<' "$work/dom.html"
+  dump_dom "file://$multi/charts-bare/run-map.html#fit&computer=den-mac&cross=02:30"
+  grep -q 'Not sampled on studio-mac: sampling ended at 01:59' "$work/dom.html" && grep -Eq 'class="v">[0-9]+% <em>avg</em>' "$work/dom.html"
+  if grep -q 'class="gap">Subscriptions not sampled' "$work/dom.html"; then exit 1; fi
   if node -e 'process.exit(typeof WebSocket === "function" ? 0 : 1)' 2>/dev/null; then
     node - "$chrome" "file://$multi/charts-two/run-map.html#fit" "$work/chrome-keys" > "$multi/keys.json" <<'EOF'
 const { spawn } = require("node:child_process"), fs = require("node:fs"), path = require("node:path");
