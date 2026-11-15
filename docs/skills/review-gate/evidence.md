@@ -367,13 +367,24 @@ Every model got the gate's brief for a free or trial reviewer and 15 minutes, th
 The reports were scored blind, by letter: 1 for a known defect described, a half for the right code without
 the failing case.
 
-| Reviewer | Reports, of 16 | Known defects found, of 108 | Blockers, of 17 | Found by it alone | Other findings judged real | Minutes per review |
-|---|---|---|---|---|---|---|
-| DeepSeek V4.1 Flash | 16 | 30.5 (28%) | 4 | 6 | 4 | 6.4 |
-| Gemini 4 Hydrogen | 16 | 27.5 (25%) | 3 | 9 | 8 | 4.4 |
-| GLM-5.3 Flash | 14 | 21.5 (20%) | 2 | 6 | 2 | 7.6 |
-| MiniMax M3.1 Flash | 13 | 21 (19%) | 3 | 3 | 3 | 6.5 |
-| Claude Haiku 5.5 | 16 | 20 (19%) | 2.5 | 4 | 3 | 1.6 |
+| Reviewer | Reports, of 16 | Known defects found, of 108 | Blockers, of 17 | Found by it alone | Minutes per review |
+|---|---|---|---|---|---|
+| DeepSeek V4.1 Flash | 16 | 30.5 (28%) | 4 | 6 | 6.4 |
+| Gemini 4 Hydrogen | 16 | 29 (27%) | 3 | 9 | 4.4 |
+| GLM-5.3 Flash | 14 | 21.5 (20%) | 2 | 6 | 7.6 |
+| MiniMax M3.1 Flash | 13 | 21 (19%) | 3 | 3 | 6.5 |
+| Claude Haiku 5.5 | 16 | 20 (19%) | 2.5 | 4 | 1.6 |
+
+What each said beyond the key, where it called the finding a blocker or follow-up: all 110 such findings were
+checked against the code by a second, stricter model (the first scorer had filed most under "minor" unread).
+
+| Reviewer | Findings outside the key | Real defects | True but minor, or there before | False | False, of all its blockers and follow-ups |
+|---|---|---|---|---|---|
+| Gemini 4 Hydrogen | 23 | 12 | 9 | 2 | 4% |
+| DeepSeek V4.1 Flash | 25 | 6 | 15 | 4 | 7% |
+| GLM-5.3 Flash | 15 | 3 | 10 | 2 | 5% |
+| MiniMax M3.1 Flash | 29 | 7 | 17 | 5 | 9% |
+| Claude Haiku 5.5 | 18 | 4 | 10 | 4 | 10% |
 
 - **MiMo-V2.6-Flash was too slow to score.** It reported in time on 1 of 4 changes, the smallest, in 14
   minutes. Given 30 minutes on four mid-size changes it finished two, in 27 and 29 minutes.
@@ -381,11 +392,16 @@ the failing case.
   three. DeepSeek, Hydrogen and Haiku reported every time.
 - **Together:** DeepSeek and Hydrogen found 39 of the 108 in full between them, the most of any pair; all
   five found 56. No model found the other 43 in full.
-- **Other findings:** the scorer judged 20 findings outside the key real. For the first eight changes a second,
-  stricter check against the code kept 5 of the 11 it had first called real, so read that column as an upper
-  bound.
+- **False claims are the smaller cost:** 17 of the 110 findings outside the key were false, between 2 and 5
+  a model. The larger cost is the true but minor: 61 of the 110, which an author must still read and weigh.
+- **Real defects the original reviews missed:** 32 of the 110 held up as real (some the same defect from
+  two or three models), 12 of them Hydrogen's. So the key understates a model that finds what the paid
+  reviewers didn't, Hydrogen most of all.
+- **Not checked:** the findings a model itself called nits, 18 to 34 a model, and whether a blocker tag was
+  earned (only a handful of findings outside the key carried one).
 
-Limits: about four points either way on each share, so two tiers and no finer order. The key favours the
+Limits: about four points either way on each share, so two tiers and no finer order. A few of the "false"
+verdicts are the checker's judgment of code it couldn't run. The key favours the
 models that took part in the original first rounds (DeepSeek often, Haiku and GLM sometimes) over those that
 didn't (Hydrogen, MiniMax). One model scored the reports. Haiku ran with a narrower set of commands than it
 has in a gate, which may be why it was both fastest and lowest. The benchmark's changes, keys, reports and
@@ -393,7 +409,8 @@ scores stay in the owner's private state.
 
 → *a first round of two paid reviewers and their extras found all 108; the best cheap reviewer found 28% of
 them and the best pair 36%, so none stands in for a paid reviewer. DeepSeek and Hydrogen are the two worth a
-regular place, and they find different things. GLM stays DeepSeek's fallback. MiniMax M3.1 Flash and
+regular place, and they find different things; Hydrogen also says the least that is false and finds the most
+that the original reviews missed. GLM stays DeepSeek's fallback. MiniMax M3.1 Flash and
 MiMo-V2.6-Flash earn no place: one no better than GLM and less often done in time, the other too slow. Any
 change of the reviewers is the owner's decision; none is made here.*
 
