@@ -37,7 +37,8 @@ Each line starts with a word saying what it is:
                    approval prompt, or a hang before the command started
   quiet <task>     a running task whose session log, worktree and run folder haven't changed for
                    20 minutes and whose processes are idle
-  blind <task>     (once per task; kept in its state file's "blind" list until its log is found) a running task whose session log this script can't read (a
+  blind <task>     (once per task; kept in its state file's "blind" list until its log is found, and for the
+                   whole run for a task on another computer) a running task whose session log this script can't read (a
                    harness it doesn't know, or a log it didn't find): it sees only that task's
                    processes and files; or a task whose watch.json "computer" isn't this one (watch.json's
                    own "computer", else this Mac's LocalHostName): it reads nothing of that task
