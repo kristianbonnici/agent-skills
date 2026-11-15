@@ -36,9 +36,9 @@ as failed, whatever it printed, and run again by the next run. A review of other
 again, and its score is dropped. Stopping bench stops the reviewer it started. Models: the table below, and
 the owner's in models.json.
 
-blind: copies those models' reports of every change to blind/<change>/<letter>.md, in an order of its own
-for each change, and writes blind/<change>/scores.json for the scorer to fill. A review that timed out,
-failed or left under 400 bytes gets no file. The letters' meaning is kept in blind/map.json, which scorers
+blind: copies those models' reports that have no score yet to blind/<change>/<letter>.md, in an order of
+its own for each change, and writes blind/<change>/scores.json for the scorer to fill. A review that timed
+out, failed or left under 400 bytes gets no file, and neither does one whose score is saved. The letters' meaning is kept in blind/map.json, which scorers
 aren't given. It refuses while the scores of an earlier blind aren't saved; --discard throws them away.
 
 unblind: reads each blind/<change>/scores.json and saves its reports' scores under their models' names in
@@ -224,8 +224,8 @@ def wanted(found, given):
 
 def state_of(meta, key):
     """How a saved review stands: "report", "none" (out of time, or nearly nothing), "failed" (to run again)
-    or "stale" (a review of other commits than the key's)."""
-    if meta.get("commits") != [key["base"], key["head"]]:
+    or "stale" (a review of other commits than the key's, or one with no id of its own)."""
+    if meta.get("commits") != [key["base"], key["head"]] or not isinstance(meta.get("id"), str) or not meta["id"]:
         return "stale"
     if meta.get("failed"):
         return "failed"
@@ -450,10 +450,13 @@ def blind(data, scoring, names):
     mapping, copies, shuffler, of = {}, [], random.Random(), {}
     for change in found["changes"]:
         key = the_key(data, change)
-        there = []
+        there, scored = [], the_scores(data, change)
         for name in sorted(set(names)):
             meta, report = os.path.join(data, "runs", name, change + ".json"), os.path.join(data, "runs", name, change + ".md")
             if os.path.exists(meta) and state_of(read(meta, "run"), key) == "report":
+                saved = scored.get(name)
+                if isinstance(saved, dict) and saved.get("review") == review_id(read(meta, "run")):
+                    continue        # scored already: shown again, its empty score would take the saved one's place
                 if not os.path.isfile(report):
                     raise Refused(f"{report} is missing, though its review has a report: put it back, or delete {meta}")
                 there.append(name)
@@ -480,9 +483,8 @@ def blind(data, scoring, names):
 
 
 def review_id(meta):
-    """What tells one review of a change by a model from another of the same: its own id, or, for a review
-    saved before reviews had one, what is known of it."""
-    return meta.get("id") or [meta.get("commits"), meta.get("bytes"), meta.get("seconds"), meta.get("returncode")]
+    """What tells one review of a change by a model from another of the same: the id run gave it."""
+    return meta.get("id")
 
 
 def score_problems(change, letter, report, key):
@@ -579,7 +581,7 @@ def totals(data, as_json):
             report = scores.get(name)
             if state == "none":
                 continue
-            if not isinstance(report, dict) or (meta.get("id") and report.get("review") != meta["id"]):
+            if not isinstance(report, dict) or report.get("review") != meta["id"]:
                 s["unscored"] += 1          # no score, or the score of another review of this change
                 continue
             if not report.get("is_review", True):

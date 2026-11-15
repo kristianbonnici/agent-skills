@@ -142,6 +142,21 @@ done = bench("run", "absent")
 assert done.returncode == 69 and "isn't installed" in done.stderr and not os.path.exists(os.path.join(data, "runs", "absent", "one.json")), done.stderr
 done = bench("run", "nobody")
 assert done.returncode == 64 and "no model nobody" in done.stderr, done.stderr
+# A command given as a path is looked for from the copy's folder, where it runs.
+put(os.path.join(work, "outside", "tool"), "#!/bin/sh\necho ran from $(pwd)\n")
+os.chmod(os.path.join(work, "outside", "tool"), 0o755)
+set_models(pathed={"kind": "command", "argv": [os.path.relpath(os.path.join(work, "outside", "tool"), copy)]},
+           nopath={"kind": "command", "argv": ["bin/none"]})
+done = bench("run", "pathed", "one")
+assert done.returncode == 0 and open(os.path.join(data, "runs", "pathed", "one.md")).read().strip() == f"ran from {copy}", done.stderr
+done = bench("run", "nopath", "one")
+assert done.returncode == 69 and "bin/none isn't installed" in done.stderr, done.stderr
+set_models()
+# A saved review with no id of its own isn't trusted: it is run again.
+kept_meta = load(data, "runs", "good", "two.json")
+put(os.path.join(data, "runs", "good", "two.json"), json.dumps({k: v for k, v in kept_meta.items() if k != "id"}))
+done = bench("run", "good", "two")
+assert '"change": "two"' in done.stdout and len(load(data, "runs", "good", "two.json")["id"]) == 32, done.stdout
 # A review that ends in an error with no report is recorded as failed, and the next run does it again.
 done = bench("run", "flaky", "one")
 assert done.returncode == 0 and load(data, "runs", "flaky", "one.json").get("failed") is True, done.stdout
@@ -297,9 +312,11 @@ assert sorted(load(data, "scores", "one.json")["reports"]) == ["cheap", "echo", 
 assert "cheap" not in load(data, "scores", "two.json")["reports"]
 assert bench("blind", "cheap").returncode == 0, "after unblind saved what it could, blind runs again"
 mapping = load(blind, "map.json")
-fill("one", cheap={"is_review": True, "known": {"1": 0, "2": 1}, "others": [], "nits_unchecked": 0})
+# Only the report with no score yet is shown again: the saved score of "one" can't be replaced by an empty one.
+assert mapping == {"one": {}, "two": {"A": "cheap"}}, mapping
 fill("two", cheap={"is_review": True, "known": {"1": 0}, "others": [], "nits_unchecked": 0})
 assert bench("unblind").returncode == 0 and load(data, "scores", "two.json")["reports"]["cheap"]["review"] == "another review"
+assert load(data, "scores", "one.json")["reports"]["cheap"]["known"] == {"1": 0, "2": 1}
 
 # totals.
 done = bench("totals", "--json")
