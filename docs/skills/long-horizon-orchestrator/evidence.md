@@ -166,8 +166,9 @@ private records.
 - **The first run across two computers** (2026-11-15), placed by hand: the orchestrator and one task on one
   Mac, three tasks on the other, linked in T3. Model IDs differed by computer (one Hydrogen with its
   reasoning in the ID, the other with a reasoning option), and so did the installed skill's version; the
-  orchestrator's checkout was 30 commits behind the other computer's default branch, which had never been
-  pushed; the other computer was on battery; and `run-watch` saw only the orchestrator's computer. Briefs
+  orchestrator's checkout was far behind the other computer's default branch, which had never been
+  pushed; the other computer's power and disk had to be checked there; and `run-watch` saw only the
+  orchestrator's computer. Briefs
   travelled on a throwaway branch of the private state repository, commits on a run branch on the remote. →
   *[computers.md](../../../skills/long-horizon-orchestrator/references/computers.md): targets read per
   computer, a pre-flight there, the run branch, tasks elsewhere named `blind` on purpose.*
