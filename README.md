@@ -94,8 +94,9 @@ by host or computer, such as the tools a Mac has for computer use, is a section 
 section and run bootstrap, never the built file: bootstrap rebuilds it whenever it no longer matches
 its sections. A built file changed in place (by hand, or by an agent writing to it) is kept first as
 a backup beside it (`CLAUDE.md.changed-<date>-<time>`, named in the output), and doctor fails on it
-until the change is moved into a section. A rebuilt file keeps the permissions of the one it
-replaces.
+until the change is moved into a section. The marker names the private repository by its folder's
+name, so a clone under another name counts each built file as changed once, and bootstrap keeps one
+backup of each. A rebuilt file keeps the permissions of the one it replaces.
 
 A file already at a target without the marker is the owner's own. Bootstrap leaves it as it is and
 says `NOT ADOPTED` with the command that adopts it, and doctor warns about it without failing.
@@ -114,8 +115,10 @@ uncommitted change to a tracked file, it runs `git pull --ff-only`; one off its 
 with a change is skipped, with the reason and the command to fix it. For each it reports the commits
 of its default branch that are not on `origin` as of the last fetch, and it never pushes: push those
 yourself, so the other computers get them. When its standard input is not a terminal (a schedule, an
-agent), git fails rather than asks for a password: no prompt, and ssh in batch mode. Then it runs `bootstrap --all` (pass `--skip-dependencies` to leave the
-runtimes alone). A pull that cannot fast-forward fails sync after bootstrap has run.
+agent), git fails rather than asks for a password: no prompt, and ssh in batch mode (added to the
+repository's own ssh command; a `GIT_SSH_COMMAND` you set is left alone). Then it runs
+`bootstrap --all` (pass `--skip-dependencies` to leave the runtimes alone). A pull that cannot
+fast-forward fails sync after bootstrap has run.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind
 `origin` as of the last fetch, with the count and the command to run.

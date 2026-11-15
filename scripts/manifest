@@ -307,6 +307,8 @@ table == "instructions" {
   if ($1 == "" || $1 ~ / /) { refuse("not a computer name: \"" $1 "\""); next }
   if (!($2 in host_named)) { refuse("no table names a host \"" $2 "\""); next }
   if ($3 !~ /^(~\/|\/)./) { refuse("not a path that starts with ~/ or /: \"" $3 "\""); next }
+  # A .. step would let two spellings name one file: write the path without it.
+  if ($3 ~ /(^|\/)\.\.(\/|$)/) { refuse("a path with a .. step: \"" $3 "\""); next }
   # The file itself: ~/x and $HOME/x, or a doubled slash, are the same path.
   key = same_path($3)
   if (($1, key) in instruction_where) { refuse($3 " is named twice for " $1 " (first at " instruction_where[$1, key] ")"); next }

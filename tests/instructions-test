@@ -151,6 +151,17 @@ expect "^FAIL $on_home/.codex/AGENTS.md was changed since bootstrap built it" "$
 on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/rebuild.out" 2>&1
 expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/rebuild.out"
 rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/rebuild.out")"
+# A change made after bootstrap judged the file unchanged, and before it moves the new file into
+# place, is kept as well: a stand-in chmod (run in between) appends to the target.
+printf '## Long responses\n\nEnd a long reply with a short TLDR, always.\n' >"$sections/long-responses.md"
+mkdir -p "$test_home/late-bin"
+printf '#!/bin/sh\necho "LATE EDIT" >>"$LATE_TARGET"\nexec /bin/chmod "$@"\n' >"$test_home/late-bin/chmod"
+chmod +x "$test_home/late-bin/chmod"
+(LATE_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/late-bin:$PATH"; export LATE_TARGET PATH
+  on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/late.out" 2>&1
+expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/late.out"
+grep -q "LATE EDIT" "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/late.out")" || fail "the late change was not kept"
+rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/late.out")"
 # A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
 (TMPDIR="$test_home/no-such-folder"; export TMPDIR; on studio-mac "$repo_root/scripts/doctor" --host claude) >"$test_home/doctor.out" 2>&1 || true
 expect "^FAIL the instruction files could not be checked (scripts/instructions check exited [1-9]" "$test_home/doctor.out"
@@ -268,6 +279,7 @@ bad_row 'studio-mac|claude|~/.claude/CLAUDE.md|title missing' "no section file .
 bad_row 'studio-mac|claude|~/.claude/CLAUDE.md|title ../title' 'not a section name: "../title"'
 bad_row 'studio-mac|claude|~/.claude/CLAUDE.md| ' "names no section"
 bad_row 'travel-mac|factory|~/.factory/AGENTS.md|title' "travel-mac leaves out factory in computers.tsv"
+bad_row 'studio-mac|claude|~/.claude/../.claude/CLAUDE.md|title' "a path with a .. step"
 bad_row 'nowhere-mac|claude|~/.claude/CLAUDE.md|title' 'no computers.tsv names a computer "nowhere-mac"'
 printf 'studio-mac\tclaude\t~/.claude/CLAUDE.md\ttitle\nstudio-mac\tcodex\t~/.claude/CLAUDE.md\ttitle\n' >"$private/install/instructions.tsv"
 on studio-mac "$repo_root/scripts/manifest" instructions >"$test_home/bad.out" 2>&1 && fail "manifest took a file named twice"
