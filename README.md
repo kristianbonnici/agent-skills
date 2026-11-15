@@ -117,7 +117,8 @@ with a change is skipped, with the reason and the command to fix it. For each it
 of its default branch that are not on `origin` as of the last fetch, and it never pushes: push those
 yourself, so the other computers get them. When its standard input is not a terminal (a schedule, an
 agent), git fails rather than asks for a password: no prompt, and ssh in batch mode (added to the
-repository's own ssh command; a `GIT_SSH_COMMAND` you set is left alone). Then it runs
+repository's own ssh command when it starts with `ssh`; a `GIT_SSH_COMMAND` you set, or a command
+that wraps ssh, is left as it is and may still ask). Then it runs
 `bootstrap --all` (pass `--skip-dependencies` to leave the runtimes alone). A pull that cannot
 fast-forward fails sync after bootstrap has run.
 
