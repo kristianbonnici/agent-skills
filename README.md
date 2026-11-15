@@ -30,6 +30,29 @@ Preview changes without writing:
 
 Bootstrap is idempotent. It repairs managed symlinks but refuses to overwrite real files or directories it does not own.
 
+### Computers with different hosts
+
+When the computers don't all have the same agent tools, an `install/computers.tsv` (kept in the
+private repository, since computer names are private) says which hosts each one has: one row per
+computer, its name, then its hosts separated by spaces, as `install/hosts.tsv` names them.
+
+```text
+studio-mac	opencode factory antigravity antigravity-cli codex claude gemini
+travel-mac	opencode antigravity codex claude gemini
+```
+
+A computer is named by `scutil --get LocalHostName` on macOS and `hostname -s` elsewhere;
+`AGENT_SKILLS_COMPUTER` overrides it. A computer with no row, or no table at all, has every host.
+For a host its computer leaves out, bootstrap installs nothing and removes the links an earlier
+bootstrap made there, as safely as a retired link: only a link to exactly what this checkout
+installed, never a real file or someone else's link. Doctor skips that host's checks and says in one
+line which hosts it left out, and `--host` naming one of them stops with the reason.
+
+An `external` row in a `links.tsv` may end with the computers it is on, separated by spaces, for a
+tool installed on some computers only. Doctor expects that skill only there; an empty column means
+every computer. `./scripts/manifest computer` prints this computer's name, and
+`./scripts/manifest hosts` and `left-out` the hosts it has and leaves out.
+
 ### Private state
 
 Skills keep per-owner facts, such as the orchestrator's provider profile, in
@@ -88,13 +111,14 @@ agent-skills/
 
 ## Where skills are installed
 
-Three tables in `install/` say what is linked where; `scripts/bootstrap`, `scripts/doctor` and `scripts/uninstall` all act on them.
+The tables in `install/` say what is linked where; `scripts/bootstrap`, `scripts/doctor` and `scripts/uninstall` all act on them.
 
 | Table | One row per | Columns |
 |---|---|---|
 | `install/skills.tsv` | skill | `install` or `retired`, the skill's folder name, the hosts that get it |
 | `install/hosts.tsv` | folder a host reads skills from | host, its name in the table below, `link`, `adapter` or `retired`, the folder |
-| `install/links.tsv` | link that is not a skill's folder, such as a host's command file | host, mode, source, target |
+| `install/links.tsv` | link that is not a skill's folder, such as a host's command file | host, mode, source, target; for an `external` row, optionally the computers it is on |
+| `install/computers.tsv` (optional) | computer | the computer's name, the hosts it has ([Computers with different hosts](#computers-with-different-hosts)) |
 
 To give a host a skill, add the host to the skill's row. To take a skill away, or after renaming or removing it, name it in a `retired` row: bootstrap then removes the links an earlier version installed. `./scripts/manifest` prints every link the tables declare, and refuses tables that contradict themselves.
 

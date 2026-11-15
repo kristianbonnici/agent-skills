@@ -22,6 +22,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# A host this computer leaves out (install/computers.tsv) has nothing installed to remove.
+if [ "$host" != all ] && "$script_dir/manifest" left-out 2>/dev/null | grep -qxF -- "$host"; then
+  echo "uninstall: this computer ($("$script_dir/manifest" computer)) leaves out $host in install/computers.tsv, so nothing is installed for it; uninstall --all also removes the links an earlier bootstrap made for it" >&2
+  exit 1
+fi
+
 expand_target() {
   case "$1" in
     '~'/*) printf '%s/%s\n' "$HOME" "${1#\~/}" ;;
@@ -60,8 +66,13 @@ looks_retired() {
   return 1
 }
 
-# Every link the install tables declare, here and in the private repository.
+# Every link the install tables declare, here and in the private repository: this computer's, and
+# with --all those of the hosts it leaves out, in case an earlier bootstrap made them.
 rows=$("$script_dir/manifest" links) || exit 1
+if [ "$host" = all ]; then
+  away=$("$script_dir/manifest" away) || exit 1
+  rows=$(printf '%s\n%s\n' "$rows" "$away")
+fi
 while IFS=$(printf '\t') read -r row_host mode source target; do
   [ -n "$row_host" ] || continue
   [ "$host" = all ] || [ "$row_host" = "$host" ] || continue

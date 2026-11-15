@@ -1,26 +1,37 @@
 #!/bin/sh
-# Prints what the install manifests declare. Each repository of skills has three tables in install/:
-#   hosts.tsv   where each host looks for skills: host, label, mode, folder
-#   skills.tsv  which hosts get each skill: mode (install, vendor or retired), skill, hosts. A skill
-#               may sit in a group folder, named group/skill; hosts see it by its own name.
-#   links.tsv   any other link: host, mode, source, target
+# Prints what the install manifests declare. Each repository of skills has these tables in install/:
+#   hosts.tsv      where each host looks for skills: host, label, mode, folder
+#   skills.tsv     which hosts get each skill: mode (install, vendor or retired), skill, hosts. A
+#                  skill may sit in a group folder, named group/skill; hosts see it by its own name.
+#   links.tsv      any other link: host, mode, source, target, and for an external link, optionally,
+#                  the computers it is on (names separated by spaces; none means every computer)
+#   computers.tsv  optional: which hosts each computer has: computer, hosts. A computer with no row,
+#                  or no table at all, has every host.
 # The tables are read from this repository and, when it exists, the owner's private one
 # (AGENT_SKILLS_PRIVATE, by default agent-skills-private next to this repository; set it empty to
 # leave it out). bootstrap, doctor and uninstall read their links from here, so only this script
 # knows the tables.
 #
-#   manifest [links]   every link: host, mode, source, target. A source is an absolute path, except
-#                      for an external link, whose source names what installs it.
-#   manifest hosts     every host named
-#   manifest folders   every folder a host reads skills from: host, mode, folder
-#   manifest skills    every installed skill and the hosts that get it, by their labels
+# This computer is named by AGENT_SKILLS_COMPUTER when it is set, otherwise by
+# `scutil --get LocalHostName` on macOS and `hostname -s` elsewhere.
+#
+#   manifest [links]   every link this computer has: host, mode, source, target. A source is an
+#                      absolute path, except for an external link, whose source names what installs it.
+#   manifest away      the links of hosts this computer leaves out, and the external links of other
+#                      computers, in the same columns: bootstrap removes the ones it installed
+#   manifest hosts     every host this computer has
+#   manifest left-out  every host this computer leaves out (none without a row for it)
+#   manifest computer  this computer's name
+#   manifest folders   every folder a host of this computer reads skills from: host, mode, folder
+#   manifest skills    every installed skill and the hosts that get it, by their labels, on any computer
 #   manifest roots     every repository read, this one first
 #
 # --dir INSTALL_DIR, once or more, reads only those folders' tables instead. The first must have a
 # hosts.tsv; each needs a skills.tsv.
 #
-# Exits 1, printing nothing but the reasons, on a row it cannot read, a host no hosts.tsv names, a
-# skill named twice for one host, and a path claimed by two sources or both installed and retired.
+# Exits 1, printing nothing but the reasons, on a row it cannot read, a host no table names, a
+# skill named twice for one host, a path claimed by two sources or both installed and retired, a
+# computer named twice, and an external link on a computer no computers.tsv names.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -31,12 +42,12 @@ nl='
 '
 
 usage() {
-  echo "Usage: manifest [links | hosts | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
+  echo "Usage: manifest [links | away | hosts | left-out | computer | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    links|hosts|folders|skills|roots) what=$1; shift ;;
+    links|away|hosts|left-out|computer|folders|skills|roots) what=$1; shift ;;
     --dir) [ "$#" -ge 2 ] || { usage; exit 2; }; dirs="$dirs$2$nl"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -84,6 +95,20 @@ if [ "$what" = roots ]; then
   exit 0
 fi
 
+# This computer's name: its row in computers.tsv says which hosts it has.
+if [ -n "${AGENT_SKILLS_COMPUTER:-}" ]; then
+  computer=$AGENT_SKILLS_COMPUTER
+elif [ "$(uname -s)" = Darwin ] && computer=$(scutil --get LocalHostName 2>/dev/null) && [ -n "$computer" ]; then
+  :
+else
+  computer=$(hostname -s 2>/dev/null) || computer=
+fi
+if [ "$what" = computer ]; then
+  [ -n "$computer" ] || { echo "manifest: cannot tell this computer's name: set AGENT_SKILLS_COMPUTER" >&2; exit 1; }
+  printf '%s\n' "$computer"
+  exit 0
+fi
+
 while IFS= read -r dir; do
   [ -n "$dir" ] || continue
   set -- "$@" table=skills root="$(dirname -- "$dir")" "$dir/skills.tsv"
@@ -91,8 +116,15 @@ while IFS= read -r dir; do
 done <<EOF
 $table_dirs
 EOF
+# Computers last, so that a row may name a host from any table.
+while IFS= read -r dir; do
+  [ -n "$dir" ] || continue
+  [ ! -f "$dir/computers.tsv" ] || set -- "$@" table=computers root="$(dirname -- "$dir")" "$dir/computers.tsv"
+done <<EOF
+$table_dirs
+EOF
 
-awk -F '\t' -v what="$what" '
+awk -F '\t' -v what="$what" -v computer="$computer" '
 # Is there a folder at path? Quoted for sh, so any path is safe.
 function is_dir(path,    quoted) {
   quoted = path
@@ -112,7 +144,7 @@ function known_mode(mode) {
 }
 # One link. A path may be named twice only for the same source in the same mode (two hosts that
 # share a folder); anything else would leave what is installed there to the order of the rows.
-function add(host, mode, source, target) {
+function add(host, mode, source, target, computers) {
   if (mode == "retired") {
     if (target in live_source) {
       refuse(target " is both installed (" live_where[target] ") and retired")
@@ -137,6 +169,8 @@ function add(host, mode, source, target) {
   row_mode[rows] = mode
   row_source[rows] = source
   row_target[rows] = target
+  row_computers[rows] = computers
+  row_where[rows] = here()
 }
 function name_host(host) {
   if (host in host_named) return
@@ -204,26 +238,74 @@ table == "skills" {
 }
 
 table == "links" {
-  if (NF != 4) { refuse("expected four columns: host, mode, source, target"); next }
+  if (NF != 4 && NF != 5) { refuse("expected four columns: host, mode, source, target (and computers, for an external link)"); next }
   # external: something else installs it (a tool, or a host itself); listed so doctor knows it.
   if (!known_mode($2) && $2 != "external") {
     refuse("unknown mode \"" $2 "\": expected link, adapter, retired or external"); next
   }
+  # The computers an external link is on: a tool may be installed on one computer and not another.
+  # Bootstrap installs every other link wherever the host is, so only an external one names them.
+  computers = (NF == 5) ? $5 : ""
+  gsub(/^ +| +$/, "", computers)
+  if (computers != "" && $2 != "external") { refuse("only an external link names its computers"); next }
   name_host($1)
-  add($1, $2, $2 == "external" ? $3 : root "/" $3, $4)
+  add($1, $2, $2 == "external" ? $3 : root "/" $3, $4, computers)
+  next
+}
+
+table == "computers" {
+  if (NF != 2) { refuse("expected two columns: computer, hosts"); next }
+  if ($1 == "" || $1 ~ / /) { refuse("not a computer name: \"" $1 "\""); next }
+  if ($1 in computer_where) { refuse($1 " is named twice (first at " computer_where[$1] ")"); next }
+  computer_where[$1] = here()
+  computer_count++
+  pieces = split($2, named, / +/)
+  used = 0
+  for (piece = 1; piece <= pieces; piece++) {
+    if (named[piece] == "") continue
+    used++
+    if (!(named[piece] in host_named)) { refuse("no table names a host \"" named[piece] "\""); continue }
+    computer_host[$1, named[piece]] = 1
+  }
+  if (used == 0) refuse($1 " names no host")
   next
 }
 
 END {
+  # A computer an external link names must have a row, when there is a table: a misspelt name
+  # would leave the link expected nowhere.
+  for (row = 1; row <= rows; row++) {
+    if (row_computers[row] == "") continue
+    pieces = split(row_computers[row], named, / +/)
+    for (piece = 1; piece <= pieces; piece++) {
+      if (named[piece] == "" || named[piece] in computer_where || computer_count == 0) continue
+      printf "manifest: %s: no computers.tsv names a computer \"%s\"\n", row_where[row], named[piece] > "/dev/stderr"
+      refused = 1
+    }
+  }
   if (refused) exit 1
-  if (what == "links") {
-    for (row = 1; row <= rows; row++)
+  # Without a row for this computer, it has every host.
+  has_row = (computer != "" && computer in computer_where)
+  for (host = 1; host <= host_count; host++)
+    host_here[host_names[host]] = !has_row || ((computer, host_names[host]) in computer_host)
+  for (row = 1; row <= rows; row++) {
+    on_computer = row_computers[row] == "" || computer != "" && index(" " row_computers[row] " ", " " computer " ") > 0
+    row_here[row] = host_here[row_host[row]] && on_computer
+    if (row_here[row]) here_target[row_target[row]] = 1
+  }
+  if (what == "links" || what == "away") {
+    # A folder two hosts share keeps its links while one of them is here.
+    for (row = 1; row <= rows; row++) {
+      if (what == "links" ? !row_here[row] : (row_here[row] || row_target[row] in here_target)) continue
       printf "%s\t%s\t%s\t%s\n", row_host[row], row_mode[row], row_source[row], row_target[row]
-  } else if (what == "hosts") {
-    for (host = 1; host <= host_count; host++) print host_names[host]
+    }
+  } else if (what == "hosts" || what == "left-out") {
+    for (host = 1; host <= host_count; host++)
+      if (host_here[host_names[host]] == (what == "hosts")) print host_names[host]
   } else if (what == "folders") {
     for (folder = 1; folder <= folders; folder++)
-      printf "%s\t%s\t%s\n", folder_host[folder], folder_mode[folder], folder_path[folder]
+      if (host_here[folder_host[folder]])
+        printf "%s\t%s\t%s\n", folder_host[folder], folder_mode[folder], folder_path[folder]
   } else {
     # Labels in the order hosts.tsv names the hosts, each once: two hosts may share a label.
     for (skill = 1; skill <= skill_count; skill++) {

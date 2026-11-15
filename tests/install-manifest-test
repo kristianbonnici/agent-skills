@@ -6,6 +6,9 @@
 # path both installed and retired, and a row it cannot read, printing no links when it does.
 # Tables from two repositories: a private one adds vendor/ skills and external links, may name the
 # other's hosts but not claim its paths, and is found next to this one or by AGENT_SKILLS_PRIVATE.
+# Two made-up computers: computers.tsv leaves hosts out of one, whose links move to the away view,
+# an external link may be on some computers only, and a computer with no row or no table has every
+# host.
 # Then this repository's own tables: every skill folder is installed somewhere, every source
 # exists, and the README's table of skills names each skill once with the hosts the manifest gives.
 set -eu
@@ -187,6 +190,98 @@ test "$status" = 2
 # The folders view: every folder a host reads, retired ones too.
 test "$("$manifest" folders --dir "$base" | wc -l | tr -d ' ')" = 5
 "$manifest" folders --dir "$base" | grep -q "^old	retired	~/.old/skills$"
+
+# Two computers. studio-mac has every host; travel-mac leaves out beta (adapter folders), old and
+# extra; a tool installs tools-own only on studio-mac. A view describes the computer it runs on,
+# named by AGENT_SKILLS_COMPUTER; the skills view, which the README shows, every computer.
+mkdir "$work/computers"
+cp "$base"/*.tsv "$work/computers/"
+row alpha external "a tool" '~/.alpha/skills/tools-own' studio-mac >>"$work/computers/links.tsv"
+row alpha external "a tool" '~/.alpha/skills/everywhere' '' >>"$work/computers/links.tsv"
+{
+  echo "# computer, hosts"
+  row studio-mac "alpha beta gamma old extra"
+  row travel-mac "alpha  gamma"
+} >"$work/computers/computers.tsv"
+on() { AGENT_SKILLS_COMPUTER=$1 "$manifest" "$2" --dir "$work/computers" | sed "s#	$work/#	#"; }
+test "$(on travel-mac computer)" = travel-mac
+test "$(on travel-mac hosts | paste -sd' ' -)" = "alpha gamma"
+test "$(on travel-mac left-out | paste -sd' ' -)" = "beta old extra"
+test "$(on studio-mac hosts | paste -sd' ' -)" = "alpha beta gamma old extra"
+test -z "$(on studio-mac left-out)"
+{
+  cat "$work/links.expected"
+  row alpha external "a tool" '~/.alpha/skills/tools-own'
+  row alpha external "a tool" '~/.alpha/skills/everywhere'
+} >"$work/studio.expected"
+on studio-mac links | diff "$work/studio.expected" -
+test -z "$(on studio-mac away)"
+grep -v "^beta	\|^old	\|^extra	" "$work/links.expected" >"$work/travel.expected"
+row alpha external "a tool" '~/.alpha/skills/everywhere' >>"$work/travel.expected"
+on travel-mac links | diff "$work/travel.expected" -
+{
+  row beta adapter skills/one '~/.beta/skills/one'
+  row beta adapter skills/two '~/.beta/skills/two'
+  row old retired skills/two '~/.old/skills/two'
+  row extra retired adapters/extra/old.md '~/.extra/old.md'
+  row alpha external "a tool" '~/.alpha/skills/tools-own'
+} >"$work/travel-away.expected"
+on travel-mac away | diff "$work/travel-away.expected" -
+test "$(on travel-mac folders | cut -f3 | paste -sd' ' -)" = "~/.alpha/skills ~/.shared/skills ~/.gamma/skills"
+on travel-mac skills | diff "$work/skills.expected" -
+# A computer with no row has every host, as does any computer with no table.
+grep -v "tools-own" "$work/studio.expected" >"$work/spare.expected"
+on spare-mac links | diff "$work/spare.expected" -
+test -z "$(on spare-mac left-out)"
+test "$(AGENT_SKILLS_COMPUTER=travel-mac "$manifest" left-out --dir "$base")" = ""
+links_of --dir "$base" | diff "$work/links.expected" -
+AGENT_SKILLS_COMPUTER=travel-mac "$manifest" links --dir "$base" | sed "s#	$work/#	#" | diff "$work/links.expected" -
+# Without AGENT_SKILLS_COMPUTER, the name is the computer's own.
+own_name=$(if [ "$(uname -s)" = Darwin ]; then scutil --get LocalHostName 2>/dev/null || hostname -s; else hostname -s; fi)
+test "$(unset AGENT_SKILLS_COMPUTER; "$manifest" computer)" = "$own_name"
+# A folder two hosts share keeps its links while one of them is on the computer.
+mkdir "$work/computers-shared"
+cp "$base"/*.tsv "$work/computers-shared/"
+row twin Twin link '~/.alpha/skills' >>"$work/computers-shared/hosts.tsv"
+row install four "alpha twin" >>"$work/computers-shared/skills.tsv"
+printf 'only-alpha\talpha\nonly-twin\ttwin\n' >"$work/computers-shared/computers.tsv"
+for name in only-alpha only-twin; do
+  AGENT_SKILLS_COMPUTER=$name "$manifest" links --dir "$work/computers-shared" | grep -q "	~/.alpha/skills/four$"
+  if AGENT_SKILLS_COMPUTER=$name "$manifest" away --dir "$work/computers-shared" | grep -q "	~/.alpha/skills/four$"; then
+    echo "$name would remove a link another of its hosts uses" >&2; exit 1
+  fi
+done
+# Refused: a computer named twice, a host no table names, a row with no host or the wrong columns,
+# computers on a link bootstrap installs, and an external link on a computer the table doesn't name.
+computers_refused() {
+  case_number=$((case_number + 1))
+  refused_dir="$work/refused-$case_number"
+  mkdir "$refused_dir"
+  cp "$work/computers"/*.tsv "$refused_dir/"
+  printf '%s\n' "$2" >>"$refused_dir/$1"
+  if "$manifest" links --dir "$refused_dir" >"$refused_dir/out" 2>"$refused_dir/err"; then
+    echo "not refused: $2 in $1" >&2; exit 1
+  fi
+  [ ! -s "$refused_dir/out" ] || { echo "printed links although it refused: $2 in $1" >&2; exit 1; }
+  grep -q -- "$3" "$refused_dir/err" || { echo "refused $2 in $1, but not for \"$3\":" >&2; cat "$refused_dir/err" >&2; exit 1; }
+}
+computers_refused computers.tsv "travel-mac	alpha" 'computers.tsv:4: travel-mac is named twice (first at .*computers.tsv:3)'
+computers_refused computers.tsv "other-mac	alpha nobody" 'no table names a host "nobody"'
+computers_refused computers.tsv "other-mac	" 'other-mac names no host'
+computers_refused computers.tsv "other-mac" 'expected two columns: computer, hosts'
+computers_refused computers.tsv "other mac	alpha" 'not a computer name: "other mac"'
+computers_refused links.tsv "alpha	link	adapters/x	~/.alpha/x	studio-mac" 'only an external link names its computers'
+computers_refused links.tsv "alpha	external	a tool	~/.alpha/x	studio-mac nowhere-mac" 'links.tsv:5: no computers.tsv names a computer "nowhere-mac"'
+computers_refused links.tsv "alpha	external	a tool	~/.alpha/x	a	b" 'expected four columns'
+# With no table, an external link may name any computer: it is expected only there.
+mkdir "$work/no-computers"
+cp "$base"/*.tsv "$work/no-computers/"
+row alpha external "a tool" '~/.alpha/skills/tools-own' studio-mac >>"$work/no-computers/links.tsv"
+AGENT_SKILLS_COMPUTER=studio-mac "$manifest" links --dir "$work/no-computers" | grep -q "tools-own"
+AGENT_SKILLS_COMPUTER=travel-mac "$manifest" away --dir "$work/no-computers" | grep -q "tools-own"
+if AGENT_SKILLS_COMPUTER=travel-mac "$manifest" links --dir "$work/no-computers" | grep -q "tools-own"; then
+  echo "travel-mac expects studio-mac's tool" >&2; exit 1
+fi
 
 # Two repositories. The second adds a host, a pinned copy in vendor/, its own skill, and an external
 # link; it may name the first one's hosts.

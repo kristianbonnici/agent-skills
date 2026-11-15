@@ -245,6 +245,105 @@ grep -q "has no install folder" "$test_home/missing.out"
 HOME="$test_home" "$repo_root/scripts/bootstrap" --host claude --skip-dependencies >/dev/null 2>&1
 export AGENT_SKILLS_PRIVATE=
 
+# Two computers that don't have the same hosts: studio-mac has every host, travel-mac leaves out
+# Factory (linked skills) and the Antigravity CLI (adapter folders). A tool installs studio-tool only
+# on studio-mac. Everything above ran with no computers.tsv, so with every host.
+computers=$(CDPATH= cd -- "$test_home" && pwd)/computers-private
+mkdir -p "$computers/install" "$computers/skills/roaming"
+echo roaming >"$computers/skills/roaming/SKILL.md"
+printf 'install\troaming\tclaude factory\n' >"$computers/install/skills.tsv"
+printf 'claude\texternal\ta tool\t~/.claude/skills/studio-tool\tstudio-mac\nclaude\texternal\ta tool\t~/.claude/skills/everywhere-tool\n' >"$computers/install/links.tsv"
+printf '# computer\thosts\nstudio-mac\topencode factory antigravity antigravity-cli codex claude gemini\ntravel-mac\topencode antigravity codex claude gemini\n' >"$computers/install/computers.tsv"
+export AGENT_SKILLS_PRIVATE="$computers"
+on() {
+  on_computer=$1
+  shift
+  AGENT_SKILLS_COMPUTER="$on_computer" HOME="$test_home" "$@"
+}
+# An earlier bootstrap on travel-mac, from before computers.tsv, linked every host as studio-mac does.
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+test "$(readlink "$test_home/.factory/skills/roaming")" = "$computers/skills/roaming"
+test -L "$test_home/.factory/skills/product-design"
+test -L "$test_home/.gemini/antigravity-cli/skills/product-design/SKILL.md"
+# Someone's own folder where a link would go, a link of someone else's, and a file in an adapter
+# folder: travel-mac's bootstrap keeps all three.
+rm "$test_home/.factory/skills/roaming"
+mkdir "$test_home/.factory/skills/roaming"
+echo own >"$test_home/.factory/skills/roaming/SKILL.md"
+ln -s "$test_home/elsewhere/afk" "$test_home/.factory/skills/afk"
+echo notes >"$test_home/.gemini/antigravity-cli/skills/product-design/notes.md"
+test "$(on travel-mac "$repo_root/scripts/manifest" left-out | paste -sd' ' -)" = "factory antigravity-cli"
+test "$(on travel-mac "$repo_root/scripts/manifest" computer)" = travel-mac
+# Doctor on travel-mac checks nothing of those hosts, says so in one line with what is left there,
+# and expects studio-tool only on studio-mac.
+on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-travel.out" 2>&1 || true
+grep -q "^SKIP hosts this computer (travel-mac) leaves out in install/computers.tsv: factory antigravity-cli; [0-9]* link(s) an earlier bootstrap made for them are still there" "$test_home/doctor-travel.out"
+test "$(grep -c "leaves out" "$test_home/doctor-travel.out")" = 1
+if grep -v "^SKIP hosts this computer" "$test_home/doctor-travel.out" | grep -q "\.factory\|antigravity-cli\|Factory\|studio-tool"; then
+  echo "doctor on travel-mac checked a host it leaves out, or studio-mac's tool:" >&2
+  grep "\.factory\|antigravity-cli\|Factory\|studio-tool" "$test_home/doctor-travel.out" >&2; exit 1
+fi
+grep -q "WARN $test_home/.claude/skills/everywhere-tool is listed as installed by a tool, but is not there" "$test_home/doctor-travel.out"
+on studio-mac "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-studio.out" 2>&1 || true
+grep -q "WARN $test_home/.claude/skills/studio-tool is listed as installed by a tool, but is not there" "$test_home/doctor-studio.out"
+if grep -q "leaves out" "$test_home/doctor-studio.out"; then echo "doctor on studio-mac named a host left out" >&2; exit 1; fi
+# studio-tool where the table doesn't expect it is still in a table: no warning.
+mkdir "$test_home/.claude/skills/studio-tool"
+on travel-mac "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-travel.out" 2>&1 || true
+if grep -q "studio-tool" "$test_home/doctor-travel.out"; then echo "doctor on travel-mac warned about studio-mac's tool" >&2; exit 1; fi
+rmdir "$test_home/.claude/skills/studio-tool"
+# --host for a host left out stops every script with the reason, before it changes anything.
+for script in bootstrap doctor uninstall; do
+  if on travel-mac "$repo_root/scripts/$script" --host factory >"$test_home/host-left-out.out" 2>&1; then
+    echo "$script --host factory ran on travel-mac, which leaves factory out" >&2; exit 1
+  fi
+  grep -q "this computer (travel-mac) leaves out factory in install/computers.tsv" "$test_home/host-left-out.out"
+done
+test -L "$test_home/.factory/skills/product-design"
+# A dry run says what bootstrap on travel-mac removes and removes nothing.
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >"$test_home/travel-dry.out" 2>&1
+grep -q "DRY RUN: rm $test_home/.factory/skills/product-design" "$test_home/travel-dry.out"
+test -L "$test_home/.factory/skills/product-design"
+if grep -q "REMOVED" "$test_home/travel-dry.out"; then echo "a dry run says it removed something" >&2; exit 1; fi
+# Bootstrap on travel-mac makes nothing for those hosts and removes the links it made there earlier.
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/travel.out" 2>&1
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+grep -q "REMOVED $test_home/.factory/skills/product-design: this computer leaves out factory" "$test_home/travel.out"
+test ! -e "$test_home/.factory/skills/product-design" && test ! -L "$test_home/.factory/skills/product-design"
+if find "$test_home/.factory/skills" -type l | grep -v "/afk$" | grep -q .; then
+  echo "bootstrap on travel-mac left links in a host it leaves out:" >&2; find "$test_home/.factory/skills" -type l >&2; exit 1
+fi
+test "$(cat "$test_home/.factory/skills/roaming/SKILL.md")" = own
+test "$(readlink "$test_home/.factory/skills/afk")" = "$test_home/elsewhere/afk"
+rm -rf "$test_home/.factory/skills/roaming" "$test_home/.factory/skills/afk"
+test ! -e "$test_home/.gemini/antigravity-cli/skills/product-design/SKILL.md"
+test -f "$test_home/.gemini/antigravity-cli/skills/product-design/notes.md"
+# The hosts travel-mac has keep their links, and an adapter folder left empty is removed.
+test "$(readlink "$test_home/.claude/skills/roaming")" = "$computers/skills/roaming"
+test -L "$test_home/.config/opencode/skills/product-design"
+test -f "$test_home/.gemini/config/skills/product-design/SKILL.md"
+rm "$test_home/.gemini/antigravity-cli/skills/product-design/notes.md"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+test -d "$test_home/.gemini/antigravity-cli/skills/product-design"
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+test ! -e "$test_home/.gemini/antigravity-cli/skills/product-design"
+on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-travel.out" 2>&1 || true
+grep -q "^SKIP hosts this computer (travel-mac) leaves out in install/computers.tsv: factory antigravity-cli$" "$test_home/doctor-travel.out"
+# Uninstall on travel-mac also removes links an earlier bootstrap made for a host it leaves out.
+on studio-mac "$repo_root/scripts/bootstrap" --host factory --skip-dependencies >/dev/null 2>&1
+test -L "$test_home/.factory/skills/product-design"
+on travel-mac "$repo_root/scripts/uninstall" --all >/dev/null 2>&1
+test ! -L "$test_home/.factory/skills/product-design"
+test ! -L "$test_home/.factory/skills/roaming"
+# A computer with no row has every host.
+test -z "$(on spare-mac "$repo_root/scripts/manifest" left-out)"
+on spare-mac "$repo_root/scripts/bootstrap" --host factory --skip-dependencies >/dev/null 2>&1
+test -L "$test_home/.factory/skills/product-design"
+on spare-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-spare.out" 2>&1 || true
+if grep -q "leaves out" "$test_home/doctor-spare.out"; then echo "doctor left out a host on a computer with no row" >&2; exit 1; fi
+grep -q "WARN $test_home/.claude/skills/studio-tool is listed" "$test_home/doctor-spare.out" && { echo "studio-mac's tool expected on spare-mac" >&2; exit 1; }
+export AGENT_SKILLS_PRIVATE=
+
 # Uninstall removes a retired link that is still there too.
 ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null

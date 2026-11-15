@@ -17,6 +17,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+# A host this computer leaves out (install/computers.tsv) has nothing to check.
+if [ "$host" != all ] && "$script_dir/manifest" left-out 2>/dev/null | grep -qxF -- "$host"; then
+  echo "doctor: this computer ($("$script_dir/manifest" computer)) leaves out $host in install/computers.tsv, so nothing of it is checked" >&2
+  exit 1
+fi
+
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*" >&2; failures=$((failures + 1)); }
 
@@ -52,9 +58,39 @@ looks_retired() {
   return 1
 }
 
-# Every link the install tables declare, here and in the private repository.
+# Every link the install tables declare for this computer, here and in the private repository.
 rows=$("$script_dir/manifest" links) || { echo "FAIL the install tables cannot be read" >&2; exit 1; }
 roots=$("$script_dir/manifest" roots)
+# The links of hosts this computer leaves out, and external links of other computers: none is checked.
+away=$("$script_dir/manifest" away)
+left_out=$("$script_dir/manifest" left-out | paste -sd' ' -)
+# Is $1 a host this computer has that the run checks?
+checks_host() {
+  [ "$host" = all ] || [ "$host" = "$1" ] || return 1
+  case " $left_out " in *" $1 "*) return 1 ;; esac
+}
+
+# One line for the hosts left out, with the links an earlier bootstrap made for them still there.
+if [ -n "$left_out" ] && [ "$host" = all ]; then
+  leftover=0
+  while IFS=$(printf '\t') read -r row_host mode source target; do
+    [ -n "$row_host" ] || continue
+    target_path=$(expand_target "$target")
+    case "$mode" in
+      link|retired) ! is_retired_link "$target_path" "$source" || leftover=$((leftover + 1)) ;;
+      adapter)
+        for name in SKILL.md agents references scripts assets; do
+          ! is_retired_link "$target_path/$name" "$source/$name" || leftover=$((leftover + 1))
+        done
+        ;;
+    esac
+  done <<EOF
+$away
+EOF
+  leftover_note=
+  [ "$leftover" -eq 0 ] || leftover_note="; $leftover link(s) an earlier bootstrap made for them are still there: run scripts/bootstrap --all to remove them"
+  echo "SKIP hosts this computer ($("$script_dir/manifest" computer)) leaves out in install/computers.tsv: $left_out$leftover_note"
+fi
 
 # Hosts read each repository's own files through the links, so what is checked out is what every
 # agent runs: another branch, or an installed file changed and not committed, is already live.
@@ -149,8 +185,10 @@ EOF
 
 # Anything in a host's skills folder that no table names: installed by hand or by a tool, and so
 # outside what this repository knows about. A warning: list it, as external if a tool installs it.
+# An external link of another computer counts as listed: the table knows it.
 listed=$(printf '%s
-' "$rows" | awk -F '	' '$2 != "retired" { print $4 }')
+%s
+' "$rows" "$away" | awk -F '	' '$2 != "retired" { print $4 }')
 "$script_dir/manifest" folders | awk -F '	' -v h="$host" '$2 != "retired" && (h == "all" || $1 == h) { print $3 }' | sort -u |
 while IFS= read -r folder; do
   folder_path=$(expand_target "$folder")
@@ -292,7 +330,7 @@ if [ "$host" = all ] || printf '%s\n' "$rows" | awk -F '\t' -v h="$host" -v s="$
   done
 fi
 
-if [ "$host" = all ] || [ "$host" = opencode ]; then
+if checks_host opencode; then
   if command -v opencode >/dev/null 2>&1; then
     # OpenCode 2 lists skills through its background service (`opencode api
     # skill.list`); the list can come back empty while the service still loads
@@ -319,11 +357,11 @@ if [ "$host" = all ] || [ "$host" = opencode ]; then
   fi
 fi
 
-if [ "$host" = all ] || [ "$host" = factory ]; then
+if checks_host factory; then
   command -v droid >/dev/null 2>&1 && pass "Factory Droid available" || fail "Factory Droid missing"
 fi
 
-if [ "$host" = all ] || [ "$host" = antigravity ]; then
+if checks_host antigravity; then
   if [ -d "/Applications/Antigravity.app" ] || [ -d "/Applications/Antigravity IDE.app" ] || [ -x "$HOME/.antigravity-ide/antigravity-ide/bin/antigravity-ide" ]; then
     pass "Google Antigravity available"
   else

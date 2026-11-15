@@ -14,13 +14,16 @@ install_links=1
 install_dependencies=1
 
 usage() {
-  # The hosts are the ones the install manifests name, not a second list kept here.
+  # The hosts are the ones the install manifests give this computer, not a second list kept here.
   hosts=$("$script_dir/manifest" hosts 2>/dev/null | paste -sd, - | sed 's/,/, /g')
   cat >&2 <<EOF
 Usage: bootstrap [--all | --host HOST] [--dry-run] [--skip-dependencies]
        bootstrap --dependencies [--dry-run]
 
 Hosts: $hosts
+
+A host this computer leaves out (install/computers.tsv) gets nothing, and --all removes the links
+an earlier bootstrap made for it.
 
 Also links the files of a private state repository (AGENT_SKILLS_STATE, by default
 agent-skills-state next to this repository) into \${XDG_STATE_HOME:-~/.local/state}/agent-skills.
@@ -42,6 +45,12 @@ while [ "$#" -gt 0 ]; do
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+# A host this computer leaves out gets nothing: --all removes what an earlier run made for it.
+if [ "$host" != all ] && "$script_dir/manifest" left-out 2>/dev/null | grep -qxF -- "$host"; then
+  echo "bootstrap: this computer ($("$script_dir/manifest" computer)) leaves out $host in install/computers.tsv, so nothing is installed for it; bootstrap --all removes the links an earlier run made for it" >&2
+  exit 1
+fi
 
 expand_target() {
   case "$1" in
@@ -127,6 +136,29 @@ retire_one() {
   fi
 }
 
+# A host this computer leaves out: the links an earlier bootstrap made for it are removed, as safely
+# as a retired link (only a link to exactly the source this checkout installed), and an adapter
+# folder that is left empty. Anything else there is kept.
+leave_one() {
+  leave_source=$1
+  leave_target=$2
+  if is_retired_link "$leave_target" "$leave_source"; then
+    run rm "$leave_target"
+    [ "$dry_run" -eq 1 ] || echo "REMOVED $leave_target: this computer leaves out $row_host"
+  fi
+}
+leave_adapter() {
+  leave_parts=$1
+  leave_folder=$2
+  [ -d "$leave_folder" ] && [ ! -L "$leave_folder" ] || return 0
+  for name in SKILL.md agents references scripts assets; do
+    leave_one "$leave_parts/$name" "$leave_folder/$name"
+  done
+  if [ "$dry_run" -eq 0 ] && [ -z "$(find "$leave_folder" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    rmdir "$leave_folder"
+  fi
+}
+
 selected_product_design=0
 selected_excalidraw_drawing=0
 if [ "$install_links" -eq 1 ]; then
@@ -152,6 +184,21 @@ if [ "$install_links" -eq 1 ]; then
   done <<EOF
 $rows
 EOF
+
+  # The links of hosts this computer leaves out. Only --all: --host for one of them stopped above.
+  if [ "$host" = all ]; then
+    away=$("$script_dir/manifest" away) || exit 1
+    while IFS=$(printf '\t') read -r row_host mode source target; do
+      [ -n "$row_host" ] || continue
+      target_path=$(expand_target "$target")
+      case "$mode" in
+        link|retired) leave_one "$source" "$target_path" ;;
+        adapter) leave_adapter "$source" "$target_path" ;;
+      esac
+    done <<EOF
+$away
+EOF
+  fi
 
   if [ -d "$state_repo/.git" ]; then
     for state_file in "$state_repo"/*/*; do
