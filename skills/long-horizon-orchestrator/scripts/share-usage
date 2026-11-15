@@ -143,7 +143,8 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
 def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:
     branch = f"lho/{run_dir.name}-briefs"
     head = fetch_head(state, remote, branch)
-    listed = git(state, "ls-tree", "-d", "--name-only", head, "computers/", check=False).stdout.split()
+    # a listing that fails stops here, so no earlier copy is taken for one the branch dropped
+    listed = git(state, "ls-tree", "-d", "--name-only", head, "computers/").stdout.split()
     names = [n.split("/", 1)[1] for n in listed if n.startswith("computers/")]
     arrived = []
     for name in names:

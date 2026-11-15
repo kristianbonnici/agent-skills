@@ -3403,6 +3403,23 @@ test "$status" -eq 1 && test "$(git -C "$multi/state.git" rev-parse lho/run-x-br
 # and a fetch drops the copies an earlier fetch made for that computer, which the branch no longer has
 "$scripts/share-usage" fetch "$multi/fetched/run-x" --state "$multi/studio-state" | grep -q '^share-usage: spare-mac: nothing on the branch now; removed the earlier copies$'
 test ! -e "$multi/fetched/run-x/computers/spare-mac/usage/machine.jsonl"
+# a branch whose listing fails takes no earlier copy: fetch stops with the error
+python3 -I - "$scripts/share-usage" "$multi/studio/run-x" "$multi/studio-state" <<'EOF'
+import os, runpy, subprocess, sys
+from pathlib import Path
+script, run_dir, state = sys.argv[1:4]
+mod = runpy.run_path(script, run_name="share_usage")
+real = mod["git"]
+def failing(repo, *args, **kw):
+    if args[:1] == ("ls-tree",):
+        raise RuntimeError("git ls-tree failed: made-up damaged object")
+    return real(repo, *args, **kw)
+mod["fetch"].__globals__["git"] = failing
+kept = Path(run_dir, "computers", "den-mac", "usage", "machine.jsonl")
+assert kept.is_file()
+assert mod["main"](["fetch", run_dir, "--state", state]) == 1
+assert kept.is_file(), "a failed listing removed an earlier copy"
+EOF
 
 # share-usage fetch on studio-mac: den-mac's files land under the run directory, attic-mac is named
 "$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" --expect den-mac,attic-mac > "$multi/fetch.out"
