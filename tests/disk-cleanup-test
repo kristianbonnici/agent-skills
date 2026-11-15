@@ -369,6 +369,8 @@ assert waiting.poll() is None and read() == laid, "init wrote while another held
 impatient = subprocess.run([script, "init"], capture_output=True, text=True, env={
     **os.environ, "XDG_STATE_HOME": state("den-mac"), "DISK_CLEANUP_MACHINE": "den-mac", "DISK_CLEANUP_LOCK_WAIT": "0.5"})
 assert impatient.returncode == 1 and "has been writing" in impatient.stderr and read() == laid, impatient
+garbled = subprocess.run([script, "show"], capture_output=True, text=True, env={**os.environ, "DISK_CLEANUP_LOCK_WAIT": "soon"})
+assert garbled.returncode == 0 and "Traceback" not in garbled.stderr, garbled
 fcntl.flock(folder, fcntl.LOCK_UN)
 os.close(folder)
 assert "added a section for travel-mac" in finish(waiting)

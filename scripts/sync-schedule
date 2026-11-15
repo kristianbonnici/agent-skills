@@ -310,8 +310,10 @@ install() {
   # Never over a file that appeared meanwhile.
   mv -n "$next" "$plist" 2>/dev/null
   if [ -e "$next" ]; then
-    echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written); the agents that were there are in $backups" >&2
-    judge_staged
+    # The agents that were there go back, and the one that ran is loaded again.
+    unstage_all
+    [ ! -f "$plist" ] || launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1 || true
+    echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written); the agents that were there were put back" >&2
     exit 1
   fi
   judge_staged

@@ -221,6 +221,7 @@ fi
 expect "^KEEP $on_home/.codex/AGENTS.md: another program wrote it while bootstrap was rebuilding it" "$test_home/held.out"
 test "$(cat "$on_home/.codex/AGENTS.md")" = "Saved by an editor" || fail "the editor's file was moved over"
 find "$on_home/.codex" -name 'AGENTS.md.changed-*' | grep -q . || fail "the file moved aside was not kept"
+expect "; the file it replaced is kept as $on_home/.codex/AGENTS.md.changed-" "$test_home/held.out"
 find "$on_home/.codex" -name 'AGENTS.md.changed-*' -exec rm {} +
 test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
 rm "$on_home/.codex/AGENTS.md"

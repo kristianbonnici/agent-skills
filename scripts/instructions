@@ -145,12 +145,16 @@ held=
 held_target=
 # A file moved aside is never deleted on the way out: it goes back where it was if nothing took its
 # place, or else stays as a backup beside it.
+# Sets $released to where it went. An adopted file's backup keeps the name the owner is told about.
+released=
 release_held() {
+  released=
   [ -n "$held" ] && [ -e "$held" ] || return 0
   if [ ! -e "$held_target" ] && [ ! -L "$held_target" ]; then
-    mv "$held" "$held_target"
+    mv "$held" "$held_target" && released=$held_target
   else
-    mv "$held" "$(backup_name "$held_target" changed)"
+    released=$(backup_name "$held_target" "${held_keep_as:-changed}")
+    mv "$held" "$released" || released=
   fi
 }
 trap 'release_held; rm -rf "$scratch"; [ -z "$next_file" ] || rm -f "$next_file"' EXIT
@@ -283,6 +287,7 @@ while IFS= read -r row; do
           # missing.
           held=$(mktemp "$target_dir/.agent-skills-instructions-held.XXXXXX")
           held_target=$target_path
+          held_keep_as=$keep_as
           mv -f "$target_path" "$held"
         fi
         # The new file goes in only where nothing is: ln never replaces a file.
@@ -314,11 +319,13 @@ while IFS= read -r row; do
           if [ -e "$next_file" ]; then
             rm -f "$next_file"
             next_file=
-            echo "KEEP $target_path: another program wrote it while bootstrap was rebuilding it, or it can't be written; run scripts/bootstrap again" >&2
-            status=1
             # What was moved aside goes back, or stays as a backup if something took its place.
             release_held
             held=
+            note=
+            [ -z "$released" ] || [ "$released" = "$target_path" ] || note="; the file it replaced is kept as $released"
+            echo "KEEP $target_path: another program wrote it while bootstrap was rebuilding it, or it can't be written; run scripts/bootstrap again$note" >&2
+            status=1
             continue
           fi
         fi

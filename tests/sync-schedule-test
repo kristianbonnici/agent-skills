@@ -228,6 +228,18 @@ if command -v chflags >/dev/null 2>&1; then
   "$sync" --schedule >"$work/out" 2>&1 || fail "--schedule failed once the file could move"
 fi
 
+# The new agent can't go in (a stand-in mv refuses it): the agent that was there goes back, loaded.
+cp "$plist" "$work/before-fail.plist"
+mkdir -p "$work/refuse-bin"
+printf '#!/bin/sh\ncase "$*" in *.agent-skills-sync.*com.agent-skills.sync.plist) exit 1 ;; esac\nexec /bin/mv "$@"\n' >"$work/refuse-bin/mv"
+chmod +x "$work/refuse-bin/mv"
+: >"$work/launchctl.log"
+if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 06:00 >"$work/out" 2>&1; then fail "--schedule passed when the new agent couldn't go in"; fi
+expect "^FAIL could not put the new launch agent at $plist" "$work/out"
+cmp -s "$plist" "$work/before-fail.plist" || fail "the agent that was there did not go back"
+expect "^bootstrap gui/$uid $plist$" "$work/launchctl.log"
+grep -qxF "gui/$uid/com.agent-skills.sync" "$work/loaded" || fail "the agent that was there is not loaded again"
+
 # Never from a linked worktree, which goes away when its work is done.
 git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null
 cp "$plist" "$work/plist.before"
