@@ -236,12 +236,12 @@ git -C "$private" config core.sshCommand "env SYNC_TEST=1 $work/bin/asking-ssh"
 : >"$work/ssh.log"
 env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
 expect "^0|force|refused|$" "$work/ssh.log"
-# A caller's own askpass program is theirs: kept, and not forced.
+# A caller's own askpass program, which may open a window nobody answers, is replaced as well.
 printf '#!/bin/sh\necho from-their-askpass\n' >"$work/bin/their-askpass"
 chmod +x "$work/bin/their-askpass"
 : >"$work/ssh.log"
-env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u SSH_ASKPASS_REQUIRE SSH_ASKPASS="$work/bin/their-askpass" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
-expect "^0||answered|from-their-askpass$" "$work/ssh.log"
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND SSH_ASKPASS_REQUIRE=prefer SSH_ASKPASS="$work/bin/their-askpass" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "^0|force|refused|$" "$work/ssh.log"
 git -C "$private" remote set-url origin "$work/remotes/agent-skills-private.git"
 git -C "$private" config --unset core.sshCommand
 

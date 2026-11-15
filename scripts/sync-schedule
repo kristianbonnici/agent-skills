@@ -26,8 +26,9 @@ set -u
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 label=com.agent-skills.sync
-# Every agent this script writes starts its plist with this comment, after the XML declaration.
-marker='<!-- Written by agent-skills scripts/sync-schedule: change it with scripts/sync and its schedule options, not here. -->'
+# Every agent this script writes has this comment as its second line, after the XML declaration,
+# ending with the checksum of the plist's other lines, so a hand edit is seen.
+marker='<!-- Written by agent-skills scripts/sync-schedule: change it with scripts/sync and its schedule options, not here. Checksum: '
 start_marker='agent-skills sync started '
 finish_marker='agent-skills sync finished '
 
@@ -97,8 +98,22 @@ labelled_plists() {
   done
 }
 
+# The checksum of a plist's lines other than its second.
+plist_sum() {
+  sed 2d "$1" | cksum | awk '{ print $1 "-" $2 }'
+}
+
+# Did this script write $1? Its second line is the marker.
 is_ours() {
-  [ -f "$1" ] && sed -n 2p "$1" | grep -qxF -- "$marker"
+  [ -f "$1" ] || return 1
+  case "$(sed -n 2p "$1")" in "$marker"*) return 0 ;; esac
+  return 1
+}
+
+# Did this script write $1, and has nobody changed it since? Only such a file is replaced or removed
+# without a backup.
+is_intact() {
+  is_ours "$1" && [ "$(sed -n 2p "$1")" = "$marker$(plist_sum "$1") -->" ]
 }
 
 # HH:MM (or H:MM) to "hour minute", or nothing when it isn't a time of day.
@@ -125,23 +140,62 @@ stamp() {
   date +%Y%m%d-%H%M%S
 }
 
-# Moves a plist this script didn't write to the backup folder before it is replaced or removed.
+# Copies a plist this script didn't write, or one changed since, to the backup folder before it is
+# replaced or removed, and checks the copy. Fails, saying so, when it can't: then nothing may be
+# replaced or removed.
 keep_aside() {
-  mkdir -p "$backups"
+  if is_ours "$1"; then why="changed since agent-skills wrote it"; else why="which agent-skills didn't write"; fi
   aside="$backups/$(basename -- "$1").before-agent-skills-$(stamp)"
   count=1
   while [ -e "$aside" ]; do count=$((count + 1)); aside="$backups/$(basename -- "$1").before-agent-skills-$(stamp)-$count"; done
-  mv "$1" "$aside"
-  echo "KEPT the launch agent $1, which agent-skills didn't write, as $aside"
+  if mkdir -p "$backups" 2>/dev/null && cp -p "$1" "$aside" 2>/dev/null && cmp -s "$1" "$aside"; then
+    echo "KEPT the launch agent $1, $why, as $aside"
+    return 0
+  fi
+  echo "FAIL could not keep a copy of the launch agent $1 in $backups, so nothing was changed" >&2
+  return 1
 }
 
+# Keeps a copy of every file in $1 (one per line) that is not intact; fails if one can't be kept.
+keep_all() {
+  while IFS= read -r kept; do
+    [ -n "$kept" ] || continue
+    is_intact "$kept" || keep_aside "$kept" || return 1
+  done <<EOF
+$1
+EOF
+}
+
+# Removes every file in $1 (one per line).
+remove_all() {
+  while IFS= read -r gone; do
+    [ -z "$gone" ] || rm -f "$gone"
+  done <<EOF
+$1
+EOF
+}
+
+# The files that carry the label, and the one at the label's name whatever it carries.
+agent_files() {
+  { labelled_plists; [ ! -e "$plist" ] || printf '%s\n' "$plist"; } | awk 'NF && !seen[$0]++'
+}
+
+# The plist, with the marker and its checksum as the second line.
 render_plist() {
-  hour=$1
-  minute=$2
-  path=$3
+  render_body "$@" >"$1.body"
+  sed -n 1p "$1.body"
+  printf '%s%s -->\n' "$marker" "$(cksum <"$1.body" | awk '{ print $1 "-" $2 }')"
+  sed 1d "$1.body"
+  rm -f "$1.body"
+}
+
+# The plist without its second line: $1 is where it goes, then the hour, minute and PATH.
+render_body() {
+  hour=$2
+  minute=$3
+  path=$4
   cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
-$marker
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -223,24 +277,22 @@ install() {
 
   mkdir -p "$agents_dir" "$(dirname -- "$log")"
   next=$(mktemp "$agents_dir/.agent-skills-sync.XXXXXX")
-  trap 'rm -f "$next"' EXIT
+  trap 'rm -f "$next" "$next.body" "$next.plist"' EXIT
   trap 'exit 1' HUP INT TERM
-  render_plist "$hour" "$minute" "$path" >"$next"
+  render_plist "$next" "$hour" "$minute" "$path" >"$next.plist"
+  mv "$next.plist" "$next"
   chmod 644 "$next"
   if cmp -s "$next" "$plist" && launchctl print "$domain/$label" >/dev/null 2>&1 && [ "$(labelled_plists)" = "$plist" ]; then
     echo "OK the daily sync is scheduled at $shown ($plist)"
     return 0
   fi
-  # Whatever runs with this label now stops, and every file that would load it again goes.
+  # Every file that would load this label again goes, a copy kept first of each this script didn't
+  # write or someone changed; if a copy can't be kept, nothing is changed. Then whatever runs with
+  # the label stops.
+  others=$(agent_files)
+  keep_all "$others" || exit 1
   launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-  labelled_plists | while IFS= read -r other; do
-    if is_ours "$other"; then
-      [ "$other" = "$plist" ] || rm -f "$other"
-    else
-      keep_aside "$other"
-    fi
-  done
-  [ ! -e "$plist" ] || is_ours "$plist" || keep_aside "$plist"
+  remove_all "$others"
   mv "$next" "$plist"
   # launchd can still be letting go of the old agent: one more try a moment later.
   if ! launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
@@ -263,9 +315,8 @@ remove() {
     fi
     return 0
   fi
-  # The files that carry the label, and the one at this label's name whatever it carries. launchd
-  # is asked only when there is one: an agent without a file goes at the next login.
-  found=$({ labelled_plists; [ ! -e "$plist" ] || printf '%s\n' "$plist"; } | awk 'NF && !seen[$0]++')
+  # launchd is asked only when there is a file: an agent without one goes at the next login.
+  found=$(agent_files)
   if [ -z "$found" ]; then
     echo "OK no daily sync is scheduled"
     return 0
@@ -274,11 +325,9 @@ remove() {
     printf '%s\n' "$found" | sed 's/^/DRY RUN: unload and remove the daily sync /'
     return 0
   fi
+  keep_all "$found" || exit 1
   launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-  printf '%s\n' "$found" | while IFS= read -r other; do
-    [ -n "$other" ] || continue
-    if is_ours "$other"; then rm -f "$other"; else keep_aside "$other"; fi
-  done
+  remove_all "$found"
   echo "UNSCHEDULED the daily sync ($label); its log stays at $log"
 }
 
@@ -332,8 +381,13 @@ status() {
   file=$(printf '%s\n' "$found" | head -n 1)
   at=$(plist_time "$file")
   program=$(plist_program "$file")
-  how="scripts/sync --schedule installed it"
-  is_ours "$file" || how="hand-made; scripts/sync --schedule takes it over"
+  if is_intact "$file"; then
+    how="scripts/sync --schedule installed it"
+  elif is_ours "$file"; then
+    how="changed by hand since scripts/sync --schedule installed it; --schedule keeps a copy and replaces it"
+  else
+    how="hand-made; scripts/sync --schedule takes it over, keeping a copy"
+  fi
   echo "INFO the daily sync is scheduled${at:+ at $at} ($file, $how)"
   if ! launchctl print "$domain/$label" >/dev/null 2>&1; then
     echo "WARN the daily sync's launch agent is not loaded, so it won't run until the next login: run scripts/sync --schedule"

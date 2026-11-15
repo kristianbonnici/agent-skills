@@ -16,7 +16,8 @@
 # With no terminal on standard input (a schedule, an agent), nothing may wait for an answer: git
 # doesn't prompt (GIT_TERMINAL_PROMPT=0) and reads no input; ssh asks through an askpass program
 # that fails at once (SSH_ASKPASS_REQUIRE=force), so no ssh command, a wrapper included, can wait for
-# a passphrase, a password or a new host key, unless the caller set SSH_ASKPASS; and ssh's batch
+# a passphrase, a password or a new host key (an SSH_ASKPASS the caller set is replaced too, since it
+# may open a window nobody answers: keys belong in ssh-agent); and ssh's batch
 # mode is added where that is safe: to the repository's own ssh command when it starts with ssh, or
 # as the command when none is set. A GIT_SSH_COMMAND or GIT_SSH the caller set is left as it is.
 #
@@ -76,15 +77,13 @@ batch=0
 if [ ! -t 0 ]; then
   batch=1
   export GIT_TERMINAL_PROMPT=0
-  if [ -z "${SSH_ASKPASS:-}" ]; then
-    for no_answer in /usr/bin/false /bin/false; do
-      [ -x "$no_answer" ] || continue
-      SSH_ASKPASS=$no_answer
-      SSH_ASKPASS_REQUIRE=force
-      export SSH_ASKPASS SSH_ASKPASS_REQUIRE
-      break
-    done
-  fi
+  for no_answer in /usr/bin/false /bin/false; do
+    [ -x "$no_answer" ] || continue
+    SSH_ASKPASS=$no_answer
+    SSH_ASKPASS_REQUIRE=force
+    export SSH_ASKPASS SSH_ASKPASS_REQUIRE
+    break
+  done
 fi
 
 in_repo() {

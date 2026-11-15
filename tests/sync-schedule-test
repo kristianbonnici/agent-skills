@@ -188,6 +188,30 @@ test "$(ls "$HOME/.local/state/agent-skills-sync" | wc -l | tr -d ' ')" -eq 2 ||
 refuse "^WARN.*launch agent" "$work/out"
 expect "scripts/sync --schedule installed it" "$work/out"
 
+# A plist it wrote and someone changed since is kept as a copy too, before it is replaced.
+sed -i.orig 's#<integer>30</integer>#<integer>45</integer>#' "$plist" && rm -f "$plist.orig"
+cp "$plist" "$work/edited.plist"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "changed by hand since scripts/sync --schedule installed it" "$work/out"
+"$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "replacing an edited agent failed"; }
+expect "^KEPT the launch agent $plist, changed since agent-skills wrote it, as " "$work/out"
+cmp -s "$(sed -n "s#^KEPT the launch agent .*, as ##p" "$work/out")" "$work/edited.plist" || fail "the copy of the edited agent differs"
+# A copy that can't be kept (the backup folder is a file here) stops it before anything changes:
+# the hand-made agent stays, loaded as it was.
+cp "$work/hand-made.plist" "$plist"
+mv "$HOME/.local/state/agent-skills-sync" "$work/backups"
+: >"$HOME/.local/state/agent-skills-sync"
+: >"$work/launchctl.log"
+if "$sync" --schedule >"$work/out" 2>&1; then fail "--schedule passed with no room for a copy"; fi
+expect "^FAIL could not keep a copy of the launch agent $plist" "$work/out"
+cmp -s "$plist" "$work/hand-made.plist" || fail "the hand-made agent was replaced without a copy"
+refuse "^bootout" "$work/launchctl.log"
+if "$sync" --unschedule >"$work/out" 2>&1; then fail "--unschedule passed with no room for a copy"; fi
+cmp -s "$plist" "$work/hand-made.plist" || fail "the hand-made agent was removed without a copy"
+rm "$HOME/.local/state/agent-skills-sync"
+mv "$work/backups" "$HOME/.local/state/agent-skills-sync"
+"$sync" --schedule >"$work/out" 2>&1 || fail "--schedule failed once there was room"
+
 # Never from a linked worktree, which goes away when its work is done.
 git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null
 cp "$plist" "$work/plist.before"

@@ -142,7 +142,18 @@ mode_for() {
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/agent-skills-instructions.XXXXXX")
 next_file=
 held=
-trap 'rm -rf "$scratch"; [ -z "$next_file" ] || rm -f "$next_file"; [ -z "$held" ] || rm -f "$held"' EXIT
+held_target=
+# A file moved aside is never deleted on the way out: it goes back where it was if nothing took its
+# place, or else stays as a backup beside it.
+release_held() {
+  [ -n "$held" ] && [ -e "$held" ] || return 0
+  if [ ! -e "$held_target" ] && [ ! -L "$held_target" ]; then
+    mv "$held" "$held_target"
+  else
+    mv "$held" "$(backup_name "$held_target" changed)"
+  fi
+}
+trap 'release_held; rm -rf "$scratch"; [ -z "$next_file" ] || rm -f "$next_file"' EXIT
 trap 'exit 1' HUP INT TERM
 built="$scratch/built"
 status=0
@@ -255,8 +266,7 @@ while IFS= read -r row; do
       fi
       target_dir=$(dirname -- "$target_path")
       mkdir -p "$target_dir"
-      # Written beside the target and moved into place, so a host never reads half a file, and the
-      # target is there throughout.
+      # Written beside the target, then put in its place, so a host never reads half a file.
       next_file=$(mktemp "$target_dir/.agent-skills-instructions.XXXXXX")
       cat "$built" >"$next_file"
       chmod "$(mode_for "$target_path")" "$next_file"
@@ -265,29 +275,43 @@ while IFS= read -r row; do
         # Only an adopted file can be a link: it is kept as the link it was, pointing where it pointed.
         ln -s "$(readlink "$target_path")" "$backup"
         note="; your file is kept as $backup"
-      elif [ -e "$target_path" ]; then
-        # The file there now gets a second name beside it, a hard link: whatever is written into it
-        # until the move replaces it stays in it, and it is judged again once the move is done.
-        held=$(mktemp "$target_dir/.agent-skills-instructions-held.XXXXXX")
-        # A folder that takes no hard links (some network shares) gets a copy instead, as before:
-        # then a change written after the copy is not kept.
-        held_by_copy=0
-        if ! ln -f "$target_path" "$held" 2>/dev/null; then
-          cp -p "$target_path" "$held"
-          held_by_copy=1
+        mv "$next_file" "$target_path"
+      else
+        if [ -e "$target_path" ]; then
+          # The file there now is moved aside: a rename keeps the file itself, so whatever is still
+          # being written into it lands in what is judged below. For that instant the target is
+          # missing.
+          held=$(mktemp "$target_dir/.agent-skills-instructions-held.XXXXXX")
+          held_target=$target_path
+          mv -f "$target_path" "$held"
         fi
-        # Replaced by another file since (an editor that saves by renaming): that file is the newest
-        # text, so it is left for the next run to judge.
-        if [ "$held_by_copy" -eq 0 ] && ! [ "$target_path" -ef "$held" ]; then
-          rm -f "$held" "$next_file"
-          held=
+        # The new file goes in only where nothing is: ln never replaces a file.
+        if ln "$next_file" "$target_path" 2>/dev/null; then
+          rm -f "$next_file"
+        elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
+          # Another program put a file there in that instant (an editor saving by renaming): it is
+          # the newest text, so it stays, for the next run to judge.
+          rm -f "$next_file"
           next_file=
-          echo "KEEP $target_path: it was replaced while bootstrap was rebuilding it; run scripts/bootstrap again" >&2
+          note=
+          if [ -n "$held" ]; then
+            if [ "$verb" = REBUILT ] && [ -z "$backup" ] && cmp -s "$scratch/judged" "$held"; then
+              rm -f "$held"
+            else
+              [ -n "$backup" ] || backup=$(backup_name "$target_path" changed)
+              mv "$held" "$backup"
+              note="; the file it replaced is kept as $backup"
+            fi
+            held=
+          fi
+          echo "KEEP $target_path: another program wrote it while bootstrap was rebuilding it; run scripts/bootstrap again$note" >&2
           status=1
           continue
+        else
+          # A folder that takes no hard links (some network shares): moved in instead.
+          mv "$next_file" "$target_path"
         fi
       fi
-      mv "$next_file" "$target_path"
       next_file=
       if [ -n "$held" ]; then
         # The file that was replaced: let go only when it is still what was judged unchanged.

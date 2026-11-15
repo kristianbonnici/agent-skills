@@ -111,12 +111,11 @@ the computer and the host, in `${XDG_STATE_HOME:-~/.local/state}/agent-skills/in
 a file whose row is taken out of the table (or whose host the computer now leaves out) is still
 known: doctor warns about it, and bootstrap and uninstall remove it when it still carries the marker
 and its checksum, or keep it and say so when someone changed it. Files built before this record
-existed, and those of a computer since renamed, aren't in it: remove those by hand. Just before it replaces a file,
-bootstrap gives it a second name (a hard link) and compares that with what it judged afterwards, so
-a change written into the file in between, or a file another program put in its place before then,
-is kept as the backup; a file put in its place after the second name was given is left for the
-next run, which fails until then. Only a replacement in the instant between that last check and the
-move can still be lost. A folder that takes no hard links gets a copy instead. `./scripts/manifest instructions` prints this computer's
+existed, and those of a computer since renamed, aren't in it: remove those by hand. To replace a file, bootstrap moves it aside and links the new one in only where nothing is, then
+compares what it moved aside with what it judged: a change written into the file until then is kept
+as the backup, and a file another program put in its place in that instant is left as it is for the
+next run, which fails until then. For that instant the file is missing; a bootstrap stopped then
+puts it back. `./scripts/manifest instructions` prints this computer's
 rows, each section as its path; it refuses a row with a section that has no file, a host the
 computer leaves out, a target written with a `..` step, or one file named twice for a computer.
 
@@ -129,7 +128,8 @@ of its default branch that are not on `origin` as of the last fetch, and it neve
 yourself, so the other computers get them. When its standard input is not a terminal (a schedule, an
 agent), nothing waits for an answer: git doesn't prompt and reads no input, and ssh asks through an
 askpass program that fails at once (`SSH_ASKPASS_REQUIRE=force`), so a command that wraps ssh can't
-prompt either; an `SSH_ASKPASS` you set is kept. ssh's batch mode is added to the repository's own
+prompt either; an `SSH_ASKPASS` you set is replaced too, since it may open a window nobody answers
+(keep keys in ssh-agent). ssh's batch mode is added to the repository's own
 ssh command when it starts with `ssh`, or is the command when none is set; a `GIT_SSH_COMMAND` or
 `GIT_SSH` you set is left as it is. Then it runs `bootstrap --all` (pass `--skip-dependencies` to
 leave the runtimes alone). A pull that cannot fast-forward fails sync after bootstrap has run.

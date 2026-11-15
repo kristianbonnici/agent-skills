@@ -162,14 +162,14 @@ chmod +x "$test_home/late-bin/chmod"
 expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/late.out"
 grep -q "LATE EDIT" "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/late.out")" || fail "the late change was not kept"
 rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/late.out")"
-# After the last check, bootstrap holds the file by a second name (a hard link) and moves the new
-# one into place: a change written into it then is in the file that was replaced, and kept as a
-# backup. A stand-in ln makes the change right after the hold.
+# After the last check, bootstrap moves the file aside and links the new one in where nothing is: a
+# change still being written into the old file lands in what was moved aside, and is kept as a
+# backup. A stand-in ln makes the change right before the new file is linked in.
 mkdir -p "$test_home/hold-bin"
-printf '#!/bin/sh\n/bin/ln "$@" || exit\ncase "$1" in -f) eval "$HOLD_EDIT" ;; esac\n' >"$test_home/hold-bin/ln"
+printf '#!/bin/sh\ncase "$1" in -*) ;; *) eval "$HOLD_EDIT" ;; esac\nexec /bin/ln "$@"\n' >"$test_home/hold-bin/ln"
 chmod +x "$test_home/hold-bin/ln"
 printf '## Long responses\n\nEnd a long reply with a TLDR of two lines.\n' >"$sections/long-responses.md"
-(HOLD_EDIT='echo "HELD EDIT" >>"$HOLD_TARGET"'; HOLD_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/hold-bin:$PATH"; export HOLD_EDIT HOLD_TARGET PATH
+(HOLD_EDIT='for held in "$(dirname "$HOLD_TARGET")"/.agent-skills-instructions-held.*; do echo "HELD EDIT" >>"$held"; done'; HOLD_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/hold-bin:$PATH"; export HOLD_EDIT HOLD_TARGET PATH
   on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1
 expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/held.out"
 held_backup=$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/held.out")
@@ -183,14 +183,22 @@ if (HOLD_EDIT='printf "Saved by an editor\n" >"$HOLD_TARGET.saved" && /bin/mv "$
   on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1; then
   fail "a file replaced during the rebuild was reported as rebuilt"
 fi
-expect "^KEEP $on_home/.codex/AGENTS.md: it was replaced while bootstrap was rebuilding it; run scripts/bootstrap again$" "$test_home/held.out"
+expect "^KEEP $on_home/.codex/AGENTS.md: another program wrote it while bootstrap was rebuilding it; run scripts/bootstrap again$" "$test_home/held.out"
 test "$(cat "$on_home/.codex/AGENTS.md")" = "Saved by an editor" || fail "the file saved by an editor was overwritten"
 test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
 rm "$on_home/.codex/AGENTS.md"
 on studio-mac "$repo_root/scripts/instructions" install --host codex >/dev/null 2>&1
-# A folder that takes no hard links (a stand-in ln that refuses them) gets a copy instead: the
-# rebuild still works, and a change made before the copy is still kept.
-printf '#!/bin/sh\ncase "$1" in -f) exit 1 ;; esac\nexec /bin/ln "$@"\n' >"$test_home/hold-bin/ln"
+# Stopped in the instant the file is aside (a stand-in ln stops bootstrap there), the file goes back
+# where it was.
+cp "$on_home/.codex/AGENTS.md" "$test_home/before-stop.md"
+printf '## Long responses\n\nEnd a long reply with a TLDR, stopped.\n' >"$sections/long-responses.md"
+printf '#!/bin/sh\ncase "$1" in -*) exec /bin/ln "$@" ;; esac\nkill -TERM "$PPID"\nsleep 1\nexit 1\n' >"$test_home/hold-bin/ln"
+(PATH="$test_home/hold-bin:$PATH"; export PATH; on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1 && fail "a stopped rebuild passed"
+cmp -s "$on_home/.codex/AGENTS.md" "$test_home/before-stop.md" || fail "a stopped rebuild did not put the file back"
+test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a stopped rebuild left a temporary file"
+# A folder that takes no hard links (a stand-in ln that refuses them): the new file is moved in
+# instead, and a change made before the move is still kept.
+printf '#!/bin/sh\ncase "$1" in -s) exec /bin/ln "$@" ;; esac\nexit 1\n' >"$test_home/hold-bin/ln"
 printf '## Long responses\n\nEnd a long reply with a TLDR, short.\n' >"$sections/long-responses.md"
 (PATH="$test_home/hold-bin:$PATH"; export PATH; on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1 || { cat "$test_home/held.out" >&2; fail "a rebuild without hard links failed"; }
 expect "^REBUILT $on_home/.codex/AGENTS.md$" "$test_home/held.out"
