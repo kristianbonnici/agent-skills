@@ -210,7 +210,11 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 .us-opt input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: inherit; }
 .us-opt .nm { color: var(--rm-fg); font-weight: 550; }
 .us-opt .role { font-size: 11.5px; }
-.us-opt:has(input:checked) { background: var(--rm-card); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.us-opt::before { content: ""; align-self: center; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--rm-muted); }
+.us-opt:has(input:checked) { background: var(--rm-card); box-shadow: 0 0 0 1.5px var(--rm-info), 0 1px 3px rgba(0,0,0,.12); }
+.us-opt:has(input:checked)::before { background: var(--rm-info); border-color: var(--rm-info); }
+.us-opt:has(input:checked) .nm { font-weight: 700; }
+@media (forced-colors: active) { .us-opt:has(input:checked) { outline: 2px solid Highlight; } .us-opt:has(input:checked)::before { background: Highlight; border-color: Highlight; } }
 .us-opt:has(input:focus-visible) { outline: 2px solid var(--rm-info); outline-offset: 1px; }
 .us-opt.off { cursor: default; opacity: .6; }
 .us-opt.off .nm { color: var(--rm-muted); }

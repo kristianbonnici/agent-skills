@@ -112,7 +112,9 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
             if git(tree, "diff", "--cached", "--quiet", check=False).returncode == 0:
                 print(f"share-usage: {branch} already holds these files from {name}")
                 return 0
-            git(tree, "commit", "-q", "-m", f"usage: {name}'s machine samples and costs for {run}")
+            who = [] if git(tree, "config", "user.email", check=False).stdout.strip() else ["-c", "user.name=share-usage", "-c", f"user.email=share-usage@{name}"]
+            # never signed: a signing key's passphrase would prompt, and nobody is there to answer it
+            git(tree, *who, "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", f"usage: {name}'s machine samples and costs for {run}")
             pushed = git(tree, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)
             if pushed.returncode == 0:
                 what = " and ".join(dest for dest, _ in found) + (f", and removed the earlier {' and '.join(dropped)}" if dropped else "")
@@ -144,9 +146,11 @@ def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:
         got = []
         for dest, local in FILES:
             blob = git(state, "show", f"{head}:computers/{name}/{dest}", check=False, binary=True)
-            if blob.returncode != 0:
-                continue
             target = run_dir / "computers" / name / local
+            if blob.returncode != 0:
+                if target.is_file():   # an earlier fetch's copy of a file the branch no longer has
+                    target.unlink()
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(blob.stdout)
             if dest == "machine.jsonl":

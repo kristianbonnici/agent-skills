@@ -3362,9 +3362,22 @@ git -C "$multi/state.git" merge-base --is-ancestor "$briefs_start" lho/run-x-bri
 test "$(git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | tr '\n' ' ')" = "common.md computers/den-mac/costs.json computers/den-mac/machine.jsonl "
 "$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'already holds these files from den-mac'
 # a later send without costs (they failed this time) takes the earlier costs off the branch: never new samples with old costs
+# (here with no git identity and signing asked for, as on a computer set up for neither: the commit takes
+# share-usage's own name and is never signed, so nothing can prompt); a fetch then drops its earlier copy too
+"$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" > /dev/null
+test -e "$multi/studio/run-x/computers/den-mac/costs.json"
+git -C "$multi/den-state" config --unset user.name
+git -C "$multi/den-state" config --unset user.email
+git -C "$multi/den-state" config commit.gpgsign true
 mv "$multi/den/run-x/costs.json" "$multi/den/costs.json.aside"
-"$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'sent machine.jsonl, and removed the earlier costs.json from den-mac'
+HOME="$multi/no-home" GIT_CONFIG_NOSYSTEM=1 "$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'sent machine.jsonl, and removed the earlier costs.json from den-mac'
 test "$(git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | tr '\n' ' ')" = "common.md computers/den-mac/machine.jsonl "
+test "$(git -C "$multi/state.git" log -1 --format=%ae lho/run-x-briefs)" = "share-usage@den-mac"
+"$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" > /dev/null
+test ! -e "$multi/studio/run-x/computers/den-mac/costs.json"
+git -C "$multi/den-state" config user.name t
+git -C "$multi/den-state" config user.email t@example.com
+git -C "$multi/den-state" config --unset commit.gpgsign
 mv "$multi/den/costs.json.aside" "$multi/den/run-x/costs.json"
 "$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'sent machine.jsonl and costs.json from den-mac'
 status=0
