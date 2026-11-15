@@ -145,9 +145,11 @@ Then finish the original brief below, from "Required work" through "Report back"
 <the original brief, verbatim>
 ```
 
-## A task on another computer
+## A run with a task on another computer
 
-Its brief and the common file reach it through git, its report-back carries your `environmentId`, its targets and paths are that computer's, and its merge gate pushes to the run branch instead of fast-forwarding a checkout ([computers.md](computers.md), sections 5 to 8). Add to its brief: end with the report as your final message, name any dialog you saw, and check free disk before a heavy build.
+Every task of such a run, on your computer too, merges by pushing to the run branch ([computers.md](computers.md#6-commits-travel-through-the-remote)). In each brief, the authorization line names that push instead of the fast-forward ("commits on <task branch>, and the non-force push to the run branch `lho/<run>` described under 'Finish and merge'. Nothing else may be pushed or published."), steps 3 and 4 of "Finish and merge" become `git fetch origin`, `git rebase origin/lho/<run>`, the full validation, and `git push <remote> HEAD:refs/heads/lho/<run>` (a rejected push sends it back to the fetch; never force), and the common file's rule on pushing names that push as the one allowed.
+
+A task elsewhere also gets its brief and the common file through git, a report-back that carries your `environmentId`, and that computer's targets and paths ([computers.md](computers.md), sections 5 to 8). Add to its brief: end with the report as your final message, name any dialog you saw, and check free disk before a heavy build.
 
 ## Before sending
 

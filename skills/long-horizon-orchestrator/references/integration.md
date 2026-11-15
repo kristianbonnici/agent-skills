@@ -118,6 +118,6 @@ Nothing of it merges. Mark it `stopped` and park its dependents. Keep its work i
 
 ## What never happens
 
-- Pushing, publishing, opening external pull requests, or force-updating any branch. All of these require an explicit request outside the contract. The one exception is the owner's provider profile and skill lessons, pushed to their private state repository as the contract says ([routing.md](routing.md#6-the-owners-profile)).
+- Pushing, publishing, opening external pull requests, or force-updating any branch. All of these require an explicit request outside the contract. The exceptions are the owner's provider profile and skill lessons, pushed to their private state repository as the contract says ([routing.md](routing.md#6-the-owners-profile)), and, in a run with a task on another computer, the run, task and briefs branches the contract names, never forced ([computers.md](computers.md#6-commits-travel-through-the-remote)).
 - Resetting, stashing or cleaning the user's integration checkout to make the gate pass.
 - Merging work whose checks you have not seen pass on its final commit.
