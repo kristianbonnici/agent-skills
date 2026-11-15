@@ -3410,10 +3410,12 @@ from pathlib import Path
 script, run_dir, state = sys.argv[1:4]
 mod = runpy.run_path(script, run_name="share_usage")
 real = mod["git"]
-def failing(repo, *args, **kw):
+def failing(repo, *args, check=True, **kw):   # as git would: a failed result, raised only when checked
     if args[:1] == ("ls-tree",):
-        raise RuntimeError("git ls-tree failed: made-up damaged object")
-    return real(repo, *args, **kw)
+        if check:
+            raise RuntimeError("git ls-tree failed: made-up damaged object")
+        return subprocess.CompletedProcess(["git"], 128, "", "made-up damaged object")
+    return real(repo, *args, check=check, **kw)
 mod["fetch"].__globals__["git"] = failing
 kept = Path(run_dir, "computers", "den-mac", "usage", "machine.jsonl")
 assert kept.is_file()
