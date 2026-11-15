@@ -6,8 +6,8 @@ Last checked: new work 2026-11-15; sources 2026-11-15.
 
 ## The first run (2026-11-15)
 
-The run that became this skill: nine models on 16 past app-code changes of two apps, 134 to 2,439 added lines
-each. Its numbers are in [review-gate's evidence](../review-gate/evidence.md#the-replay-benchmark-2026-11-15);
+The run that became this skill: six cheap models on 16 past app-code changes of two apps, 134 to 2,439 added
+lines each. Its numbers are in [review-gate's evidence](../review-gate/evidence.md#the-replay-benchmark-2026-11-15);
 what it taught about running a benchmark is here.
 
 - **Why past changes with known defects:** the review gate's trial gave each model one extra review at a
@@ -41,13 +41,39 @@ what it taught about running a benchmark is here.
   commits a round had read were on no branch, and one change's were gone. → *the names that keep a key's
   commits.*
 
+## The second run (2026-11-15)
+
+Four more models on the same 16 changes, with the skill's own script: one more cheap model, and the three
+paid models the review gate uses, as references. Its numbers are in
+[review-gate's evidence](../review-gate/evidence.md#the-benchmarks-second-run-2026-11-15).
+
+- **A reference run gives the scale its top.** The strongest paid model found 38% of the 143 known defects in
+  full and the three paid models 30% to 38%; the cheap models 16% to 32%. Without the references, 28% read as
+  a weak reviewer; with them it is close to a paid one. → *the models the owner compares others with are run
+  on the same set, and run again when it changes by a MAJOR.*
+- **Shares hide what a model is for.** One paid model found 9 of the 20 blockers in under a minute a review;
+  a cheap model with a higher share of all defects found 4. Another paid model found 45 defects and none
+  that no other model found. → *`totals` prints blockers and "alone" beside the share, and the report says
+  what a pair finds together.*
+- **The key kept growing, and the growth reached back.** The second strict pass confirmed 10 more defects (of
+  80 findings outside the key, 13 were false). Checking the first run's saved reports for them credited models
+  that had already described five of the ten, as nits or as findings the first check had filed under minor.
+  → *every saved report is scored for each defect added, whoever raised it.*
+- **Scoring four models on 16 changes took 40 short tasks:** 16 first-pass scorers that read the reports and
+  the key, 16 second-pass checkers with the code open, and 8 that added defects to a key. The first pass
+  took under half a minute a change, the second one to two minutes. → *one scorer per change, in two passes.*
+- **Twenty-four of the 35 defects added over both runs were still in the owner's code,** 8 had been fixed
+  since and 3 were in code that no longer exists.
+- **Not measured:** how much a model's result moves between two runs on the same change. Each model reviewed
+  each change once.
+
 ## Outside sources
 
 - **Pereira, Sinha, Ghosh and Dutta, [CR-Bench-v2: Evaluating the Real-World Utility of AI Code Review Agents](https://arxiv.org/abs/2611.02566)**
   (Nutanix; arXiv 2611.02566 v2, 3 November 2026, preprint): review agents scored on 174 verified instances
   with a labeled defect each, by three model judges. "Even the strongest systems detect only about one-third
   of known defects", and a reviewer whose comments were judged useful 78.0% of the time found 8.1% of the
-  defects. The first run here landed in the same range (18% to 31% of 133 known defects). → *known defects
+  defects. Both runs here landed in the same range (16% to 38% of 143 known defects). → *known defects
   as the measure, and usefulness of the other findings counted apart from it.*
 
 ## Left out

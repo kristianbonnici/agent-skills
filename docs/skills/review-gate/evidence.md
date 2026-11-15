@@ -414,6 +414,55 @@ that the original reviews missed. GLM stays DeepSeek's fallback. MiniMax M3.1 Fl
 MiMo-V2.6-Flash earn no place: one no better than GLM and less often done in time, the other too slow. Any
 change of the reviewers is the owner's decision; none is made here.*
 
+## The benchmark's second run (2026-11-15)
+
+The owner asked for Muse on the same set, and for the paid reviewers as references ("to get really good
+references on different models"). Four more models reviewed the same 16 changes, now through the
+[reviewer-benchmark](../reviewer-benchmark/README.md) skill: Muse Spark 1.3 Contributor with the brief and
+15 minutes of a trial reviewer, and Codex GPT-6.1 Terra, Claude Sonnet 5.5 and Claude Opus 5.5 with a paid
+reviewer's brief and 30 minutes. Scored blind as before. The key had grown to 133 defects with the first
+run's 25 confirmed findings, and grew to 143 (20 of them blockers) with this run's 10; every saved report was
+scored for each defect added.
+
+| Reviewer | Reports, of 16 | Known defects found, of 143 | Blockers, of 20 | Found by it alone | Outside the key: true but minor, or there before | Outside the key: false | False, of all its blockers and follow-ups | Minutes per review |
+|---|---|---|---|---|---|---|---|---|
+| Claude Opus 5.5 | 16 | 54 (38%) | 10.5 | 6 | 16 | 1 | 1% | 5.3 |
+| Gemini 4 Hydrogen | 16 | 46 (32%) | 4 | 12 | 9 | 2 | 3% | 4.4 |
+| Claude Sonnet 5.5 | 16 | 45 (31%) | 5 | 0 | 15 | 2 | 3% | 2.5 |
+| Codex GPT-6.1 Terra | 16 | 42.5 (30%) | 9 | 6 | 11 | 1 | 2% | 0.9 |
+| DeepSeek V4.1 Flash | 16 | 39.5 (28%) | 5 | 1 | 14 | 4 | 7% | 6.4 |
+| MiniMax M3.1 Flash | 13 | 29 (20%) | 3 | 4 | 16 | 5 | 9% | 6.5 |
+| GLM-5.3 Flash | 14 | 26.5 (19%) | 3 | 3 | 9 | 2 | 5% | 7.6 |
+| Claude Haiku 5.5 | 16 | 26.5 (19%) | 2.5 | 1 | 9 | 4 | 10% | 1.6 |
+| Muse Spark 1.3 Contributor | 16 | 23.5 (16%) | 3.5 | 2 | 9 | 9 | 20% | 2.5 |
+
+- **Muse was the weakest of the nine,** and one in five of its blockers and follow-ups was false: 9 of the 13
+  false findings of this run's four models. Its 16 live trial reviews had looked promising; the same changes
+  as everyone else did not bear that out.
+- **Terra and Opus find the blockers.** 9 and 10.5 of the 20; every other model 2.5 to 5. Terra did it in
+  under a minute a review.
+- **Hydrogen finds what the others don't.** 12 defects only it found in full, twice the next model, and 20
+  that neither Terra nor Sonnet found; DeepSeek adds 8 to that pair, GLM 9, Haiku 6, Muse 6. But 4 blockers:
+  it is an addition to a paid reviewer, not a stand-in.
+- **Sonnet found nothing alone.** 45 defects, each also found by another model. Terra and Sonnet together
+  found 63; Terra and Hydrogen 71, as many as Terra, Sonnet and DeepSeek.
+- **Teams:** Terra, Sonnet and DeepSeek (the Standard level until now) 71 of 143, with 13 blockers. With
+  Hydrogen as well, 88 and 15. All nine, 110 and 17. Three blockers and 33 defects no model found in full.
+- **Opus adds the most after a paid pair:** 14 defects and 3 blockers that Terra and Sonnet missed, at the
+  highest cost and the longest paid review.
+
+Limits, beyond the first run's: each model reviewed each change once, so how much a result moves between two
+runs isn't known; take the shares as tiers. The first key came from first rounds that Terra, Sonnet and Opus
+often took part in, which favours them. The scorers were Claude models (Sonnet for the key, Opus for the
+other findings), blind to which report was whose. The first run's findings outside the key were checked by
+one checker and this run's by another instance, per change.
+
+→ *Hydrogen joins DeepSeek as a regular free reviewer at Standard and Deep (owner, 2026-11-15) and stays
+Light's reviewer. Muse leaves the trial with no place, and so does Luna (the live trial, above). Haiku is the
+last fallback for a free reviewer: as good as GLM here, quick, and always done. No free reviewer replaces a
+paid one. Whether Sonnet keeps its paid place beside Terra is open: this set says its findings are covered by
+others, on one run.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
