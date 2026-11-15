@@ -122,8 +122,11 @@ def parse(text):
     if (machines or SHARED in headings or UNASSIGNED in headings) and old:
         raise LayoutError("the file has both computer sections and top-level lists: fix it by hand")
     if machines or SHARED in headings or UNASSIGNED in headings:
-        if headings.count(UNASSIGNED) > 1:
-            raise LayoutError("the file has two Unassigned sections: fix it by hand")
+        if headings.count(UNASSIGNED) > 1 or headings.count(SHARED) > 1:
+            raise LayoutError("the file has two Unassigned or two Every machine sections: fix it by hand")
+        unknown = [h for h in headings if h not in (SHARED, UNASSIGNED) and not h.startswith(MACHINE)]
+        if unknown:
+            raise LayoutError(f"the file has a section this script doesn't know ({unknown[0]}): fix it by hand")
         names = [machine_name(h) for h in machines]
         if len(set(names)) != len(names):
             raise LayoutError("a computer has two sections: fix it by hand")

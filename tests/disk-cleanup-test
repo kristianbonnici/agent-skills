@@ -317,6 +317,13 @@ with open(shared, "w") as handle:
 mixed = read()
 for args in (("show",), ("init",), ("migrate", "--to", "studio-mac")):
     assert "fix it by hand" in run("studio-mac", *args, code=2) and read() == mixed, args
+laid = "# disk-cleanup decisions\n\n## Every machine\n- rule one (2026-11-01)\n\n## Machine: studio-mac\n\n### Keep\n"
+for extra in ("\n## Machine travel-mac\n### Keep\n- `~/t` (2026-11-01): kept.\n", "\n## Every machine\n- rule two (2026-11-01)\n"):
+    with open(shared, "w") as handle:
+        handle.write(laid + extra)
+    unknown = read()
+    for args in (("show",), ("init",), ("migrate", "--to", "studio-mac")):
+        assert "fix it by hand" in run("travel-mac", *args, code=2) and read() == unknown, (extra, args)
 
 # a hand-edited heading with extra spaces is still this computer's section, not a new one
 with open(shared, "w") as handle:
