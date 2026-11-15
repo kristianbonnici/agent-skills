@@ -3389,6 +3389,9 @@ mkdir -p "$multi/empty/run-x" "$multi/spare/run-x/usage"
 cp "$multi/den/run-x/usage/machine.jsonl" "$multi/spare/run-x/usage/machine.jsonl"
 "$scripts/share-usage" send "$multi/spare/run-x" --state "$multi/den-state" --computer spare-mac > /dev/null
 git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | grep -q '^computers/spare-mac/machine.jsonl$'
+mkdir -p "$multi/fetched/run-x"
+"$scripts/share-usage" fetch "$multi/fetched/run-x" --state "$multi/studio-state" > /dev/null
+test -s "$multi/fetched/run-x/computers/spare-mac/usage/machine.jsonl"
 status=0
 "$scripts/share-usage" send "$multi/empty/run-x" --state "$multi/den-state" --computer spare-mac > "$multi/empty.out" 2>&1 || status=$?
 test "$status" -eq 1 && grep -q 'removed the earlier machine.jsonl from spare-mac' "$multi/empty.out"
@@ -3397,6 +3400,9 @@ before=$(git -C "$multi/state.git" rev-parse lho/run-x-briefs)
 status=0
 "$scripts/share-usage" send "$multi/empty/run-x" --state "$multi/den-state" --computer spare-mac >/dev/null 2>&1 || status=$?
 test "$status" -eq 1 && test "$(git -C "$multi/state.git" rev-parse lho/run-x-briefs)" = "$before"
+# and a fetch drops the copies an earlier fetch made for that computer, which the branch no longer has
+"$scripts/share-usage" fetch "$multi/fetched/run-x" --state "$multi/studio-state" | grep -q '^share-usage: spare-mac: nothing on the branch now; removed the earlier copies$'
+test ! -e "$multi/fetched/run-x/computers/spare-mac/usage/machine.jsonl"
 
 # share-usage fetch on studio-mac: den-mac's files land under the run directory, attic-mac is named
 "$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" --expect den-mac,attic-mac > "$multi/fetch.out"
@@ -3454,8 +3460,11 @@ python3 -I -c 'import json, sys; w = json.load(open(sys.argv[1])); del w["tasks"
 mv "$multi/studio/run-x/computers/den-mac" "$multi/studio/run-x/computers/den-mac.local"
 mkdir -p "$multi/studio/run-x/computers/odd-mac"
 printf '%s\n' '{"lines": [{"owner": "Q", "thread": "thread:q", "role": "task", "harness": "claude", "model": "m", "usd": "12"}]}' > "$multi/studio/run-x/computers/odd-mac/costs.json"
+mkdir -p "$multi/studio/run-x/computers/odd2-mac"   # dollars with no model to put them under
+printf '%s\n' '{"lines": [{"owner": "Q", "thread": "thread:q", "role": "task", "harness": "claude", "usd": 1.5}]}' > "$multi/studio/run-x/computers/odd2-mac/costs.json"
 T3_USERDATA="$multi/studio-t3" "$scripts/run-costs" "$multi/studio/run-x" --json "$multi/studio/costs-local.json" > /dev/null 2> "$multi/studio/costs-local.err"
 grep -q "computers/odd-mac/costs.json (its lines aren't run-costs lines); odd-mac's costs are left out" "$multi/studio/costs-local.err"
+grep -q "computers/odd2-mac/costs.json (its lines aren't run-costs lines); odd2-mac's costs are left out" "$multi/studio/costs-local.err"
 python3 -I - "$multi/studio/costs-local.json" <<'EOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -3463,7 +3472,7 @@ d_lines = [l for l in d["lines"] if l["owner"] == "D"]
 assert d_lines and all(l["usd"] for l in d_lines) and {l["computer"] for l in d_lines} == {"den-mac.local"}, d_lines
 assert d["totals"]["computers_missing"] == {"attic-mac": ["E"]} and "den-mac's" not in d["paragraph"], d["paragraph"]
 EOF
-rm -r "$multi/studio/run-x/computers/odd-mac"
+rm -r "$multi/studio/run-x/computers/odd-mac" "$multi/studio/run-x/computers/odd2-mac"
 mv "$multi/studio/run-x/computers/den-mac.local" "$multi/studio/run-x/computers/den-mac"
 
 # run-charts: each computer's Mac on the panel, with the picker; den-mac without GPU readings, on studio-mac's

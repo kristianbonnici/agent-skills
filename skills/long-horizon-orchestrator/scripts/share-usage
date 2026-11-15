@@ -169,6 +169,15 @@ def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:
         if got:
             arrived.append(name)
             print(f"share-usage: {name}: " + ", ".join(got) + f" -> {run_dir / 'computers' / name}")
+    for old in sorted((run_dir / "computers").glob("*")) if (run_dir / "computers").is_dir() else []:
+        # an earlier fetch's copies for a computer the branch no longer has a folder for: its send took them off
+        if old.name in names or not valid(old.name):
+            continue
+        gone = [local for _, local in FILES if (old / local).is_file()]
+        for local in gone:
+            (old / local).unlink()
+        if gone:
+            print(f"share-usage: {old.name}: nothing on the branch now; removed the earlier copies")
     for name in expect:
         if name not in arrived:
             print(f"share-usage: nothing arrived from {name}")

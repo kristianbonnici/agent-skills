@@ -652,7 +652,8 @@ def costs_line(l) -> bool:
     reported = l.get("reported_usd") if isinstance(l, dict) else None
     money = lambda v: v is None or isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
     return (isinstance(l, dict) and all(text(l.get(k)) for k in ("owner", "thread", "role", "harness")) and "usd" in l
-            and (l.get("model") is None or isinstance(l["model"], str)) and money(usd) and money(reported)
+            and "model" in l and (isinstance(l["model"], str) and l["model"] != "" or l["model"] is None and usd is None)
+            and money(usd) and money(reported)
             and (l.get("missing") is None or isinstance(l["missing"], str)))
 
 
