@@ -52,6 +52,8 @@ The reader is returning after hours away, and probably after several tasks' wort
 - **<Task>: its reviewer held on a blocker the task tagged lower:** what the reviewer says goes wrong and when, the task's reason for its tag, and where to look. No merge waited on it.
 
 ## Side effects on your computer
+
+<With tasks on another computer: one such list per computer, and the report's other parts as [computers.md](computers.md#9-the-ledger-the-finish-and-the-report) says.>
 <Only if any. One line each, with the time: dialogs that appeared and how they were answered, permissions or settings changed and restored, services reinstalled, files left or removed (test builds' sandbox containers, which need your password to delete, are safe to remove), disk space used and freed (with what pruning older runs freed at the start, when the contract asked for it), and anything the run couldn't restore.>
 
 ## What needs you

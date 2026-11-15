@@ -1,5 +1,7 @@
 # Integration, dependents and cleanup
 
+For a task on another computer, what this file does in a task's worktree runs in a short thread on that computer, and its merges go to the run branch ([computers.md](computers.md#7-launch-and-report-back)).
+
 ## Merge policies
 
 - **Merge (default):** each task fast-forwards the integration branch itself once the review and full checks pass. Tasks that finish around the same time race safely: fast-forward-only either succeeds or fails cleanly, and a task that loses rebases, re-validates and tries again.
