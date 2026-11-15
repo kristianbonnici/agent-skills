@@ -13,10 +13,10 @@ Version and history: [CHANGELOG.md](CHANGELOG.md). Why it works this way: [evide
 flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
   level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
-  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Terra for a Claude change,<br/>Sonnet for any other"]
-  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus,<br/>+ a free reviewer if one answers"]
+  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Terra for a Claude change,<br/>Sonnet for any other,<br/>+ Gemini 4 Hydrogen"]
+  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus,<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer if one answers"]
   light -->|neither Hydrogen nor a free model answers| standard
-  standard -.->|Codex short| sub["Claude substitute<br/>+ a free reviewer"]
+  standard -.->|Codex short| sub["Claude substitute<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
   sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
   second --> sort
@@ -34,8 +34,8 @@ flowchart TD
 | Level | Round 1 | Later rounds |
 |---|---|---|
 | Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
-| Standard | the cross reviewer (Codex short: its Claude substitute + a free reviewer) | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only a free reviewer asked for |
-| Deep | two paid reviewers, different focus, + a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Standard | the cross reviewer and Gemini 4 Hydrogen (Codex short: its Claude substitute, Hydrogen and a free reviewer); a free reviewer in Hydrogen's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
+| Deep | two paid reviewers, different focus, + Gemini 4 Hydrogen and a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
 - **Paid reviewers** run at high reasoning: Codex's GPT-6.1 Terra (preferred to Sol, which costs more of
   the Codex plan), Claude Sonnet 5.5 and Opus 5.5.
@@ -44,8 +44,9 @@ flowchart TD
 - **Free reviewers** (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash) run on OpenCode's free tier,
   which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
-  alone on light changes, as an extra voice on deep ones, and in place of the lost family when Codex is
-  short. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers it is dropped, or at light
+  alone on light changes when Hydrogen can't review, in Hydrogen's place on standard ones, as an extra
+  voice on deep ones, and in place of the lost family when Codex is short. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers, Claude Haiku 5.5 comes last at standard and deep (not for a Claude change while
+  Codex is short, where it would add no second family); at light
   the cross reviewer takes its place. It is never waited for past its time, and in T3 one with no activity
   5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
@@ -61,7 +62,6 @@ flowchart TD
   Standard and Deep, and GPT-6 Luna and Muse Spark 1.3 Contributor got none. A new model is measured with
   the [reviewer-benchmark](../reviewer-benchmark/README.md) skill, on the same past changes as the others,
   before the owner gives it a place.
-  One that holds up could take Terra's or Sonnet's place at Light, or stand in when Codex is short.
 
 ## When the author tags a blocker lower
 

@@ -80,11 +80,11 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 - **Claude reviewers:** a background command:
 
   ```sh
-  claude -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk \
+  claude -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --setting-sources local \
     --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)" < <a file holding the brief>
   ```
 
-  (or `claude-opus-5-5`, or `claude-haiku-5-5` as the free order's last), run from the worktree. The brief goes in on standard input, never as a last argument: `--allowedTools` takes every word after it as a tool's name, and the run ends with "Input must be provided". `--permission-mode dontAsk` refuses a tool outside the list; without it each such call waits on an approval from the owner, who may not be there.
+  (or `claude-opus-5-5`, or `claude-haiku-5-5` as the free order's last), run from the worktree. The brief goes in on standard input, never as a last argument: `--allowedTools` takes every word after it as a tool's name, and the run ends with "Input must be provided". `--permission-mode dontAsk` refuses a tool outside the list; without it each such call waits on an approval from the owner, who may not be there. `--setting-sources local` leaves out the owner's own settings, which would add tools to the list. The allow rules match the start of a command, and `git -C <path> diff` is refused: in the brief, write the diff as `git diff <base>...<head>`, run from the worktree.
 - **Free reviewers:** the OpenCode command above.
 - **Gemini 4 Hydrogen:** the `agy` command above.
 

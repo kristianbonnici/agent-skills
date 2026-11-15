@@ -192,7 +192,7 @@ assert load(data, "runs", "loud", "one.json").get("failed") is True
 
 # The four tools are called in the forms that can't wait for a person: each stand-in records how it was called.
 for tool in ("opencode", "claude", "codex", "agy"):
-    put(os.path.join(tools, tool), "#!/bin/sh\n{ echo \"TOOL " + tool + "\"; for a in \"$@\"; do echo \"ARG $a\"; done; echo \"STDIN $(cat | wc -c | tr -d ' ')\"; } >> \"$TOOL_LOG.$1$2\"\n"
+    put(os.path.join(tools, tool), "#!/bin/sh\n{ echo \"TOOL " + tool + "\"; for a in \"$@\"; do echo \"ARG $a\"; done; cat > \"$TOOL_LOG.in." + tool + "\"; echo \"STDIN $(wc -c < \"$TOOL_LOG.in." + tool + "\" | tr -d ' ')\"; } >> \"$TOOL_LOG.$1$2\"\n"
         + ("[ -f \"$TOOL_LOG.no-last\" ] || while [ $# -gt 0 ]; do [ \"$1\" = --output-last-message ] && printf '%s' 'the last message' > \"$2\"; shift; done\n" if tool == "codex" else "")
         + "echo a report from " + tool + "\n")
     os.chmod(os.path.join(tools, tool), 0o755)
@@ -217,6 +217,9 @@ args, stdin = called("-p--model")
 assert args == ["-p", "--model", "claude-x", "--effort", "high", "--permission-mode", "dontAsk", "--setting-sources", "local",
                 "--allowedTools", "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"], args
 assert stdin > 500, "claude gets its brief on standard input, and none of it as an argument"
+# Its allow rules match the start of a command, so its brief gives the diff as plain "git diff", as agy's does.
+brief = open(env["TOOL_LOG"] + ".in.claude").read()
+assert "The diff: git diff " in brief and "run from that folder" in brief and "git -C" not in brief, brief
 args, stdin = called("exec--sandbox")
 assert args[:4] == ["exec", "--sandbox", "read-only", "--ephemeral"] and args[args.index("-C") + 1] == copy and stdin == 0, args
 assert "You have" not in args[-1] and open(os.path.join(data, "runs", "cx", "one.md")).read() == "the last message"
@@ -228,6 +231,7 @@ os.remove(env["TOOL_LOG"] + ".no-last")
 args, stdin = called("--modeplan")
 assert args[:4] == ["--mode", "plan", "--model", "gem-x"] and "--settings" in args and args[-2] == "-p" and stdin == 0, args
 assert "Run one shell command at a time" in args[-1] and "command(git diff)" in args[args.index("--settings") + 1]
+assert "The diff: git diff " in args[-1] and "git -C" not in args[-1], args[-1]
 
 # A review of other commits than the key's now names is run again, and its score is dropped.
 put(os.path.join(data, "scores", "two.json"), json.dumps({"id": "two", "reports": {"echo": {"is_review": True, "known": {"1": 1}, "others": [], "nits_unchecked": 0}, "good": {"is_review": True, "known": {"1": 1}, "others": [], "nits_unchecked": 0}}}))

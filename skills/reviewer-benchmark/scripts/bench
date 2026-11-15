@@ -286,7 +286,8 @@ def setup(data, copies, given):
 
 def brief(key, work, note, spec):
     kind, minutes = spec["kind"], spec.get("minutes", 15)
-    diff = (f"git diff {note['base']}...{note['head']}, run from that folder" if kind == "agy"
+    # agy's and claude's allow rules match the start of a command, and refuse "git -C <path> diff".
+    diff = (f"git diff {note['base']}...{note['head']}, run from that folder" if kind in ("agy", "claude")
             else f"git -C {work} diff {note['base']}...{note['head']}")
     rules = f"{work}/{key['rules']}" if key.get("rules") else "none written down"
     timed = "" if spec.get("paid") else (

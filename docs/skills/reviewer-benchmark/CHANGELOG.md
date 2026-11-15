@@ -1,5 +1,10 @@
 # reviewer-benchmark changelog
 
+## 1.0.1 (2026-11-15)
+
+- **A Claude reviewer's brief gives the diff as a command its allow list permits.** The brief said `git -C <copy> diff`, which the `Bash(git diff:*)` rule refuses, so the Claude models of the first two runs had their first command refused and went on with plain `git diff` (shown with one command each way, 2026-11-15; found by Claude Sonnet 5.5 reviewing review-gate 6.0.0). Now it says `git diff <base>...<head>`, run from the copy's folder, as it does for `agy`. Their saved reports stand: a later run of those models is that little bit easier for them.
+- The built-in cheap models' brief is "the gate's brief for a free reviewer": review-gate 6.0.0 ended the trial that the wording named.
+
 ## 1.0.0 (2026-11-15)
 
 - **A benchmark for reviewer models** (owner, 2026-11-15: "a rerunnable, versioned benchmark for these reviews", "stored properly"). Models review the owner's private set of past changes, whose defects are known, and their reports are scored blind. It replaces waiting for about 20 live trial reviews of each model, on different changes, with one evening on the same ones ([evidence.md](evidence.md)).

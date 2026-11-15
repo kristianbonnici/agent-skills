@@ -2,7 +2,7 @@
 name: reviewer-benchmark
 description: Measure how well a model reviews code, by having it review past changes whose defects are known and scoring its reports blind. Run models through the owner's private set of past changes, score each report against the set's answer key, check every other finding against the code (real, minor or false), add the confirmed finds to the key, and report one table for the set's version. Use when the owner asks how good a model is as a reviewer, wants reviewers compared or a new model tested before it reviews in the review gate, or wants changes added to the benchmark. It never changes who reviews in the review gate.
 metadata:
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Reviewer Benchmark
@@ -32,7 +32,7 @@ Run `scripts/bench setup`. For each change it makes a small repository of two co
 
 Run `scripts/bench run <model>` once for each model, in the background, the models side by side. It reviews one change at a time, skips a review already saved, and stops one that passes its time, recording it as timed out. That is a result, not a failure to retry: a reviewer that doesn't report in its time is of no use to a gate. A review whose tool ends in an error (a usage limit, a login) is no result, whatever it printed: it is recorded as failed, and the same command later does it again. To stop a run, stop `bench` (Ctrl-C, or ending its command): it stops its reviewer and keeps nothing of that review. Don't end the reviewer yourself.
 
-- The models it knows: `deepseek`, `glm`, `muse`, `haiku`, `hydrogen` (15 minutes, the gate's brief for a free or trial reviewer), and `terra`, `sonnet`, `opus` (30 minutes, no time line in the brief, as the gate gives a paid reviewer). Another model goes in the data folder's `models.json` ([references/set.md](references/set.md#another-model)).
+- The models it knows: `deepseek`, `glm`, `muse`, `haiku`, `hydrogen` (15 minutes, the gate's brief for a free reviewer), and `terra`, `sonnet`, `opus` (30 minutes, no time line in the brief, as the gate gives a paid reviewer). Another model goes in the data folder's `models.json` ([references/set.md](references/set.md#another-model)).
 - A paid model may run as two commands, each given half of the changes' names.
 - When a model fails its first two reviews the same way (no report, out of time, or an error after a good report), stop it and say so. Don't spend the whole set on it: a failed review is run again by every later run.
 - A review that left almost nothing and no error counts as tried with no report. Read its log in the scoring folder: when it was a usage limit or a login, delete that review's `.json` in `runs/<model>/` and run the model again.
