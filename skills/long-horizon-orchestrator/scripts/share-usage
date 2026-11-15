@@ -114,7 +114,8 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
                 if found:
                     print(f"share-usage: {branch} already holds these files from {name}")
                 return 0 if found else 1
-            who = [] if git(tree, "config", "user.email", check=False).stdout.strip() else ["-c", "user.name=share-usage", "-c", f"user.email=share-usage@{name}"]
+            named = all(git(tree, "config", key, check=False).stdout.strip() for key in ("user.name", "user.email"))
+            who = [] if named else ["-c", "user.name=share-usage", "-c", f"user.email=share-usage@{name}"]
             # never signed: a signing key's passphrase would prompt, and nobody is there to answer it
             git(tree, *who, "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", f"usage: {name}'s machine samples and costs for {run}")
             pushed = git(tree, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)

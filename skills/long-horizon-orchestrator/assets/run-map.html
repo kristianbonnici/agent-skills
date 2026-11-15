@@ -1491,7 +1491,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     // the chosen computer's bands follow its own sampling, the subscriptions the orchestrator's
     const own = M && M.sampled, macBefore = own ? m < Math.floor(own[0]) : before, macPast = own ? m >= Math.floor(own[1]) + 1 : past;
     const macShown = mac && !macBefore && !macPast;
-    if (before || past) tip.append(el("div", "gap", `${own && macShown ? "Subscriptions not sampled" : "Not sampled"}: sampling ${past ? "ended" : "began"} at ${clock(Math.floor(past ? sampledTo : sampledFrom))}`));
+    if (before || past) tip.append(el("div", "gap", `${own && macShown ? (byId.subs || byId.api ? "Subscriptions not sampled" : `Not sampled on ${MS[0].name}`) : "Not sampled"}: sampling ${past ? "ended" : "began"} at ${clock(Math.floor(past ? sampledTo : sampledFrom))}`));
     if (byId.subs && !before && !past) {
       tip.append(el("div", "sec", "Subscriptions"));
       hover.filter(h => h.kind === "sub").reverse().forEach(h => {
