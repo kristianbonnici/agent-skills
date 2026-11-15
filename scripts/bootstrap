@@ -153,7 +153,11 @@ leave_one() {
 leave_adapter() {
   leave_parts=$1
   leave_folder=$2
-  [ -d "$leave_folder" ] && [ ! -L "$leave_folder" ] || return 0
+  if [ -L "$leave_folder" ] || { [ -e "$leave_folder" ] && [ ! -d "$leave_folder" ]; }; then
+    echo "KEEP $leave_folder: this computer leaves out $row_host, but this repository didn't install it" >&2
+    return 0
+  fi
+  [ -d "$leave_folder" ] || return 0
   # The folder goes only with the links it held: an empty folder bootstrap never filled is kept.
   left_any=0
   for name in SKILL.md agents references scripts assets; do
@@ -192,7 +196,9 @@ EOF
 
   # The links of hosts this computer leaves out. Only --all: --host for one of them stopped above.
   if [ "$host" = all ]; then
+    # Two hosts that share a folder list its links once each: act on each path once.
     away=$("$script_dir/manifest" away) || exit 1
+    away=$(printf '%s\n' "$away" | awk -F '\t' '!seen[$4]++')
     while IFS=$(printf '\t') read -r row_host mode source target; do
       [ -n "$row_host" ] || continue
       target_path=$(expand_target "$target")

@@ -53,8 +53,9 @@ line which hosts it left out, and `--host` naming one of them stops with the rea
 An `external` row in a `links.tsv` may end with the computers it is on, separated by spaces, for a
 tool installed on some computers only. Doctor expects that skill only there; an empty column means
 every computer. A computer named there needs a row in the table, so a misspelt name is refused.
-`./scripts/manifest computer` prints this computer's name, and
-`./scripts/manifest hosts` and `left-out` the hosts it has and leaves out.
+`./scripts/manifest computer` prints this computer's name, `hosts` and `left-out` the hosts it has
+and leaves out, `away` the links of the hosts it leaves out, `computers` the computers the table
+names, and `unhosted` the hosts no row names (doctor warns about those).
 
 ### Private state
 

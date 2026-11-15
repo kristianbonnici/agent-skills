@@ -338,7 +338,8 @@ rmdir "$test_home/.gemini/antigravity-cli/skills/product-design"
 mkdir "$test_home/foreign-adapter"
 ln -s "$repo_root/skills/product-design/SKILL.md" "$test_home/foreign-adapter/SKILL.md"
 ln -s "$test_home/foreign-adapter" "$test_home/.gemini/antigravity-cli/skills/product-design"
-on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/travel-foreign.out" 2>&1
+grep -q "KEEP $test_home/.gemini/antigravity-cli/skills/product-design: this computer leaves out antigravity-cli" "$test_home/travel-foreign.out"
 on travel-mac "$repo_root/scripts/uninstall" --all >/dev/null 2>&1
 test -L "$test_home/foreign-adapter/SKILL.md"
 test -L "$test_home/.gemini/antigravity-cli/skills/product-design"
@@ -370,6 +371,11 @@ on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-travel.out" 
 grep -q "FAIL portable Product Design must not be exposed to Codex: $test_home/.agents/skills/product-design" "$test_home/doctor-travel.out"
 rmdir "$test_home/.agents/skills/product-design"
 grep -q "WARN $test_home/.claude/skills/studio-tool is listed" "$test_home/doctor-spare.out" && { echo "studio-mac's tool expected on spare-mac" >&2; exit 1; }
+# A host added to hosts.tsv and to no row is on no computer with a row: doctor says so.
+printf 'lonely\tLonely\tlink\t~/.lonely/skills\n' >"$computers/install/hosts.tsv"
+printf 'lonely\texternal\ta tool\t~/.lonely/skills/thing\n' >>"$computers/install/links.tsv"
+on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-lonely.out" 2>&1 || true
+grep -q "^WARN no row of install/computers.tsv names lonely, so no computer with a row installs it" "$test_home/doctor-lonely.out"
 export AGENT_SKILLS_PRIVATE=
 
 # Uninstall removes a retired link that is still there too.
