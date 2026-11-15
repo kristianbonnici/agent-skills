@@ -85,6 +85,8 @@ def read(path):
         return None
     except OSError as error:
         raise SystemExit(f"decisions: can't read {path}: {error.strerror}")
+    except UnicodeDecodeError:
+        raise SystemExit(f"decisions: can't read {path}: it isn't UTF-8 text; fix it by hand")
 
 
 def write(path, text):
@@ -109,6 +111,8 @@ def write(path, text):
 def parse(text):
     """Return (layout, preamble lines, [(heading, body lines)]); layout is new, single or empty."""
     preamble, sections = [], []
+    if any(line.startswith(("<<<<<<< ", ">>>>>>> ")) or line == "=======" for line in text.splitlines()):
+        raise LayoutError("the file has git conflict markers: resolve them by hand")
     for line in text.splitlines():
         if line.startswith("## "):
             sections.append((line.rstrip(), []))
@@ -291,7 +295,7 @@ def main(argv):
             return init(path)
         return migrate(path, target)
     except LayoutError as error:
-        print(f"decisions: {error}; nothing was written", file=sys.stderr)
+        print(f"decisions: {error}" + ("" if args == ["show"] else "; nothing was written"), file=sys.stderr)
         return 2
 
 

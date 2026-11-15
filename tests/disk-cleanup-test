@@ -324,6 +324,16 @@ for extra in ("\n## Machine travel-mac\n### Keep\n- `~/t` (2026-11-01): kept.\n"
     unknown = read()
     for args in (("show",), ("init",), ("migrate", "--to", "studio-mac")):
         assert "fix it by hand" in run("travel-mac", *args, code=2) and read() == unknown, (extra, args)
+with open(shared, "w") as handle:
+    handle.write(laid + "<<<<<<< HEAD\n- `~/a` (2026-11-01): kept.\n=======\n- `~/b` (2026-11-02): kept.\n>>>>>>> theirs\n")
+unknown = read()
+for args in (("show",), ("init",), ("migrate", "--unassigned")):
+    assert "conflict markers" in run("studio-mac", *args, code=2) and read() == unknown, args
+with open(shared, "wb") as handle:
+    handle.write(laid.encode() + b"- `~/caf\xe9` (2026-11-01): kept.\n")
+for args in (("show",), ("init",)):
+    out = run("studio-mac", *args, code=1)
+    assert "isn't UTF-8" in out and "Traceback" not in out, out
 
 # a hand-edited heading with extra spaces is still this computer's section, not a new one
 with open(shared, "w") as handle:
