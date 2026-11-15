@@ -196,9 +196,9 @@ EOF
 
   # The links of hosts this computer leaves out. Only --all: --host for one of them stopped above.
   if [ "$host" = all ]; then
-    # Two hosts that share a folder list its links once each: act on each path once.
+    # Two hosts that share a folder list its links once each: act on each link once.
     away=$("$script_dir/manifest" away) || exit 1
-    away=$(printf '%s\n' "$away" | awk -F '\t' '!seen[$4]++')
+    away=$(printf '%s\n' "$away" | awk -F '\t' '!seen[$2 FS $3 FS $4]++')
     while IFS=$(printf '\t') read -r row_host mode source target; do
       [ -n "$row_host" ] || continue
       target_path=$(expand_target "$target")
