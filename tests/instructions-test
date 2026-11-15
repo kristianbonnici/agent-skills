@@ -137,6 +137,15 @@ grep -q "a line of my own" "$changed_backup" || fail "the backup of a changed fi
 rm "$changed_backup"
 # A rebuild only because the sections changed keeps no backup (above), and leaves no temporary file.
 test -z "$(find "$on_home" -name '.agent-skills-instructions.*')" || fail "a temporary file was left beside a target"
+# A marker without a checksum (as an earlier version wrote it) counts as changed: kept, to be safe.
+{ printf '%s\n' "${marker_start%% Checksum: } -->"; tail -n +2 "$on_home/.codex/AGENTS.md"; } >"$test_home/old-marker"
+cp "$test_home/old-marker" "$on_home/.codex/AGENTS.md"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/rebuild.out" 2>&1
+expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/rebuild.out"
+rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/rebuild.out")"
+# A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
+(TMPDIR="$test_home/no-such-folder"; export TMPDIR; on studio-mac "$repo_root/scripts/doctor" --host claude) >"$test_home/doctor.out" 2>&1 || true
+expect "^FAIL the instruction files could not be checked (scripts/instructions check exited [1-9]" "$test_home/doctor.out"
 # --host builds only that host's file.
 rm "$on_home/.codex/AGENTS.md" "$on_home/.claude/CLAUDE.md"
 on studio-mac "$repo_root/scripts/bootstrap" --host codex --skip-dependencies >"$test_home/host.out" 2>&1
@@ -207,7 +216,7 @@ rmdir "$on_home/.config/opencode/AGENTS.md"
 # Uninstall removes the built files and nothing else: the backups and the owner's link target stay.
 on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 on studio-mac "$repo_root/scripts/uninstall" --all --dry-run >"$test_home/uninstall.out" 2>&1
-expect "^DRY RUN: rm $on_home/.claude/CLAUDE.md$" "$test_home/uninstall.out"
+expect "^DRY RUN: rm $on_home/.claude/CLAUDE.md; your file from before bootstrap built it is $backup" "$test_home/uninstall.out"
 test -f "$on_home/.claude/CLAUDE.md"
 on studio-mac "$repo_root/scripts/uninstall" --all >"$test_home/uninstall.out" 2>&1
 expect "^REMOVED $on_home/.claude/CLAUDE.md; your file from before bootstrap built it is $backup: rename it back to use it again$" "$test_home/uninstall.out"

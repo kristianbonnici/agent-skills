@@ -113,8 +113,8 @@ rows, each section as its path.
 uncommitted change to a tracked file, it runs `git pull --ff-only`; one off its default branch or
 with a change is skipped, with the reason and the command to fix it. For each it reports the commits
 of its default branch that are not on `origin` as of the last fetch, and it never pushes: push those
-yourself, so the other computers get them. Run by nothing at a terminal, it lets git fail rather than
-ask for a password. Then it runs `bootstrap --all` (pass `--skip-dependencies` to leave the
+yourself, so the other computers get them. When its standard input is not a terminal (a schedule, an
+agent), git fails rather than asks for a password: no prompt, and ssh in batch mode. Then it runs `bootstrap --all` (pass `--skip-dependencies` to leave the
 runtimes alone). A pull that cannot fast-forward fails sync after bootstrap has run.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind

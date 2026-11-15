@@ -28,7 +28,8 @@ an earlier bootstrap made for it.
 
 Also builds this computer's instruction files (a host's global AGENTS.md or CLAUDE.md) from the
 sections install/instructions.tsv names. A file already there that bootstrap didn't build is left
-as it is; --adopt-instructions takes it over, copying it first to a backup beside it.
+as it is; --adopt-instructions takes it over, keeping it first as a backup beside it. A built file
+changed in place is kept as a backup beside it before it is rebuilt.
 
 Also links the files of a private state repository (AGENT_SKILLS_STATE, by default
 agent-skills-state next to this repository) into \${XDG_STATE_HOME:-~/.local/state}/agent-skills.

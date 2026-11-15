@@ -179,6 +179,25 @@ done
 remote_heads | awk '{ print $1 }' >"$work/remotes.after"
 test "$(sort -u "$work/remotes.after" | paste -sd' ' -)" = refs/heads/main || fail "a branch was pushed"
 
+# Run with no terminal, sync lets git fail rather than prompt: no password prompt, and ssh in batch
+# mode added to the repository's own ssh command. A stand-in ssh records how it was called.
+printf '#!/bin/sh\nprintf "%%s|%%s\\n" "$GIT_TERMINAL_PROMPT" "$*" >>"%s/ssh.log"\nexit 255\n' "$work" >"$work/bin/ssh"
+chmod +x "$work/bin/ssh"
+git -C "$private" remote set-url origin ssh://git@example.invalid/agent-skills-private.git
+git -C "$private" config core.sshCommand "ssh -i $work/work-key"
+if env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1; then
+  fail "sync passed with an origin it cannot reach"
+fi
+expect "^FAIL agent-skills-private: git pull --ff-only failed" "$work/sync.out"
+expect "^0|-i $work/work-key -o BatchMode=yes .*example.invalid" "$work/ssh.log"
+# A command given in GIT_SSH_COMMAND is the caller's: sync leaves it alone.
+: >"$work/ssh.log"
+GIT_SSH_COMMAND="ssh -o ConnectTimeout=1" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "|-o ConnectTimeout=1 .*example.invalid" "$work/ssh.log"
+refuse "BatchMode" "$work/ssh.log"
+git -C "$private" remote set-url origin "$work/remotes/agent-skills-private.git"
+git -C "$private" config --unset core.sshCommand
+
 # A private repository left out (set empty) and a state repository that isn't there are skipped.
 rm -rf "$state"
 AGENT_SKILLS_PRIVATE= "$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }

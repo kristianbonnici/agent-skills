@@ -38,10 +38,12 @@ else
   private_repo=$parent/agent-skills-private
 fi
 state_repo=${AGENT_SKILLS_STATE:-$parent/agent-skills-state}
-# Run by nobody at a terminal (a schedule, an agent), git must fail rather than wait for a password.
+# When standard input is not a terminal (a schedule, an agent), git must fail rather than wait for
+# a password: no prompt, and ssh in batch mode (the pull adds it to the repository's own ssh command).
+batch=0
 if [ ! -t 0 ]; then
+  batch=1
   export GIT_TERMINAL_PROMPT=0
-  export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
 fi
 
 in_repo() {
@@ -81,7 +83,12 @@ sync_one() {
     echo "SKIP $name: it has uncommitted changes, so it is not pulled: commit or discard them (git -C $sync_root status) and run sync again"
   else
     before=$(in_repo rev-parse HEAD)
-    if pull_out=$(in_repo pull --ff-only --quiet origin "$default" 2>&1); then
+    set -- pull --ff-only --quiet origin "$default"
+    if [ "$batch" -eq 1 ] && [ -z "${GIT_SSH_COMMAND:-}" ]; then
+      ssh_command=$(in_repo config --get core.sshCommand 2>/dev/null) || ssh_command=ssh
+      set -- -c "core.sshCommand=$ssh_command -o BatchMode=yes" "$@"
+    fi
+    if pull_out=$(in_repo "$@" 2>&1); then
       count=$(in_repo rev-list --count "$before..HEAD")
       if [ "$count" -eq 0 ]; then
         echo "OK $name is up to date with origin/$default"
