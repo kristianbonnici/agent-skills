@@ -158,7 +158,7 @@ stage_all() {
     while [ -e "$aside" ]; do count=$((count + 1)); aside="$backups/$(basename -- "$original").before-agent-skills-$(stamp)-$count"; done
     if ! mv "$original" "$aside" 2>/dev/null; then
       echo "FAIL could not move the launch agent $original into $backups, so nothing was changed" >&2
-      unstage_all
+      unstage_all >/dev/null
       return 1
     fi
     staged="$staged$original$tab$aside
@@ -168,11 +168,17 @@ $1
 EOF
 }
 
-# Puts the staged files back where they were.
+# Puts the staged files back where they were, never over a file that appeared there meanwhile, and
+# prints each one put back. Those that can't go back stay in the backup folder, and it says so.
 unstage_all() {
   printf '%s' "$staged" | while IFS="$tab" read -r original aside; do
     [ -n "$original" ] || continue
-    mv -n "$aside" "$original" 2>/dev/null || echo "FAIL could not put $aside back as $original: move it back by hand" >&2
+    mv -n "$aside" "$original" 2>/dev/null || true
+    if [ -e "$aside" ]; then
+      echo "FAIL could not put $aside back as $original, since another file is there now: move it back by hand" >&2
+    else
+      printf '%s\n' "$original"
+    fi
   done
 }
 
@@ -310,10 +316,23 @@ install() {
   # Never over a file that appeared meanwhile.
   mv -n "$next" "$plist" 2>/dev/null
   if [ -e "$next" ]; then
-    # The agents that were there go back, and the one that ran is loaded again.
-    unstage_all
-    [ ! -f "$plist" ] || launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1 || true
-    echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written); the agents that were there were put back" >&2
+    # The agents that were there go back, and one of them, with this label, is loaded again: never
+    # a file that appeared meanwhile.
+    restored=$(unstage_all)
+    reloaded=
+    while IFS= read -r back; do
+      [ -n "$back" ] && [ -z "$reloaded" ] || continue
+      [ "$(plist_label "$back")" = "$label" ] || continue
+      if launchctl bootstrap "$domain" "$back" >/dev/null 2>&1; then
+        reloaded=$back
+      else
+        echo "FAIL launchctl could not load $back again; it loads at the next login" >&2
+        reloaded=-
+      fi
+    done <<EOF
+$restored
+EOF
+    echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written); the agents that were there were put back where nothing took their place" >&2
     exit 1
   fi
   judge_staged

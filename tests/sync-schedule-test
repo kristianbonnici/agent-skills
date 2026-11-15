@@ -239,6 +239,27 @@ expect "^FAIL could not put the new launch agent at $plist" "$work/out"
 cmp -s "$plist" "$work/before-fail.plist" || fail "the agent that was there did not go back"
 expect "^bootstrap gui/$uid $plist$" "$work/launchctl.log"
 grep -qxF "gui/$uid/com.agent-skills.sync" "$work/loaded" || fail "the agent that was there is not loaded again"
+# The same with the agent at another file name: that file goes back, and it is the one loaded again.
+mv "$plist" "$HOME/Library/LaunchAgents/other-name.plist"
+: >"$work/launchctl.log"
+if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 06:00 >"$work/out" 2>&1; then fail "--schedule passed when the new agent couldn't go in"; fi
+cmp -s "$HOME/Library/LaunchAgents/other-name.plist" "$work/before-fail.plist" || fail "the agent at another name did not go back"
+expect "^bootstrap gui/$uid $HOME/Library/LaunchAgents/other-name.plist$" "$work/launchctl.log"
+test ! -e "$plist" || fail "a plist appeared at the label's name"
+mv "$HOME/Library/LaunchAgents/other-name.plist" "$plist"
+test -z "$(ls "$HOME/.local/state/agent-skills-sync" | grep -v '^com.agent-skills.sync.plist.before-agent-skills-\|^sync-by-hand.plist.before-agent-skills-')" || fail "a restore left a staged file behind"
+# Another program puts a file at the label's name meanwhile (a stand-in mv does, before refusing the
+# new agent): that file is neither replaced nor loaded, and the agent that was there stays in the
+# backup folder, which the output names.
+printf '#!/bin/sh\ncase "$*" in *.agent-skills-sync.*com.agent-skills.sync.plist) echo foreign >"%s"; exit 1 ;; esac\nexec /bin/mv "$@"\n' "$plist" >"$work/refuse-bin/mv"
+: >"$work/launchctl.log"
+if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 06:00 >"$work/out" 2>&1; then fail "--schedule passed when another file took the agent's place"; fi
+test "$(cat "$plist")" = foreign || fail "the file that appeared was replaced"
+expect "^FAIL could not put $HOME/.local/state/agent-skills-sync/com.agent-skills.sync.plist.before-agent-skills-.* back as $plist, since another file is there now" "$work/out"
+refuse "^bootstrap" "$work/launchctl.log"
+kept_back=$(sed -n "s#^FAIL could not put \(.*\) back as .*#\1#p" "$work/out")
+cmp -s "$kept_back" "$work/before-fail.plist" || fail "the agent that was there is not in the backup folder"
+mv "$kept_back" "$plist"
 
 # Never from a linked worktree, which goes away when its work is done.
 git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null

@@ -65,6 +65,8 @@ try:
     LOCK_WAIT = float(os.environ.get("DISK_CLEANUP_LOCK_WAIT") or 60)
 except ValueError:
     LOCK_WAIT = 60.0
+if not 0 <= LOCK_WAIT < float("inf"):
+    LOCK_WAIT = 60.0
 ATTEMPTS = 3
 USAGE = next(part for part in __doc__.split("\n\n") if part.startswith("Usage:"))
 

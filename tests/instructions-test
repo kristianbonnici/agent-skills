@@ -224,6 +224,16 @@ find "$on_home/.codex" -name 'AGENTS.md.changed-*' | grep -q . || fail "the file
 expect "; the file it replaced is kept as $on_home/.codex/AGENTS.md.changed-" "$test_home/held.out"
 find "$on_home/.codex" -name 'AGENTS.md.changed-*' -exec rm {} +
 test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
+# The same while adopting the owner's own file: it is kept under the name adoption gives it.
+printf 'My own codex notes\n' >"$on_home/.codex/AGENTS.md"
+if (APPEAR_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/appear-bin:$test_home/hold-bin:$PATH"; export APPEAR_TARGET PATH
+  on studio-mac "$repo_root/scripts/instructions" install --host codex --adopt) >"$test_home/held.out" 2>&1; then
+  fail "an adoption that found a new file in its place passed"
+fi
+expect "; the file it replaced is kept as $on_home/.codex/AGENTS.md.before-agent-skills-" "$test_home/held.out"
+adopted_backup=$(sed -n "s#.*; the file it replaced is kept as ##p" "$test_home/held.out")
+test "$(cat "$adopted_backup")" = "My own codex notes" || fail "the owner's file was not kept"
+rm "$adopted_backup"
 rm "$on_home/.codex/AGENTS.md"
 on studio-mac "$repo_root/scripts/instructions" install --host codex >/dev/null 2>&1
 # A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
