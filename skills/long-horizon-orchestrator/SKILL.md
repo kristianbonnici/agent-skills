@@ -2,7 +2,7 @@
 name: long-horizon-orchestrator
 description: Run a set of long-running agent tasks to completion while the user is away. Launch each task as its own agent (T3 threads on any provider, Claude Code background subagents, or Codex subagents). Get woken automatically when a task finishes or blocks, launch dependent tasks once their prerequisites are merged, and have finished work reviewed, checked and merged into the branch the run started from. End with a plain-language report of what was built and what needs the user. Use whenever the user wants several tasks run in parallel or overnight, asks you to launch, coordinate, chain or babysit agents or follow-up tasks, says "launch everything and merge it", or wants work to continue while they sleep or step away, even if they never say "orchestrate". If no task list exists yet, plan one first and get a single approval.
 metadata:
-  version: 5.6.0
+  version: 5.7.0
 ---
 
 # Long-Horizon Orchestrator
@@ -65,7 +65,7 @@ After approval, do not ask the user anything. When a new decision comes up:
 
 Record each such decision for the final report.
 
-A message from the user during the run amends the contract. Quote it in the ledger with its time, and act on it: it may widen the scope, move a task to another provider, or override a default of this skill. Don't ask them to confirm what they already said, and don't take it as an opening for other questions; the rest of the contract stands. Name each amendment in the report.
+A message from the user during the run amends the contract. Quote it in the ledger with its time, and act on it: it may widen the scope, move a task to another provider, or override a default of this skill. Don't ask them to confirm what they already said, and don't take it as an opening for other questions; the rest of the contract stands. Name each amendment in the report. A pause they ask for (to move or close a computer), and continuing after it, go in the order [references/integration.md](references/integration.md#a-pause-the-owner-asks-for) gives.
 
 ### 3. Prepare
 
@@ -164,5 +164,5 @@ Update it on every state change. Mention its path in the contract message and in
 - **Stop only what you started,** by its recorded process ID, never by a name or pattern. A pattern matches other tasks' builds and the user's own apps.
 - **Never run a command that waits for approval,** in your own thread above all. Even with permissions bypassed, Claude Code stops for approval on commands it judges dangerous, such as `rm -rf` on a path built from a shell variable (`rm -rf "$RUN/$d"`), or any `rm` inside a `sh -c` script or compound command ("This shell -c script runs rm and could not be checked"). Delete with a Bash call of its own: plain `rm` and literal absolute paths, one per argument. A prompt in a task's thread stalls that task. A prompt in your own thread stalls the whole run: the heartbeats queue behind your stuck turn, so nothing notices. If a task's thread shows a pending request with no child process running, it is waiting for approval: interrupt the turn and tell the task how to finish without that command. On every wake, check each running task for a pending approval (`run-watch`'s `approval` line, or the thread of a task it can't read; step 2 of "On every wake"), and keep the heartbeat at 15 minutes or less while tasks run.
 - **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work. Only the four kinds of work named under "Quota pauses work" above move when a limit stops them, and a Fable task that moves to Opus changes model, not subscription.
-- **Never push, publish or force-update,** except the owner's provider profile and skill lessons to their private state repository, and, in a run with tasks on another computer, the run, task and briefs branches its contract names ([references/computers.md](references/computers.md#6-commits-travel-through-the-remote)), never forced. Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
+- **Never push, publish or force-update,** except the owner's provider profile and skill lessons to their private state repository (to its run branch when it has one), and, in a run with tasks on another computer, the run, task and briefs branches its contract names ([references/computers.md](references/computers.md#6-commits-travel-through-the-remote)), never forced. Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
 - **Calibrate.** Record actual task durations in the ledger and report them, so future estimates improve.

@@ -111,6 +111,17 @@ Then clean up:
 
 Cleanup is for merged work only, and a split's kept branch stays. A blocked, failed, parked, stopped or ready-but-not-merged task keeps its worktree, branch and scratch folder, because they hold the unmerged work or what it needs to go on. At the finish, put an empty `KEEP` file in each such task's folder in the run directory, so `prune-runs` leaves that folder whole in later runs too. Name them in the final report.
 
+## A pause the owner asks for
+
+A pause the owner asks for mid-run (to close a lid or move a computer) is not a quota pause, and nothing in it is lost if you go in this order:
+
+1. Switch the heartbeat off (in T3, `schedule_task` with `enabled: false`), so it doesn't wake tasks you are stopping.
+2. Tell each running task to stop at its next safe point: commit what is ready, start nothing new, cancel its reviewers, no rebase or push. Send it as a steer, or in mode `auto` when the task is between turns (a steer then fails with "no running turn"). Never interrupt a task mid-push.
+3. Wait until each task is idle, then stop its leftover processes by process ID ([machine.md](machine.md#8-leftover-processes)).
+4. Set the ledger to `Status: paused until the owner continues`, each running task to `paused` there and in `watch.json`, and tell the owner it is safe now.
+
+On their word to continue: switch the heartbeat on, check each computer's keep-awake and power (restart a keep-awake that ended), set the tasks back to `running`, and send each task "continue".
+
 ## A task the user stopped
 
 Nothing of it merges. Mark it `stopped` and park its dependents. Keep its work in case the user wants it later:
