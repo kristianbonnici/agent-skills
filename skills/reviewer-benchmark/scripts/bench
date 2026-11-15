@@ -30,16 +30,18 @@ reads the key's repository.
 
 run: has one model review each change it has no review of, one at a time, read-only, from the copy's
 folder, with the review gate's brief. A model with "paid" gets no time line in its brief. The report is
-saved as it came, with how long it took and how it ended. A review that passes its minutes is stopped and
-recorded as timed out, and the run goes on. One whose tool ends in an error (a limit, a login) is recorded
-as failed, whatever it printed, and run again by the next run. A review of other commits than the key's now names is run
-again, and its score is dropped. Stopping bench stops the reviewer it started. Models: the table below, and
-the owner's in models.json.
+saved as it came, with how long it took, how it ended and an id of its own. A review that passes its
+minutes is stopped and recorded as timed out, and the run goes on. One whose tool ends in an error (a limit,
+a login) is recorded as failed, whatever it printed, and run again by the next run. So is a review of other
+commits than its key names now, or one saved without an id (a file written by hand), and its score is
+dropped. Stopping bench stops the reviewer it started. Models: the table below, and the owner's in
+models.json.
 
 blind: copies those models' reports that have no score yet to blind/<change>/<letter>.md, in an order of
 its own for each change, and writes blind/<change>/scores.json for the scorer to fill. A review that timed
-out, failed or left under 400 bytes gets no file, and neither does one whose score is saved. The letters' meaning is kept in blind/map.json, which scorers
-aren't given. It refuses while the scores of an earlier blind aren't saved; --discard throws them away.
+out, failed or left under 400 bytes gets no file, and neither does one whose score is saved. The letters'
+meaning is kept in blind/map.json, which scorers aren't given. It refuses while the scores of an earlier
+blind aren't saved; --discard throws them away.
 
 unblind: reads each blind/<change>/scores.json and saves its reports' scores under their models' names in
 the data's scores/<change>.json, leaving other models' scores there as they are. A scores.json that doesn't

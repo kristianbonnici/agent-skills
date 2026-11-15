@@ -41,7 +41,7 @@ Run `scripts/bench run <model>` once for each model, in the background, the mode
 
 ## 4. Score the reports blind
 
-1. Run `scripts/bench blind <model> ...` once, for all the models to score. It copies their reports that have no score yet to `blind/<change>/<letter>.md` in the scoring folder and leaves a `scores.json` to fill beside them. Filled scores exist only there until step 3: a second `blind` before it is refused.
+1. Run `scripts/bench blind <model> ...` once, for all the models to score. It copies their reports that have no score yet to `blind/<change>/<letter>.md` in the scoring folder and leaves a `scores.json` to fill beside them. Filled scores exist only there until step 3: a second `blind` before it is refused. A report with a saved score isn't shown again: to score one again, delete its model's entry in `scores/<change>.json` first.
 2. For each change, have a scorer fill that file, with the two briefs in [references/scoring.md](references/scoring.md): first each report against the key, then every other finding the report calls a blocker or follow-up against the code. Give the second pass to the strongest model you have.
 3. Run `scripts/bench unblind`. It checks each `scores.json` against its key and saves the scores under the models' names; one that doesn't fit is refused with its reasons, and nothing is saved until it does. A report whose change was reviewed again since step 1 is left out and named, and the others are saved: run `blind` for that model again and score its new report.
 

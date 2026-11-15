@@ -8,7 +8,7 @@
 |---|---|
 | `set.json` | The set's `version`, its `changes` (their names) and a `history` line per version |
 | `keys/<change>.json` | The change's answer key |
-| `runs/<model>/<change>.md` and `.json` | A model's report as it came, and how long it took and how it ended |
+| `runs/<model>/<change>.md` and `.json` | A model's report as it came, and how long it took and how it ended. `bench run` writes both: a `.json` written by hand lacks the id a review needs, and that review is run again |
 | `scores/<change>.json` | Each model's score for that change |
 | `models.json` | The owner's own models |
 | `results.md` | The table of each run, with its date and the set's version |
