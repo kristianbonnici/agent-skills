@@ -41,8 +41,10 @@ studio-mac	opencode factory antigravity antigravity-cli codex claude gemini
 travel-mac	opencode antigravity codex claude gemini
 ```
 
-A computer is named by `scutil --get LocalHostName` on macOS and `hostname -s` elsewhere;
-`AGENT_SKILLS_COMPUTER` overrides it. A computer with no row, or no table at all, has every host.
+A computer is named by `scutil --get LocalHostName` on macOS (`hostname -s` when that gives no
+name) and `hostname -s` elsewhere; `AGENT_SKILLS_COMPUTER` overrides it. A computer with no row, or
+no table at all, has every host; doctor warns when there is a table but no row for this computer,
+as after a rename.
 For a host its computer leaves out, bootstrap installs nothing and removes the links an earlier
 bootstrap made there, as safely as a retired link: only a link to exactly what this checkout
 installed, never a real file or someone else's link. Doctor skips that host's checks and says in one
@@ -50,7 +52,8 @@ line which hosts it left out, and `--host` naming one of them stops with the rea
 
 An `external` row in a `links.tsv` may end with the computers it is on, separated by spaces, for a
 tool installed on some computers only. Doctor expects that skill only there; an empty column means
-every computer. `./scripts/manifest computer` prints this computer's name, and
+every computer. A computer named there needs a row in the table, so a misspelt name is refused.
+`./scripts/manifest computer` prints this computer's name, and
 `./scripts/manifest hosts` and `left-out` the hosts it has and leaves out.
 
 ### Private state

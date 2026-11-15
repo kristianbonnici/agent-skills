@@ -91,6 +91,14 @@ EOF
   [ "$leftover" -eq 0 ] || leftover_note="; $leftover link(s) an earlier bootstrap made for them are still there: run scripts/bootstrap --all to remove them"
   echo "SKIP hosts this computer ($("$script_dir/manifest" computer)) leaves out in install/computers.tsv: $left_out$leftover_note"
 fi
+# A table with no row for this computer gives it every host: likely a new or renamed computer.
+computer_names=$("$script_dir/manifest" computers)
+if [ -n "$computer_names" ] && ! printf '%s\n' "$computer_names" | grep -qxF -- "$("$script_dir/manifest" computer 2>/dev/null)"; then
+  echo "WARN this computer ($("$script_dir/manifest" computer 2>/dev/null)) has no row in install/computers.tsv, so it gets every host: add its row, or rename the row of the computer it was (rows: $(printf '%s\n' "$computer_names" | paste -sd' ' -))"
+fi
+# A host no row names is left out on every computer that has a row: a host added to hosts.tsv only.
+unhosted=$("$script_dir/manifest" unhosted | paste -sd' ' -)
+[ -z "$unhosted" ] || echo "WARN no row of install/computers.tsv names $unhosted, so no computer with a row installs it: add it to the rows of the computers that have it"
 
 # Hosts read each repository's own files through the links, so what is checked out is what every
 # agent runs: another branch, or an installed file changed and not committed, is already live.
@@ -225,7 +233,9 @@ else
   echo "SKIP no private state repository at $state_repo"
 fi
 
+# Codex reads these folders; a computer that leaves Codex out has no Codex to hide it from.
 for forbidden in "$HOME/.agents/skills/product-design" "$HOME/.codex/skills/product-design"; do
+  case " $left_out " in *" codex "*) break ;; esac
   if [ -e "$forbidden" ] || [ -L "$forbidden" ]; then
     fail "portable Product Design must not be exposed to Codex: $forbidden"
   else

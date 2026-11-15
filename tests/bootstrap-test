@@ -253,7 +253,7 @@ mkdir -p "$computers/install" "$computers/skills/roaming"
 echo roaming >"$computers/skills/roaming/SKILL.md"
 printf 'install\troaming\tclaude factory\n' >"$computers/install/skills.tsv"
 printf 'claude\texternal\ta tool\t~/.claude/skills/studio-tool\tstudio-mac\nclaude\texternal\ta tool\t~/.claude/skills/everywhere-tool\n' >"$computers/install/links.tsv"
-printf '# computer\thosts\nstudio-mac\topencode factory antigravity antigravity-cli codex claude gemini\ntravel-mac\topencode antigravity codex claude gemini\n' >"$computers/install/computers.tsv"
+printf '# computer\thosts\nstudio-mac\topencode factory antigravity antigravity-cli codex claude gemini\ntravel-mac\topencode antigravity codex claude gemini\ncodeless-mac\tclaude\n' >"$computers/install/computers.tsv"
 export AGENT_SKILLS_PRIVATE="$computers"
 on() {
   on_computer=$1
@@ -314,6 +314,7 @@ if find "$test_home/.factory/skills" -type l | grep -v "/afk$" | grep -q .; then
   echo "bootstrap on travel-mac left links in a host it leaves out:" >&2; find "$test_home/.factory/skills" -type l >&2; exit 1
 fi
 test "$(cat "$test_home/.factory/skills/roaming/SKILL.md")" = own
+grep -q "KEEP $test_home/.factory/skills/roaming: this computer leaves out factory, but this repository didn't install it" "$test_home/travel.out"
 test "$(readlink "$test_home/.factory/skills/afk")" = "$test_home/elsewhere/afk"
 rm -rf "$test_home/.factory/skills/roaming" "$test_home/.factory/skills/afk"
 test ! -e "$test_home/.gemini/antigravity-cli/skills/product-design/SKILL.md"
@@ -327,6 +328,22 @@ on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/nul
 test -d "$test_home/.gemini/antigravity-cli/skills/product-design"
 on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 test ! -e "$test_home/.gemini/antigravity-cli/skills/product-design"
+# An empty folder there that bootstrap didn't fill is kept, by bootstrap and by uninstall.
+mkdir "$test_home/.gemini/antigravity-cli/skills/product-design"
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+on travel-mac "$repo_root/scripts/uninstall" --all >/dev/null 2>&1
+test -d "$test_home/.gemini/antigravity-cli/skills/product-design"
+rmdir "$test_home/.gemini/antigravity-cli/skills/product-design"
+# An adapter folder that is a link is someone else's: neither script reaches through it.
+mkdir "$test_home/foreign-adapter"
+ln -s "$repo_root/skills/product-design/SKILL.md" "$test_home/foreign-adapter/SKILL.md"
+ln -s "$test_home/foreign-adapter" "$test_home/.gemini/antigravity-cli/skills/product-design"
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+on travel-mac "$repo_root/scripts/uninstall" --all >/dev/null 2>&1
+test -L "$test_home/foreign-adapter/SKILL.md"
+test -L "$test_home/.gemini/antigravity-cli/skills/product-design"
+rm "$test_home/.gemini/antigravity-cli/skills/product-design"
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-travel.out" 2>&1 || true
 grep -q "^SKIP hosts this computer (travel-mac) leaves out in install/computers.tsv: factory antigravity-cli$" "$test_home/doctor-travel.out"
 # Uninstall on travel-mac also removes links an earlier bootstrap made for a host it leaves out.
@@ -341,6 +358,17 @@ on spare-mac "$repo_root/scripts/bootstrap" --host factory --skip-dependencies >
 test -L "$test_home/.factory/skills/product-design"
 on spare-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-spare.out" 2>&1 || true
 if grep -q "leaves out" "$test_home/doctor-spare.out"; then echo "doctor left out a host on a computer with no row" >&2; exit 1; fi
+# A table with no row for this computer is worth a warning: it may be a renamed one.
+grep -q "^WARN this computer (spare-mac) has no row in install/computers.tsv, so it gets every host" "$test_home/doctor-spare.out"
+if grep -q "has no row\|no row of" "$test_home/doctor-travel.out"; then echo "doctor warned about a computer that has a row, or a host on none" >&2; exit 1; fi
+grep -q "(rows: studio-mac travel-mac codeless-mac)" "$test_home/doctor-spare.out"
+# A computer that leaves Codex out isn't checked for what Codex would see.
+mkdir -p "$test_home/.agents/skills/product-design"
+on codeless-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-codeless.out" 2>&1 || true
+if grep -q "exposed to Codex" "$test_home/doctor-codeless.out"; then echo "doctor checked Codex on a computer without it" >&2; exit 1; fi
+on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-travel.out" 2>&1 || true
+grep -q "FAIL portable Product Design must not be exposed to Codex: $test_home/.agents/skills/product-design" "$test_home/doctor-travel.out"
+rmdir "$test_home/.agents/skills/product-design"
 grep -q "WARN $test_home/.claude/skills/studio-tool is listed" "$test_home/doctor-spare.out" && { echo "studio-mac's tool expected on spare-mac" >&2; exit 1; }
 export AGENT_SKILLS_PRIVATE=
 

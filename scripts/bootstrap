@@ -138,23 +138,28 @@ retire_one() {
 
 # A host this computer leaves out: the links an earlier bootstrap made for it are removed, as safely
 # as a retired link (only a link to exactly the source this checkout installed), and an adapter
-# folder that is left empty. Anything else there is kept.
+# folder that is left empty once its links are gone. Anything else there is kept.
 leave_one() {
   leave_source=$1
   leave_target=$2
   if is_retired_link "$leave_target" "$leave_source"; then
     run rm "$leave_target"
+    left_any=1
     [ "$dry_run" -eq 1 ] || echo "REMOVED $leave_target: this computer leaves out $row_host"
+  elif [ -e "$leave_target" ] || [ -L "$leave_target" ]; then
+    echo "KEEP $leave_target: this computer leaves out $row_host, but this repository didn't install it" >&2
   fi
 }
 leave_adapter() {
   leave_parts=$1
   leave_folder=$2
   [ -d "$leave_folder" ] && [ ! -L "$leave_folder" ] || return 0
+  # The folder goes only with the links it held: an empty folder bootstrap never filled is kept.
+  left_any=0
   for name in SKILL.md agents references scripts assets; do
     leave_one "$leave_parts/$name" "$leave_folder/$name"
   done
-  if [ "$dry_run" -eq 0 ] && [ -z "$(find "$leave_folder" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  if [ "$left_any" -eq 1 ] && [ "$dry_run" -eq 0 ] && [ -z "$(find "$leave_folder" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
     rmdir "$leave_folder"
   fi
 }

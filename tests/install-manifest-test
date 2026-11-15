@@ -205,6 +205,16 @@ row alpha external "a tool" '~/.alpha/skills/everywhere' '' >>"$work/computers/l
 } >"$work/computers/computers.tsv"
 on() { AGENT_SKILLS_COMPUTER=$1 "$manifest" "$2" --dir "$work/computers" | sed "s#	$work/#	#"; }
 test "$(on travel-mac computer)" = travel-mac
+test "$(on spare-mac computers | paste -sd' ' -)" = "studio-mac travel-mac"
+test -z "$("$manifest" computers --dir "$base")"
+# A host that has links and no row names: none here; one added to hosts.tsv alone is named.
+test -z "$(on travel-mac unhosted)"
+test -z "$("$manifest" unhosted --dir "$base")"
+mkdir "$work/unhosted"
+cp "$work/computers"/*.tsv "$work/unhosted/"
+row delta Delta link '~/.delta/skills' >>"$work/unhosted/hosts.tsv"
+row install four "delta" >>"$work/unhosted/skills.tsv"
+test "$(AGENT_SKILLS_COMPUTER=studio-mac "$manifest" unhosted --dir "$work/unhosted")" = delta
 test "$(on travel-mac hosts | paste -sd' ' -)" = "alpha gamma"
 test "$(on travel-mac left-out | paste -sd' ' -)" = "beta old extra"
 test "$(on studio-mac hosts | paste -sd' ' -)" = "alpha beta gamma old extra"
@@ -237,7 +247,9 @@ test "$(AGENT_SKILLS_COMPUTER=travel-mac "$manifest" left-out --dir "$base")" = 
 links_of --dir "$base" | diff "$work/links.expected" -
 AGENT_SKILLS_COMPUTER=travel-mac "$manifest" links --dir "$base" | sed "s#	$work/#	#" | diff "$work/links.expected" -
 # Without AGENT_SKILLS_COMPUTER, the name is the computer's own.
-own_name=$(if [ "$(uname -s)" = Darwin ]; then scutil --get LocalHostName 2>/dev/null || hostname -s; else hostname -s; fi)
+own_name=
+[ "$(uname -s)" != Darwin ] || own_name=$(scutil --get LocalHostName 2>/dev/null) || own_name=
+[ -n "$own_name" ] || own_name=$(hostname -s)
 test "$(unset AGENT_SKILLS_COMPUTER; "$manifest" computer)" = "$own_name"
 # A folder two hosts share keeps its links while one of them is on the computer.
 mkdir "$work/computers-shared"

@@ -22,6 +22,8 @@
 #   manifest hosts     every host this computer has
 #   manifest left-out  every host this computer leaves out (none without a row for it)
 #   manifest computer  this computer's name
+#   manifest computers every computer computers.tsv names
+#   manifest unhosted  every host with links that no row of computers.tsv names (none without one)
 #   manifest folders   every folder a host of this computer reads skills from: host, mode, folder
 #   manifest skills    every installed skill and the hosts that get it, by their labels, on any computer
 #   manifest roots     every repository read, this one first
@@ -42,12 +44,12 @@ nl='
 '
 
 usage() {
-  echo "Usage: manifest [links | away | hosts | left-out | computer | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
+  echo "Usage: manifest [links | away | hosts | left-out | computer | computers | unhosted | folders | skills | roots] [--dir INSTALL_DIR]..." >&2
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    links|away|hosts|left-out|computer|folders|skills|roots) what=$1; shift ;;
+    links|away|hosts|left-out|computer|computers|unhosted|folders|skills|roots) what=$1; shift ;;
     --dir) [ "$#" -ge 2 ] || { usage; exit 2; }; dirs="$dirs$2$nl"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
@@ -258,7 +260,7 @@ table == "computers" {
   if ($1 == "" || $1 ~ / /) { refuse("not a computer name: \"" $1 "\""); next }
   if ($1 in computer_where) { refuse($1 " is named twice (first at " computer_where[$1] ")"); next }
   computer_where[$1] = here()
-  computer_count++
+  computer_names[++computer_count] = $1
   pieces = split($2, named, / +/)
   used = 0
   for (piece = 1; piece <= pieces; piece++) {
@@ -266,6 +268,7 @@ table == "computers" {
     used++
     if (!(named[piece] in host_named)) { refuse("no table names a host \"" named[piece] "\""); continue }
     computer_host[$1, named[piece]] = 1
+    hosted[named[piece]] = 1
   }
   if (used == 0) refuse($1 " names no host")
   next
@@ -298,6 +301,15 @@ END {
     for (row = 1; row <= rows; row++) {
       if (what == "links" ? !row_here[row] : (row_here[row] || row_target[row] in here_target)) continue
       printf "%s\t%s\t%s\t%s\n", row_host[row], row_mode[row], row_source[row], row_target[row]
+    }
+  } else if (what == "computers") {
+    for (named_computer = 1; named_computer <= computer_count; named_computer++) print computer_names[named_computer]
+  } else if (what == "unhosted") {
+    # A host that still has links but is on no computer: a host added to hosts.tsv and to no row.
+    if (computer_count > 0) {
+      for (row = 1; row <= rows; row++) if (row_mode[row] != "retired") linked_host[row_host[row]] = 1
+      for (host = 1; host <= host_count; host++)
+        if (host_names[host] in linked_host && !(host_names[host] in hosted)) print host_names[host]
     }
   } else if (what == "hosts" || what == "left-out") {
     for (host = 1; host <= host_count; host++)
