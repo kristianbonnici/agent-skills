@@ -1,6 +1,6 @@
 # reviewer-benchmark
 
-How good is a model at reviewing code? The review gate's trial answers that slowly: one extra review at a
+How good is a model at reviewing code? The review gate's trial, which ended with review-gate 6.0.0, answered that slowly: one extra review at a
 time, each model on different changes, beside different reviewers. This skill answers it in an evening: every
 model reviews the same past changes, whose defects are known, and its reports are scored without the scorer
 knowing who wrote them.

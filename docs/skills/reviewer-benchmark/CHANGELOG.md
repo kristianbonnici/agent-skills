@@ -3,6 +3,7 @@
 ## 1.0.1 (2026-11-15)
 
 - **A Claude reviewer's brief gives the diff as a command its allow list permits.** The brief said `git -C <copy> diff`, which the `Bash(git diff:*)` rule refuses, so the Claude models of the first two runs had their first command refused and went on with plain `git diff` (shown with one command each way, 2026-11-15; found by Claude Sonnet 5.5 reviewing review-gate 6.0.0). Now it says `git diff <base>...<head>`, run from the copy's folder, as it does for `agy`. Their saved reports stand: a later run of those models is that little bit easier for them.
+- **A Claude reviewer reads no settings file.** With `--setting-sources local`, a `.claude/settings.local.json` in the copy that allows a tool gave the reviewer that tool whatever its list said: one that allows writing let a reviewer write a file (shown by a run, 2026-11-15; found by Codex GPT-6.1 Terra). The source list is now empty.
 - The built-in cheap models' brief is "the gate's brief for a free reviewer": review-gate 6.0.0 ended the trial that the wording named.
 
 ## 1.0.0 (2026-11-15)

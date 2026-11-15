@@ -214,7 +214,7 @@ def called(start):
 args, stdin = called("run--agent")
 assert args[:5] == ["run", "--agent", "plan", "-m", "p/m#high"] and args[5].startswith("You are reviewing") and stdin == 0, args[:5]
 args, stdin = called("-p--model")
-assert args == ["-p", "--model", "claude-x", "--effort", "high", "--permission-mode", "dontAsk", "--setting-sources", "local",
+assert args == ["-p", "--model", "claude-x", "--effort", "high", "--permission-mode", "dontAsk", "--setting-sources", "",
                 "--allowedTools", "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"], args
 assert stdin > 500, "claude gets its brief on standard input, and none of it as an argument"
 # Its allow rules match the start of a command, so its brief gives the diff as plain "git diff", as agy's does.

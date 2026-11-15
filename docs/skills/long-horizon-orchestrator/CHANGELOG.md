@@ -3,7 +3,7 @@
 ## 5.5.0 (2026-11-15)
 
 - **No task gets a trial reviewer any more** (owner, 2026-11-15). review-gate 6.0.0 ended the trial: the contract no longer splits standard and deep tasks among trial reviewers, and the task brief names none. The gate itself now adds Gemini 4 Hydrogen at standard and deep.
-- **Hydrogen's reviews count in the Gemini windows:** one a task, from the windows the Hydrogen helper uses. The gate skips Hydrogen while the 5-hour window is past about 85%, so the orchestrator leaves room for the reviews when it plans Hydrogen hand-offs.
+- **Hydrogen's reviews count in the Gemini windows:** one for each standard and deep task, and for a light one while the 5-hour window is under about 60%, from the windows the Hydrogen helper uses. The gate skips Hydrogen while the 5-hour window is past about 85%, so the orchestrator leaves room for the reviews when it plans Hydrogen hand-offs.
 
 ## 5.4.0 (2026-11-14)
 
