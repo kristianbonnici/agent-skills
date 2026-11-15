@@ -252,7 +252,7 @@ with open(shared, "w") as handle:
     handle.write(old)
 assert "layout: single list" in run("travel-mac", "show")
 assert "migrate it first" in run("travel-mac", "init", code=2) and read() == old, "init refuses a single list"
-assert "migrate --to" in run("travel-mac", "migrate", code=1) and read() == old, "migrate needs a computer's name"
+assert "--unassigned" in run("travel-mac", "migrate", code=1) and read() == old, "migrate needs a computer's name"
 assert "moved 4 entries under studio-mac" in run("travel-mac", "migrate", "--to", "studio-mac")
 assert linked("travel-mac"), "migrate wrote through the link"
 new = read()
@@ -266,7 +266,33 @@ studio = run("studio-mac", "show")
 assert all(e in studio for e in entries), studio
 assert "isn't a single list" in run("studio-mac", "migrate", "--to", "studio-mac", code=2) and read() == new, "migrating twice changes nothing"
 
+# the owner can't say where a single list was made: it moves under Unassigned, applied nowhere,
+# init works again, and a later migrate gives it to the computer the owner names
+with open(shared, "w") as handle:
+    handle.write(old)
+assert "migrate" in run("studio-mac", "migrate", "--to", "studio-mac", "--unassigned", code=1) and read() == old
+assert "moved 4 entries under Unassigned" in run("travel-mac", "migrate", "--unassigned")
+held = read()
+assert [line for line in held.splitlines() if line.startswith("- ")] == entries, held
+assert "\n## Unassigned\n" in held and "## Machine: " not in held, held
+out = run("travel-mac", "show")
+assert "unassigned (not applied here): 4 entries" in out and not any(e in out for e in entries), out
+assert "added a section for travel-mac" in run("travel-mac", "init")
+assert "already has a section" in run("travel-mac", "migrate", "--to", "travel-mac", code=2)
+before = read()
+assert "moved 4 unassigned entries under studio-mac" in run("travel-mac", "migrate", "--to", "studio-mac")
+after = read()
+assert after == before.replace("\n## Unassigned\n", "\n## Machine: studio-mac\n"), after
+assert all(e in run("studio-mac", "show") for e in entries)
+assert "nothing to migrate" in run("studio-mac", "migrate", "--to", "studio-mac", code=2) and read() == after
+
 # a file it can't place is refused, not guessed
+for extra in ("\n## Another machine\n- `~/b` (2026-10-31): kept.\n", "\n## Unassigned\n"):
+    with open(shared, "w") as handle:
+        handle.write(old + extra)
+    unknown = read()
+    for args in (("show",), ("init",), ("migrate", "--to", "studio-mac"), ("migrate", "--unassigned")):
+        assert "fix it by hand" in run("studio-mac", *args, code=2) and read() == unknown, (extra, args)
 with open(shared, "w") as handle:
     handle.write(old + "\n## Machine: studio-mac\n### Keep\n")
 mixed = read()

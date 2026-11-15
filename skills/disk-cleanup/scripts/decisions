@@ -6,7 +6,7 @@ SKILL.md says when to use each form.
 Usage:
   decisions show [--file <path>]
   decisions init [--file <path>]
-  decisions migrate --to <computer> [--file <path>]
+  decisions migrate (--to <computer> | --unassigned) [--file <path>]
 
 The file is ${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup/decisions.md unless --file
 names another. It holds "## Every machine", for rules the owner stated for every computer, and one
@@ -23,8 +23,11 @@ init: creates the file, or adds this computer's empty section at the end. It cha
 and refuses an older single list.
 
 migrate: turns an older single list into this layout, moving every entry, unchanged, under the
-computer --to names. Run it only after the owner confirmed where those entries were made. It
-refuses a file that isn't a single list, or one with sections it doesn't know.
+computer --to names. Run it only after the owner confirmed where those entries were made. When the
+owner can't say, --unassigned moves them, unchanged, under "## Unassigned", which applies on no
+computer, so rounds can record decisions again; a later `migrate --to <computer>` gives that section
+to the computer the owner names, if it has no section yet. It refuses anything else, and a single
+list with sections it doesn't know.
 
 The file may be a link into the owner's private state repository: init and migrate write the file
 it points to, never replacing the link, and git is left to the skill.
@@ -42,6 +45,7 @@ SHARED = "## Every machine"
 SHARED_NOTE = ("Rules the owner stated for every computer go here, each with its date. "
                "Everything else goes under the computer it was decided on.")
 MACHINE = "## Machine: "
+UNASSIGNED = "## Unassigned"
 LISTS = ("Keep", "Undecided", "Cleared")
 USAGE = next(part for part in __doc__.split("\n\n") if part.startswith("Usage:"))
 
@@ -111,9 +115,11 @@ def parse(text):
     headings = [heading for heading, _ in sections]
     machines = [h for h in headings if h.startswith(MACHINE)]
     old = [h for h in headings if h in tuple(f"## {name}" for name in LISTS)]
-    if (machines or SHARED in headings) and old:
+    if (machines or SHARED in headings or UNASSIGNED in headings) and old:
         raise LayoutError("the file has both computer sections and top-level lists: fix it by hand")
-    if machines or SHARED in headings:
+    if machines or SHARED in headings or UNASSIGNED in headings:
+        if headings.count(UNASSIGNED) > 1:
+            raise LayoutError("the file has two Unassigned sections: fix it by hand")
         names = [machine_name(h) for h in machines]
         if len(set(names)) != len(names):
             raise LayoutError("a computer has two sections: fix it by hand")
@@ -121,6 +127,8 @@ def parse(text):
             raise LayoutError("a computer section has no name: fix it by hand")
         return "new", preamble, sections
     if old:
+        if len(old) != len(headings):
+            raise LayoutError("the single list has sections this script doesn't know: fix it by hand")
         return "single", preamble, sections
     if headings:
         raise LayoutError("the file has sections this script doesn't know: fix it by hand")
@@ -172,6 +180,11 @@ def show(path):
     machines = machine_sections(sections)
     others = [other for other in machines if other != name]
     print("other computers (not applied here): " + (", ".join(others) if others else "none"))
+    if UNASSIGNED in found:
+        count = sum(1 for line in found[UNASSIGNED] if line.startswith("- "))
+        print(f"unassigned (not applied here): {count} entries from before computers had sections, under")
+        print(f"{UNASSIGNED}; when the owner says which computer they were made on, run")
+        print("`decisions migrate --to <that computer>`.")
     print()
     print(block(SHARED, found.get(SHARED, [])) if SHARED in found else f"{SHARED}\n(missing)")
     print()
@@ -206,27 +219,40 @@ def init(path):
 
 
 def migrate(path, target):
-    target = target.strip()
-    if not target:
-        raise SystemExit("decisions: --to needs a computer's name")
+    """Move a single list under target, or under Unassigned when target is None; or give an
+    Unassigned section to target."""
+    if target is not None:
+        target = target.strip()
+        if not target:
+            raise SystemExit("decisions: --to needs a computer's name")
     text = read(path)
     if text is None:
         raise LayoutError("there is no file to migrate")
     layout, preamble, sections = parse(text)
+    if layout == "new" and target is not None and UNASSIGNED in dict(sections):
+        if target in machine_sections(sections):
+            raise LayoutError(f"{target} already has a section, so the unassigned entries need merging by hand")
+        lines = text.splitlines()
+        at = next(i for i, line in enumerate(lines) if line.rstrip() == UNASSIGNED)
+        lines[at] = f"{MACHINE}{target}"
+        write(path, "\n".join(lines) + "\n")
+        count = sum(1 for line in dict(sections)[UNASSIGNED] if line.startswith("- "))
+        print(f"moved {count} unassigned entries under {target}")
+        return 0
     if layout != "single":
-        raise LayoutError("the file isn't a single list, so there is nothing to migrate")
+        raise LayoutError("the file isn't a single list and has no unassigned entries to give, so there is nothing to migrate")
     head = "\n".join(preamble).rstrip() or TITLE
-    moved = [f"{MACHINE}{target}"]
+    moved = [f"{MACHINE}{target}" if target is not None else UNASSIGNED]
     for heading, body in sections:
         moved += ["", block("#" + heading, body)]
     write(path, f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n" + "\n".join(moved) + "\n")
     count = sum(1 for _, body in sections for line in body if line.startswith("- "))
-    print(f"moved {count} entries under {target}")
+    print(f"moved {count} entries under {target if target is not None else 'Unassigned'}")
     return 0
 
 
 def main(argv):
-    args, path, target = [], default_file(), None
+    args, path, target, unassigned = [], default_file(), None, False
     items = iter(argv)
     for arg in items:
         if arg in ("--file", "--to"):
@@ -238,12 +264,16 @@ def main(argv):
                 path = value
             else:
                 target = value
+        elif arg == "--unassigned":
+            unassigned = True
         elif arg in ("-h", "--help"):
             print(__doc__)
             return 0
         else:
             args.append(arg)
-    usage = args not in (["show"], ["init"], ["migrate"]) or (args == ["migrate"]) != (target is not None)
+    usage = (args not in (["show"], ["init"], ["migrate"])
+             or (args == ["migrate"]) != (target is not None or unassigned)
+             or (target is not None and unassigned))
     if usage:
         print(USAGE, file=sys.stderr)
         return 1
