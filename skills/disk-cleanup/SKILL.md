@@ -2,7 +2,7 @@
 name: disk-cleanup
 description: Find what is wasting disk space on the owner's Mac and clear only what the owner picks. Measure with a read-only scan, sort each find into leftover, rebuildable, old version or the owner's own work, prove it is unused, and report sizes and what would be lost. Remember the owner's decisions in private state, per computer, so later rounds show only what's new. Never deletes anything the owner didn't choose in the conversation, and a scheduled run only reports. Use on its schedule, and when the user asks to free up disk space, find what's taking up space, clean up leftovers or caches, or do another cleanup round.
 metadata:
-  version: 2.0.0
+  version: 2.0.1
 ---
 
 # Disk Cleanup

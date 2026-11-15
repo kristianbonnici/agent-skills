@@ -1,5 +1,11 @@
 # disk-cleanup changelog
 
+## 2.0.1 (2026-11-16)
+
+- `scripts/decisions init` and `migrate` no longer lose a decision when two rounds run at once on one computer. They hold a lock on the file's folder from reading the file until the new one is in place, so the second waits and then reads what the first wrote, and they read the file again just before replacing it: an entry added by hand in between, which takes no lock, makes them start over from the changed file. A file that keeps changing is left as it is. The previous run's review found the read-modify-write race (agent-skills-20261115-1930, task A, follow-up 2).
+- `init` and `migrate` keep a file's CRLF line ends instead of turning them into LF (nit 22).
+- The counts `migrate` and `show` print are of each list's items at whatever indentation the list is written, without their sub-items; an indented list was counted as empty (nit 20).
+
 ## 2.0.0 (2026-11-15)
 
 - Decisions are kept per computer: `decisions.md` has one `## Machine: <computer>` section per computer (named by `scutil --get LocalHostName`, or `hostname -s`), each with its own Keep, Undecided and Cleared lists, and an `## Every machine` section for rules the owner stated for every computer. A round reads and writes only its own computer's section and the shared one. The owner now uses two computers that share the file, and a round on the second would have taken the first one's "caches cleared" as done there and hidden finds that are new on it.

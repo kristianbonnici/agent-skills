@@ -33,13 +33,23 @@ The file may be a link into the owner's private state repository: init and migra
 it points to, never replacing the link, and git is left to the skill. A link into a folder that
 doesn't exist (the repository isn't cloned here) is refused, so no folder is made in its place.
 
-Exit 0: done; 1: usage or an unreadable file; 2: the file's layout is not what the command needs
+Two rounds may run at once on one computer. init and migrate hold a lock on the file's folder from
+reading the file until the new one is in place, so a second command waits for the first and then
+reads what it wrote. The file is also read again just before the new one replaces it: if it
+changed in between (an entry added by hand, which takes no lock), the command starts over from the
+changed file, so the entry is kept. A file that keeps changing is left as it is (exit 2). Both keep
+the file's line ends: CRLF stays CRLF. DISK_CLEANUP_PAUSE (seconds) waits between reading and
+writing, for tests.
+
+Exit 0: done; 1: usage, an unreadable file or a lock held too long; 2: the file's layout is not what the command needs
 (the message says why, and nothing was written).
 """
+import fcntl
 import os
 import platform
 import subprocess
 import sys
+import time
 
 TITLE = "# disk-cleanup decisions"
 SHARED = "## Every machine"
@@ -48,6 +58,10 @@ SHARED_NOTE = ("Rules the owner stated for every computer go here, each with its
 MACHINE = "## Machine: "
 UNASSIGNED = "## Unassigned"
 LISTS = ("Keep", "Undecided", "Cleared")
+# How long a command waits for another one's lock, and how often it starts over when the file
+# changed under it.
+LOCK_WAIT = 60
+ATTEMPTS = 3
 USAGE = next(part for part in __doc__.split("\n\n") if part.startswith("Usage:"))
 
 
@@ -74,38 +88,134 @@ def this_machine():
     return name
 
 
-def read(path):
+def check_link(path):
     if os.path.islink(path) and not os.path.isdir(os.path.dirname(os.path.realpath(path))):
         raise SystemExit(f"decisions: {path} links into {os.path.dirname(os.path.realpath(path))}, which is "
                          "missing; clone or restore the state repository first")
+
+
+def read_raw(path):
+    """The file's text with its line ends as they are, or None when there is no file."""
+    check_link(path)
     try:
-        with open(path, encoding="utf-8") as handle:
-            return handle.read()
+        with open(path, "rb") as handle:
+            data = handle.read()
     except FileNotFoundError:
         return None
     except OSError as error:
         raise SystemExit(f"decisions: can't read {path}: {error.strerror}")
+    try:
+        return data.decode("utf-8")
     except UnicodeDecodeError:
         raise SystemExit(f"decisions: can't read {path}: it isn't UTF-8 text; fix it by hand")
 
 
-def write(path, text):
-    """Write the file a link points to, through a temporary file beside it, keeping its mode."""
+def read(path):
+    """The file's text with LF line ends, or None when there is no file."""
+    raw = read_raw(path)
+    return None if raw is None else raw.replace("\r\n", "\n")
+
+
+def line_end(raw):
+    """CRLF when the file's first line ends with it, LF otherwise."""
+    first = raw.find("\n")
+    return "\r\n" if first > 0 and raw[first - 1] == "\r" else "\n"
+
+
+class Changed(Exception):
+    pass
+
+
+class Locked:
+    """Holds an exclusive lock on the folder of the file a link points to, so two commands on one
+    computer take turns. The folder, not the file: the file is replaced, the folder stays."""
+
+    def __init__(self, path, create):
+        check_link(path)
+        self.folder = os.path.dirname(os.path.realpath(path))
+        self.create = create
+
+    def __enter__(self):
+        if self.create:
+            os.makedirs(self.folder, exist_ok=True)
+        elif not os.path.isdir(self.folder):
+            raise LayoutError("there is no file to migrate")
+        self.fd = os.open(self.folder, os.O_RDONLY)
+        deadline = time.monotonic() + LOCK_WAIT
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    os.close(self.fd)
+                    raise SystemExit(f"decisions: another command has been writing {self.folder} for "
+                                     f"{LOCK_WAIT} seconds; try again when it is done")
+                time.sleep(0.05)
+
+    def __exit__(self, *_):
+        fcntl.flock(self.fd, fcntl.LOCK_UN)
+        os.close(self.fd)
+
+
+def write(path, text, was):
+    """Write the file a link points to, through a temporary file beside it, keeping its mode and
+    its line ends. was is the file's text as read (None: no file); if it differs just before the
+    rename, nothing is written and Changed is raised."""
     real = os.path.realpath(path)
-    os.makedirs(os.path.dirname(real), exist_ok=True)
     temporary = f"{real}.tmp-{os.getpid()}"
+    if was is not None and line_end(was) == "\r\n":
+        text = text.replace("\n", "\r\n")
     try:
         mode = os.stat(real).st_mode & 0o7777
     except FileNotFoundError:
         mode = 0o644
     try:
-        with open(temporary, "w", encoding="utf-8") as handle:
+        with open(temporary, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         os.chmod(temporary, mode)
+        if read_raw(path) != was:
+            raise Changed()
         os.replace(temporary, real)
     finally:
         if os.path.exists(temporary):
             os.remove(temporary)
+
+
+def update(path, change, create):
+    """Run change(text with LF line ends, or None) under the lock and write what it returns (None:
+    nothing to write). A file changed by a writer that takes no lock, between the read and the
+    rename, is read again and changed again."""
+    with Locked(path, create):
+        for _ in range(ATTEMPTS):
+            raw = read_raw(path)
+            text = change(None if raw is None else raw.replace("\r\n", "\n"))
+            if text is None:
+                return
+            pause = os.environ.get("DISK_CLEANUP_PAUSE")
+            if pause:
+                time.sleep(float(pause))
+            try:
+                write(path, text, raw)
+                return
+            except Changed:
+                continue
+    raise LayoutError(f"the file changed {ATTEMPTS} times while this command was writing it: try again")
+
+
+def count_entries(lines):
+    """The items of each list, at whatever indentation the list is written, without their
+    sub-items: in each list (between two headings), the items indented least."""
+    count, items = 0, []
+    for line in [*lines, "#"]:
+        if line.startswith("#"):
+            if items:
+                least = min(items)
+                count += items.count(least)
+            items = []
+        elif line.lstrip().startswith(("- ", "* ", "+ ")):
+            items.append(len(line) - len(line.lstrip()))
+    return count
 
 
 def parse(text):
@@ -192,7 +302,7 @@ def show(path):
     others = [other for other in machines if other != name]
     print("other computers (not applied here): " + (", ".join(others) if others else "none"))
     if UNASSIGNED in found:
-        count = sum(1 for line in found[UNASSIGNED] if line.startswith("- "))
+        count = count_entries(found[UNASSIGNED])
         print(f"unassigned (not applied here): {count} entries from before computers had sections, under")
         print(f"{UNASSIGNED}; when the owner says which computer they were made on, run")
         print("`decisions migrate --to <that computer>`.")
@@ -209,23 +319,27 @@ def show(path):
 
 def init(path):
     name = this_machine()
-    text = read(path)
-    if text is None:
-        write(path, fresh(name))
-        print(f"created {path} with a section for {name}")
-        return 0
-    layout, preamble, sections = parse(text)
-    if layout == "single":
-        raise LayoutError("the file is a single list: migrate it first")
-    if name in machine_sections(sections):
-        print(f"{name} already has a section")
-        return 0
-    if layout == "empty":
-        head = "\n".join(preamble).rstrip() or TITLE
-        write(path, f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n{empty_machine(name)}\n")
-    else:
-        write(path, text.rstrip("\n") + f"\n\n{empty_machine(name)}\n")
-    print(f"added a section for {name}")
+    said = []
+
+    def change(text):
+        said.clear()
+        if text is None:
+            said.append(f"created {path} with a section for {name}")
+            return fresh(name)
+        layout, preamble, sections = parse(text)
+        if layout == "single":
+            raise LayoutError("the file is a single list: migrate it first")
+        if name in machine_sections(sections):
+            said.append(f"{name} already has a section")
+            return None
+        said.append(f"added a section for {name}")
+        if layout == "empty":
+            head = "\n".join(preamble).rstrip() or TITLE
+            return f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n{empty_machine(name)}\n"
+        return text.rstrip("\n") + f"\n\n{empty_machine(name)}\n"
+
+    update(path, change, create=True)
+    print(*said)
     return 0
 
 
@@ -236,29 +350,33 @@ def migrate(path, target):
         target = target.strip()
         if not target:
             raise SystemExit("decisions: --to needs a computer's name")
-    text = read(path)
-    if text is None:
-        raise LayoutError("there is no file to migrate")
-    layout, preamble, sections = parse(text)
-    if layout == "new" and target is not None and UNASSIGNED in dict(sections):
-        if target in machine_sections(sections):
-            raise LayoutError(f"{target} already has a section, so the unassigned entries need merging by hand")
-        lines = text.splitlines()
-        at = next(i for i, line in enumerate(lines) if line.rstrip() == UNASSIGNED)
-        lines[at] = f"{MACHINE}{target}"
-        write(path, "\n".join(lines) + "\n")
-        count = sum(1 for line in dict(sections)[UNASSIGNED] if line.startswith("- "))
-        print(f"moved {count} unassigned entries under {target}")
-        return 0
-    if layout != "single":
-        raise LayoutError("the file isn't a single list and has no unassigned entries to give, so there is nothing to migrate")
-    head = "\n".join(preamble).rstrip() or TITLE
-    moved = [f"{MACHINE}{target}" if target is not None else UNASSIGNED]
-    for heading, body in sections:
-        moved += ["", block("#" + heading, body)]
-    write(path, f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n" + "\n".join(moved) + "\n")
-    count = sum(1 for _, body in sections for line in body if line.startswith("- "))
-    print(f"moved {count} entries under {target if target is not None else 'Unassigned'}")
+    said = []
+
+    def change(text):
+        said.clear()
+        if text is None:
+            raise LayoutError("there is no file to migrate")
+        layout, preamble, sections = parse(text)
+        if layout == "new" and target is not None and UNASSIGNED in dict(sections):
+            if target in machine_sections(sections):
+                raise LayoutError(f"{target} already has a section, so the unassigned entries need merging by hand")
+            lines = text.splitlines()
+            at = next(i for i, line in enumerate(lines) if line.rstrip() == UNASSIGNED)
+            lines[at] = f"{MACHINE}{target}"
+            said.append(f"moved {count_entries(dict(sections)[UNASSIGNED])} unassigned entries under {target}")
+            return "\n".join(lines) + "\n"
+        if layout != "single":
+            raise LayoutError("the file isn't a single list and has no unassigned entries to give, so there is nothing to migrate")
+        head = "\n".join(preamble).rstrip() or TITLE
+        moved = [f"{MACHINE}{target}" if target is not None else UNASSIGNED]
+        for heading, body in sections:
+            moved += ["", block("#" + heading, body)]
+        count = sum(count_entries(body) for _, body in sections)
+        said.append(f"moved {count} entries under {target if target is not None else 'Unassigned'}")
+        return f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n" + "\n".join(moved) + "\n"
+
+    update(path, change, create=False)
+    print(*said)
     return 0
 
 

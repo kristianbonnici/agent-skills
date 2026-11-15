@@ -168,7 +168,7 @@ print("disk-cleanup scan: ok")
 EOF
 
 python3 -I - "$repo_root/skills/disk-cleanup/scripts/decisions" "$work/decisions" <<'EOF'
-import os, subprocess, sys
+import os, subprocess, sys, time
 
 script, work = sys.argv[1], sys.argv[2]
 shared = os.path.join(work, "repo", "disk-cleanup", "decisions.md")  # the state repository's file
@@ -342,5 +342,81 @@ spaced = read()
 out = run("studio-mac", "show")
 assert "`~/a`" in out and "new computer" not in out and "not applied here): none" in out, out
 assert "already has a section" in run("studio-mac", "init") and read() == spaced
+
+
+def start(machine, *args, pause=None):
+    env = {**os.environ, "XDG_STATE_HOME": state(machine), "DISK_CLEANUP_MACHINE": machine}
+    if pause:
+        env["DISK_CLEANUP_PAUSE"] = str(pause)
+    return subprocess.Popen([script, *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+
+
+def finish(process):
+    out, _ = process.communicate(timeout=60)
+    assert process.returncode == 0, (process.args, process.returncode, out)
+    return out
+
+
+# two rounds at once on one computer: the second waits for the first one's lock, then reads what it
+# wrote, so neither section is lost
+with open(shared, "w") as handle:
+    handle.write(laid)
+first = start("travel-mac", "init", pause=1)
+time.sleep(0.3)
+second = start("den-mac", "init")
+assert "added a section for travel-mac" in finish(first)
+assert "added a section for den-mac" in finish(second)
+both = read()
+assert both.startswith(laid.rstrip("\n")) and "## Machine: travel-mac\n" in both and "## Machine: den-mac\n" in both, both
+assert both.index("## Machine: travel-mac") < both.index("## Machine: den-mac"), both
+
+# an entry added by hand (no lock) while a command is between reading and writing: it starts over
+# from the changed file, so the entry is kept
+with open(shared, "w") as handle:
+    handle.write(laid)
+writer = start("travel-mac", "init", pause=1)
+time.sleep(0.3)
+add("studio-mac", "Keep", "- `~/Studio/new` (2026-11-16): added by another round.")
+assert "added a section for travel-mac" in finish(writer)
+kept = read()
+assert "- `~/Studio/new` (2026-11-16): added by another round." in kept and "## Machine: travel-mac\n" in kept, kept
+
+# many at once, without pauses: every section arrives
+with open(shared, "w") as handle:
+    handle.write(laid)
+crowd = [start(f"mac-{number}", "init") for number in range(8)]
+for process in crowd:
+    finish(process)
+everyone = read()
+assert all(everyone.count(f"## Machine: mac-{number}\n") == 1 for number in range(8)), everyone
+assert not [name for name in os.listdir(os.path.dirname(shared)) if ".tmp-" in name], "no temporary file left"
+
+# CRLF line ends stay CRLF, byte for byte, when init adds a section
+crlf = laid.replace("\n", "\r\n").encode()
+with open(shared, "wb") as handle:
+    handle.write(crlf)
+assert "added a section for travel-mac" in run("travel-mac", "init")
+with open(shared, "rb") as handle:
+    data = handle.read()
+assert data.startswith(crlf.rstrip(b"\r\n")) and b"\r\n## Machine: travel-mac\r\n" in data, data
+assert data.count(b"\n") == data.count(b"\r\n"), data
+assert "`~/a`" not in run("travel-mac", "show") and "## Machine: travel-mac" in run("travel-mac", "show")
+
+# the count is of each list's items, at whatever indentation the list is written, not their sub-items
+indented = """# disk-cleanup decisions
+
+## Keep
+  - `~/a` (2026-10-31): kept.
+    - why: the owner's.
+  - `~/b` (2026-10-31): kept.
+
+## Cleared
+- `~/c` (2026-10-31): about 1 GB.
+  - with its logs.
+"""
+with open(shared, "w") as handle:
+    handle.write(indented)
+assert "moved 3 entries under Unassigned" in run("travel-mac", "migrate", "--unassigned")
+assert "unassigned (not applied here): 3 entries" in run("travel-mac", "show")
 print("disk-cleanup decisions: ok")
 EOF
