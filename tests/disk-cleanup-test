@@ -2,7 +2,10 @@
 # Checks disk-cleanup's scan script in a made-up home folder: it deletes nothing, finds big folders
 # and what's left in their parents, build folders with their own repository's last commit, big files,
 # app data with no app and LaunchAgents with a missing program, marks what's new or grew since an
-# earlier day's scan, says what it was refused, keeps 12 scans, and answers the due check.
+# earlier day's scan, says what it was refused, keeps 12 scans, and answers the due check. Then checks
+# its decisions script: two made-up computers share one decisions file through links and neither sees
+# the other's entries, a new computer starts clean, and an older single list is migrated unchanged
+# under the computer the owner named, and only then.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -162,4 +165,112 @@ gone = {**env, "HOME": os.path.join(work, "no-such-home")}
 done = subprocess.run([script], capture_output=True, text=True, env=gone)
 assert done.returncode == 1 and "nothing could be measured" in done.stderr, done
 print("disk-cleanup scan: ok")
+EOF
+
+python3 -I - "$repo_root/skills/disk-cleanup/scripts/decisions" "$work/decisions" <<'EOF'
+import os, subprocess, sys
+
+script, work = sys.argv[1], sys.argv[2]
+shared = os.path.join(work, "repo", "disk-cleanup", "decisions.md")  # the state repository's file
+os.makedirs(os.path.dirname(shared))
+
+
+def state(machine):
+    folder = os.path.join(work, machine, "state", "agent-skills", "disk-cleanup")
+    os.makedirs(folder, exist_ok=True)
+    link = os.path.join(folder, "decisions.md")
+    if not os.path.islink(link):
+        os.symlink(shared, link)
+    return os.path.join(work, machine, "state")
+
+
+def linked(machine):
+    return os.path.islink(os.path.join(work, machine, "state", "agent-skills", "disk-cleanup", "decisions.md"))
+
+
+def run(machine, *args, code=0):
+    env = {**os.environ, "XDG_STATE_HOME": state(machine), "DISK_CLEANUP_MACHINE": machine}
+    done = subprocess.run([script, *args], capture_output=True, text=True, env=env)
+    assert done.returncode == code, (machine, args, done.returncode, done.stdout, done.stderr)
+    return done.stdout + done.stderr
+
+
+def read():
+    with open(shared) as handle:
+        return handle.read()
+
+
+def add(machine, title, entry):
+    text = read()
+    start = text.index(f"## Machine: {machine}\n")
+    at = text.index(f"### {title}\n", start) + len(f"### {title}\n")
+    with open(shared, "w") as handle:
+        handle.write(text[:at] + entry + "\n" + text[at:])
+
+
+# no file yet: the first round anywhere
+assert "file: none yet" in run("studio-mac", "show")
+assert "created" in run("studio-mac", "init")
+assert linked("studio-mac"), "init wrote through the link"
+add("studio-mac", "Keep", "- `~/Studio/models` (2026-11-01): in use on studio-mac.")
+add("studio-mac", "Cleared", "- `~/Library/Caches/tool` (2026-11-01): about 5 GB.")
+
+# a second computer: no section yet, so it starts clean and the first one's entries aren't shown
+out = run("travel-mac", "show")
+assert "new computer: no section for travel-mac" in out, out
+assert "other computers (not applied here): studio-mac" in out, out
+assert "~/Studio/models" not in out and "~/Library/Caches/tool" not in out, out
+before = read()
+assert "added a section for travel-mac" in run("travel-mac", "init")
+assert read().startswith(before.rstrip("\n")), "init only appended"
+add("travel-mac", "Keep", "- `~/Travel/photos` (2026-11-02): the owner's photos.")
+assert "already has a section" in run("travel-mac", "init")
+
+studio, travel = run("studio-mac", "show"), run("travel-mac", "show")
+assert "~/Studio/models" in studio and "~/Library/Caches/tool" in studio and "~/Travel/photos" not in studio, studio
+assert "~/Travel/photos" in travel and "~/Studio/models" not in travel and "~/Library/Caches/tool" not in travel, travel
+assert "## Every machine" in studio and "## Every machine" in travel
+assert "other computers (not applied here): travel-mac" in studio, studio
+laid_out = read()
+assert "nothing was written" in run("studio-mac", "migrate", "--to", "studio-mac", code=2)
+assert read() == laid_out, "migrate leaves a laid-out file alone"
+
+# an older single list: shown as applying nowhere, init refuses, migrate moves it unchanged
+old = """# disk-cleanup decisions
+
+## Keep
+- `~/Developer/projects/app/.git` (2026-10-31): the owner's git history.
+- `~/Downloads` (2026-10-31): the owner's files.
+
+## Undecided
+- `~/Library/Containers/com.docker.docker` (2026-10-31): about 19 GB, not yet offered.
+
+## Cleared
+- Homebrew and npm caches (2026-10-31): about 17 GB.
+"""
+with open(shared, "w") as handle:
+    handle.write(old)
+assert "layout: single list" in run("travel-mac", "show")
+assert "migrate it first" in run("travel-mac", "init", code=2) and read() == old, "init refuses a single list"
+assert "migrate --to" in run("travel-mac", "migrate", code=1) and read() == old, "migrate needs a computer's name"
+assert "moved 4 entries under studio-mac" in run("travel-mac", "migrate", "--to", "studio-mac")
+assert linked("travel-mac"), "migrate wrote through the link"
+new = read()
+entries = [line for line in old.splitlines() if line.startswith("- ")]
+assert [line for line in new.splitlines() if line.startswith("- ")] == entries, new
+assert new.index("## Every machine") < new.index("## Machine: studio-mac") < new.index("### Keep") < new.index("### Undecided") < new.index("### Cleared"), new
+assert "\n## Keep" not in new and new.count("## Machine: ") == 1, new
+travel = run("travel-mac", "show")
+assert "new computer: no section for travel-mac" in travel and not any(e in travel for e in entries), travel
+studio = run("studio-mac", "show")
+assert all(e in studio for e in entries), studio
+assert "isn't a single list" in run("studio-mac", "migrate", "--to", "studio-mac", code=2) and read() == new, "migrating twice changes nothing"
+
+# a file it can't place is refused, not guessed
+with open(shared, "w") as handle:
+    handle.write(old + "\n## Machine: studio-mac\n### Keep\n")
+mixed = read()
+for args in (("show",), ("init",), ("migrate", "--to", "studio-mac")):
+    assert "fix it by hand" in run("studio-mac", *args, code=2) and read() == mixed, args
+print("disk-cleanup decisions: ok")
 EOF

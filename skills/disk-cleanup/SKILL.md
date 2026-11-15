@@ -1,8 +1,8 @@
 ---
 name: disk-cleanup
-description: Find what is wasting disk space on the owner's Mac and clear only what the owner picks. Measure with a read-only scan, sort each find into leftover, rebuildable, old version or the owner's own work, prove it is unused, and report sizes and what would be lost. Remember the owner's decisions in private state, so later rounds show only what's new. Never deletes anything the owner didn't choose in the conversation, and a scheduled run only reports. Use on its schedule, and when the user asks to free up disk space, find what's taking up space, clean up leftovers or caches, or do another cleanup round.
+description: Find what is wasting disk space on the owner's Mac and clear only what the owner picks. Measure with a read-only scan, sort each find into leftover, rebuildable, old version or the owner's own work, prove it is unused, and report sizes and what would be lost. Remember the owner's decisions in private state, per computer, so later rounds show only what's new. Never deletes anything the owner didn't choose in the conversation, and a scheduled run only reports. Use on its schedule, and when the user asks to free up disk space, find what's taking up space, clean up leftovers or caches, or do another cleanup round.
 metadata:
-  version: 1.0.0
+  version: 2.0.0
 ---
 
 # Disk Cleanup
@@ -18,7 +18,12 @@ You find what is wasting space and the owner decides what goes. Measuring is the
 
 ## 1. Set up
 
-- **The state:** `${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup/`. Its `decisions.md` is what the owner already decided, and may be a link into the owner's private state repository (`realpath` shows where). When it is, `git -C <that repository> pull --ff-only` first, except on a scheduled run; if the pull fails, carry on with the copy you have and say so. Without the file, this is the first round: section 7 creates it. Its `scans/` holds the script's measurements.
+- **The state:** `${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup/`. Its `decisions.md` is what the owner already decided, and may be a link into the owner's private state repository (`realpath` shows where). When it is, `git -C <that repository> pull --ff-only` first, except on a scheduled run; if the pull fails, carry on with the copy you have and say so. Its `scans/` holds the script's measurements.
+- **Decisions are per computer.** Several computers may share the file, and a cache cleared on one is still full on another. The file has one `## Machine: <computer>` section per computer, each with its own Keep, Undecided and Cleared lists, and one `## Every machine` section for rules the owner stated for every computer. The computer's name is `scutil --get LocalHostName` on macOS, `hostname -s` elsewhere. Read the decisions with `scripts/decisions show` from this skill's folder: it prints this computer's section and the shared one, never another computer's entries, and says which case you are in:
+  - **No file yet:** the first round anywhere. Section 7 creates it.
+  - **A new computer** (no section for it yet): start clean, and tell the owner that decisions made on other computers, which it names, were not applied here. Section 7 adds the section.
+  - **A single list** (the file from before computers had sections): its entries apply nowhere yet. Ask the owner once whether they were made on this computer, or on which other one, and after they answer run `scripts/decisions migrate --to <that computer>`, which moves every entry unchanged under it. Until then, treat this computer as new. A scheduled run doesn't ask: it says so in its report.
+  - Apply only this computer's section and the shared one; another computer's decisions say nothing about this one.
 - **Due?** On a scheduled run, run `scripts/scan --due` from this skill's folder. A round is due every four weeks, or sooner when free space runs low. If it says `not due`, stop with that one line and nothing else.
 
 ## 2. Scan
@@ -39,7 +44,7 @@ Anything the scan was refused is unknown, not empty. Say so in the report.
 
 A shared store is never one item. Offer what's inside it, by the tool's own listing (`ollama list`, `docker image ls`), or leave it out: see "Shared stores" in [references/macos.md](references/macos.md), and read that before you offer anything from one.
 
-Skip anything `decisions.md` says to keep, unless it changed a lot since. Something cleared before that came back isn't news when it's a cache that refills: offer it only if it's worth the rebuild, and from 5 GB.
+Skip anything this computer's section or the shared one says to keep, unless it changed a lot since. Something cleared before that came back isn't news when it's a cache that refills: offer it only if it's worth the rebuild, and from 5 GB.
 
 ## 4. Prove it's unused
 
@@ -79,22 +84,28 @@ Name each path exactly, and quote it. Never build a deletion from a variable tha
 
 - **Report what happened:** free space before and after, measured, and what each item freed. Where the real figure differs from your estimate, say so and why. Say what you didn't do.
 - **What needs doing later:** a cleared build folder needs a rebuild, a removed browser profile means signing in again.
-- **Keep it where it can follow the owner.** The private state repository is `$AGENT_SKILLS_STATE`, or else `agent-skills-state` beside the skills repository (`git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`). If that exists and `decisions.md` isn't already a link into it, put the file at `<repository>/disk-cleanup/decisions.md`, moving a plain one from the state folder, and link it: `ln -s <that file> <state folder>/decisions.md`. Bootstrap won't replace a real file with its link. With no such repository, a plain file in the state folder is right.
-- **Update `decisions.md`,** on every round the owner decided anything, in the form below, newest first in each section. Paths start with `~`.
+- **Keep it where it can follow the owner.** The private state repository is `$AGENT_SKILLS_STATE`, or else `agent-skills-state` beside the skills repository (`git -C "$(realpath <this skill's folder>)" rev-parse --show-toplevel`). If that exists and `decisions.md` isn't already a link into it, put the file at `<repository>/disk-cleanup/decisions.md`, moving a plain one from the state folder, and link it: `ln -s <that file> <state folder>/decisions.md`. If the repository already has the file, another computer's decisions are in it: never replace it. Leave both files as they are and tell the owner, who decides how to bring this computer's entries in. Bootstrap won't replace a real file with its link. With no such repository, a plain file in the state folder is right.
+- **Update `decisions.md`,** on every round the owner decided anything: run `scripts/decisions init` first, which creates the file or adds this computer's section and changes nothing else, then edit the file `realpath` names (never the link) in the form below, newest first in each list. Paths start with `~`. Write only in this computer's section, and in `## Every machine` only a rule the owner said holds for every computer.
 
   ```markdown
   # disk-cleanup decisions
 
-  ## Keep
+  ## Every machine
+  - <rule, in the owner's terms> (<date>)
+
+  ## Machine: <computer>
+
+  ### Keep
   - `<path>` (<date>): <why, in the owner's terms>
 
-  ## Undecided
+  ### Undecided
   - `<path>` (<date>): <what's waiting on the owner>
 
-  ## Cleared
+  ### Cleared
   - `<path>` (<date>): <what it was, about how much it freed>
   ```
 
-  Whatever the owner saw and declined goes under Keep. Something they haven't answered yet goes under Undecided. If the file is in the private state repository, commit that file alone and push (`git add disk-cleanup/decisions.md`, then `git commit -m "disk-cleanup: <what was decided>" -- disk-cleanup/decisions.md`): other skills keep their state there too. If the push fails, say so. Nothing from `decisions.md` goes into the public skills repository.
+  Whatever the owner saw and declined goes under Keep. Something they haven't answered yet goes under Undecided.
+- **Share it.** If the file is in the private state repository, commit that file alone and push: `git -C <repository> add disk-cleanup/decisions.md`, `git -C <repository> commit -m "disk-cleanup: <computer>: <what was decided>" -- disk-cleanup/decisions.md`, then `git -C <repository> push`. Other skills keep their state there too, so never commit anything else in it. If the push is rejected because another computer pushed first, `git -C <repository> pull --rebase` and push again. Never force-push. If the pull or push fails (no network, a conflict), leave the local file as it is and say so in the report. Nothing from `decisions.md` goes into the public skills repository.
 
 If a tool or skill keeps causing the same waste, say which one and what would stop it at the source: a cleanup only treats the symptom.

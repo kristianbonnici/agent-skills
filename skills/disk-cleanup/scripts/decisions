@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Read and lay out disk-cleanup's decisions file, one section per computer.
+
+SKILL.md says when to use each form.
+
+Usage:
+  decisions show [--file <path>]
+  decisions init [--file <path>]
+  decisions migrate --to <computer> [--file <path>]
+
+The file is ${XDG_STATE_HOME:-~/.local/state}/agent-skills/disk-cleanup/decisions.md unless --file
+names another. It holds "## Every machine", for rules the owner stated for every computer, and one
+"## Machine: <computer>" section per computer, each with its own "### Keep", "### Undecided" and
+"### Cleared" lists. This computer is named by `scutil --get LocalHostName` on macOS and
+`hostname -s` elsewhere; DISK_CLEANUP_MACHINE overrides it (tests use it).
+
+show: reads only. Prints this computer's name, the shared section and this computer's section,
+never another computer's entries. It says when there is no file yet, when this computer has no
+section yet (decisions made on other computers are not applied), and when the file is an older
+single list that has to be migrated before its entries apply anywhere.
+
+init: creates the file, or adds this computer's empty section at the end. It changes nothing else
+and refuses an older single list.
+
+migrate: turns an older single list into this layout, moving every entry, unchanged, under the
+computer --to names. Run it only after the owner confirmed where those entries were made. It
+refuses a file that isn't a single list, or one with sections it doesn't know.
+
+The file may be a link into the owner's private state repository: init and migrate write the file
+it points to, never replacing the link, and git is left to the skill.
+
+Exit 0: done; 1: usage or an unreadable file; 2: the file's layout is not what the command needs
+(the message says why, and nothing was written).
+"""
+import os
+import platform
+import subprocess
+import sys
+
+TITLE = "# disk-cleanup decisions"
+SHARED = "## Every machine"
+SHARED_NOTE = ("Rules the owner stated for every computer go here, each with its date. "
+               "Everything else goes under the computer it was decided on.")
+MACHINE = "## Machine: "
+LISTS = ("Keep", "Undecided", "Cleared")
+USAGE = next(part for part in __doc__.split("\n\n") if part.startswith("Usage:"))
+
+
+class LayoutError(Exception):
+    pass
+
+
+def default_file():
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "agent-skills", "disk-cleanup", "decisions.md")
+
+
+def this_machine():
+    name = os.environ.get("DISK_CLEANUP_MACHINE", "").strip()
+    if name:
+        return name
+    command = ["scutil", "--get", "LocalHostName"] if platform.system() == "Darwin" else ["hostname", "-s"]
+    try:
+        name = subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        name = ""
+    if not name:
+        raise SystemExit("decisions: couldn't name this computer (" + " ".join(command) + ")")
+    return name
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise SystemExit(f"decisions: can't read {path}: {error.strerror}")
+
+
+def write(path, text):
+    """Write the file a link points to, through a temporary file beside it, keeping its mode."""
+    real = os.path.realpath(path)
+    os.makedirs(os.path.dirname(real), exist_ok=True)
+    temporary = f"{real}.tmp-{os.getpid()}"
+    try:
+        mode = os.stat(real).st_mode & 0o7777
+    except FileNotFoundError:
+        mode = 0o644
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(temporary, mode)
+        os.replace(temporary, real)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
+def parse(text):
+    """Return (layout, preamble lines, [(heading, body lines)]); layout is new, single or empty."""
+    preamble, sections = [], []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            sections.append((line.rstrip(), []))
+        elif sections:
+            sections[-1][1].append(line)
+        else:
+            preamble.append(line)
+    headings = [heading for heading, _ in sections]
+    machines = [h for h in headings if h.startswith(MACHINE)]
+    old = [h for h in headings if h in tuple(f"## {name}" for name in LISTS)]
+    if machines and old:
+        raise LayoutError("the file has both computer sections and top-level lists: fix it by hand")
+    if machines or SHARED in headings:
+        names = [h[len(MACHINE):].strip() for h in machines]
+        if len(set(names)) != len(names):
+            raise LayoutError("a computer has two sections: fix it by hand")
+        if "" in names:
+            raise LayoutError("a computer section has no name: fix it by hand")
+        return "new", preamble, sections
+    if old:
+        return "single", preamble, sections
+    if headings:
+        raise LayoutError("the file has sections this script doesn't know: fix it by hand")
+    return "empty", preamble, sections
+
+
+def block(heading, body):
+    lines = [heading, *body]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
+def empty_machine(name):
+    parts = [f"{MACHINE}{name}"]
+    for title in LISTS:
+        parts += ["", f"### {title}"]
+    return "\n".join(parts)
+
+
+def fresh(name):
+    return f"{TITLE}\n\n{SHARED}\n{SHARED_NOTE}\n\n{empty_machine(name)}\n"
+
+
+def show(path):
+    name = this_machine()
+    print(f"machine: {name}")
+    text = read(path)
+    if text is None:
+        print("file: none yet, so this is the first round anywhere; `decisions init` creates it")
+        return 0
+    layout, _, sections = parse(text)
+    if layout == "single":
+        print("layout: single list, from before decisions were kept per computer. Its entries apply")
+        print("on no computer until the owner says which computer they were made on; then run")
+        print("`decisions migrate --to <that computer>`. They are shown below for that question only.")
+        print()
+        print(text.rstrip())
+        return 0
+    found = dict(sections)
+    others = [h[len(MACHINE):].strip() for h, _ in sections if h.startswith(MACHINE) and h != f"{MACHINE}{name}"]
+    print("other computers (not applied here): " + (", ".join(others) if others else "none"))
+    print()
+    print(block(SHARED, found.get(SHARED, [])) if SHARED in found else f"{SHARED}\n(missing)")
+    print()
+    if f"{MACHINE}{name}" in found:
+        print(block(f"{MACHINE}{name}", found[f"{MACHINE}{name}"]))
+    else:
+        print(f"new computer: no section for {name} yet. Start clean: decisions made on other computers")
+        print("were not applied. `decisions init` adds the section.")
+    return 0
+
+
+def init(path):
+    name = this_machine()
+    text = read(path)
+    if text is None:
+        write(path, fresh(name))
+        print(f"created {path} with a section for {name}")
+        return 0
+    layout, preamble, sections = parse(text)
+    if layout == "single":
+        raise LayoutError("the file is a single list: migrate it first")
+    if f"{MACHINE}{name}" in dict(sections):
+        print(f"{name} already has a section")
+        return 0
+    if layout == "empty":
+        head = "\n".join(preamble).rstrip() or TITLE
+        write(path, f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n{empty_machine(name)}\n")
+    else:
+        write(path, text.rstrip("\n") + f"\n\n{empty_machine(name)}\n")
+    print(f"added a section for {name}")
+    return 0
+
+
+def migrate(path, target):
+    target = target.strip()
+    if not target:
+        raise SystemExit("decisions: --to needs a computer's name")
+    text = read(path)
+    if text is None:
+        raise LayoutError("there is no file to migrate")
+    layout, preamble, sections = parse(text)
+    if layout != "single":
+        raise LayoutError("the file isn't a single list, so there is nothing to migrate")
+    head = "\n".join(preamble).rstrip() or TITLE
+    moved = [f"{MACHINE}{target}"]
+    for heading, body in sections:
+        moved += ["", block("#" + heading, body)]
+    write(path, f"{head}\n\n{SHARED}\n{SHARED_NOTE}\n\n" + "\n".join(moved) + "\n")
+    count = sum(1 for _, body in sections for line in body if line.startswith("- "))
+    print(f"moved {count} entries under {target}")
+    return 0
+
+
+def main(argv):
+    args, path, target = [], default_file(), None
+    items = iter(argv)
+    for arg in items:
+        if arg in ("--file", "--to"):
+            value = next(items, None)
+            if value is None:
+                print(USAGE, file=sys.stderr)
+                return 1
+            if arg == "--file":
+                path = value
+            else:
+                target = value
+        elif arg in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        else:
+            args.append(arg)
+    usage = args not in (["show"], ["init"], ["migrate"]) or (args == ["migrate"]) != (target is not None)
+    if usage:
+        print(USAGE, file=sys.stderr)
+        return 1
+    try:
+        if args == ["show"]:
+            return show(path)
+        if args == ["init"]:
+            return init(path)
+        return migrate(path, target)
+    except LayoutError as error:
+        print(f"decisions: {error}; nothing was written", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
