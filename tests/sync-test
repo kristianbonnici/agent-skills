@@ -126,7 +126,7 @@ expect "^WARN agent-skills-private main is 1 commit(s) behind" "$work/doctor.out
 expect "^PULLED agent-skills: 2 new commit(s) from origin/main$" "$work/sync.out"
 expect "^SKIP agent-skills-private: it has uncommitted changes, so it is not pulled" "$work/sync.out"
 expect "^SKIP agent-skills-state: on experiment, not main, so it is not pulled: switch back to main" "$work/sync.out"
-expect "^UNPUSHED agent-skills-state: 2 commit(s) on main are not on origin, .*sync never pushes: git -C $state push origin main$" "$work/sync.out"
+expect "^UNPUSHED agent-skills-state: 2 commit(s) on main are not on origin/main as of the last fetch, .*sync never pushes: git -C $state push origin main$" "$work/sync.out"
 refuse "UNPUSHED agent-skills:\|UNPUSHED agent-skills-private" "$work/sync.out"
 test "$(git -C "$public" rev-parse HEAD)" = "$(git -C "$work/seeds/agent-skills" rev-parse HEAD)"
 test "$(git -C "$private" rev-parse HEAD)" = "$private_before"
@@ -152,6 +152,23 @@ expect "^UNPUSHED agent-skills-state: 2 commit(s) on main" "$work/sync.out"
 # A failed pull doesn't stop bootstrap.
 expect "^Bootstrap complete" "$work/sync.out"
 expect "^sync: 1 step(s) failed" "$work/sync.out"
+# Doctor gives both counts of a branch that has moved on both sides.
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^WARN agent-skills-private main is 1 commit(s) ahead of origin/main" "$work/doctor.out"
+expect "^WARN agent-skills-private main is 1 commit(s) behind origin/main" "$work/doctor.out"
+git -C "$private" reset -q --hard origin/main
+
+# A detached checkout is skipped, and so is one with no origin; neither stops the rest.
+git -C "$state" checkout -q --detach
+git -C "$private" remote rename origin upstream
+"$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }
+expect "^SKIP agent-skills-state: on a detached commit, not main, so it is not pulled" "$work/sync.out"
+expect "^SKIP agent-skills-private: it has no remote named origin$" "$work/sync.out"
+expect "^OK agent-skills is up to date" "$work/sync.out"
+"$public/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^SKIP agent-skills-private has no origin/main to compare main with" "$work/doctor.out"
+git -C "$private" remote rename upstream origin
+git -C "$state" switch -q main
 
 # Nothing was ever pushed: the remotes hold what the seeds pushed, and nothing from the clones.
 for name in agent-skills agent-skills-private agent-skills-state; do
@@ -165,7 +182,7 @@ test "$(sort -u "$work/remotes.after" | paste -sd' ' -)" = refs/heads/main || fa
 # A private repository left out (set empty) and a state repository that isn't there are skipped.
 rm -rf "$state"
 AGENT_SKILLS_PRIVATE= "$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }
-expect "^SKIP $state: not there" "$work/sync.out"
+expect "^SKIP agent-skills-state: not there ($state)" "$work/sync.out"
 refuse "agent-skills-private" "$work/sync.out"
 
 echo "sync-test: passed"

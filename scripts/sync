@@ -38,6 +38,11 @@ else
   private_repo=$parent/agent-skills-private
 fi
 state_repo=${AGENT_SKILLS_STATE:-$parent/agent-skills-state}
+# Run by nobody at a terminal (a schedule, an agent), git must fail rather than wait for a password.
+if [ ! -t 0 ]; then
+  export GIT_TERMINAL_PROMPT=0
+  export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
+fi
 
 in_repo() {
   git -C "$sync_root" "$@"
@@ -48,12 +53,12 @@ sync_one() {
   [ -n "$sync_root" ] || return 0
   name=$(basename -- "$sync_root")
   if [ ! -d "$sync_root" ]; then
-    echo "SKIP $sync_root: not there"
+    echo "SKIP $name: not there ($sync_root)"
     return 0
   fi
   top=$(in_repo rev-parse --show-toplevel 2>/dev/null) || top=
   if [ -z "$top" ] || [ "$(CDPATH= cd -- "$top" && pwd -P)" != "$(CDPATH= cd -- "$sync_root" && pwd -P)" ]; then
-    echo "SKIP $sync_root: not a git checkout of its own"
+    echo "SKIP $name: not a git checkout of its own ($sync_root)"
     return 0
   fi
   if ! in_repo remote get-url origin >/dev/null 2>&1; then
@@ -90,12 +95,13 @@ sync_one() {
     fi
   fi
 
-  # Unpushed commits, also of a repository it skipped: they exist on this computer only.
+  # Unpushed commits, also of a repository it skipped (and so didn't fetch): they exist on this
+  # computer only.
   if in_repo rev-parse --verify --quiet "refs/remotes/origin/$default" >/dev/null &&
     in_repo rev-parse --verify --quiet "refs/heads/$default" >/dev/null; then
     unpushed=$(in_repo rev-list --count "refs/remotes/origin/$default..refs/heads/$default")
     if [ "$unpushed" -gt 0 ]; then
-      echo "UNPUSHED $name: $unpushed commit(s) on $default are not on origin, so no other computer has them; sync never pushes: git -C $sync_root push origin $default"
+      echo "UNPUSHED $name: $unpushed commit(s) on $default are not on origin/$default as of the last fetch, so no other computer has them; sync never pushes: git -C $sync_root push origin $default"
     fi
   fi
 }

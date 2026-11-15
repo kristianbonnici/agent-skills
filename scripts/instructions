@@ -3,18 +3,21 @@
 # install/instructions.tsv says for this computer (scripts/manifest instructions). bootstrap,
 # doctor and uninstall run it; run them instead.
 #
-# A built file is a real file whose first line is a marker that says it is generated and where to
-# edit it. A file at a target without the marker is the owner's own: it is left as it is until
-# install --adopt takes it over, after copying it to a backup beside it. Remove deletes only files
-# that carry the marker.
+# A built file is a real file whose first line is a marker: it says the file is generated, where to
+# edit it, and the checksum of the lines below it as built, so a change made in the file itself is
+# seen. A file at a target without the marker is the owner's own: it is left as it is until
+# install --adopt takes it over, after keeping it as a backup beside it (a link stays a link there).
+# A built file someone changed is kept as a backup beside it before it is rebuilt, and is never
+# removed. A rebuilt file keeps the permissions of the file it replaces.
 #
 #   instructions install [--host HOST] [--dry-run] [--adopt]
 #                     build what is missing, rebuild a built file that no longer matches its
 #                     sections, report an unadopted file (--adopt takes it over)
 #   instructions check [--host HOST]
-#                     print PASS, FAIL or WARN for each file, as doctor does; never changes a file
+#                     print PASS, FAIL or WARN for each file, as doctor does; never changes a file.
+#                     Exits 1 after any FAIL.
 #   instructions remove [--host HOST] [--dry-run]
-#                     delete each built file
+#                     delete each built file that nobody changed
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -56,25 +59,24 @@ expand_target() {
   esac
 }
 
-# The marker for a file built from sections of the repository at $1.
-marker() {
-  case "$1" in
-    "$HOME"/*) marker_root="~/${1#"$HOME"/}" ;;
-    *) marker_root=$1 ;;
-  esac
-  printf '%s%s (install/instructions.tsv, instructions/sections/). Edit there and run scripts/bootstrap: changes made here are overwritten. -->\n' "$marker_start" "$marker_root"
+# The checksum of what follows a file's first line.
+body_sum() {
+  tail -n +2 "$1" | cksum | awk '{ print $1 "-" $2 }'
 }
 
 # Writes to $1 the file built from the sections $2...: the marker, then each section's lines, a
-# blank line between two sections.
+# blank line between two sections. The marker names the repository by its folder's name, so that
+# another clone of it builds the same file.
 build() {
   build_out=$1
   shift
   # The repository the sections are in: each is <root>/instructions/sections/<name>.md.
   build_root=${1%/instructions/sections/*}
+  awk 'FNR == 1 && NR > 1 { print "" } { print }' "$@" >"$scratch/body"
   {
-    marker "$build_root"
-    awk 'FNR == 1 && NR > 1 { print "" } { print }' "$@"
+    printf '%s%s (install/instructions.tsv, instructions/sections/). Edit there and run scripts/bootstrap: it rebuilds this file, keeping a change made here in a backup beside it. Checksum: %s -->\n' \
+      "$marker_start" "$(basename -- "$build_root")" "$(cksum <"$scratch/body" | awk '{ print $1 "-" $2 }')"
+    cat "$scratch/body"
   } >"$build_out"
 }
 
@@ -87,9 +89,21 @@ is_built() {
   return 1
 }
 
-# A free name beside $1 for the owner's file it replaces.
+# Has the built file $1 changed since bootstrap wrote it: is the rest of it other than its
+# marker's checksum says? A marker without a checksum counts as changed, to be safe.
+is_changed() {
+  first_line=
+  IFS= read -r first_line <"$1" || true
+  case "$first_line" in
+    *" Checksum: "*" -->") recorded=${first_line##* Checksum: }; recorded=${recorded% -->} ;;
+    *) return 0 ;;
+  esac
+  [ "$recorded" != "$(body_sum "$1")" ]
+}
+
+# A free name beside $1, ending in $2 and the time, for a file that is about to be replaced.
 backup_name() {
-  backup="$1.before-agent-skills-$(date +%Y%m%d-%H%M%S)"
+  backup="$1.$2-$(date +%Y%m%d-%H%M%S)"
   candidate=$backup
   count=1
   while [ -e "$candidate" ] || [ -L "$candidate" ]; do
@@ -99,8 +113,20 @@ backup_name() {
   printf '%s\n' "$candidate"
 }
 
+# The permissions a file written at $1 gets: those of the file there (through a link), or what the
+# umask gives a new file.
+mode_for() {
+  if [ -e "$1" ]; then
+    stat -L -f %Lp "$1" 2>/dev/null || stat -L -c %a "$1"
+  else
+    printf '%o\n' $((0666 & ~$(umask)))
+  fi
+}
+
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/agent-skills-instructions.XXXXXX")
-trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+next_file=
+trap 'rm -rf "$scratch"; [ -z "$next_file" ] || rm -f "$next_file"' EXIT
+trap 'exit 1' HUP INT TERM
 built="$scratch/built"
 status=0
 tab=$(printf '\t')
@@ -113,11 +139,13 @@ while IFS= read -r row; do
   sections=${rest#*"$tab"}
   [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
   target_path=$(expand_target "$target")
-  # The section paths as arguments: they are separated by tabs.
+  # The section paths as arguments: they are separated by tabs, and a path is never a pattern.
   old_ifs=$IFS
   IFS=$tab
+  set -f
   # shellcheck disable=SC2086
   set -- $sections
+  set +f
   IFS=$old_ifs
   build "$built" "$@"
 
@@ -126,23 +154,39 @@ while IFS= read -r row; do
       if is_built "$target_path"; then
         if cmp -s "$built" "$target_path"; then
           echo "PASS $target_path is built from install/instructions.tsv"
+        elif is_changed "$target_path"; then
+          echo "FAIL $target_path was changed since bootstrap built it: move the change into a section of install/instructions.tsv, then run scripts/bootstrap, which keeps the changed file as a backup beside it"
+          status=1
         else
           echo "FAIL $target_path no longer matches its sections in install/instructions.tsv: run scripts/bootstrap to rebuild it"
+          status=1
         fi
+      elif [ -d "$target_path" ] && [ ! -L "$target_path" ]; then
+        echo "FAIL $target_path is a folder, where install/instructions.tsv expects a file: move it away, then run scripts/bootstrap"
+        status=1
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
         echo "WARN $target_path is not adopted: it is your own file, not built from install/instructions.tsv. To build it from there, keeping yours as a backup beside it, run scripts/bootstrap --adopt-instructions"
       else
         echo "FAIL $target_path is missing: run scripts/bootstrap to build it from install/instructions.tsv"
+        status=1
       fi
       ;;
 
     remove)
       if is_built "$target_path"; then
+        if is_changed "$target_path"; then
+          echo "KEEP $target_path: it was changed since bootstrap built it" >&2
+          continue
+        fi
+        # The owner's file from before the adoption, if a backup of it is there.
+        earlier=$(find "$(dirname -- "$target_path")" -maxdepth 1 -name "$(basename -- "$target_path").before-agent-skills-*" 2>/dev/null | sort | tail -n 1)
+        note=
+        [ -z "$earlier" ] || note="; your file from before bootstrap built it is $earlier: rename it back to use it again"
         if [ "$dry_run" -eq 1 ]; then
           echo "DRY RUN: rm $target_path"
         else
           rm "$target_path"
-          echo "REMOVED $target_path"
+          echo "REMOVED $target_path$note"
         fi
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
         echo "KEEP $target_path: your own file, not built by bootstrap" >&2
@@ -155,44 +199,54 @@ while IFS= read -r row; do
         status=1
         continue
       fi
+      keep_as=
       if is_built "$target_path"; then
         if cmp -s "$built" "$target_path"; then
           echo "OK $target_path"
           continue
         fi
         verb=REBUILT
+        ! is_changed "$target_path" || keep_as=changed
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
         if [ "$adopt" -eq 0 ]; then
           echo "NOT ADOPTED $target_path: your own file, so bootstrap leaves it. To build it from install/instructions.tsv, keeping yours as a backup beside it, run scripts/bootstrap --adopt-instructions" >&2
           continue
         fi
         verb=ADOPTED
+        keep_as=before-agent-skills
       else
         verb=BUILT
       fi
+      backup=
+      [ -z "$keep_as" ] || backup=$(backup_name "$target_path" "$keep_as")
       if [ "$dry_run" -eq 1 ]; then
-        [ "$verb" != ADOPTED ] || echo "DRY RUN: cp $target_path $(backup_name "$target_path")"
+        if [ -n "$backup" ] && [ -L "$target_path" ]; then
+          echo "DRY RUN: keep the link $target_path as $backup"
+        elif [ -n "$backup" ]; then
+          echo "DRY RUN: cp $target_path $backup"
+        fi
         echo "DRY RUN: write $target_path"
         continue
       fi
       target_dir=$(dirname -- "$target_path")
       mkdir -p "$target_dir"
+      # Written beside the target and moved into place, so a host never reads half a file, and the
+      # target is there throughout: the backup is made before the move replaces it.
+      next_file=$(mktemp "$target_dir/.agent-skills-instructions.XXXXXX")
+      cat "$built" >"$next_file"
+      chmod "$(mode_for "$target_path")" "$next_file"
       note=
-      if [ "$verb" = ADOPTED ]; then
-        backup=$(backup_name "$target_path")
-        # A link is kept as the link it was; a file is copied, so it stays in place until replaced.
+      if [ -n "$backup" ]; then
         if [ -L "$target_path" ]; then
-          mv "$target_path" "$backup"
+          # A link is kept as the link it was, pointing where it pointed.
+          ln -s "$(readlink "$target_path")" "$backup"
         else
           cp -p "$target_path" "$backup"
         fi
-        note="; your file is kept as $backup"
+        if [ "$verb" = ADOPTED ]; then note="; your file is kept as $backup"; else note="; the change made in it is kept as $backup"; fi
       fi
-      # Written beside the target and moved into place, so a host never reads half a file.
-      next_file=$(mktemp "$target_dir/.agent-skills-instructions.XXXXXX")
-      cp "$built" "$next_file"
-      chmod 644 "$next_file"
       mv "$next_file" "$target_path"
+      next_file=
       echo "$verb $target_path$note"
       ;;
   esac

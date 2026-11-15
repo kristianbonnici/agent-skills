@@ -71,7 +71,8 @@ tool installed on some computers only. Doctor expects that skill only there; an 
 every computer. A computer named there needs a row in the table, so a misspelt name is refused.
 `./scripts/manifest computer` prints this computer's name, `hosts` and `left-out` the hosts it has
 and leaves out, `away` the links of the hosts it leaves out, `computers` the computers the table
-names, and `unhosted` the hosts no row names (doctor warns about those).
+names, `unhosted` the hosts no row names (doctor warns about those), and `instructions` the
+instruction files this computer has ([Instruction files](#instruction-files)).
 
 ### Instruction files
 
@@ -87,26 +88,33 @@ travel-mac	claude	~/.claude/CLAUDE.md	title long-responses computer-use-travel
 ```
 
 Bootstrap joins the sections with a blank line between two of them and writes a real file, not a
-link, whose first line is a marker: an HTML comment saying it is generated and where to edit it.
-Text that is the same everywhere is one section; text that differs by host or computer, such as the
-tools a Mac has for computer use, is a section of its own. Edit a section and run bootstrap, never the
-built file, which bootstrap rebuilds whenever it no longer matches its sections.
+link, whose first line is a marker: an HTML comment saying it is generated, where to edit it, and the
+checksum of the rest of the file. Text that is the same everywhere is one section; text that differs
+by host or computer, such as the tools a Mac has for computer use, is a section of its own. Edit a
+section and run bootstrap, never the built file: bootstrap rebuilds it whenever it no longer matches
+its sections. A built file changed in place (by hand, or by an agent writing to it) is kept first as
+a backup beside it (`CLAUDE.md.changed-<date>-<time>`, named in the output), and doctor fails on it
+until the change is moved into a section. A rebuilt file keeps the permissions of the one it
+replaces.
 
 A file already at a target without the marker is the owner's own. Bootstrap leaves it as it is and
 says `NOT ADOPTED` with the command that adopts it, and doctor warns about it without failing.
-`./scripts/bootstrap --adopt-instructions` takes such files over, copying each first to a backup
-beside it (`CLAUDE.md.before-agent-skills-<date>-<time>`, named in its output). Doctor fails while a
-built file is missing or out of date; uninstall removes only files that carry the marker. With no
-table, or no row for this computer, nothing is built and nothing is reported.
-`./scripts/manifest instructions` prints this computer's rows, each section as its path.
+`./scripts/bootstrap --adopt-instructions` takes such files over, keeping each first as a backup
+beside it (`CLAUDE.md.before-agent-skills-<date>-<time>`, named in its output; a link stays a link).
+Doctor fails while a built file is missing or out of date. Uninstall removes only built files nobody
+changed, and names the backup from before the adoption, to rename back. With no table, or no row for
+this computer, nothing is built and nothing is reported. A row taken out of the table leaves its
+built file where it is: remove it by hand. `./scripts/manifest instructions` prints this computer's
+rows, each section as its path.
 
 ### Keeping computers in step
 
 `./scripts/sync` brings the three repositories up to date. For each one on its default branch with no
 uncommitted change to a tracked file, it runs `git pull --ff-only`; one off its default branch or
 with a change is skipped, with the reason and the command to fix it. For each it reports the commits
-of its default branch that are not on `origin`, and it never pushes: push those yourself, so the
-other computers get them. Then it runs `bootstrap --all` (pass `--skip-dependencies` to leave the
+of its default branch that are not on `origin` as of the last fetch, and it never pushes: push those
+yourself, so the other computers get them. Run by nothing at a terminal, it lets git fail rather than
+ask for a password. Then it runs `bootstrap --all` (pass `--skip-dependencies` to leave the
 runtimes alone). A pull that cannot fast-forward fails sync after bootstrap has run.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind
