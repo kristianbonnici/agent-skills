@@ -255,10 +255,16 @@ printf 'install\troaming\tclaude factory\n' >"$computers/install/skills.tsv"
 printf 'claude\texternal\ta tool\t~/.claude/skills/studio-tool\tstudio-mac\nclaude\texternal\ta tool\t~/.claude/skills/everywhere-tool\n' >"$computers/install/links.tsv"
 printf '# computer\thosts\nstudio-mac\topencode factory antigravity antigravity-cli codex claude gemini\ntravel-mac\topencode antigravity codex claude gemini\ncodeless-mac\tclaude\n' >"$computers/install/computers.tsv"
 export AGENT_SKILLS_PRIVATE="$computers"
+# Doctor --all asks the OpenCode CLI which skills it sees: a stand-in answers, so the test never
+# starts the real one in a made-up home.
+stand_in_bin="$test_home/stand-in-bin"
+mkdir -p "$stand_in_bin"
+printf '#!/bin/sh\necho "{\\"data\\": [{\\"id\\": \\"product-design\\"}]}"\n' >"$stand_in_bin/opencode"
+chmod +x "$stand_in_bin/opencode"
 on() {
   on_computer=$1
   shift
-  AGENT_SKILLS_COMPUTER="$on_computer" HOME="$test_home" "$@"
+  AGENT_SKILLS_COMPUTER="$on_computer" HOME="$test_home" PATH="$stand_in_bin:$PATH" "$@"
 }
 # An earlier bootstrap on travel-mac, from before computers.tsv, linked every host as studio-mac does.
 on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
