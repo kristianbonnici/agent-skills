@@ -3687,6 +3687,12 @@ assert "GPU left out: some stretches have no reading" in gappy and gappy.count("
 mac["gpu"][10:30] = [6.0] * 20; mac["gpu_pk"][10:30] = [6.0] * 20
 whole = mac_chart(usage, mac, peaks, "den-mac", [60, 70, 80, 90], 10, axis)
 assert "GPU violet" in whole and whole.count("\n    line [") == 3 and "left out" not in whole, whole
+# an axis that starts mid-minute (no timeline: the first sample's second): minute 0 is in the first stretch
+mid = mac_chart(dict(usage, t0=60.5), mac, peaks, "den-mac", [60.5, 70.5, 80.5, 90.5], 10, axis)
+assert mid.count("\n    line [") == 3 and "left out" not in mid and all("None" not in l and ", 0" not in l for l in mid.splitlines() if l.startswith("    line [")), mid
+short = {"cpu": [30.0], "cpu_pk": [40.0], "gpu": [5.0], "gpu_pk": [6.0], "mem": [4.0], "mem_pk": [4.0], "mem_total": 16.0}
+one = mac_chart({"start": 60, "t0": 60.5, "t1": 61}, short, peaks, "den-mac", [60.5], 5, axis)
+assert "line [40]" in one and "line [6]" in one and "left out" not in one, one   # a run of under a minute
 EOF
 # a computers list that can't be drawn is refused with one sentence
 python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["computers"] = [{"name": "a"}, {"name": "a"}]; json.dump(f, open(sys.argv[2], "w"))' \

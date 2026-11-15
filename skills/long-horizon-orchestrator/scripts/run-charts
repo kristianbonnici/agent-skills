@@ -1163,7 +1163,9 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
     first, last = min(read, default=0), max(read, default=0)
     # from the stretch of the first reading to that of the last: a computer that began sampling later gets no
     # stretches of zeros before it
-    cut = [s for s in starts if s + width > usage["start"] + first and s <= usage["start"] + last] or starts[:1]
+    # a stretch holds the minutes from its whole starting minute on: the axis may start mid-minute, the per-minute
+    # series at a whole one
+    cut = [s for s in starts if int(s // 1) + width > usage["start"] + first and int(s // 1) <= usage["start"] + last] or starts[:1]
     total = mac.get("mem_total") or 0
     left_out = ""
     for key, name, colour, scale in (("cpu_pk", "CPU", "#2563eb", 1), ("gpu_pk", "GPU", "#7c3aed", 1),
@@ -1172,7 +1174,7 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
             continue
         values = []
         for s in cut:
-            inside = [v for i, v in enumerate(mac[key]) if v is not None and s <= usage["start"] + i < s + width]
+            inside = [v for i, v in enumerate(mac[key]) if v is not None and int(s // 1) <= usage["start"] + i < int(s // 1) + width]
             values.append(round(max(inside) * scale, 1) if inside else None)
         if key == "gpu_pk" and None in values:
             # a line chart can't leave a point out, and a stretch with no GPU reading isn't an idle GPU: no GPU line
