@@ -5,7 +5,8 @@ travel the other way. The computers share no files; this is the only thing writt
 
 Usage:
   share-usage send <run directory> --state <state repository> [--computer <name>] [--remote <remote>]
-  share-usage fetch <run directory> --state <state repository> [--expect <name>,<name>...] [--remote <remote>]
+  share-usage fetch <run directory> [--state <state repository>] [--ssh <name>=<alias>]... [--remote-run <path>]
+                    [--expect <name>,<name>...] [--remote <remote>]
 
 send runs on a computer that ran tasks, at its finish, after usage-sampler --final --machine-only and
 run-costs: it commits <run directory>/usage/machine.jsonl and <run directory>/costs.json, whichever exist,
@@ -14,14 +15,26 @@ branch, never forced. The folder then holds exactly what this send found: a file
 there and this one didn't find (costs that failed this time) is removed, so the branch never pairs new
 samples with old costs; a send that finds neither file removes the folder's earlier files and exits 1. A push the remote rejects (someone pushed meanwhile) is made again on the
 branch's new head, up to five times. It works in a temporary worktree of the state repository, a new
-folder <run directory>/share-usage.<random>.worktree for each send, removed afterwards; it never touches
-another worktree, and changes nothing else there. <name> is the computer's LocalHostName
+folder <run directory>/share-usage.<random>.worktree for each send, removed afterwards, with this send's
+process ID in it. Before it starts, a send removes the folders an earlier send of this run directory left
+when it was killed: only share-usage.*.worktree folders that exist, whose recorded process (or, for one
+with none, any share-usage at all) is no longer running, and only through `git worktree remove` of their
+own worktree; it never runs `git worktree prune`, which would also forget the owner's own worktrees whose
+folders are missing (on an unmounted disk, say), and it never touches another worktree. <name> is the computer's LocalHostName
 (scutil --get LocalHostName; hostname -s elsewhere) unless given.
 
 fetch runs on the orchestrator's computer before the charts: it fetches the briefs branch and writes each
 computers/<name>/ folder it holds into <run directory>/computers/<name>/: usage/machine.jsonl, which
 run-charts reads when the facts list the computer, and costs.json, which run-costs adds to the run's
 costs. It prints one line per computer that sent something, and one per --expect name that sent nothing.
+
+fetch --ssh <name>=<alias> reads that computer's files straight over SSH instead (the owner's alias in
+~/.ssh/config, the one their profile names; batch mode, so nothing can prompt): <run directory>/usage/
+machine.jsonl and <run directory>/costs.json there, at the same path under that computer's home folder
+(or --remote-run, a path there), into the same places here. A file that isn't there removes this
+computer's earlier copy of it, as the branch's snapshot does; a computer SSH can't reach keeps its
+earlier copies and is named. Computers fetched over SSH are left out of the branch's fetch, which runs
+only with --state; give one or the other, or both.
 
 The run is the run directory's name. Every git command runs with GIT_TERMINAL_PROMPT=0 and, unless
 GIT_SSH_COMMAND is set, ssh in batch mode, so nothing can prompt. Exit 0; 1 when there was nothing to
@@ -36,6 +49,7 @@ import re
 import shutil
 import subprocess
 import sys
+import shlex
 import tempfile
 import time
 from pathlib import Path
@@ -81,13 +95,77 @@ def fetch_head(state: Path, remote: str, branch: str) -> str:
     return git(state, "rev-parse", "FETCH_HEAD").stdout.strip()
 
 
+def running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def other_sends() -> bool:
+    """Whether a share-usage other than this one is running (ps; on failure, assume one is)."""
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if out.returncode != 0:
+        return True
+    for line in out.stdout.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if pid.isdigit() and int(pid) != os.getpid() and re.search(r"(^|[\s/])share-usage\s+(send|fetch)\b", command):
+            return True
+    return False
+
+
+def leftovers(run_dir: Path, state: Path) -> None:
+    """Removes the worktrees earlier sends left in this run directory when they were killed: each
+    share-usage.*.worktree folder that exists, whose send is no longer running (its pid file names a
+    process that is gone; one with no pid file only when no share-usage runs at all), through `git worktree
+    remove` of the worktree in it when the state repository lists it. A folder whose tree isn't listed (its
+    registration is gone) is left as it is and named. Never `git worktree prune`."""
+    holders = sorted(p for p in run_dir.glob("share-usage.*.worktree") if p.is_dir())
+    if not holders:
+        return
+    listed = git(state, "worktree", "list", "--porcelain").stdout
+    trees = {line[len("worktree "):] for line in listed.splitlines() if line.startswith("worktree ")}
+    nobody = None
+    for holder in holders:
+        mark = holder / "pid"
+        try:
+            pid = int(mark.read_text().strip())
+            alive = running(pid)
+        except (OSError, ValueError):
+            if nobody is None:
+                nobody = not other_sends()
+            alive = not nobody
+        if alive:
+            continue
+        tree = holder / "tree"
+        if tree.exists() and str(tree.resolve()) not in trees:
+            print(f"share-usage: left {holder} as it is: its tree isn't a worktree of {state}", file=sys.stderr)
+            continue
+        if tree.exists():
+            git(state, "worktree", "remove", "--force", str(tree))
+        mark.unlink(missing_ok=True)
+        try:
+            holder.rmdir()
+            print(f"share-usage: removed {holder.name}, which a killed send left")
+        except OSError:
+            print(f"share-usage: left {holder}: it holds more than a send leaves", file=sys.stderr)
+
+
 def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
     run = run_dir.name
+    leftovers(run_dir, state)
     branch = f"lho/{run}-briefs"
     found = [(dest, run_dir / src) for dest, src in FILES if (run_dir / src).is_file()]
     if not found:   # still a snapshot: the folder's earlier files go, so nothing old reads as this send's
         print(f"share-usage: nothing to send: neither {run_dir / FILES[0][1]} nor {run_dir / FILES[1][1]} exists", file=sys.stderr)
     holder = Path(tempfile.mkdtemp(prefix="share-usage.", suffix=".worktree", dir=run_dir))   # this send's own, never another's
+    (holder / "pid").write_text(f"{os.getpid()}\n")   # so a later send can tell a killed send's folder from a running one's
     tree = holder / "tree"
     added = False
     try:
@@ -135,17 +213,72 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
         if added:
             git(state, "worktree", "remove", "--force", str(tree), check=False)   # this send's own worktree, pushed or abandoned
         try:
+            (holder / "pid").unlink(missing_ok=True)
             holder.rmdir()
         except OSError:
             pass
 
 
-def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:
+def over_ssh(run_dir: Path, name: str, alias: str, remote_run: str) -> list[str] | None:
+    """Reads one computer's two files over SSH into <run directory>/computers/<name>/; a file that isn't
+    there removes the earlier copy. What arrived, or None when SSH couldn't reach it (copies kept)."""
+    got = []
+    for dest, local in FILES:
+        there = shlex.quote(f"{remote_run}/{local}")
+        try:
+            done = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", alias,
+                                   f"if [ -f {there} ]; then cat -- {there}; else exit 3; fi"],
+                                  capture_output=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as error:
+            print(f"share-usage: {name}: ssh {alias} failed ({error}); its earlier copies are kept", file=sys.stderr)
+            return None
+        target = run_dir / "computers" / name / local
+        if done.returncode == 3:
+            if target.is_file():
+                target.unlink()
+            continue
+        if done.returncode != 0:
+            print(f"share-usage: {name}: ssh {alias} failed: {done.stderr.decode(errors='replace').strip()[:300]}; "
+                  "its earlier copies are kept (the briefs branch is the fallback)", file=sys.stderr)
+            return None
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(done.stdout)
+        got.append(described(dest, done.stdout))
+    return got
+
+
+def described(dest: str, data: bytes) -> str:
+    if dest != "machine.jsonl":
+        return "costs"
+    rows = [l for l in data.decode(errors="replace").splitlines() if l.strip()]
+    last = re.search(r'"t":\s*"([^"]+)"', rows[-1]) if rows else None
+    return f"{len(rows)} machine samples" + (f", the last at {last.group(1)}" if last else "")
+
+
+def fetch(run_dir: Path, state: Path | None, remote: str, expect: list[str], ssh: dict | None = None, remote_run: str = "") -> int:
+    arrived = []
+    for name, alias in (ssh or {}).items():
+        got = over_ssh(run_dir, name, alias, remote_run)
+        if got:
+            arrived.append(name)
+            print(f"share-usage: {name}: " + ", ".join(got) + f" -> {run_dir / 'computers' / name} (over ssh {alias})")
+    if state is not None:
+        arrived += fetch_branch(run_dir, state, remote, set(ssh or {}))
+    for name in expect:
+        if name not in arrived:
+            print(f"share-usage: nothing arrived from {name}")
+    if not arrived and not expect:
+        print("share-usage: no computer has sent anything")
+    return 0
+
+
+def fetch_branch(run_dir: Path, state: Path, remote: str, skip: set) -> list[str]:
+    """The briefs branch's computers/ folders, but those in skip (fetched over SSH)."""
     branch = f"lho/{run_dir.name}-briefs"
     head = fetch_head(state, remote, branch)
     # a listing that fails stops here, so no earlier copy is taken for one the branch dropped
     listed = git(state, "ls-tree", "-d", "--name-only", head, "computers/").stdout.split()
-    names = [n.split("/", 1)[1] for n in listed if n.startswith("computers/")]
+    names = [n.split("/", 1)[1] for n in listed if n.startswith("computers/") and n.split("/", 1)[1] not in skip]
     arrived = []
     for name in names:
         if not valid(name):
@@ -161,49 +294,60 @@ def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(blob.stdout)
-            if dest == "machine.jsonl":
-                rows = [l for l in blob.stdout.decode(errors="replace").splitlines() if l.strip()]
-                last = re.search(r'"t":\s*"([^"]+)"', rows[-1]) if rows else None
-                got.append(f"{len(rows)} machine samples" + (f", the last at {last.group(1)}" if last else ""))
-            else:
-                got.append("costs")
+            got.append(described(dest, blob.stdout))
         if got:
             arrived.append(name)
             print(f"share-usage: {name}: " + ", ".join(got) + f" -> {run_dir / 'computers' / name}")
     for old in sorted((run_dir / "computers").glob("*")) if (run_dir / "computers").is_dir() else []:
         # an earlier fetch's copies for a computer the branch no longer has a folder for: its send took them off
-        if old.name in names or not valid(old.name):
+        if old.name in names or old.name in skip or not valid(old.name):
             continue
         gone = [local for _, local in FILES if (old / local).is_file()]
         for local in gone:
             (old / local).unlink()
         if gone:
             print(f"share-usage: {old.name}: nothing on the branch now; removed the earlier copies")
-    for name in expect:
-        if name not in arrived:
-            print(f"share-usage: nothing arrived from {name}")
-    if not arrived and not expect:
+    if not arrived:
         print(f"share-usage: no computer has sent anything to {branch}")
-    return 0
+    return arrived
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="share-usage", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mode", choices=("send", "fetch"))
     parser.add_argument("run")
-    parser.add_argument("--state", required=True, help="the owner's private state repository on this computer")
+    parser.add_argument("--state", help="the owner's private state repository on this computer")
+    parser.add_argument("--ssh", action="append", default=[], metavar="NAME=ALIAS", help="fetch: that computer's files over SSH")
+    parser.add_argument("--remote-run", help="fetch --ssh: the run directory's path there (default: the same path under its home)")
     parser.add_argument("--computer")
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--expect", default="")
     args = parser.parse_args(argv)
     run_dir = Path(args.run).expanduser().resolve()
-    state = Path(args.state).expanduser()
+    state = Path(args.state).expanduser() if args.state else None
     if not run_dir.is_dir():
         print(f"share-usage: no run directory {run_dir}", file=sys.stderr)
         return 2
-    if git(state, "rev-parse", "--git-dir", check=False).returncode != 0:
+    if state is None and (args.mode == "send" or not args.ssh):
+        print("share-usage: give --state (the state repository), or for fetch --ssh <name>=<alias>", file=sys.stderr)
+        return 2
+    if state is not None and git(state, "rev-parse", "--git-dir", check=False).returncode != 0:
         print(f"share-usage: {state} isn't a git repository", file=sys.stderr)
         return 2
+    ssh = {}
+    for pair in args.ssh:
+        name, _, alias = pair.partition("=")
+        if not valid(name) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]*", alias):
+            print(f"share-usage: --ssh takes <computer name>=<ssh alias>, not {pair!r}", file=sys.stderr)
+            return 2
+        ssh[name] = alias
+    remote_run = args.remote_run
+    if ssh and not remote_run:
+        try:
+            remote_run = str(run_dir.relative_to(Path.home().resolve()))   # the same place under that computer's home
+        except ValueError:
+            print(f"share-usage: {run_dir} isn't under your home folder: give --remote-run", file=sys.stderr)
+            return 2
     try:
         if args.mode == "send":
             name = computer_name(args.computer)
@@ -216,7 +360,7 @@ def main(argv: list[str]) -> int:
         if bad:
             print(f"share-usage: --expect names {', '.join(bad)}, which can't be computers' names", file=sys.stderr)
             return 2
-        return fetch(run_dir, state, args.remote, expect)
+        return fetch(run_dir, state, args.remote, expect, ssh, remote_run or "")
     except RuntimeError as error:
         print(f"share-usage: {error}", file=sys.stderr)
         return 1

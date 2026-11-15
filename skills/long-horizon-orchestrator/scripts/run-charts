@@ -1159,9 +1159,13 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
     if not mac:
         return None
     lines, colours, names = [], [], []
-    last = max((i for key in ("cpu_pk", "gpu_pk", "mem_pk") for i, v in enumerate(mac.get(key, [])) if v is not None), default=0)
-    cut = [s for s in starts if s <= usage["start"] + last] or starts[:1]
+    read = [i for key in ("cpu_pk", "gpu_pk", "mem_pk") for i, v in enumerate(mac.get(key, [])) if v is not None]
+    first, last = min(read, default=0), max(read, default=0)
+    # from the stretch of the first reading to that of the last: a computer that began sampling later gets no
+    # stretches of zeros before it
+    cut = [s for s in starts if s + width > usage["start"] + first and s <= usage["start"] + last] or starts[:1]
     total = mac.get("mem_total") or 0
+    left_out = ""
     for key, name, colour, scale in (("cpu_pk", "CPU", "#2563eb", 1), ("gpu_pk", "GPU", "#7c3aed", 1),
                                      ("mem_pk", "memory" + (f" (% of {total:g} GB)" if total else ""), "#0d9488", 100 / total if total else 0)):
         if key not in mac or not scale:
@@ -1169,14 +1173,18 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
         values = []
         for s in cut:
             inside = [v for i, v in enumerate(mac[key]) if v is not None and s <= usage["start"] + i < s + width]
-            values.append(round(max(inside) * scale, 1) if inside else 0)
-        lines.append("    line [" + ", ".join(f"{v:g}" for v in values) + "]")
+            values.append(round(max(inside) * scale, 1) if inside else None)
+        if key == "gpu_pk" and None in values:
+            # a line chart can't leave a point out, and a stretch with no GPU reading isn't an idle GPU: no GPU line
+            left_out = " · GPU left out: some stretches have no reading"
+            continue
+        lines.append("    line [" + ", ".join(f"{v or 0:g}" for v in values) + "]")
         colours.append(colour)
         names.append(f"{name} {({'#2563eb': 'blue', '#7c3aed': 'violet', '#0d9488': 'teal'})[colour]}")
     disk = f" · free disk {peaks['disk_first']:g} → {peaks['disk_last']:g} GB" if peaks and peaks["disk_first"] is not None else ""
     if not lines:
         return None
-    title = f"{subject}, the highest reading in each {span(width)} · " + " · ".join(names) + disk
+    title = f"{subject}, the highest reading in each {span(width)} · " + " · ".join(names) + left_out + disk
     return "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"',
                       "    x-axis [" + ", ".join(f'"{clock_text(c)}"' for c in cut) + "]",
                       '    y-axis "% busy" 0 --> 100'] + lines) + "\n"

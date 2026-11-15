@@ -3383,6 +3383,31 @@ mv "$multi/den/costs.json.aside" "$multi/den/run-x/costs.json"
 status=0
 "$scripts/share-usage" send "$multi/studio/run-x" --state "$multi/studio-state" --computer ../x >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
+# a killed send's folder is removed by the next send: only share-usage.*.worktree folders whose send is gone,
+# through git worktree remove of their own worktree; one whose send still runs, and one whose tree git doesn't
+# list, stay; and the owner's own worktree whose folder is missing (an unmounted disk) is never pruned
+mkdir -p "$multi/kill/run-x/usage"
+cp "$multi/den/run-x/usage/machine.jsonl" "$multi/kill/run-x/usage/machine.jsonl"
+git -C "$multi/den-state" worktree add -q --detach "$multi/owners-disk" FETCH_HEAD
+rm -r "$multi/owners-disk"   # the owner's worktree, its disk unmounted
+mkdir -p "$multi/kill/run-x/share-usage.dead.worktree" "$multi/kill/run-x/share-usage.live.worktree" "$multi/kill/run-x/share-usage.lost.worktree/tree"
+git -C "$multi/den-state" worktree add -q --detach "$multi/kill/run-x/share-usage.dead.worktree/tree" FETCH_HEAD
+git -C "$multi/den-state" worktree add -q --detach "$multi/kill/run-x/share-usage.live.worktree/tree" FETCH_HEAD
+sh -c 'exit 0' & gone=$!
+wait "$gone"
+printf '%s\n' "$gone" > "$multi/kill/run-x/share-usage.dead.worktree/pid"
+sleep 60 & alive=$!
+background="$background $alive"
+printf '%s\n' "$alive" > "$multi/kill/run-x/share-usage.live.worktree/pid"
+printf '%s\n' "$gone" > "$multi/kill/run-x/share-usage.lost.worktree/pid"
+"$scripts/share-usage" send "$multi/kill/run-x" --state "$multi/den-state" --computer kill-mac > "$multi/kill.out" 2> "$multi/kill.err"
+grep -q 'removed share-usage.dead.worktree, which a killed send left' "$multi/kill.out"
+grep -q "share-usage.lost.worktree as it is: its tree isn't a worktree" "$multi/kill.err"
+test ! -e "$multi/kill/run-x/share-usage.dead.worktree" && test -d "$multi/kill/run-x/share-usage.live.worktree/tree" && test -d "$multi/kill/run-x/share-usage.lost.worktree/tree"
+git -C "$multi/den-state" worktree list --porcelain | grep -q "^worktree $(cd "$multi" && pwd -P)/owners-disk$"
+if git -C "$multi/den-state" worktree list --porcelain | grep -q 'share-usage.dead.worktree'; then exit 1; fi
+kill "$alive"
+git -C "$multi/den-state" worktree remove --force "$multi/kill/run-x/share-usage.live.worktree/tree"
 # a send that finds neither file fails, and takes that computer's earlier files off the branch, so a fetch
 # can't take them for this send's; with nothing there before, it changes nothing
 mkdir -p "$multi/empty/run-x" "$multi/spare/run-x/usage"
@@ -3430,6 +3455,49 @@ grep -q '^share-usage: nothing arrived from attic-mac$' "$multi/fetch.out"
 cmp "$multi/den/run-x/usage/machine.jsonl" "$multi/studio/run-x/computers/den-mac/usage/machine.jsonl"
 cmp "$multi/den/run-x/costs.json" "$multi/studio/run-x/computers/den-mac/costs.json"
 test ! -e "$multi/studio/run-x/computers/den-mac/usage/providers.jsonl"
+
+# share-usage fetch --ssh: a computer's files straight from there, at the same path under its home folder,
+# through a stand-in ssh that runs the command in a made-up home; a file missing there removes the earlier
+# copy; a computer ssh can't reach keeps its copies; the git path skips the computers fetched over ssh
+mkdir -p "$multi/fake-bin" "$multi/den-home"
+cat > "$multi/fake-bin/ssh" <<'EOF'
+#!/bin/sh
+# stand-in ssh: options, then the alias, then the command; "unreachable" fails as ssh does
+while [ $# -gt 0 ]; do case "$1" in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done
+alias=$1; shift
+echo "$alias $*" >> "$FAKE_SSH_LOG"
+[ "$alias" = unreachable ] && { echo "ssh: connect to host unreachable: timed out" >&2; exit 255; }
+cd "$FAKE_SSH_HOME" && exec sh -c "$*"
+EOF
+chmod +x "$multi/fake-bin/ssh"
+fakehome="$multi/home-here"
+mkdir -p "$fakehome/state/run-x" "$multi/den-home/state/run-x/usage"
+cp "$multi/den/run-x/usage/machine.jsonl" "$multi/den-home/state/run-x/usage/machine.jsonl"
+cp "$multi/den/run-x/costs.json" "$multi/den-home/state/run-x/costs.json"
+mkdir -p "$fakehome/state/run-x/computers/far-mac/usage"
+printf 'old\n' > "$fakehome/state/run-x/computers/far-mac/usage/machine.jsonl"
+HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --ssh far-mac=unreachable --expect den-mac,far-mac > "$multi/ssh-fetch.out" 2> "$multi/ssh-fetch.err"
+grep -q '^share-usage: den-mac: 120 machine samples, the last at 2026-11-16T02:19:10+01:00, costs -> .* (over ssh den-mac)$' "$multi/ssh-fetch.out"
+grep -q '^share-usage: nothing arrived from far-mac$' "$multi/ssh-fetch.out" && grep -q 'far-mac: ssh unreachable failed' "$multi/ssh-fetch.err"
+cmp "$multi/den/run-x/usage/machine.jsonl" "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl"
+cmp "$multi/den/run-x/costs.json" "$fakehome/state/run-x/computers/den-mac/costs.json"
+test "$(cat "$fakehome/state/run-x/computers/far-mac/usage/machine.jsonl")" = old
+grep -q "^den-mac if \[ -f state/run-x/usage/machine.jsonl \]" "$multi/ssh.log"
+rm "$multi/den-home/state/run-x/costs.json"   # costs that failed there: the earlier copy goes
+HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac > /dev/null
+test ! -e "$fakehome/state/run-x/computers/den-mac/costs.json" && test -s "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl"
+# with --state too, the branch's fetch leaves the computers fetched over ssh alone (den-mac isn't on the branch here)
+HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --state "$multi/studio-state" > /dev/null
+test -s "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl"
+status=0
+"$scripts/share-usage" fetch "$multi/studio/run-x" > /dev/null 2>&1 || status=$?
+test "$status" -eq 2
+status=0
+"$scripts/share-usage" fetch "$multi/studio/run-x" --ssh 'den-mac=den;rm' > /dev/null 2>&1 || status=$?
+test "$status" -eq 2
 
 # run-costs on studio-mac: den-mac's task and its reviewer counted, attic-mac's task named as not arrived
 T3_USERDATA="$multi/studio-t3" "$scripts/run-costs" "$multi/studio/run-x" --json "$multi/studio/costs.json" > "$multi/studio/costs.md"
@@ -3544,6 +3612,9 @@ den_mmd = open(os.path.join(root, "charts-two", "usage-mac-den-mac.mmd")).read()
 assert den_mmd.count("\n    line [") == 2 and "GPU" not in den_mmd and "den-mac (task D · Intel), the highest reading" in den_mmd, den_mmd
 assert "studio-mac (orchestrator · daily Mac), the highest" in open(os.path.join(root, "charts-two", "usage-mac.mmd")).read()
 assert not os.path.exists(os.path.join(root, "charts-two", "usage-mac-attic-mac.mmd"))
+first_label = re.search(r'x-axis \["(\d\d:\d\d)"', den_mmd).group(1)
+assert first_label >= "01:10", den_mmd   # den-mac began at 01:20: no stretches of zeros before it
+assert all(" 0," not in l and "[0," not in l for l in den_mmd.splitlines() if l.startswith("    line [")), den_mmd
 cost = two["cost"]["lines"]
 assert any(l.startswith("On studio-mac: $") for l in cost) and any(l.startswith("On den-mac: $") for l in cost), cost
 assert "Not counted: attic-mac's costs didn't arrive (task E)" in cost and two["cost"]["incomplete"] is True, cost
@@ -3585,6 +3656,22 @@ cp "$multi/studio/run-x/usage-early/machine.jsonl" "$multi/studio/run-x/usage-ba
 python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["folder"] = "run-x/usage-bare"; json.dump(f, open(sys.argv[2], "w"))' \
   "$multi/studio/facts-early.json" "$multi/studio/facts-bare.json"
 "$scripts/run-charts" "$multi/studio/facts-bare.json" "$multi/charts-bare" >/dev/null
+# a stretch with no GPU reading leaves the GPU line out of the Mermaid chart, never a 0
+python3 -I - "$scripts/run-charts" <<'EOF'
+import runpy, sys
+mac_chart = runpy.run_path(sys.argv[1], run_name="charts")["mac_chart"]
+n = 40
+mac = {"cpu": [10.0] * n, "cpu_pk": [20.0] * n, "gpu": [5.0] * 10 + [None] * 20 + [7.0] * 10, "gpu_pk": [9.0] * 10 + [None] * 20 + [8.0] * 10,
+       "mem": [4.0] * n, "mem_pk": [5.0] * n, "mem_total": 16.0}
+usage = {"start": 60, "t0": 60, "t1": 100}
+peaks = {"disk_first": None}
+axis = "%%{init: PALETTE}%%"
+gappy = mac_chart(usage, mac, peaks, "den-mac", [60, 70, 80, 90], 10, axis)
+assert "GPU left out: some stretches have no reading" in gappy and gappy.count("\n    line [") == 2 and "GPU violet" not in gappy, gappy
+mac["gpu"][10:30] = [6.0] * 20; mac["gpu_pk"][10:30] = [6.0] * 20
+whole = mac_chart(usage, mac, peaks, "den-mac", [60, 70, 80, 90], 10, axis)
+assert "GPU violet" in whole and whole.count("\n    line [") == 3 and "left out" not in whole, whole
+EOF
 # a computers list that can't be drawn is refused with one sentence
 python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["computers"] = [{"name": "a"}, {"name": "a"}]; json.dump(f, open(sys.argv[2], "w"))' \
   "$multi/studio/facts-two.json" "$multi/studio/facts-twice.json"
