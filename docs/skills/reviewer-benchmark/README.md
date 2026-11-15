@@ -43,7 +43,8 @@ flowchart TD
 - **This repository:** the skill, its script and its test, with a made-up set.
 - **The owner's private state repository,** `reviewer-benchmark/`: the set, its keys, every model's reports
   and scores, and the table of each run. It quotes the owner's code and never comes here.
-- **The cache:** the copies to review and the blind copies. Deleted freely.
+- **The cache:** the copies to review in one folder, and the blind copies and logs in another, so that a reviewer
+  looking around its copy doesn't find another's report beside it. Deleted freely once scores are saved.
 - **The repositories the changes came from:** only read, apart from the names that keep each key's two
   commits from being deleted.
 

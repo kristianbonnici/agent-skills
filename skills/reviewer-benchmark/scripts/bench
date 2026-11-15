@@ -9,31 +9,37 @@ Usage:
   bench where
   bench setup [<change> ...]
   bench run <model> [<change> ...]
-  bench blind <model> [<model> ...]
+  bench blind [--discard] <model> [<model> ...]
   bench unblind
   bench totals [--json]
 
-where: prints the data folder, the cache folder and the set's version. The data is the owner's and private:
-<the private state repository>/reviewer-benchmark (AGENT_SKILLS_STATE, by default agent-skills-state beside
-the skills repository, with a .git), or, without one,
+where: prints the data folder, the two cache folders and the set's version. The data is the owner's and
+private: <the private state repository>/reviewer-benchmark (AGENT_SKILLS_STATE, by default agent-skills-state
+beside the skills repository, with a .git), or, without one,
 ${XDG_STATE_HOME:-~/.local/state}/agent-skills/reviewer-benchmark. It holds set.json, keys/<change>.json,
-runs/<model>/<change>.md and .json, scores/<change>.json and models.json (the owner's own models). The cache
-(${XDG_CACHE_HOME:-~/.cache}/agent-skills/reviewer-benchmark, or REVIEWER_BENCHMARK_CACHE) holds what can be
-made again: the copies to review and the blind copies of reports.
+runs/<model>/<change>.md and .json, scores/<change>.json and models.json (the owner's own models). What can
+be made again is in ${XDG_CACHE_HOME:-~/.cache}/agent-skills (or REVIEWER_BENCHMARK_CACHE): the copies to
+review under reviewer-benchmark/, and the blind copies of reports and the reviewers' logs under
+reviewer-benchmark-scoring/, apart from the copies, so that a reviewer looking around its folder doesn't
+find another's report beside it.
 
-setup: for each change of the set, makes work/<change> in the cache: a repository of two commits, the tree
-before the change and the tree its first review round read, taken from the key's repository with git archive.
-A reviewer sees the change and nothing that came after it. It only reads the key's repository.
+setup: for each change of the set, makes a repository of two commits: the tree before the change and the
+tree its first review round read, taken from the key's repository with git archive (a file that repository
+marks export-ignore isn't in the copy). A reviewer sees the change and nothing that came after it. It only
+reads the key's repository.
 
-run: has one model review each change it hasn't reviewed yet, one at a time, read-only, from the copy's
+run: has one model review each change it has no review of, one at a time, read-only, from the copy's
 folder, with the review gate's brief. A model with "paid" gets no time line in its brief. The report is
-saved as it came, with how long it took and how it ended; a review that passes its minutes is stopped and
-recorded as timed out, and the run goes on. Models: the table below, and the owner's in models.json.
+saved as it came, with how long it took and how it ended. A review that passes its minutes is stopped and
+recorded as timed out, and the run goes on. One that ends in an error with no report (a limit, a login) is
+recorded as failed and run again by the next run. A review of other commits than the key's now names is run
+again, and its score is dropped. Stopping bench stops the reviewer it started. Models: the table below, and
+the owner's in models.json.
 
-blind: copies those models' reports of every change to blind/<change>/<letter>.md in the cache, in an order
-of its own for each change, and writes blind/<change>/scores.json for the scorer to fill. A review that timed
-out or left under 400 bytes gets no file. The letters' meaning is kept in blind/map.json, which scorers
-aren't given.
+blind: copies those models' reports of every change to blind/<change>/<letter>.md, in an order of its own
+for each change, and writes blind/<change>/scores.json for the scorer to fill. A review that timed out,
+failed or left under 400 bytes gets no file. The letters' meaning is kept in blind/map.json, which scorers
+aren't given. It refuses while the scores of an earlier blind aren't saved; --discard throws them away.
 
 unblind: reads each blind/<change>/scores.json and saves its reports' scores under their models' names in
 the data's scores/<change>.json, leaving other models' scores there as they are. A scores.json that doesn't
@@ -42,7 +48,8 @@ fit its key (a known defect missing, a verdict it doesn't know) is refused with 
 totals: one line per model: reports of reviews tried, known defects found (1 for a defect described, a half
 for the right code without the failing case), blockers among them, defects only it found among the models
 that tried every change, and its other findings by verdict: real, true but minor or there before, and false.
---json prints the same as JSON.
+It names a model that tried only part of the set, a review that failed, and a score that doesn't cover its
+key. --json prints the same as JSON.
 
 Exit 0: done; 64: a mistake in the command or in a file it was given; 69: a tool a model needs isn't
 installed.
@@ -60,6 +67,7 @@ import time
 
 CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
 AGY_ALLOW = ["git diff", "git log", "git show", "git status", "grep", "ls", "cat", "sed -n", "find"]
+KINDS = ("opencode", "claude", "codex", "agy", "command")
 MODELS = {
     "deepseek": {"kind": "opencode", "model": "opencode-go/deepseek-v4.1-flash#high"},
     "glm": {"kind": "opencode", "model": "opencode-go/glm-5.3-flash#high"},
@@ -104,11 +112,13 @@ def data_folder():
     return os.path.join(state, "agent-skills", "reviewer-benchmark")
 
 
-def cache_folder():
-    if os.environ.get("REVIEWER_BENCHMARK_CACHE"):
-        return os.environ["REVIEWER_BENCHMARK_CACHE"]
-    cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    return os.path.join(cache, "agent-skills", "reviewer-benchmark")
+def cache_folders():
+    """Where the copies to review are, and where the blind copies and logs are: never one inside the other."""
+    root = os.environ.get("REVIEWER_BENCHMARK_CACHE")
+    if not root:
+        cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+        root = os.path.join(cache, "agent-skills")
+    return os.path.join(root, "reviewer-benchmark"), os.path.join(root, "reviewer-benchmark-scoring")
 
 
 def read(path, what):
@@ -129,16 +139,16 @@ def write(path, value):
     os.replace(path + ".part", path)
 
 
+def plain(name):
+    return isinstance(name, str) and name not in ("", ".", "..") and os.path.basename(name) == name and "\0" not in name
+
+
 def the_set(data):
     found = read(os.path.join(data, "set.json"), "set")
     if not (isinstance(found, dict) and isinstance(found.get("version"), str)
             and isinstance(found.get("changes"), list) and all(plain(c) for c in found["changes"])):
         raise Refused(f'{data}/set.json needs a "version" and a list of "changes", each a plain folder name')
     return found
-
-
-def plain(name):
-    return isinstance(name, str) and name not in ("", ".", "..") and os.path.basename(name) == name and "\0" not in name
 
 
 def the_key(data, change):
@@ -148,7 +158,20 @@ def the_key(data, change):
     if not numbers or len(set(map(str, numbers))) != len(numbers) or any(
             not isinstance(key.get(name), str) or not key[name] for name in ("repo", "base", "head", "objective")):
         raise Refused(f'{change}: its key needs "repo", "base", "head", "objective" and "defects" numbered each once')
+    if not isinstance(key.get("rules", ""), str) or "\n" in key.get("rules", ""):
+        raise Refused(f'{change}: "rules" in its key is the path of the rules file in the repository, or empty')
     return key
+
+
+def the_scores(data, change):
+    """A change's saved scores by model: {} when there are none yet."""
+    path = os.path.join(data, "scores", change + ".json")
+    if not os.path.exists(path):
+        return {}
+    kept = read(path, "scores")
+    if not isinstance(kept, dict) or not isinstance(kept.get("reports"), dict):
+        raise Refused(f'{path} needs "reports", an object of scores by model')
+    return kept["reports"]
 
 
 def models(data):
@@ -159,6 +182,19 @@ def models(data):
         if not isinstance(own, dict) or not all(plain(n) and isinstance(s, dict) for n, s in own.items()):
             raise Refused(f"{path} isn't an object of models")
         known.update(own)
+    for name, spec in known.items():
+        if spec.get("kind") not in KINDS:
+            raise Refused(f'model {name}: "kind" is one of {", ".join(KINDS)}')
+        if spec["kind"] == "command" and not (isinstance(spec.get("argv"), list) and spec["argv"]):
+            raise Refused(f'model {name}: a command needs "argv", a list')
+        if spec["kind"] != "command" and not (isinstance(spec.get("model"), str) and spec["model"]):
+            raise Refused(f'model {name}: "model" is the model\'s name as its tool takes it')
+        minutes = spec.get("minutes", 15)
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or not 4 <= minutes <= 120:
+            raise Refused(f'model {name}: "minutes" is a whole number from 4 to 120')
+        seconds = spec.get("seconds", 1)
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
+            raise Refused(f'model {name}: "seconds" is a number above 0')
     return known
 
 
@@ -167,6 +203,16 @@ def wanted(found, given):
     if unknown:
         raise Refused("not in the set: " + ", ".join(unknown))
     return given or found["changes"]
+
+
+def state_of(meta, key):
+    """How a saved review stands: "report", "none" (out of time, or nearly nothing), "failed" (to run again)
+    or "stale" (a review of other commits than the key's)."""
+    if meta.get("commits") != [key["base"], key["head"]]:
+        return "stale"
+    if meta.get("failed"):
+        return "failed"
+    return "none" if meta.get("timed_out") or meta.get("bytes", 0) < 400 else "report"
 
 
 # setup
@@ -181,16 +227,20 @@ def git(folder, *args):
 
 def unpack(repo, commit, folder):
     archive = subprocess.Popen(["git", "-C", repo, "archive", commit], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    tar = subprocess.run(["tar", "-x", "-C", folder], stdin=archive.stdout, capture_output=True)
+    tar = subprocess.Popen(["tar", "-x", "-C", folder], stdin=archive.stdout, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE)
+    archive.stdout.close()          # so that git archive ends when tar does, and never waits on a full pipe
+    tar_said = tar.communicate()[1]
+    said = archive.stderr.read()
     if archive.wait() or tar.returncode:
-        raise Refused(f"{commit} of {repo} can't be read: {archive.stderr.read().decode()[:160].strip()}")
+        raise Refused(f"{commit} of {repo} can't be unpacked: {(said or tar_said).decode(errors='replace')[:200].strip()}")
 
 
-def setup(data, cache, given):
+def setup(data, copies, given):
     found = the_set(data)
     for change in wanted(found, given):
         key = the_key(data, change)
-        work = os.path.join(cache, "work", change)
+        work = os.path.join(copies, change)
         note = os.path.join(work, ".bench.json")
         if os.path.exists(note) and read(note, "note").get("of") == [key["base"], key["head"]]:
             continue
@@ -198,17 +248,15 @@ def setup(data, cache, given):
         os.makedirs(work)
         git(work, "init", "-q", "-b", "main")
         unpack(key["repo"], key["base"], work)
-        git(work, "add", "-A")
+        git(work, "add", "-A", "-f")            # -f: a tracked file its .gitignore names is part of the tree too
         git(work, "commit", "-q", "--allow-empty", "-m", "Before the change")
         base = git(work, "rev-parse", "HEAD")
-        for name in git(work, "ls-files", "-z").split("\0"):
-            if name:
-                os.remove(os.path.join(work, name))
+        git(work, "rm", "-r", "-f", "-q", "--ignore-unmatch", ".")      # folders too: one may be a file at head
         unpack(key["repo"], key["head"], work)
-        git(work, "add", "-A")
+        git(work, "add", "-A", "-f")
         git(work, "commit", "-q", "--allow-empty", "-m", "The change under review")
         with open(os.path.join(work, ".git", "info", "exclude"), "a") as handle:
-            handle.write(".bench.json\n")       # the reviewer doesn't see this note
+            handle.write(".bench.json\n")       # kept out of the copy's commits; it holds only the two commits' names
         write(note, {"of": [key["base"], key["head"]], "base": base[:10], "head": git(work, "rev-parse", "HEAD")[:10]})
         print(f"{change}: {git(work, 'diff', '--shortstat', 'HEAD~1', 'HEAD')}")
     return 0
@@ -249,8 +297,9 @@ def command(spec, text, work, last):
     if kind == "claude":
         # The brief goes in on standard input, since --allowedTools would take it for a tool's name. dontAsk
         # refuses a tool that isn't allowed, where another mode raises an approval card and waits for a person.
+        # Only the copy's local settings are read: the owner's own would add tools, hooks and instructions.
         return ["claude", "-p", "--model", model, "--effort", "high", "--permission-mode", "dontAsk",
-                "--allowedTools", CLAUDE_TOOLS], True
+                "--setting-sources", "local", "--allowedTools", CLAUDE_TOOLS], True
     if kind == "codex":
         return ["codex", "exec", "--sandbox", "read-only", "--ephemeral", "-m", model, "-c",
                 'model_reasoning_effort="high"', "-C", work, "--output-last-message", last, text], False
@@ -258,80 +307,97 @@ def command(spec, text, work, last):
         settings = {"trustedWorkspaces": [work], "permissions": {"allow": [f"command({c})" for c in AGY_ALLOW]}}
         return ["agy", "--mode", "plan", "--model", model, "--print-timeout", f"{spec.get('minutes', 15)}m",
                 "--settings", json.dumps(settings), "-p", text], False
-    if kind == "command" and isinstance(spec.get("argv"), list) and spec["argv"]:
-        return [str(part).replace("{work}", work).replace("{brief}", text) for part in spec["argv"]], bool(spec.get("stdin"))
-    raise Refused(f'a model\'s "kind" is opencode, claude, codex, agy or command with "argv", not {kind!r}')
+    return [str(part).replace("{work}", work).replace("{brief}", text) for part in spec["argv"]], bool(spec.get("stdin"))
 
 
 def stop(process):
-    """Stop a reviewer and what it started; where signalling its group isn't allowed, stop it alone."""
-    for sign in (signal.SIGTERM, signal.SIGKILL):
+    """Stop a reviewer and everything it started: ask its group to end, then end what is left of it. Where
+    signalling the group isn't allowed, the reviewer alone."""
+    for sign, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 30)):
         try:
             os.killpg(process.pid, sign)
         except ProcessLookupError:
-            break
+            pass
         except PermissionError:
-            process.send_signal(sign)
+            try:
+                process.send_signal(sign)
+            except ProcessLookupError:
+                pass
         try:
-            return process.wait(timeout=5)
+            process.wait(timeout=wait)
         except subprocess.TimeoutExpired:
-            continue
-    try:
-        return process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        return -9
+            pass
+    return process.returncode if process.returncode is not None else -9
 
 
-def run(data, cache, name, given):
+def drop_score(data, change, name):
+    reports = the_scores(data, change)
+    if name in reports:
+        del reports[name]
+        write(os.path.join(data, "scores", change + ".json"), {"id": change, "reports": reports})
+
+
+def run(data, copies, scoring, name, given):
     found, known = the_set(data), models(data)
     if name not in known:
         raise Refused(f"no model {name}: " + ", ".join(sorted(known)))
     spec = known[name]
-    minutes = spec.get("minutes", 15)
-    if not (isinstance(minutes, int) and not isinstance(minutes, bool) and 1 <= minutes <= 120):
-        raise Refused(f'{name}: "minutes" is a whole number from 1 to 120')
-    limit = spec.get("seconds", minutes * 60)       # "seconds": a shorter limit, for a check of this script
-    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
-        raise Refused(f'{name}: "seconds" is a number above 0')
-    folder = os.path.join(data, "runs", name)
+    limit = spec["seconds"] if "seconds" in spec else spec.get("minutes", 15) * 60    # "seconds": for a check of this script
+    folder, logs = os.path.join(data, "runs", name), os.path.join(scoring, "logs", name)
     os.makedirs(folder, exist_ok=True)
+    os.makedirs(logs, exist_ok=True)
+
+    def ended(*_):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, ended)        # so that stopping bench stops its reviewer, below
     for change in wanted(found, given):
-        meta = os.path.join(folder, change + ".json")
-        if os.path.exists(meta):
-            continue
         key = the_key(data, change)
-        work = os.path.join(cache, "work", change)
+        meta = os.path.join(folder, change + ".json")
+        if os.path.exists(meta) and state_of(read(meta, "run"), key) in ("report", "none"):
+            continue
+        work = os.path.join(copies, change)
         note = read(os.path.join(work, ".bench.json"), f"copy of {change} (run setup first)")
         if note.get("of") != [key["base"], key["head"]]:
             raise Refused(f"{change}: its copy is of other commits than its key's: run setup")
-        report, last = os.path.join(folder, change + ".md"), os.path.join(cache, f"last-{name}-{change}")
+        drop_score(data, change, name)          # a score of an earlier review isn't this review's
+        report, last = os.path.join(folder, change + ".md"), os.path.join(logs, change + ".last")
         text = brief(key, work, note, spec)
         argv, by_stdin = command(spec, text, work, last)
-        log = os.path.join(cache, "logs", name)
-        os.makedirs(log, exist_ok=True)
+        sent = os.path.join(logs, change + ".brief")
+        with open(sent, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if os.path.exists(last):
+            os.remove(last)                     # an earlier try's last message isn't this one's
         started = time.time()
         try:
-            with open(report, "wb") as out, open(os.path.join(log, change + ".err"), "wb") as err:
-                process = subprocess.Popen(argv, cwd=work, stdout=out, stderr=err, start_new_session=True,
-                                           stdin=subprocess.PIPE if by_stdin else subprocess.DEVNULL)
-                if by_stdin:
-                    try:
-                        process.stdin.write(text.encode())
-                        process.stdin.close()
-                    except OSError:
-                        pass
+            # The brief is read from a file, never written down a pipe that a reviewer may stop reading.
+            with open(report, "wb") as out, open(os.path.join(logs, change + ".err"), "wb") as err, open(
+                    sent if by_stdin else os.devnull, "rb") as given_in:
+                process = subprocess.Popen(argv, cwd=work, stdout=out, stderr=err, stdin=given_in, start_new_session=True)
                 try:
                     code, timed_out = process.wait(timeout=limit), False
                 except subprocess.TimeoutExpired:
                     code, timed_out = stop(process), True
+                except BaseException:
+                    stop(process)
+                    os.remove(report)
+                    raise
         except FileNotFoundError:
             os.remove(report)
             print(f"bench: {argv[0]} isn't installed", file=sys.stderr)
             return 69
+        except KeyboardInterrupt:
+            print(f"bench: stopped during {name}'s review of {change}; nothing of it is kept", file=sys.stderr)
+            return 130
         if spec["kind"] == "codex" and os.path.exists(last):
-            os.replace(last, report)        # Codex prints its whole session; its last message is the report
+            shutil.copyfile(last, report)       # Codex prints its whole session; its last message is the report
+            os.remove(last)
+        size = os.path.getsize(report)
         result = {"model": name, "change": change, "seconds": round(time.time() - started), "returncode": code,
-                  "timed_out": timed_out, "bytes": os.path.getsize(report), "set": found["version"]}
+                  "timed_out": timed_out, "bytes": size, "set": found["version"], "commits": [key["base"], key["head"]]}
+        if code != 0 and not timed_out and size < 400:
+            result["failed"] = True             # an error and no report: not a result, and run again next time
         write(meta, result)
         print(json.dumps(result), flush=True)
     return 0
@@ -340,38 +406,44 @@ def run(data, cache, name, given):
 # blind and unblind
 
 
-def usable(meta):
-    return not meta.get("timed_out") and meta.get("bytes", 0) >= 400
-
-
-def blind(data, cache, names):
+def blind(data, scoring, names):
+    discard = "--discard" in names
+    names = [n for n in names if n != "--discard"]
     found, known = the_set(data), models(data)
     unknown = [n for n in names if n not in known]
     if unknown or not names:
         raise Refused("blind takes the models to score: " + ", ".join(sorted(known)))
     if len(set(names)) > 26:
         raise Refused("at most 26 models at once")
-    folder = os.path.join(cache, "blind")
-    shutil.rmtree(folder, ignore_errors=True)
-    mapping, shuffler = {}, random.Random()
+    folder = os.path.join(scoring, "blind")
+    if os.path.exists(os.path.join(folder, "map.json")) and not os.path.exists(os.path.join(folder, "saved")) and not discard:
+        raise Refused(f"the scores in {folder} aren't saved yet: run unblind, or blind --discard to throw them away")
+    mapping, copies, shuffler = {}, [], random.Random()
     for change in found["changes"]:
         key = the_key(data, change)
         there = []
         for name in sorted(set(names)):
-            meta = os.path.join(data, "runs", name, change + ".json")
-            if os.path.exists(meta) and usable(read(meta, "run")):
+            meta, report = os.path.join(data, "runs", name, change + ".json"), os.path.join(data, "runs", name, change + ".md")
+            if os.path.exists(meta) and state_of(read(meta, "run"), key) == "report":
+                if not os.path.isfile(report):
+                    raise Refused(f"{report} is missing, though its review has a report: put it back, or delete {meta}")
                 there.append(name)
         shuffler.shuffle(there)
-        os.makedirs(os.path.join(folder, change))
-        mapping[change] = {}
+        mapping[change] = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", there))
+        copies.append((change, key))
+    building = folder + ".part"
+    shutil.rmtree(building, ignore_errors=True)
+    for change, key in copies:
+        os.makedirs(os.path.join(building, change))
         template = {"id": change, "reports": {}}
-        for letter, name in zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", there):
-            shutil.copyfile(os.path.join(data, "runs", name, change + ".md"), os.path.join(folder, change, letter + ".md"))
-            mapping[change][letter] = name
+        for letter, name in mapping[change].items():
+            shutil.copyfile(os.path.join(data, "runs", name, change + ".md"), os.path.join(building, change, letter + ".md"))
             template["reports"][letter] = {"is_review": True, "known": {str(d["n"]): 0 for d in key["defects"]},
                                            "others": [], "nits_unchecked": 0}
-        write(os.path.join(folder, change, "scores.json"), template)
-    write(os.path.join(folder, "map.json"), mapping)
+        write(os.path.join(building, change, "scores.json"), template)
+    write(os.path.join(building, "map.json"), mapping)
+    shutil.rmtree(folder, ignore_errors=True)
+    os.replace(building, folder)
     print(f"{sum(len(v) for v in mapping.values())} reports of {len(mapping)} changes in {folder}")
     return 0
 
@@ -403,8 +475,8 @@ def score_problems(change, letter, report, key):
     return problems
 
 
-def unblind(data, cache):
-    folder = os.path.join(cache, "blind")
+def unblind(data, scoring):
+    folder = os.path.join(scoring, "blind")
     mapping = read(os.path.join(folder, "map.json"), "blind map (run blind first)")
     problems, ready = [], {}
     for change, letters in mapping.items():
@@ -420,10 +492,11 @@ def unblind(data, cache):
     if problems:
         raise Refused("the scores don't fit:\n  - " + "\n  - ".join(problems))
     for change, by_model in ready.items():
-        path = os.path.join(data, "scores", change + ".json")
-        kept = read(path, "scores") if os.path.exists(path) else {"id": change, "reports": {}}
-        kept["reports"].update(by_model)
-        write(path, kept)
+        kept = the_scores(data, change)
+        kept.update(by_model)
+        write(os.path.join(data, "scores", change + ".json"), {"id": change, "reports": kept})
+    with open(os.path.join(folder, "saved"), "w") as handle:
+        handle.write("unblind saved these scores\n")
     print(f"scores of {sum(len(v) for v in ready.values())} reports saved under their models' names")
     return 0
 
@@ -435,48 +508,60 @@ def totals(data, as_json):
     found = the_set(data)
     stats, hits = collections.defaultdict(collections.Counter), collections.defaultdict(dict)
     blockers = total = 0
+    names = sorted(n for n in os.listdir(os.path.join(data, "runs")) if plain(n)) if os.path.isdir(os.path.join(data, "runs")) else []
     for change in found["changes"]:
         key = the_key(data, change)
         defects = {str(d["n"]): d for d in key["defects"]}
         total += len(defects)
         blockers += sum(1 for d in defects.values() if d.get("tag") == "blocker")
-        path = os.path.join(data, "scores", change + ".json")
-        scores = read(path, "scores")["reports"] if os.path.exists(path) else {}
-        for name in sorted(os.listdir(os.path.join(data, "runs")) if os.path.isdir(os.path.join(data, "runs")) else []):
+        scores = the_scores(data, change)
+        for name in names:
             meta = os.path.join(data, "runs", name, change + ".json")
-            if not plain(name) or not os.path.exists(meta):
+            if not os.path.exists(meta):
                 continue
             meta, s = read(meta, "run"), stats[name]
+            state = state_of(meta, key)
+            if state in ("failed", "stale"):
+                s[state] += 1               # not a review of this change as it is: neither tried nor scored
+                continue
             s["tried"] += 1
             s["seconds"] += meta.get("seconds", 0)
             report = scores.get(name)
-            if not usable(meta) or not isinstance(report, dict):
-                s["unscored"] += usable(meta)
+            if state == "none":
+                continue
+            if not isinstance(report, dict):
+                s["unscored"] += 1
                 continue
             if not report.get("is_review", True):
                 continue
+            known = report.get("known") if isinstance(report.get("known"), dict) else {}
+            if sorted(known) != sorted(defects):
+                s["uncovered"] += 1         # the key has defects this score says nothing of, or the other way
             s["reports"] += 1
             for n, defect in defects.items():
-                score = report.get("known", {}).get(n, 0)
+                score = known.get(n, 0)
+                score = score if score in (0.5, 1) else 0
                 s["points"] += score
                 s["blockers"] += score if defect.get("tag") == "blocker" else 0
+                s["hits"] += bool(score)
                 if score == 1:
                     hits[(change, n)][name] = True
-            for other in report.get("others", []):
+            for other in report.get("others", []) if isinstance(report.get("others"), list) else []:
                 verdict = {"minor": "true-minor"}.get(other.get("verdict"), other.get("verdict"))
-                s[verdict] += 1
-            s["nits"] += report.get("nits_unchecked", 0)
-            s["hits"] += sum(1 for v in report.get("known", {}).values() if v)
+                s[verdict if verdict in VERDICTS else "unclear"] += 1
+            nits = report.get("nits_unchecked", 0)
+            s["nits"] += nits if isinstance(nits, int) and not isinstance(nits, bool) else 0
     whole = [name for name, s in stats.items() if s["tried"] == len(found["changes"])]
     for who in hits.values():
         among = [name for name in who if name in whole]
         if len(among) == 1:
             stats[among[0]]["alone"] += 1
     rows = []
-    for name, s in sorted(stats.items(), key=lambda item: -item[1]["points"]):
+    for name, s in sorted(stats.items(), key=lambda item: (-item[1]["points"], item[0])):
         outside = s["real"] + s["true-minor"] + s["pre-existing"] + s["wrong"] + s["unclear"]
         claims = s["hits"] + outside
         rows.append({"model": name, "tried": s["tried"], "reports": s["reports"], "unscored": s["unscored"],
+                     "failed": s["failed"], "stale": s["stale"], "uncovered": s["uncovered"],
                      "known": s["points"], "known_share": round(100 * s["points"] / total, 1) if total else 0,
                      "blockers": s["blockers"], "alone": s["alone"] if name in whole else None, "real": s["real"],
                      "minor": s["true-minor"] + s["pre-existing"], "false": s["wrong"], "unclear": s["unclear"],
@@ -501,31 +586,42 @@ def totals(data, as_json):
     for line in table:
         print("  ".join(cell.ljust(width) if i == 0 else cell.rjust(width) for i, (cell, width) in enumerate(zip(line, widths))))
     print()
-    print("Known found: 1 for a defect described, a half for the right code without the failing case. Alone: known "
-          "defects only it found in full, among the models that tried every change. Real, Minor, False: its findings "
-          "outside the key that it called a blocker or follow-up, as checked against the code. False share: of all "
-          "its blockers and follow-ups.")
-    unscored = [row["model"] for row in rows if row["unscored"]]
-    if unscored:
-        print("Reports not scored yet: " + ", ".join(unscored) + ".")
+    print("Known found: 1 for a defect described, a half for the right code without the failing case; its share is "
+          "of the whole set's defects. Alone: known defects only it found in full, among the models that tried "
+          "every change. Real, Minor, False: its findings outside the key that it called a blocker or follow-up, as "
+          "checked against the code. False share: of all its blockers and follow-ups.")
+
+    def listed(field, text):
+        some = [f"{row['model']} ({row[field]})" for row in rows if row[field]]
+        if some:
+            print(text + ": " + ", ".join(some) + ".")
+
+    part = [f"{row['model']} ({row['tried']} of {len(found['changes'])})" for row in rows if row["tried"] < len(found["changes"])]
+    if part:
+        print("Tried only part of the set, so their shares are low by that much: " + ", ".join(part) + ".")
+    listed("unscored", "Reports not scored yet")
+    listed("failed", "Reviews that failed and are run again by the next run")
+    listed("stale", "Reviews of other commits than the key's, run again by the next run")
+    listed("uncovered", "Scores that don't cover their key's defects (a defect added since, not scored)")
     return 0
 
 
 def main(argv):
-    data, cache = data_folder(), cache_folder()
+    data = data_folder()
+    copies, scoring = cache_folders()
     try:
         if argv == ["where"]:
             version = the_set(data)["version"] if os.path.exists(os.path.join(data, "set.json")) else "no set yet"
-            print(f"data: {data}\ncache: {cache}\nset: {version}")
+            print(f"data: {data}\ncopies: {copies}\nscoring: {scoring}\nset: {version}")
             return 0
         if argv[:1] == ["setup"]:
-            return setup(data, cache, argv[1:])
+            return setup(data, copies, argv[1:])
         if argv[:1] == ["run"] and len(argv) > 1:
-            return run(data, cache, argv[1], argv[2:])
+            return run(data, copies, scoring, argv[1], argv[2:])
         if argv[:1] == ["blind"]:
-            return blind(data, cache, argv[1:])
+            return blind(data, scoring, argv[1:])
         if argv == ["unblind"]:
-            return unblind(data, cache)
+            return unblind(data, scoring)
         if argv in (["totals"], ["totals", "--json"]):
             return totals(data, len(argv) == 2)
     except Refused as error:

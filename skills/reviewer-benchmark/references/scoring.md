@@ -3,10 +3,10 @@
 One scorer per change, in two passes. Both read the same files:
 
 - the key: `<data folder>/keys/<change>.json`;
-- the reports: `<cache>/blind/<change>/<letter>.md`, and nothing else of that cache: not `map.json`, not the `logs` folder;
-- the code the reviewers saw: `<cache>/work/<change>` (the change is `git diff HEAD~1...HEAD`).
+- the reports: `<scoring folder>/blind/<change>/<letter>.md`, and nothing else of that folder: not `map.json`, not `logs`;
+- the code the reviewers saw: `<copies folder>/<change>` (the change is `git diff HEAD~1...HEAD`).
 
-Both fill `<cache>/blind/<change>/scores.json`, which `bench blind` left with one entry per report.
+`bench where` prints both folders. Both passes fill `<scoring folder>/blind/<change>/scores.json`, which `bench blind` left with one entry per report.
 
 ## A score
 
@@ -35,7 +35,7 @@ Both fill `<cache>/blind/<change>/scores.json`, which `bench blind` left with on
 You are scoring code reviews for a benchmark. Several anonymous reviewers reviewed the same code change. Score each report against a list of known defects. Be strict and even-handed: every report gets the same standard. Read-only except for the one file you fill.
 
 The known defects: <key> (see "defects": each has "n", "title", "where", "case"). You may read a fix in the key's "repo" with git show <fix_commit> to understand a defect. Never write there.
-The reports: every .md file in <blind folder of the change>, named by a letter. Read nothing else of that cache.
+The reports: every .md file in <blind folder of the change>, named by a letter. Read nothing else of the scoring folder.
 The code as the reviewers saw it: <work copy> (the change is git diff HEAD~1...HEAD).
 
 For each report, in <scores.json>:

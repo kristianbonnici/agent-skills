@@ -13,7 +13,7 @@ The set, its keys, the reports and the scores are the owner's private data: `scr
 
 ## Rules that never bend
 
-- **Reviewers only read.** Each reviews a copy that holds the change and nothing made after it. The repositories the changes came from are never checked out, changed or committed to.
+- **Reviewers only read.** Each reviews a copy that holds the change and nothing made after it. The repositories the changes came from are never checked out, changed or committed to. Reading only is held by each tool's read-only mode, its list of allowed commands and the brief, not by a sandbox: a reviewer can still read files elsewhere on the computer.
 - **No command that can wait for a person.** Run reviewers only through `bench run`, whose forms refuse a tool that isn't allowed where others raise an approval card and stall.
 - **Say what a paid model's run spends before you start it** (one review of every change in the set), unless the owner asked for that model.
 - **Scoring is blind.** Whoever scores sees letters, never the models' names, and isn't the model under test when another is available.
@@ -22,24 +22,25 @@ The set, its keys, the reports and the scores are the owner's private data: `scr
 
 ## 1. Find the set
 
-Run `scripts/bench where`. It prints the data folder, the cache folder and the set's version. With no set yet, build one first: [references/set.md](references/set.md).
+Run `scripts/bench where`. It prints the data folder, the two cache folders and the set's version. With no set yet, build one first: [references/set.md](references/set.md).
 
 ## 2. Make the copies
 
-Run `scripts/bench setup`. For each change it makes a small repository of two commits in the cache: the tree before the change, and the tree its first review round read. Copies are made again when a key's commits change, and may be deleted when the run is over.
+Run `scripts/bench setup`. For each change it makes a small repository of two commits: the tree before the change, and the tree its first review round read. Copies are made again when a key's commits change, and may be deleted when the run is over.
 
 ## 3. Run the models
 
-Run `scripts/bench run <model>` once for each model, in the background, the models side by side. It reviews one change at a time, skips a review already saved, and stops one that passes its time, recording it as timed out. That is a result, not a failure to retry: a reviewer that doesn't report in its time is of no use to a gate.
+Run `scripts/bench run <model>` once for each model, in the background, the models side by side. It reviews one change at a time, skips a review already saved, and stops one that passes its time, recording it as timed out. That is a result, not a failure to retry: a reviewer that doesn't report in its time is of no use to a gate. A review that ends in an error with no report (a usage limit, a login) is no result: it is recorded as failed, and the same command later does it again. Stop a run with its own command's end, not by ending its reviewer.
 
 - The models it knows: `deepseek`, `glm`, `muse`, `haiku`, `hydrogen` (15 minutes, the gate's brief for a free or trial reviewer), and `terra`, `sonnet`, `opus` (30 minutes, no time line in the brief, as the gate gives a paid reviewer). Another model goes in the data folder's `models.json` ([references/set.md](references/set.md#another-model)).
 - A paid model may run as two commands, each given half of the changes' names.
 - When a model fails its first two reviews the same way (no report, or out of time), stop it and say so. Don't spend the whole set on it.
-- A model new to the benchmark is run together with the set's yardsticks only if those have no saved reports yet: saved reports are scored again, not run again.
+- A model with saved reports of the set isn't run again to be compared with a new one: its reports are scored, and stay scored.
+- Models side by side review the same copies. Don't run two commands of one model on the same change.
 
 ## 4. Score the reports blind
 
-1. Run `scripts/bench blind <model> ...` for the models to score. It copies their reports to `blind/<change>/<letter>.md` in the cache and leaves a `scores.json` to fill beside them.
+1. Run `scripts/bench blind <model> ...` once, for all the models to score. It copies their reports to `blind/<change>/<letter>.md` in the scoring folder and leaves a `scores.json` to fill beside them. Filled scores exist only there until step 3: a second `blind` before it is refused.
 2. For each change, have a scorer fill that file, with the two briefs in [references/scoring.md](references/scoring.md): first each report against the key, then every other finding the report calls a blocker or follow-up against the code. Give the second pass to the strongest model you have.
 3. Run `scripts/bench unblind`. It checks each `scores.json` against its key and saves the scores under the models' names; one that doesn't fit is refused with its reasons.
 
@@ -49,7 +50,7 @@ A finding outside the key that held up as real is a defect the first reviews mis
 
 1. Merge the findings that describe the same defect.
 2. Add each as a defect to that change's key, with who raised it and `source` saying which run found it ([references/set.md](references/set.md#a-key)).
-3. Check every saved report of that change for the new defect and set its score, in `scores/<change>.json`.
+3. Check every saved report of that change for the new defect and set its score under `known`, in `scores/<change>.json`. Where a report's finding became the defect, take that finding out of its `others`: left there it counts twice. This step isn't blind, since the scores are under the models' names by now: judge the report's words, as the first pass does. `bench totals` names a score that doesn't cover its key.
 4. Look at the repository's code as it is today, and note for each new defect whether it is still there, fixed or gone. Give the owner the ones still there: they are real defects in their code.
 5. Raise the set's version ([references/set.md](references/set.md#versions)).
 

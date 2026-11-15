@@ -13,7 +13,7 @@
 | `models.json` | The owner's own models |
 | `results.md` | The table of each run, with its date and the set's version |
 
-The cache (`${XDG_CACHE_HOME:-~/.cache}/agent-skills/reviewer-benchmark/`) holds what can be made again: the copies to review, the blind copies and the reviewers' logs.
+What can be made again is in the cache, `${XDG_CACHE_HOME:-~/.cache}/agent-skills/`: the copies to review in `reviewer-benchmark/`, and the blind copies of reports and the reviewers' logs in `reviewer-benchmark-scoring/`, apart from the copies. Scores a scorer has filled are there too, and are safe only once `bench unblind` has saved them.
 
 ## Choosing a change
 
@@ -34,7 +34,7 @@ Spread the set over the kinds of change the owner's gates see, and name each cha
   "base": "<the commit the change started from, in full>",
   "head": "<the last commit the first review round read, in full>",
   "objective": "<two to four sentences: what the change is meant to do, for whom, and what it must not change, with no hint of any defect>",
-  "rules": "<the repository's AGENTS.md or CLAUDE.md at head, or empty>",
+  "rules": "<the path of the rules file in the repository at head, such as AGENTS.md, or empty>",
   "defects": [
     {"n": 1, "title": "<a few words>", "where": "<file and function or area>",
      "case": "<what goes wrong and when, concretely>", "tag": "blocker",
@@ -44,6 +44,7 @@ Spread the set over the kinds of change the owner's gates see, and name each cha
 }
 ```
 
+- **`base` and `head` are full commit names.** A gate's record may give short ones: `git -C <repo> rev-parse <name>` gives the full one.
 - **`head` is what the first round read,** not what merged: the last commit before the first fix of a review finding. A branch rebased after its review has other commit names than its handoff gives; use the commits the round read when they still exist, and check that the change is the same.
 - **`defects` are the first round's only:** the findings the author accepted as a blocker or a follow-up (a must-fix, in gates before review-gate 3.0.0). Not nits, not pre-existing or rejected findings, and not findings of later rounds, which are about fixes that `head` doesn't have.
 - **Confirm each defect in the code at `head`,** from the code or the diff of the commit that fixed it. Mark one you couldn't settle `"sure": false`.
@@ -66,7 +67,7 @@ These names change nothing the owner sees and aren't pushed. They are the only t
 `set.json`'s `version` is `MAJOR.MINOR`. Scores compare only within one MAJOR.
 
 - **MINOR:** defects were added to keys, or changes were added. Saved reports are scored against what was added; nothing is run again for the changes already there.
-- **MAJOR:** a change was removed or its commits changed. Earlier scores no longer compare: run the set's yardsticks again.
+- **MAJOR:** a change was removed or its commits changed. Earlier scores no longer compare. `bench run` reviews a change again when its key names other commits than the saved review read, and drops that review's score; every model the owner compares others with is run again.
 
 Add a `history` line saying what changed and why.
 
@@ -83,4 +84,9 @@ Add a `history` line saying what changed and why.
 
 - `kind`: `opencode` (its read-only `plan` agent), `claude` (`claude -p`, with only reading tools allowed and a mode that refuses the rest), `codex` (`codex exec` in its read-only sandbox), `agy` (Antigravity's `plan` mode with its list of allowed commands), or `command` with `argv`, a list in which `{work}` is the copy's folder and `{brief}` the brief (`"stdin": true` sends the brief on standard input instead).
 - `model`: the model's name as that tool takes it, with its reasoning level where the tool has one (`#high` on OpenCode). A model with no such level is named bare: asking for one it lacks fails at once.
-- `minutes`: its time, 15 unless given. `paid`: true leaves the time line out of its brief. `commands`: the number of commands its brief allows, 20 unless given.
+- `minutes`: its time, from 4 to 120, 15 unless given. `paid`: true leaves the time line out of its brief. `commands`: the number of commands its brief allows, 20 unless given.
+
+## What a copy leaves out
+
+- A file its repository marks `export-ignore` isn't in the copy, since the copy is made with `git archive`.
+- Models running side by side share a change's copy. A reviewer that runs the tests may leave build files there for the next one to see.
