@@ -107,7 +107,7 @@ Each skill's version is in its `SKILL.md`; its changelog, and for some a flow di
 | Skill | Installed into | Purpose |
 |---|---|---|
 | `long-horizon-task-planner` | Codex, Claude Code | Propose maturity-aware autonomous task portfolios with calibrated workloads and safe parallel plans. |
-| `long-horizon-orchestrator` | Codex, Claude Code | Run approved long tasks as separate agents (T3 threads on any provider, or native subagents), get woken when they finish, route by capacity and strengths, merge reviewed work, and report in plain language with a run diagram. |
+| `long-horizon-orchestrator` | Codex, Claude Code | Run approved long tasks as separate agents (T3 threads on any provider and on the owner's linked computers, or native subagents), get woken when they finish, route by capacity and strengths, merge reviewed work, and report in plain language with a run diagram. |
 | `review-gate` | Codex, Claude Code | Have a finished change reviewed by agents of other model families before it merges, at a level set by what the diff touches, with every finding verified. See its [flow](docs/skills/review-gate/README.md). |
 | `reviewer-benchmark` | Codex, Claude Code | Measure how well a model reviews code: run it over the owner's private set of past changes with known defects, score its reports blind, check every other finding against the code, and add the confirmed ones to the answer key. See its [flow](docs/skills/reviewer-benchmark/README.md). |
 | `skill-evolution` | Codex, Claude Code | Turn what went wrong with a skill into at most three proposed changes, with their evidence, for the owner to apply or decline; the orchestrator calls it at a run's finish. See its [flow](docs/skills/skill-evolution/README.md). |

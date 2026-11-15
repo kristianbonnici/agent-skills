@@ -421,7 +421,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/long-horizon-orchestrator/pro
 - **At the finish,** after the last update, commit only this file and push it: `git -C <its repository> commit -m "<run>: provider profile" -- <file>`, then `git -C <its repository> push`. If the push is rejected because another computer pushed first, pull with `--rebase` and push again.
 - **Never force-push, and never commit anything else** in that repository. If the pull or push fails (no network, a conflict), go on with the local file and say so in the report.
 
-**Several computers share it.** Plans, preferences and calibration hold for every computer, because they share the subscriptions. Each computer has its own section, `## Machine: <computer>`, named by `scutil --get LocalHostName` on macOS (`hostname -s` elsewhere). Read and update only your own computer's section, and add it if it is missing.
+**Several computers share it.** Plans, preferences and calibration hold for every computer, because they share the subscriptions. Each computer has its own section, `## Machine: <computer>`, named by `scutil --get LocalHostName` on macOS (`hostname -s` elsewhere). Read and update only your own computer's section, and add it if it is missing. Routing reads every computer's section when a task may run on another one ([computers.md](computers.md#1-when-a-task-goes-elsewhere)): its role, what is installed and signed in there, and what can't run there, so a preference that names a tool applies only where the tool exists.
 
 The owner may edit it at any time, and their statements win over this reference. Keep it short:
 
@@ -443,6 +443,9 @@ The owner may edit it at any time, and their statements win over this reference.
 - Claude's home model is Opus 5.5, complex tasks included; Fable 5.2 only where Opus would probably fall short, never the default, never for helpers or reviewers (owner, <date>)
 
 ## Machine: <computer>
+- Role: <daily | always-on>; <chip, e.g. Apple silicon | Intel>, <memory>; T3 environment label "<label>" (owner, <date>)
+- Installed and signed in: <harnesses and helpers, e.g. Claude Code, Codex, Antigravity, OpenCode> (detected <date>)
+- Can't run here: <e.g. Codex desktop computer use; package installs compile from source> (owner, <date>)
 - Automatic screen lock: <off/on> (owner, <date>); Stage Manager off for computer-use runs (owner, <date>)
 - Granted (warm-up, <date>): <harness app>: Accessibility, Screen Recording, Developer Tools, Automation of <apps>; Developer mode on; <toolchain license accepted>
 - Asks for a password, so never in a run: <commands found to prompt on this computer>

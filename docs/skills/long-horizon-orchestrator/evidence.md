@@ -4,7 +4,7 @@ The skill states its rules without their reasons, to keep the model's context fo
 
 Last checked: new work 2026-11-04; sources 2026-11-04.
 
-## Our own runs (2026-10-04 to 2026-11-13)
+## Our own runs (2026-10-04 to 2026-11-15)
 
 The skill grew from its overnight runs; the review gate's [study](../review-gate/evidence.md) covers 263
 handoffs from 21 of them. The incidents below each changed a rule. The per-run details stay in the owner's
@@ -163,6 +163,14 @@ private records.
   of processor time, a cached reading 0.14 s with half a second waiting for Go, a live reading 22 s; about
   30 s an hour in all. The known limits of the Claude API credits' report were left after five review rounds
   (2026-10-30). → *the sampler runs for the whole run.*
+- **The first run across two computers** (2026-11-15), placed by hand: the orchestrator and one task on one
+  Mac, three tasks on the other, linked in T3. Model IDs differed by computer (one Hydrogen with its
+  reasoning in the ID, the other with a reasoning option), and so did the installed skill's version; the
+  orchestrator's checkout was 30 commits behind the other computer's default branch, which had never been
+  pushed; the other computer was on battery; and `run-watch` saw only the orchestrator's computer. Briefs
+  travelled on a throwaway branch of the private state repository, commits on a run branch on the remote. →
+  *[computers.md](../../../skills/long-horizon-orchestrator/references/computers.md): targets read per
+  computer, a pre-flight there, the run branch, tasks elsewhere named `blind` on purpose.*
 
 ### The owner's decisions
 
@@ -185,6 +193,9 @@ Rules that are the owner's choice, with when they made it:
   images with the same options in many different images".
 - **2026-11-13:** Gemini 4 Hydrogen replaces Gemini 3.8 Flash as Antigravity's fast helper and takes harder
   sub-tasks before Argon; the orchestrator asks Fable for a second opinion on its hardest decisions.
+- **2026-11-15:** a run may place tasks on another linked computer, to keep the daily one free or spare a
+  weak one, and its tasks may push narrow, named run branches; whether runs default to the always-on
+  computer is left open.
 
 ## Outside sources
 

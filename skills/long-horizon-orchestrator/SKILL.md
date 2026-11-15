@@ -2,7 +2,7 @@
 name: long-horizon-orchestrator
 description: Run a set of long-running agent tasks to completion while the user is away. Launch each task as its own agent (T3 threads on any provider, Claude Code background subagents, or Codex subagents). Get woken automatically when a task finishes or blocks, launch dependent tasks once their prerequisites are merged, and have finished work reviewed, checked and merged into the branch the run started from. End with a plain-language report of what was built and what needs the user. Use whenever the user wants several tasks run in parallel or overnight, asks you to launch, coordinate, chain or babysit agents or follow-up tasks, says "launch everything and merge it", or wants work to continue while they sleep or step away, even if they never say "orchestrate". If no task list exists yet, plan one first and get a single approval.
 metadata:
-  version: 5.5.0
+  version: 5.6.0
 ---
 
 # Long-Horizon Orchestrator
@@ -22,6 +22,8 @@ Check which launch tools this session has, then read the matching reference befo
 | Codex `spawn_agent` / `wait_agent`, without T3 | Subagents, each working in a worktree you create | [references/host-codex.md](references/host-codex.md) |
 
 Prefer T3 when it is present. It can run tasks on any provider, binds each task to its own worktree, and its threads outlive this conversation.
+
+T3 can also run a task on another of the owner's computers linked to it, to keep the daily one free or spare a weak one; the contract names each task's computer and why. Read [references/computers.md](references/computers.md) before placing a task there: discovery, pre-flight, how briefs and commits travel, and what you can't watch there. Claude Code and Codex hosts run every task on your own computer.
 
 If none of these tools exist, say so. Give the user ready-to-paste briefs instead of pretending to orchestrate.
 
@@ -74,7 +76,7 @@ After the approval and before the first launch, do every step of [references/pre
 Before each wave, run `scripts/provider-usage` and confirm the routing still fits (see [references/routing.md](references/routing.md)). Then, up to the contract's limit on tasks at once, for each task whose prerequisites are merged (under "leave on branch", `ready` because of that policy, not for a review that didn't converge or found no reviewer; for a prerequisite split into milestones, the milestone it needs), and then the next reserve task:
 1. Write its brief from [references/task-brief.md](references/task-brief.md), and save it in the run directory.
 2. Launch it as the host reference describes.
-3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level. Add it to `<run directory>/watch.json` too: `"<task ID>": {"worktree", "harness" ("claude-code", "codex" or the provider's name), "session" or "session_log" when the host reference says to, "thread" (its thread or agent ID), "branch", "launched", "model", "status": "running"}`. Set its `status` there (`ready`, `merged`, `paused`, …) whenever it stops running, so `run-watch` stops judging it.
+3. Record its IDs in the ledger, with the launch time taken from the host, and the model and reasoning level the host reports for it. Agents often don't know their own reasoning level. Add it to `<run directory>/watch.json` too: `"<task ID>": {"worktree", "harness" ("claude-code", "codex" or the provider's name), "session" or "session_log" when the host reference says to, "thread" (its thread or agent ID), "branch", "launched", "model", "status": "running"}`, and `"computer"` for a task on another computer. Set its `status` there (`ready`, `merged`, `paused`, …) whenever it stops running, so `run-watch` stops judging it.
 
 Launch a whole wave together, then set up the backup wake-up the host reference calls for (for example the heartbeat in T3), and confirm it is scheduled: in T3, `list_scheduled_tasks` shows it enabled, with its next run within the interval.
 
@@ -162,5 +164,5 @@ Update it on every state change. Mention its path in the contract message and in
 - **Stop only what you started,** by its recorded process ID, never by a name or pattern. A pattern matches other tasks' builds and the user's own apps.
 - **Never run a command that waits for approval,** in your own thread above all. Even with permissions bypassed, Claude Code stops for approval on commands it judges dangerous, such as `rm -rf` on a path built from a shell variable (`rm -rf "$RUN/$d"`), or any `rm` inside a `sh -c` script or compound command ("This shell -c script runs rm and could not be checked"). Delete with a Bash call of its own: plain `rm` and literal absolute paths, one per argument. A prompt in a task's thread stalls that task. A prompt in your own thread stalls the whole run: the heartbeats queue behind your stuck turn, so nothing notices. If a task's thread shows a pending request with no child process running, it is waiting for approval: interrupt the turn and tell the task how to finish without that command. On every wake, check each running task for a pending approval (`run-watch`'s `approval` line, or the thread of a task it can't read; step 2 of "On every wake"), and keep the heartbeat at 15 minutes or less while tasks run.
 - **Stay on the assigned subscriptions.** Running short of quota means waiting for a reset, never borrowing from another subscription. The user sized each subscription for its own work. Only the four kinds of work named under "Quota pauses work" above move when a limit stops them, and a Fable task that moves to Opus changes model, not subscription.
-- **Never push, publish or force-update,** except the owner's provider profile and skill lessons to their private state repository. Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
+- **Never push, publish or force-update,** except the owner's provider profile and skill lessons to their private state repository, and, in a run with tasks on another computer, the run branch and briefs branch its contract names ([references/computers.md](references/computers.md#6-commits-travel-through-the-remote)), never forced. Never delete branches or worktrees the run didn't create. Read-only exploration of the user's other checkouts is fine.
 - **Calibrate.** Record actual task durations in the ledger and report them, so future estimates improve.

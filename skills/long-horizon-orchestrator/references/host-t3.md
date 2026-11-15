@@ -51,6 +51,7 @@ t3_thread_launch({
 - **`runtimeMode`.** The task must run commands, commit and merge without approval prompts, so use `full-access` unless the contract says otherwise.
 - **Record what actually launched.** Call `t3_thread_configure` with the task's `threadId` and no `modelSelection`, and record the provider, model and reasoning option it returns. Take the launch time from the thread's `createdAt` in `t3_thread_list`, not from your own estimate.
 - **Add it to `watch.json`** (SKILL.md, "Launch the ready tasks"): `worktree` and `branch` from `t3_thread_read` (`thread.worktreePath`, `thread.branch`), `harness` from the provider (`claudeAgent` is `claude-code`, `codex` is `codex`, any other its own name), `thread` the `threadId`, `launched` the `createdAt`. Leave `session` out: T3's thread data doesn't carry the provider's session, but T3 starts a Claude Code task's `claude` in its worktree with `--session-id=<id>` (and `--resume=<the same id>` after a restart), which names its log, `~/.claude/projects/<worktree path, every character but letters and digits as "-">/<id>.jsonl`; `run-watch` reads it from the process and remembers it. A Codex task's log is the rollout in `~/.codex/sessions` whose first line names the worktree; `run-watch` finds that too.
+- **On another computer,** add its `environmentId` and its own `projectId` and model IDs, and base on the run branch: [computers.md](computers.md#7-launch-and-report-back).
 - **The brief is the only message.** Don't queue a `/goal` behind it, on any provider ([task-brief.md](task-brief.md#one-message-the-brief-no-goal)). A Claude Code task that ends its turn while its builds or reviewers run is woken when they finish.
 
 ## Report-back: how you get woken
@@ -69,6 +70,8 @@ summary: <...>
 If the t3_thread_send tool is not available but the environment variable T3_ACP_MCP_NODE is set, send the same call through:
 ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" ${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call t3_thread_send '<the same arguments as JSON>'
 ```
+
+For a task on another computer, the call also carries your own `environmentId`, and the task ends with the report as its final message, so you can read it there if the send fails ([computers.md](computers.md#7-launch-and-report-back)).
 
 A queued message to your idle thread starts a new turn. That turn is the wake-up. If you are busy, the message waits behind your current turn.
 

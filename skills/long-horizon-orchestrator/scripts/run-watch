@@ -39,7 +39,8 @@ Each line starts with a word saying what it is:
                    20 minutes and whose processes are idle
   blind <task>     (once per task; kept in its state file's "blind" list until its log is found) a running task whose session log this script can't read (a
                    harness it doesn't know, or a log it didn't find): it sees only that task's
-                   processes and files
+                   processes and files; or a task whose watch.json "computer" isn't this one (watch.json's
+                   own "computer", else this Mac's LocalHostName): it reads nothing of that task
   hog <pid>        a process started since the run began, not the run's, above 80% of a core for
                    10 minutes
   disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB, naming the running
@@ -61,7 +62,7 @@ Each line starts with a word saying what it is:
                    <run directory>/times.log, so a wake that skimmed them loses none
   note             watch.json is missing or unreadable (the machine checks still ran)
 
-What it reads:
+What it reads (nothing of a task on another computer, whose paths name folders over there):
   - a task's session log: watch.json's "session_log" when given (a Claude Code subagent's
     <session>/subagents/agent-<agent ID>.jsonl), else Claude Code's ~/.claude/projects/<worktree path, every character but
     letters and digits as "-">/<session>.jsonl (the session is watch.json's "session", else the
@@ -96,6 +97,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -158,6 +160,11 @@ def run(cmd: list[str], timeout: float = 10) -> str:
                               env=dict(os.environ, LC_ALL="C")).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def this_computer() -> str:
+    """This computer's name as the owner's profile names it: macOS's LocalHostName, else the short host name."""
+    return run(["scutil", "--get", "LocalHostName"]).strip() or socket.gethostname().split(".")[0]
 
 
 def run_ok(cmd: list[str], timeout: float = 10, ok=(0,)) -> str | None:
@@ -608,7 +615,14 @@ def main(argv: list[str]) -> int:
     if not isinstance(watch, dict):
         lines.append(f"note: no readable {watch_path}: tasks aren't watched (launch adds them); the machine checks ran")
         watch = {}
-    tasks = {k: v for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict) and v.get("worktree")}
+    all_tasks = {k: v for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict)}
+    # A task on another computer (T3's linked environments): its worktree and logs are over there, and a
+    # folder of the same path here would be another one, so it is only named, as blind.
+    elsewhere = {}
+    if any(v.get("computer") for v in all_tasks.values()):
+        here = str(watch.get("computer") or this_computer()).casefold()
+        elsewhere = {k: v for k, v in all_tasks.items() if v.get("computer") and str(v["computer"]).casefold() != here}
+    tasks = {k: v for k, v in all_tasks.items() if v.get("worktree") and k not in elsewhere}
     started = parse_time(watch.get("started"))
     if started is None:
         try:
@@ -650,6 +664,12 @@ def main(argv: list[str]) -> int:
     findings = {}
     sessions = state.get("sessions", {})
     blind_told = set(state.get("blind", []))
+    for tid, task in sorted(elsewhere.items()):
+        if tid not in blind_told and task.get("status", "running") == "running":
+            lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}, on {task['computer']}): it runs on another "
+                         "computer, whose processes, files and session log this script can't see: read its thread "
+                         "(with that computer's environmentId) on every wake")
+            blind_told.add(tid)
     reports_by_task = {}
     for tid, task in tasks.items():
         launched = parse_time(task.get("launched")) or started

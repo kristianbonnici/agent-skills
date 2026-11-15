@@ -2,6 +2,8 @@
 
 A long run happens on the computer the user uses every day, while they are away or, in an evening run, sometimes still at it. Whatever needs them (a password, a click on Allow, a setting) is done before they leave. Whatever the run touches outside the repository is left as it was found.
 
+A task on another of the owner's computers changes this: its keep-awake, pre-flight and cleanup run in threads there, and most of the watching below doesn't reach it ([computers.md](computers.md)).
+
 The commands below are for macOS, where these runs happen. On another system, apply the same steps with its own tools.
 
 ## 1. What can't happen unattended

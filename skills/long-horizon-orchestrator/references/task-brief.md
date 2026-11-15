@@ -145,6 +145,10 @@ Then finish the original brief below, from "Required work" through "Report back"
 <the original brief, verbatim>
 ```
 
+## A task on another computer
+
+Its brief and the common file reach it through git, its report-back carries your `environmentId`, its targets and paths are that computer's, and its merge gate pushes to the run branch instead of fast-forwarding a checkout ([computers.md](computers.md), sections 5 to 8). Add to its brief: end with the report as your final message, name any dialog you saw, and check free disk before a heavy build.
+
 ## Before sending
 
 - Every placeholder is filled in, and the brief and the common file make sense to someone with no other context.
