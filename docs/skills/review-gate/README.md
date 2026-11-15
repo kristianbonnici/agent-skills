@@ -49,15 +49,18 @@ flowchart TD
   the cross reviewer takes its place. It is never waited for past its time, and in T3 one with no activity
   5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
-- **Gemini isn't a regular reviewer,** except Hydrogen at Light: Gemini's reviews were the weakest in past
-  runs, but Hydrogen found half the known defects on five past changes, against DeepSeek's third
-  ([evidence.md](evidence.md#gemini-4-hydrogen-as-a-reviewer-2026-11-13)). It stays on trial at Standard and
-  Deep, and its Light reviews count toward that trial. The 60% limit keeps room in the Gemini window for the
-  run's helpers, which share it.
-- **Trial reviewers:** GPT-6 Luna, Claude Haiku 5.5, Muse Spark 1.3 Contributor and Gemini 4 Hydrogen add one cheap extra
-  review in round 1 at Standard and Deep, split evenly across a run's tasks. Their findings are checked and fixed
-  like any other, but the gate never rests on them. Once each has about 20 reviews, a study compares
-  them with Terra and Sonnet: blockers and follow-ups found, those nobody else found, and findings rejected.
+- **Gemini 4 Hydrogen reviews at every level:** alone at Light, and beside the paid reviewers at Standard
+  and Deep. On 16 past changes with 143 known defects it found 32% of them, level with the paid reviewers,
+  and the most that no other model found; with Standard's cross reviewer the two found 71 where the cross
+  reviewer alone found 41 ([evidence.md](evidence.md#the-benchmarks-second-run-2026-11-15)). It found few of
+  the blockers, so it never takes a paid reviewer's place. The 60% and 85% limits keep room in the Gemini
+  window for the run's helpers, which share it. No other Gemini model reviews: their reviews were the
+  weakest in past runs.
+- **The trial is over.** Four cheap models each added one extra review in round 1 until 6.0.0. A study of 92
+  gates and the benchmark settled them: Hydrogen got its place, Claude Haiku 5.5 ends the free order at
+  Standard and Deep, and GPT-6 Luna and Muse Spark 1.3 Contributor got none. A new model is measured with
+  the [reviewer-benchmark](../reviewer-benchmark/README.md) skill, on the same past changes as the others,
+  before the owner gives it a place.
   One that holds up could take Terra's or Sonnet's place at Light, or stand in when Codex is short.
 
 ## When the author tags a blocker lower
@@ -65,7 +68,7 @@ flowchart TD
 The author decides each finding's tag, and only the author's blockers hold back a merge. That keeps a run
 moving, but it leaves the author judging findings about its own change. So when the author rejects a finding
 its reviewer tagged a blocker, or gives it a lower tag, the gate gives it back to that reviewer with the
-author's reason and asks: agree or hold? (A free or trial reviewer's goes to the round's paid reviewer.)
+author's reason and asks: agree or hold? (A free reviewer's, Hydrogen's or Haiku's goes to the round's paid reviewer.)
 
 - **It never blocks.** The author's tag stands whatever the answer. A reply can't turn a finding into a
   blocker, hold back the merge, count toward the stop rule or start a fix or another round in that gate. If
@@ -89,7 +92,7 @@ Every gate ends with a Review section that starts with lines like these, printed
 |---|---|---|---|---|---|---|---|
 | Codex GPT-6.1 Terra, high | 1, 2 | **1** | 1 | 3 | 1 | 1 | 1 |
 | Claude Sonnet 5.5, high | 1 | **1** | – | 4 | – | 2 | – |
-| GPT-6 Luna, high (trial) | 1 | – | – | 2 | – | 1 | – |
+| Gemini 4 Hydrogen, high | 1 | – | – | 2 | – | 1 | – |
 
 *Tagged lower than the reviewer's blocker or follow-up: 1 (1 rejected).*
 

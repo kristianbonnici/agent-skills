@@ -1,5 +1,14 @@
 # review-gate changelog
 
+## 6.0.0 (2026-11-15)
+
+Major because every Standard and Deep gate now spends a Gemini 4 Hydrogen review, from the Gemini windows the run's helpers share, where one gate in four did before.
+- **Gemini 4 Hydrogen is a regular reviewer** (owner, 2026-11-15, on the benchmark's result: "yes, do all"). It reviews round 1 beside the paid reviewers at Standard and Deep, and stays Light's reviewer. On 16 past changes with 143 known defects it found 32%, level with the paid reviewers, and the most that no other model found; Standard's cross reviewer and Hydrogen found 71 together where the cross reviewer alone found 41 ([evidence.md](evidence.md#the-benchmarks-second-run-2026-11-15)). It found 4 of the 20 blockers, so it never takes a paid reviewer's place. It is skipped for a change a Gemini model wrote and while the Gemini 5-hour window is past about 85% (60% at Light, as before); then a free reviewer takes its place at Standard, and nothing does at Deep, where one already reviews.
+- **The trial ends.** GPT-6 Luna and Muse Spark 1.3 Contributor review no more: Luna found half as much as the others in 24 live reviews, and Muse found the least of nine models on the benchmark, with one in five of its blockers and follow-ups false. Claude Haiku 5.5 ends the free order at Standard and Deep, after the Go models: level with GLM on the benchmark, quick, and it reported every time. No brief names a trial reviewer any more, and a record marks no reviewer `(trial)`; `review-records` still reads the older records and handoffs that do.
+- **A model gets a place only on the owner's word, after the `reviewer-benchmark` skill has measured it,** on the same past changes as the others, in place of about 20 live reviews beside different reviewers.
+- **The command-line launch of a Claude reviewer works unattended.** In Codex without T3, and from a subagent, the brief now goes in on standard input and the command has `--permission-mode dontAsk` and `--effort high`. As written before, the brief was read as a tool's name and the run ended with "Input must be provided"; with that mended, each tool outside the allowed list waited on an approval card from the owner (both seen while running the benchmark, 2026-11-15).
+- `references/record.md`'s example names Hydrogen where it named a trial reviewer.
+
 ## 5.0.0 (2026-11-14)
 
 Major because the gate now asks a reviewer a question, and spends its usage on it, where it asked nothing before, and a record needs a new field.

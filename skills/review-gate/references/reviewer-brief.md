@@ -9,7 +9,7 @@ The change: <the objective in two to four sentences: what it is meant to do, for
 Where: <worktree or checkout path>. The diff: git -C <path> diff <base>...<head>. Read the related code and tests as well, not only the diff.
 The project's rules: <AGENTS.md, CLAUDE.md or similar, with their paths>.
 Your focus: <this reviewer's focus, for example "logic, security and what happens when things fail">. Report anything serious you find outside it too.
-<Free and trial reviewers only: "You have 12 minutes and about 20 commands. When you reach either, stop and report what you have, and list what you didn't get to.">
+<Free reviewers, Hydrogen and Haiku only: "You have 12 minutes and about 20 commands. When you reach either, stop and report what you have, and list what you didn't get to.">
 <Round 2 and later: "This round reviews only the fixes since <commit>: git -C <path> diff <commit>...<head>, and what they touch. Already raised: <one line per earlier finding>. Don't report these again, except one the fixes didn't settle: report that as 'not fixed: <the finding>', with the case that still fails.">
 <With a question about a tag for this reviewer: "Apart from your report, answer this first: <the question below, from 'A reviewer reported' to its last line>">
 
@@ -42,4 +42,4 @@ Do you agree with the author's tag? Start your answer with "agree" or "hold". If
 
 An answer that starts with "agree", in any letter case, is `agrees`; one that starts with "hold" is `holds`; and none in its 10 minutes, or one that says neither, is `no answer`. Save it in the record folder as `reply-<the finding's id>-<reviewer>.md`; if you ask about the finding again in a later round, as `reply-<id>-<reviewer>-round-<n>.md`.
 
-Ask once in a round for a finding and the reviewer that answers. When the questions about one finding go to the same reviewer (its own report of the finding and a trial reviewer's, or two free or trial reviewers'), send one question with every report of it, and record its one answer on each of those entries, with `reply_from` on every entry that reviewer didn't raise.
+Ask once in a round for a finding and the reviewer that answers. When the questions about one finding go to the same reviewer (its own report of the finding and Hydrogen's, or a free reviewer's and Hydrogen's), send one question with every report of it, and record its one answer on each of those entries, with `reply_from` on every entry that reviewer didn't raise.

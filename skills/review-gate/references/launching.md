@@ -2,16 +2,16 @@
 
 Launch every reviewer of a round at once, read-only, with the brief from [reviewer-brief.md](reviewer-brief.md) as its whole message. Then follow each reviewer's checkpoints until every one has reported or been stopped:
 
-- **Its deadline:** 30 minutes after its launch for a paid reviewer, 15 for a free or trial one (each model a free reviewer tries gets its own 15). One still running then is limited (SKILL.md, section 2). Its brief gives a free or trial reviewer 12 minutes and about 20 commands, so it reports before its deadline.
-- **Its pace check,** for a free or trial reviewer, or Hydrogen at Light, launched through T3, the one host that shows when each of its steps happened: 5 minutes after its launch, look at its activity (the commands it ran, the files it read, its messages). Activity a few seconds apart is one turn of the model. No turn yet, or turns typically more than a minute apart, means it won't finish in its time: it is limited then. A healthy reviewer takes a turn every few seconds to half a minute; a provider too slow to finish takes a minute or more for each.
+- **Its deadline:** 30 minutes after its launch for a paid reviewer, 15 for a free reviewer, Hydrogen or Haiku (each model a free reviewer tries gets its own 15). One still running then is limited (SKILL.md, section 2). Its brief gives such a reviewer 12 minutes and about 20 commands, so it reports before its deadline.
+- **Its pace check,** for a free reviewer, Hydrogen or Haiku launched through T3, the one host that shows when each of its steps happened: 5 minutes after its launch, look at its activity (the commands it ran, the files it read, its messages). Activity a few seconds apart is one turn of the model. No turn yet, or turns typically more than a minute apart, means it won't finish in its time: it is limited then. A healthy reviewer takes a turn every few seconds to half a minute; a provider too slow to finish takes a minute or more for each.
 - **Time comes from the launch:** the time left to a checkpoint is launch time + allowance − now, with the launch time read from the host (in T3, the thread's `createdAt` from `t3_thread_read`), never carried from memory.
 - **Its report** is saved when it arrives, whole and unedited, in the gate's record folder ([record.md](record.md)): from a reviewer launched through T3 or as a subagent, the text of its final message; from a command-line reviewer, the report in its output.
 - **A question about a tag** (SKILL.md, section 4) launches as its reviewer does, with [the question](reviewer-brief.md#the-question-about-a-tag) as its whole message and a deadline of 10 minutes. One that is limited or late is stopped and recorded as `no answer`: nothing replaces it.
-- **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; a trial reviewer is dropped, never replaced, except Hydrogen at Light, after which the free order starts; a paid one is replaced as SKILL.md, section 2 says.
+- **A limited reviewer** is stopped before anything replaces it. A free reviewer's next model in the order launches then, with checkpoints of its own; what follows a limited Hydrogen depends on the level (the free order at Light, one free reviewer at Standard, nothing at Deep); a paid one is replaced as SKILL.md, section 2 says.
 
 ## Before a Go model or Hydrogen
 
-The Go targets below and Muse draw on the owner's OpenCode Go plan, and Gemini 4 Hydrogen on Antigravity's Gemini windows, which the run's helpers share, so read those windows first. It spends nothing and takes a second (Antigravity's reading a few):
+The Go targets below draw on the owner's OpenCode Go plan, and Gemini 4 Hydrogen on Antigravity's Gemini windows, which the run's helpers share, so read those windows first. It spends nothing and takes a second (Antigravity's reading a few):
 
 ```sh
 <skills folder>/long-horizon-orchestrator/scripts/provider-usage --only opencode_go
@@ -22,7 +22,7 @@ The Go targets below and Muse draw on the owner's OpenCode Go plan, and Gemini 4
 
 ## In T3
 
-`delegate_task` with role `"review"`, one call per reviewer, and `interactionMode: "plan"` for every OpenCode reviewer (free, Go and Muse) and for Hydrogen. On OpenCode that runs its read-only `plan` agent instead of `build`, which can edit; on Antigravity it tells the agent to stay read-only, an instruction rather than a guard (in a probe on 2026-11-13 Hydrogen refused a write that way and still ran `git log` and `git diff`). Reviewers started this way aren't bound to your worktree, so the brief names its path.
+`delegate_task` with role `"review"`, one call per reviewer, and `interactionMode: "plan"` for every OpenCode reviewer (free and Go) and for Hydrogen. On OpenCode that runs its read-only `plan` agent instead of `build`, which can edit; on Antigravity it tells the agent to stay read-only, an instruction rather than a guard (in a probe on 2026-11-13 Hydrogen refused a write that way and still ran `git log` and `git diff`). Reviewers started this way aren't bound to your worktree, so the brief names its path.
 
 Launch every reviewer, a single one too, with mode `"async"`. Then, until each has reported or been stopped:
 
@@ -39,23 +39,19 @@ Launch every reviewer, a single one too, with mode `"async"`. Then, until each h
 | GLM-5.3 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/glm-5.3-flash-free", options: [{id: "variant", value: "high"}]}` |
 | DeepSeek V4.1 Flash (Go) | `{providerInstanceId: "opencode", model: "opencode-go/deepseek-v4.1-flash", options: [{id: "variant", value: "high"}]}` |
 | GLM-5.3 Flash (Go) | `{providerInstanceId: "opencode", model: "opencode-go/glm-5.3-flash", options: [{id: "variant", value: "high"}]}` |
-| GPT-6 Luna (trial) | `{providerInstanceId: "codex", model: "gpt-6-luna", options: [{id: "reasoningEffort", value: "high"}]}` |
-| Claude Haiku 5.5 (trial) | `{providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{id: "effort", value: "high"}]}` |
-| Muse Spark 1.3 Contributor (trial) | `{providerInstanceId: "opencode", model: "opencode-go/muse-spark-1.3-contributor", options: [{id: "variant", value: "high"}]}` |
-| Gemini 4 Hydrogen (trial) | `{providerInstanceId: "antigravity", model: "gemini-4-hydrogen-high"}` (the level is in the model's name; no options) |
+| Gemini 4 Hydrogen | `{providerInstanceId: "antigravity", model: "gemini-4-hydrogen-high"}` (the level is in the model's name; no options) |
+| Claude Haiku 5.5 (the free order's last) | `{providerInstanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{id: "effort", value: "high"}]}` |
 
-A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed". Muse also stops with "trains on request data" while the workspace blocks such models; treat that as limited.
+A reviewer that is limited shows it in its result or its thread: a quota or rate-limit error, "Free usage limit reached", or "Upstream request failed".
 
 The Go targets start with `opencode-go/`. `opencode/deepseek-v4.1-flash`, without `-free`, is a different model that bills per request, and so is `opencode/gemini-4-hydrogen`: Hydrogen goes through Antigravity only.
 
 ## In Claude Code without T3
 
-A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3"). Here, and in Codex without T3, a free or trial reviewer gets its deadline only, with no pace check: a background command's output and a subagent's progress carry no times to judge its pace by. Note each reviewer's launch time for its deadline. From the main session:
+A subagent can't launch agents of its own: there, use the command-line forms for every reviewer, Claude's too (`claude -p`, as under "In Codex without T3"). Here, and in Codex without T3, a free reviewer, Hydrogen or Haiku gets its deadline only, with no pace check: a background command's output and a subagent's progress carry no times to judge its pace by. Note each reviewer's launch time for its deadline. From the main session:
 
 - **Claude reviewers:** the `Agent` tool, `model: "opus"`, `"sonnet"` or `"haiku"`, a general-purpose agent, run in the background so they work in parallel.
-- **GPT-6 Luna (trial):** the Codex command below with `-m gpt-6-luna`.
-- **Muse Spark (trial):** the OpenCode command below with `-m 'opencode-go/muse-spark-1.3-contributor#high'`.
-- **Gemini 4 Hydrogen (trial):** a background Bash command from the worktree, in Antigravity's `plan` mode, which holds back edits. Headless `agy` can't ask for a permission, so a shell command that no allow rule matches ends the whole session with no report. Rules match the start of the command line, so `--settings` gives this session the read-only commands, and the brief tells it how to call them:
+- **Gemini 4 Hydrogen:** a background Bash command from the worktree, in Antigravity's `plan` mode, which holds back edits. Headless `agy` can't ask for a permission, so a shell command that no allow rule matches ends the whole session with no report. Rules match the start of the command line, so `--settings` gives this session the read-only commands, and the brief tells it how to call them:
 
   ```sh
   cd <worktree> && agy --mode plan --model gemini-4-hydrogen-high --print-timeout 15m \
@@ -84,11 +80,12 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 - **Claude reviewers:** a background command:
 
   ```sh
-  claude -p --model claude-sonnet-5-5 --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)" "<brief>"
+  claude -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk \
+    --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)" < <a file holding the brief>
   ```
 
-  (or `claude-opus-5-5`), run from the worktree.
-- **Free reviewers and Muse Spark (trial):** the OpenCode command above.
-- **Gemini 4 Hydrogen (trial):** the `agy` command above.
+  (or `claude-opus-5-5`, or `claude-haiku-5-5` as the free order's last), run from the worktree. The brief goes in on standard input, never as a last argument: `--allowedTools` takes every word after it as a tool's name, and the run ends with "Input must be provided". `--permission-mode dontAsk` refuses a tool outside the list; without it each such call waits on an approval from the owner, who may not be there.
+- **Free reviewers:** the OpenCode command above.
+- **Gemini 4 Hydrogen:** the `agy` command above.
 
 If a host can't launch a reviewer of the family the level needs, use the next option from SKILL.md, section 2, and record why.

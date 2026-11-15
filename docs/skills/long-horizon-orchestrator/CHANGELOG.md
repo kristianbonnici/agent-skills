@@ -1,5 +1,10 @@
 # long-horizon-orchestrator changelog
 
+## 5.5.0 (2026-11-15)
+
+- **No task gets a trial reviewer any more** (owner, 2026-11-15). review-gate 6.0.0 ended the trial: the contract no longer splits standard and deep tasks among trial reviewers, and the task brief names none. The gate itself now adds Gemini 4 Hydrogen at standard and deep.
+- **Hydrogen's reviews count in the Gemini windows:** one a task, from the windows the Hydrogen helper uses. The gate skips Hydrogen while the 5-hour window is past about 85%, so the orchestrator leaves room for the reviews when it plans Hydrogen hand-offs.
+
 ## 5.4.0 (2026-11-14)
 
 - **A blocker a reviewer held on is recorded and reported** (owner, 2026-11-14). From review-gate 5.0.0, a task that rejects a finding its reviewer tagged a blocker, or tags it lower, asks that reviewer whether it agrees, and lists the ones the reviewer held on under "A reviewer held" in its handoff. The orchestrator records them in the ledger when the task merges and lists each under "Worth checking yourself" in the report, with the reviewer's case and the task's reason. By themselves they never hold back a merge, relaunch a task or start a follow-up task; one that the task itself lists as an open follow-up, because the answer showed it a case it got wrong, goes with its other follow-ups. The owner asked for them to be visible, not blocking, since a stop rule that counted every finding had stopped 8 of 9 tasks in one night ([review-gate's evidence](../review-gate/evidence.md#the-reviewers-reply-2026-11-14)).

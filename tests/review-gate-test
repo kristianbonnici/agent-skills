@@ -156,7 +156,7 @@ fails("reply-only-finding", found_while_answering,
 # One reviewer is asked once about a finding in a round, its own report of it included: a record
 # with two different answers from it there is refused, since only one could be counted.
 def two_answers(record):
-    record["findings"].append(dict(record["findings"][2], reviewer="GPT-6 Luna, high (trial)", reply="agrees",
+    record["findings"].append(dict(record["findings"][2], reviewer="Gemini 4 Hydrogen, high", reply="agrees",
                                    reply_from="Codex GPT-6.1 Terra, high"))
 fails("two-answers", two_answers,
       'finding 6: finding 2 has another reply from the same reviewer in round 1: ask once, and record that one answer')
@@ -206,14 +206,14 @@ fails("several", lambda r: (r.pop("author"), r.update(level="x"), r["findings"][
 
 # An empty report, a report that is a link, a file that isn't JSON, and a folder with no record.
 empty = save(os.path.join(work, "bad", "empty-report"), example)
-write(os.path.join(empty, "round-1-luna.md"), "")
+write(os.path.join(empty, "round-1-hydrogen.md"), "")
 done = run("table", empty)
-assert done.returncode == 64 and 'report "round-1-luna.md" is empty' in done.stderr, done.stderr
+assert done.returncode == 64 and 'report "round-1-hydrogen.md" is empty' in done.stderr, done.stderr
 linked = save(os.path.join(work, "bad", "linked-report"), example)
-os.remove(os.path.join(linked, "round-1-luna.md"))
-os.symlink(os.path.join(good, "round-1-luna.md"), os.path.join(linked, "round-1-luna.md"))
+os.remove(os.path.join(linked, "round-1-hydrogen.md"))
+os.symlink(os.path.join(good, "round-1-hydrogen.md"), os.path.join(linked, "round-1-hydrogen.md"))
 done = run("table", linked)
-assert done.returncode == 64 and 'report "round-1-luna.md" isn\'t a file' in done.stderr, done.stderr
+assert done.returncode == 64 and 'report "round-1-hydrogen.md" isn\'t a file' in done.stderr, done.stderr
 write(os.path.join(work, "bad", "not-json", "review.json"), "{not json")
 done = run("table", os.path.join(work, "bad", "not-json"))
 assert done.returncode == 64 and "isn't valid JSON" in done.stderr and done.stdout == "", done.stderr
@@ -250,7 +250,7 @@ def places(value, here=()):
 back = copy.deepcopy(example)
 back["findings"].append(dict(back["findings"][0], round=2, reviewer_tag="follow-up"))
 assert [row["reviewer"] for row in module.gate_from_record(folder)["rows"]] == ["GPT-6.1 Terra", "Claude Sonnet 5.5",
-                                                                              "GPT-6 Luna"]
+                                                                              "Gemini 4 Hydrogen"]
 assert module.gate_from_record(os.path.join(work, "shared"))["replies"] == {"holds": 1, "agrees": 1}
 gate = module.gate_from_record(save(os.path.join(work, "back"), back))
 assert gate["changes"] == {"follow-up to blocker": 2, "blocker to follow-up": 1, "blocker to rejected": 1}, gate["changes"]
@@ -562,8 +562,8 @@ assert terra == {"reviews": 12, "blockers": 3, "follow_ups": 2, "must_fix": 4, "
 assert total["reviewers"]["DeepSeek V4.1 Flash (free)"]["follow_ups"] == 1
 assert total["reviewers"]["DeepSeek V4.1 Flash (Go)"] == {"reviews": 1, "blockers": 0, "follow_ups": 0, "must_fix": 1,
     "nits": 0, "pre_existing": 0, "rejected": 2, "unique": 0}, total["reviewers"]
-assert total["reviewers"]["Claude Haiku 5.5"]["rejected"] == 1 and total["reviewers"]["GPT-6 Luna"]["rejected"] == 1
-assert set(total["reviewers"]) == {"GPT-6.1 Terra", "Claude Sonnet 5.5", "GPT-6 Luna", "Claude Haiku 5.5",
+assert total["reviewers"]["Claude Haiku 5.5"]["rejected"] == 1 and total["reviewers"]["Gemini 4 Hydrogen"]["rejected"] == 1
+assert set(total["reviewers"]) == {"GPT-6.1 Terra", "Claude Sonnet 5.5", "Claude Haiku 5.5",
     "DeepSeek V4.1 Flash (free)", "DeepSeek V4.1 Flash (Go)", "Gemini 4 Hydrogen", "GLM-5.3 Flash (free)",
     "GLM-5.3 Flash (Go)", "Claude Opus 5.5"}, set(total["reviewers"])
 assert total["reviewers"]["GLM-5.3 Flash (Go)"] == {"reviews": 2, "blockers": 0, "follow_ups": 0, "must_fix": 0,

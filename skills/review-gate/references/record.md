@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "5.0.0",
+  "gate": "6.0.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -33,7 +33,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
     {"name": "Codex GPT-6.1 Terra, high", "rounds": [1, 2],
      "reports": ["round-1-terra.md", "round-2-terra.md", "reply-2-terra.md", "reply-3-terra.md"]},
     {"name": "Claude Sonnet 5.5, high", "rounds": [1], "reports": ["round-1-sonnet.md"]},
-    {"name": "GPT-6 Luna, high (trial)", "rounds": [1], "reports": ["round-1-luna.md"]}
+    {"name": "Gemini 4 Hydrogen, high", "rounds": [1], "reports": ["round-1-hydrogen.md"]}
   ],
   "skipped": [
     {"name": "DeepSeek V4.1 Flash (free)", "why": "Free usage limit reached"}
@@ -46,7 +46,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
     {"id": 2, "round": 1, "reviewer": "Codex GPT-6.1 Terra, high", "reviewer_tag": "blocker", "tag": "follow-up",
      "checked": "run", "title": "Two saves within a second keep the older text",
      "why": "Needs two windows saving the same note in the same second", "reply": "holds"},
-    {"id": 3, "round": 1, "reviewer": "GPT-6 Luna, high (trial)", "reviewer_tag": "blocker", "tag": "rejected",
+    {"id": 3, "round": 1, "reviewer": "Gemini 4 Hydrogen, high", "reviewer_tag": "blocker", "tag": "rejected",
      "checked": "read", "title": "The import reads files outside the chosen folder",
      "why": "The path is resolved and checked against the folder two lines above",
      "reply": "agrees", "reply_from": "Codex GPT-6.1 Terra, high"},
@@ -89,7 +89,7 @@ Each finding:
 |---|---|---|---|---|---|---|---|
 | Codex GPT-6.1 Terra, high | 1, 2 | **1** | 1 | – | – | – | 1 |
 | Claude Sonnet 5.5, high | 1 | **1** | – | 1 | – | – | – |
-| GPT-6 Luna, high (trial) | 1 | – | – | – | – | 1 | – |
+| Gemini 4 Hydrogen, high | 1 | – | – | – | – | 1 | – |
 
 *Tagged lower than the reviewer's blocker or follow-up: 2 (1 rejected).*
 

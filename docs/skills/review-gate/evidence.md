@@ -446,8 +446,10 @@ scored for each defect added.
   it is an addition to a paid reviewer, not a stand-in.
 - **Sonnet found nothing alone.** 45 defects, each also found by another model. Terra and Sonnet together
   found 63; Terra and Hydrogen 71, as many as Terra, Sonnet and DeepSeek.
-- **Teams:** Terra, Sonnet and DeepSeek (the Standard level until now) 71 of 143, with 13 blockers. With
-  Hydrogen as well, 88 and 15. All nine, 110 and 17. Three blockers and 33 defects no model found in full.
+- **By level, for a change a Claude model wrote** (defects found in full, of 143, and blockers, of 20):
+  Standard's cross reviewer, Terra, alone 41 and 9; with a trial extra, 54 and 10 (Haiku) or 52 and 10
+  (Muse); with Hydrogen, 71 and 11. Deep's Terra, Sonnet and DeepSeek 71 and 13; with Hydrogen as well, 88
+  and 15. All nine, 110 and 17. Three blockers and 33 defects no model found in full.
 - **Opus adds the most after a paid pair:** 14 defects and 3 blockers that Terra and Sonnet missed, at the
   highest cost and the longest paid review.
 
@@ -457,11 +459,11 @@ often took part in, which favours them. The scorers were Claude models (Sonnet f
 other findings), blind to which report was whose. The first run's findings outside the key were checked by
 one checker and this run's by another instance, per change.
 
-→ *Hydrogen joins DeepSeek as a regular free reviewer at Standard and Deep (owner, 2026-11-15) and stays
-Light's reviewer. Muse leaves the trial with no place, and so does Luna (the live trial, above). Haiku is the
-last fallback for a free reviewer: as good as GLM here, quick, and always done. No free reviewer replaces a
-paid one. Whether Sonnet keeps its paid place beside Terra is open: this set says its findings are covered by
-others, on one run.*
+→ *review-gate 6.0.0 (owner, 2026-11-15: "yes, do all"): Hydrogen reviews beside the paid reviewers at
+Standard and Deep and stays Light's reviewer. The trial ends: Muse and Luna get no place, and Haiku ends the
+free order at Standard and Deep (level with GLM here, quick, and always done). No cheap reviewer replaces a
+paid one. A model now earns a place through the benchmark, not a live trial. Whether Sonnet keeps its paid
+place beside Terra is open: on this set every defect it found, another model found too, on one run.*
 
 ## Left out
 
