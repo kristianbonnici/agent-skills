@@ -106,7 +106,8 @@ Doctor fails while a built file is missing or out of date. Uninstall removes onl
 changed, and names the backup from before the adoption, to rename back. With no table, or no row for
 this computer, nothing is built and nothing is reported. A row taken out of the table leaves its
 built file where it is: remove it by hand. `./scripts/manifest instructions` prints this computer's
-rows, each section as its path.
+rows, each section as its path; it refuses a row with a section that has no file, a host the
+computer leaves out, a target written with a `..` step, or one file named twice for a computer.
 
 ### Keeping computers in step
 
