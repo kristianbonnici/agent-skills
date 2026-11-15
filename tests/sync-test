@@ -189,7 +189,7 @@ if env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND "$public/scripts/sync" --skip-d
   fail "sync passed with an origin it cannot reach"
 fi
 expect "^FAIL agent-skills-private: git pull --ff-only failed" "$work/sync.out"
-expect "^0|-i $work/work-key -o BatchMode=yes .*example.invalid" "$work/ssh.log"
+expect "^0|-o BatchMode=yes -i $work/work-key .*example.invalid" "$work/ssh.log"
 # A command given in GIT_SSH_COMMAND is the caller's: sync leaves it alone.
 : >"$work/ssh.log"
 GIT_SSH_COMMAND="ssh -o ConnectTimeout=1" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true

@@ -206,9 +206,10 @@ while IFS= read -r row; do
           continue
         fi
         verb=REBUILT
-        ! is_changed "$target_path" || keep_as=changed
-        # What was judged, to see a change made between this check and the move.
+        # Judged on a copy, which the target is compared with again just before the move, so a
+        # change made in between is seen.
         cp -p "$target_path" "$scratch/judged"
+        ! is_changed "$scratch/judged" || keep_as=changed
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
         if [ "$adopt" -eq 0 ]; then
           echo "NOT ADOPTED $target_path: your own file, so bootstrap leaves it. To build it from install/instructions.tsv, keeping yours as a backup beside it, run scripts/bootstrap --adopt-instructions" >&2
