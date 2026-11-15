@@ -122,6 +122,8 @@ A pause the owner asks for mid-run (to close a lid or move a computer) is not a 
 
 On their word to continue: switch the heartbeat on, and each resume wake whose reset is still ahead (a quota-paused task whose reset passed meanwhile continues now, as on its resume wake); check each computer's keep-awake and power (restart a keep-awake that ended); set the ledger back to `Status: running` and the tasks you stopped back to `running`, and send each of them "continue".
 
+The steps name T3's tools. In Claude Code, the heartbeat and resume wakes are `CronCreate` jobs: delete them (`CronDelete`) and create them again on continuing, and send the stop and the "continue" with `SendMessage`. In Codex, send them with `send_input`; with nothing scheduled to switch off, end your turn once the tasks are idle and the owner has been told, and continue when the owner's next message resumes the session.
+
 ## A task the user stopped
 
 Nothing of it merges. Mark it `stopped` and park its dependents. Keep its work in case the user wants it later:
