@@ -3467,6 +3467,7 @@ while [ $# -gt 0 ]; do case "$1" in -o) shift 2 ;; -*) shift ;; *) break ;; esac
 alias=$1; shift
 echo "$alias $*" >> "$FAKE_SSH_LOG"
 [ "$alias" = unreachable ] && { echo "ssh: connect to host unreachable: timed out" >&2; exit 255; }
+case "$*" in *costs.json*) [ -n "${FAKE_SSH_DROP_COSTS:-}" ] && { echo "Connection reset" >&2; exit 255; } ;; esac
 cd "$FAKE_SSH_HOME" && exec sh -c "$*"
 EOF
 chmod +x "$multi/fake-bin/ssh"
@@ -3488,10 +3489,25 @@ rm "$multi/den-home/state/run-x/costs.json"   # costs that failed there: the ear
 HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
   "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac > /dev/null
 test ! -e "$fakehome/state/run-x/computers/den-mac/costs.json" && test -s "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl"
-# with --state too, the branch's fetch leaves the computers fetched over ssh alone (den-mac isn't on the branch here)
+# a connection that fails halfway (samples read, costs not) changes nothing: both files are read first
+printf '{"t": "2026-11-16T09:00:00+01:00", "cpu": 1}\n' >> "$multi/den-home/state/run-x/usage/machine.jsonl"
+cp "$multi/den/run-x/costs.json" "$multi/den-home/state/run-x/costs.json"
+before_samples=$(cksum < "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl")
+HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" FAKE_SSH_DROP_COSTS=1 \
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac > /dev/null 2> "$multi/ssh-half.err"
+grep -q 'den-mac: ssh den-mac failed: Connection reset' "$multi/ssh-half.err"
+test "$(cksum < "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl")" = "$before_samples" && test ! -e "$fakehome/state/run-x/computers/den-mac/costs.json"
+# with --state too: a computer SSH reached is left alone by the branch's fetch; one it couldn't reach falls back
+# to the branch, its files there (den-mac's send put them there), or keeps its earlier copies when there are none (far-mac)
 HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
-  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --state "$multi/studio-state" > /dev/null
-test -s "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl"
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=unreachable --ssh far-mac=unreachable --state "$multi/studio-state" > "$multi/ssh-fallback.out" 2>/dev/null
+grep -q '^share-usage: den-mac: 120 machine samples, .*costs -> ' "$multi/ssh-fallback.out"
+cmp "$multi/den/run-x/costs.json" "$fakehome/state/run-x/computers/den-mac/costs.json"
+test "$(cat "$fakehome/state/run-x/computers/far-mac/usage/machine.jsonl")" = old
+HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --state "$multi/studio-state" > "$multi/ssh-both.out"
+grep -q '^share-usage: den-mac: 121 machine samples, .*(over ssh den-mac)$' "$multi/ssh-both.out"
+test "$(grep -c '^share-usage: den-mac:' "$multi/ssh-both.out")" -eq 1
 status=0
 "$scripts/share-usage" fetch "$multi/studio/run-x" > /dev/null 2>&1 || status=$?
 test "$status" -eq 2

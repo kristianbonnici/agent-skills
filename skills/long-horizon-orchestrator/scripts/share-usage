@@ -33,8 +33,10 @@ fetch --ssh <name>=<alias> reads that computer's files straight over SSH instead
 machine.jsonl and <run directory>/costs.json there, at the same path under that computer's home folder
 (or --remote-run, a path there), into the same places here. A file that isn't there removes this
 computer's earlier copy of it, as the branch's snapshot does; a computer SSH can't reach keeps its
-earlier copies and is named. Computers fetched over SSH are left out of the branch's fetch, which runs
-only with --state; give one or the other, or both.
+earlier copies and is named; both files are read before either is written, so a connection that fails
+halfway changes nothing. Computers fetched over SSH are left out of the branch's fetch, which runs only
+with --state; one SSH couldn't reach falls back to it (its files there when its send put them there, else
+its earlier copies kept). Give --state or --ssh, or both.
 
 The run is the run directory's name. Every git command runs with GIT_TERMINAL_PROMPT=0 and, unless
 GIT_SSH_COMMAND is set, ssh in batch mode, so nothing can prompt. Exit 0; 1 when there was nothing to
@@ -221,8 +223,9 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
 
 def over_ssh(run_dir: Path, name: str, alias: str, remote_run: str) -> list[str] | None:
     """Reads one computer's two files over SSH into <run directory>/computers/<name>/; a file that isn't
-    there removes the earlier copy. What arrived, or None when SSH couldn't reach it (copies kept)."""
-    got = []
+    there removes the earlier copy. Both files are read before either is written, so a connection that fails
+    halfway changes nothing. What arrived, or None when SSH couldn't reach it (copies kept)."""
+    read = []   # (dest, local, bytes or None when the file isn't there)
     for dest, local in FILES:
         there = shlex.quote(f"{remote_run}/{local}")
         try:
@@ -232,18 +235,21 @@ def over_ssh(run_dir: Path, name: str, alias: str, remote_run: str) -> list[str]
         except (OSError, subprocess.SubprocessError) as error:
             print(f"share-usage: {name}: ssh {alias} failed ({error}); its earlier copies are kept", file=sys.stderr)
             return None
-        target = run_dir / "computers" / name / local
-        if done.returncode == 3:
-            if target.is_file():
-                target.unlink()
-            continue
-        if done.returncode != 0:
+        if done.returncode not in (0, 3):
             print(f"share-usage: {name}: ssh {alias} failed: {done.stderr.decode(errors='replace').strip()[:300]}; "
                   "its earlier copies are kept (the briefs branch is the fallback)", file=sys.stderr)
             return None
+        read.append((dest, local, done.stdout if done.returncode == 0 else None))
+    got = []
+    for dest, local, data in read:
+        target = run_dir / "computers" / name / local
+        if data is None:
+            if target.is_file():
+                target.unlink()
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(done.stdout)
-        got.append(described(dest, done.stdout))
+        target.write_bytes(data)
+        got.append(described(dest, data))
     return got
 
 
@@ -256,14 +262,20 @@ def described(dest: str, data: bytes) -> str:
 
 
 def fetch(run_dir: Path, state: Path | None, remote: str, expect: list[str], ssh: dict | None = None, remote_run: str = "") -> int:
-    arrived = []
+    arrived, reached, failed = [], set(), set()
     for name, alias in (ssh or {}).items():
         got = over_ssh(run_dir, name, alias, remote_run)
+        if got is None:
+            failed.add(name)
+            continue
+        reached.add(name)
         if got:
             arrived.append(name)
             print(f"share-usage: {name}: " + ", ".join(got) + f" -> {run_dir / 'computers' / name} (over ssh {alias})")
     if state is not None:
-        arrived += fetch_branch(run_dir, state, remote, set(ssh or {}))
+        # a computer SSH couldn't reach falls back to the branch, where its send may have put its files; with no
+        # folder there, its earlier copies stay
+        arrived += fetch_branch(run_dir, state, remote, reached, failed)
     for name in expect:
         if name not in arrived:
             print(f"share-usage: nothing arrived from {name}")
@@ -272,8 +284,9 @@ def fetch(run_dir: Path, state: Path | None, remote: str, expect: list[str], ssh
     return 0
 
 
-def fetch_branch(run_dir: Path, state: Path, remote: str, skip: set) -> list[str]:
-    """The briefs branch's computers/ folders, but those in skip (fetched over SSH)."""
+def fetch_branch(run_dir: Path, state: Path, remote: str, skip: set, keep: set = frozenset()) -> list[str]:
+    """The briefs branch's computers/ folders, but those in skip (fetched over SSH); a computer in keep (SSH
+    failed) is fetched when the branch has its folder, and its earlier copies stay when it hasn't."""
     branch = f"lho/{run_dir.name}-briefs"
     head = fetch_head(state, remote, branch)
     # a listing that fails stops here, so no earlier copy is taken for one the branch dropped
@@ -300,7 +313,7 @@ def fetch_branch(run_dir: Path, state: Path, remote: str, skip: set) -> list[str
             print(f"share-usage: {name}: " + ", ".join(got) + f" -> {run_dir / 'computers' / name}")
     for old in sorted((run_dir / "computers").glob("*")) if (run_dir / "computers").is_dir() else []:
         # an earlier fetch's copies for a computer the branch no longer has a folder for: its send took them off
-        if old.name in names or old.name in skip or not valid(old.name):
+        if old.name in names or old.name in skip or old.name in keep or not valid(old.name):
             continue
         gone = [local for _, local in FILES if (old / local).is_file()]
         for local in gone:
