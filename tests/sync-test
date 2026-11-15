@@ -33,6 +33,9 @@ git config --global init.defaultBranch main
 mkdir -p "$work/bin"
 printf '#!/bin/sh\necho "{\\"data\\": []}"\n' >"$work/bin/opencode"
 chmod +x "$work/bin/opencode"
+# Nothing here may reach launchd: a stand-in launchctl records any call, and none is expected.
+printf '#!/bin/sh\necho "$*" >>"%s/launchctl.log"\nexit 1\n' "$work" >"$work/bin/launchctl"
+chmod +x "$work/bin/launchctl"
 export PATH="$work/bin:$PATH"
 
 developer="$HOME/Developer"
@@ -201,13 +204,77 @@ refuse "BatchMode" "$work/ssh.log"
 GIT_SSH_COMMAND="ssh -o ConnectTimeout=1" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
 expect "|-o ConnectTimeout=1 .*example.invalid" "$work/ssh.log"
 refuse "BatchMode" "$work/ssh.log"
+# A configured ssh named by its path gets batch mode too.
+: >"$work/ssh.log"
+git -C "$private" config core.sshCommand "$work/bin/ssh -i $work/work-key"
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "^0|-o BatchMode=yes -i $work/work-key .*example.invalid" "$work/ssh.log"
+# With no ssh command configured, plain ssh in batch mode.
+: >"$work/ssh.log"
+git -C "$private" config --unset core.sshCommand
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u GIT_SSH "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "^0|-o BatchMode=yes .*example.invalid" "$work/ssh.log"
+# A program given in GIT_SSH is the caller's too: no command is put above it (git ranks
+# core.sshCommand above GIT_SSH), so it is the one that runs, without batch mode.
+: >"$work/ssh.log"
+cp "$work/bin/ssh" "$work/bin/their-ssh"
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND GIT_SSH="$work/bin/their-ssh" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "example.invalid" "$work/ssh.log"
+refuse "BatchMode" "$work/ssh.log"
+
+# Nothing can prompt, a wrapper included: ssh must ask through an askpass program, which fails at
+# once and says nothing. A stand-in ssh behind a wrapper records what it was given, and asks.
+cat >"$work/bin/asking-ssh" <<'ASK'
+#!/bin/sh
+if [ -n "${SSH_ASKPASS:-}" ] && answer=$("$SSH_ASKPASS" "Enter passphrase:" 2>&1); then asked=answered; else asked=refused; fi
+printf '%s|%s|%s|%s\n' "$GIT_TERMINAL_PROMPT" "${SSH_ASKPASS_REQUIRE:-}" "$asked" "${answer:-}" >>"$SYNC_TEST_LOG"
+exit 255
+ASK
+chmod +x "$work/bin/asking-ssh"
+export SYNC_TEST_LOG="$work/ssh.log"
+git -C "$private" config core.sshCommand "env SYNC_TEST=1 $work/bin/asking-ssh"
+: >"$work/ssh.log"
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "^0|force|refused|$" "$work/ssh.log"
+# A caller's own askpass program is theirs: kept, and not forced.
+printf '#!/bin/sh\necho from-their-askpass\n' >"$work/bin/their-askpass"
+chmod +x "$work/bin/their-askpass"
+: >"$work/ssh.log"
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u SSH_ASKPASS_REQUIRE SSH_ASKPASS="$work/bin/their-askpass" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "^0||answered|from-their-askpass$" "$work/ssh.log"
 git -C "$private" remote set-url origin "$work/remotes/agent-skills-private.git"
 git -C "$private" config --unset core.sshCommand
+
+# What the schedule runs: a line with the time before and after, for doctor; the pinned runtimes are
+# installed only when the pull changed them. Stand-in npm and node record what they are asked.
+printf '#!/bin/sh\necho "$*" >>"%s/npm.log"\n' "$work" >"$work/bin/npm"
+printf '#!/bin/sh\necho 26\n' >"$work/bin/node"
+chmod +x "$work/bin/npm" "$work/bin/node"
+: >"$work/npm.log"
+"$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
+expect "^agent-skills sync started [0-9-]* [0-9:]* [-+][0-9]*$" "$work/sync.out"
+expect "^agent-skills sync finished [0-9-]* [0-9:]* [-+][0-9]*: ok$" "$work/sync.out"
+test ! -s "$work/npm.log" || fail "a scheduled sync installed runtimes nothing changed"
+mkdir -p "$work/seeds/agent-skills/runtime/playwright"
+echo '{}' >"$work/seeds/agent-skills/runtime/playwright/package-lock.json"
+commit_seed agent-skills "A runtime pin"
+"$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "a scheduled sync failed"; }
+expect "^ci --prefix $public/runtime/playwright" "$work/npm.log"
+# A failed run says so in its last line.
+git -C "$public" commit -q --allow-empty -m "Local"
+echo newer >>"$work/seeds/agent-skills/skills/demo/SKILL.md"
+commit_seed agent-skills "Moves on"
+if "$public/scripts/sync" --from-schedule </dev/null >"$work/sync.out" 2>&1; then fail "sync passed when a pull could not fast-forward"; fi
+tail -n 1 "$work/sync.out" | grep -q "^agent-skills sync finished .*: failed (exit 1)$" || { cat "$work/sync.out" >&2; fail "no failed finish line"; }
+git -C "$public" reset -q --hard origin/main
+rm -f "$work/bin/npm" "$work/bin/node"
 
 # A private repository left out (set empty) and a state repository that isn't there are skipped.
 rm -rf "$state"
 AGENT_SKILLS_PRIVATE= "$public/scripts/sync" --skip-dependencies >"$work/sync.out" 2>&1 || { cat "$work/sync.out" >&2; fail "sync failed"; }
 expect "^SKIP agent-skills-state: not there ($state)" "$work/sync.out"
 refuse "agent-skills-private" "$work/sync.out"
+
+test ! -e "$work/launchctl.log" || fail "launchctl was called: $(cat "$work/launchctl.log")"
 
 echo "sync-test: passed"

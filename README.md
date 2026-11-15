@@ -26,10 +26,12 @@ git clone <the private repository> agent-skills-private
 git clone <the state repository> agent-skills-state
 ./agent-skills/scripts/sync                                  # pull all three, then bootstrap
 ./agent-skills/scripts/bootstrap --all --adopt-instructions  # build the instruction files, keeping the old ones as backups
+./agent-skills/scripts/sync --schedule                       # run sync every day at 08:30
 ./agent-skills/scripts/doctor --all
 ```
 
 Run `./scripts/sync` again whenever another computer may have pushed: it is how a computer catches up.
+The daily schedule does that by itself ([Keeping computers in step](#keeping-computers-in-step)).
 
 Install one host only:
 
@@ -104,8 +106,14 @@ says `NOT ADOPTED` with the command that adopts it, and doctor warns about it wi
 beside it (`CLAUDE.md.before-agent-skills-<date>-<time>`, named in its output; a link stays a link).
 Doctor fails while a built file is missing or out of date. Uninstall removes only built files nobody
 changed, and names the backup from before the adoption, to rename back. With no table, or no row for
-this computer, nothing is built and nothing is reported. A row taken out of the table leaves its
-built file where it is: remove it by hand. `./scripts/manifest instructions` prints this computer's
+this computer, nothing is built and nothing is reported. Bootstrap records each file it built, with
+the computer and the host, in `${XDG_STATE_HOME:-~/.local/state}/agent-skills/instructions-built`, so
+a file whose row is taken out of the table (or whose host the computer now leaves out) is still
+known: doctor warns about it, and bootstrap and uninstall remove it when it still carries the marker
+and its checksum, or keep it and say so when someone changed it. Just before it replaces a file,
+bootstrap gives it a second name (a hard link) and compares that with what it judged afterwards, so
+a change written into the file in between is kept as the backup; a file another program replaced
+in that moment is left for the next run, which fails until then. `./scripts/manifest instructions` prints this computer's
 rows, each section as its path; it refuses a row with a section that has no file, a host the
 computer leaves out, a target written with a `..` step, or one file named twice for a computer.
 
@@ -116,14 +124,32 @@ uncommitted change to a tracked file, it runs `git pull --ff-only`; one off its 
 with a change is skipped, with the reason and the command to fix it. For each it reports the commits
 of its default branch that are not on `origin` as of the last fetch, and it never pushes: push those
 yourself, so the other computers get them. When its standard input is not a terminal (a schedule, an
-agent), git fails rather than asks for a password: no prompt, and ssh in batch mode (added to the
-repository's own ssh command when it starts with `ssh`; a `GIT_SSH_COMMAND` you set, or a command
-that wraps ssh, is left as it is and may still ask). Then it runs
-`bootstrap --all` (pass `--skip-dependencies` to leave the runtimes alone). A pull that cannot
-fast-forward fails sync after bootstrap has run.
+agent), nothing waits for an answer: git doesn't prompt and reads no input, and ssh asks through an
+askpass program that fails at once (`SSH_ASKPASS_REQUIRE=force`), so a command that wraps ssh can't
+prompt either; an `SSH_ASKPASS` you set is kept. ssh's batch mode is added to the repository's own
+ssh command when it starts with `ssh`, or is the command when none is set; a `GIT_SSH_COMMAND` or
+`GIT_SSH` you set is left as it is. Then it runs `bootstrap --all` (pass `--skip-dependencies` to
+leave the runtimes alone). A pull that cannot fast-forward fails sync after bootstrap has run.
+
+`./scripts/sync --schedule [HH:MM]` runs sync once a day, at 08:30 unless you give a time. On macOS
+it installs the launch agent `com.agent-skills.sync` in `~/Library/LaunchAgents`: it runs this
+checkout's `scripts/sync --from-schedule` with no input, appends its output to
+`~/Library/Logs/agent-skills-sync.log`, between a line with the time it started and one with the
+time it finished and how, and installs the pinned runtimes only when the pull changed them. Its
+PATH is the installing shell's, limited to folders that exist, so run it from a shell that finds
+git, node and npm; `AGENT_SKILLS_PRIVATE`, `AGENT_SKILLS_STATE`, `AGENT_SKILLS_COMPUTER` and
+`XDG_STATE_HOME` go with it when they are set. A time missed while the Mac slept runs when it wakes.
+Run it from the main checkout: a linked worktree is refused. Running it again changes nothing, or
+replaces the agent with the new time; an agent with that label that it didn't write, a hand-made one
+included, is unloaded and moved to `${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/` as a
+backup. `./scripts/sync --schedule-status` says whether it is installed and how its last run went,
+and `--unschedule` removes it (the log stays). Elsewhere, `--schedule` prints the line to add to cron
+and changes nothing.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind
-`origin` as of the last fetch, with the count and the command to run.
+`origin` as of the last fetch, with the count and the command to run. It also reports the daily
+schedule and when it last ran, from the log: a warning when that run failed, or when the agent is
+not loaded, and never a failure, since a computer may go without one.
 
 ### Private state
 
@@ -226,6 +252,7 @@ Run the local checks before committing:
 ./tests/install-manifest-test
 ./tests/instructions-test
 ./tests/sync-test
+./tests/sync-schedule-test
 ./tests/vendor-test
 ./tests/skill-versions-test
 ./scripts/doctor --all

@@ -1,0 +1,236 @@
+#!/bin/sh
+# Checks the daily schedule of scripts/sync (sync --schedule, --schedule-status, --unschedule) in a
+# made-up home, with a stand-in launchctl that records what it is asked and never reaches launchd.
+# The launch agent runs this checkout's sync once a day with no input and its output appended to a
+# log; installing is idempotent and takes over a hand-made agent with the same label, keeping it as
+# a backup; the status, and doctor, say when it last ran and warn when that run failed; removing
+# leaves nothing behind; elsewhere it prints the line for cron and changes nothing.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/sync-schedule-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+work=$(CDPATH= cd -- "$work" && pwd)
+
+fail() { echo "sync-schedule-test: $*" >&2; exit 1; }
+expect() { grep -q -- "$1" "$2" || { echo "sync-schedule-test: expected \"$1\" in $2:" >&2; cat "$2" >&2; exit 1; }; }
+refuse() { if grep -q -- "$1" "$2"; then echo "sync-schedule-test: did not expect \"$1\" in $2:" >&2; cat "$2" >&2; exit 1; fi; }
+
+export HOME="$work/home"
+export GIT_CONFIG_NOSYSTEM=1
+export AGENT_SKILLS_SCHEDULER=launchd
+unset AGENT_SKILLS_PRIVATE AGENT_SKILLS_STATE AGENT_SKILLS_COMPUTER XDG_STATE_HOME
+mkdir -p "$HOME"
+git config --global user.name test
+git config --global user.email test@example.invalid
+git config --global init.defaultBranch main
+
+# The stand-in launchctl: what is loaded is a list of labels in a file.
+mkdir -p "$work/bin"
+cat >"$work/bin/launchctl" <<EOF
+#!/bin/sh
+echo "\$*" >>"$work/launchctl.log"
+touch "$work/loaded"
+case "\$1" in
+  print) grep -qxF -- "\$2" "$work/loaded" ;;
+  bootout) grep -qxF -- "\$2" "$work/loaded" || exit 3; grep -vxF -- "\$2" "$work/loaded" >"$work/loaded.next" || true; mv "$work/loaded.next" "$work/loaded" ;;
+  bootstrap) [ -f "\$3" ] || exit 5; echo "\$2/com.agent-skills.sync" >>"$work/loaded" ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod +x "$work/bin/launchctl"
+uid=$(id -u)
+
+# A made-up checkout holding this repository's scripts.
+checkout="$HOME/Developer/agent-skills"
+mkdir -p "$checkout"
+cp -R "$repo_root/scripts" "$checkout/"
+mkdir -p "$checkout/install" "$checkout/skills/demo"
+printf 'claude\tClaude Code\tlink\t~/.claude/skills\n' >"$checkout/install/hosts.tsv"
+printf 'install\tdemo\tclaude\n' >"$checkout/install/skills.tsv"
+echo demo >"$checkout/skills/demo/SKILL.md"
+git -C "$checkout" init -q
+git -C "$checkout" add -A
+git -C "$checkout" commit -q -m "A release"
+sync="$checkout/scripts/sync"
+plist="$HOME/Library/LaunchAgents/com.agent-skills.sync.plist"
+log="$HOME/Library/Logs/agent-skills-sync.log"
+
+# Folders on PATH that exist are kept, in order, once each; a missing one and a relative one go.
+mkdir -p "$work/tools"
+export PATH="$work/bin:$work/tools:relative/bin:$work/missing:$work/tools:$PATH"
+export AGENT_SKILLS_STATE="$HOME/Developer/my-state"
+
+"$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule failed"; }
+expect "^SCHEDULED the daily sync at 08:30: $plist runs $sync --from-schedule, appending to $log$" "$work/out"
+test -f "$plist" || fail "no plist"
+command -v plutil >/dev/null 2>&1 && { plutil -lint "$plist" >/dev/null || fail "the plist is not valid"; }
+python3 - "$plist" "$sync" "$log" "$work" "$HOME" <<'EOF'
+import plistlib, sys
+path, sync, log, work, home = sys.argv[1:]
+with open(path, "rb") as handle:
+    agent = plistlib.load(handle)
+assert agent["Label"] == "com.agent-skills.sync", agent
+assert agent["ProgramArguments"] == [sync, "--from-schedule"], agent
+assert agent["StartCalendarInterval"] == {"Hour": 8, "Minute": 30}, agent
+assert agent["StandardInPath"] == "/dev/null", agent
+assert agent["StandardOutPath"] == log and agent["StandardErrorPath"] == log, agent
+assert agent["RunAtLoad"] is False, agent
+env = agent["EnvironmentVariables"]
+folders = env["PATH"].split(":")
+assert folders[:2] == [f"{work}/bin", f"{work}/tools"], folders
+assert len(folders) == len(set(folders)), folders
+assert "relative/bin" not in folders and f"{work}/missing" not in folders, folders
+assert "/usr/bin" in folders and "/bin" in folders, folders
+assert env["AGENT_SKILLS_STATE"] == f"{home}/Developer/my-state", env
+assert "AGENT_SKILLS_PRIVATE" not in env and "XDG_STATE_HOME" not in env, env
+EOF
+expect "^bootstrap gui/$uid $plist$" "$work/launchctl.log"
+grep -qxF "gui/$uid/com.agent-skills.sync" "$work/loaded" || fail "not loaded"
+test -d "$HOME/Library/Logs" || fail "the log's folder was not made"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO the daily sync is scheduled at 08:30 ($plist, scripts/sync --schedule installed it)$" "$work/out"
+expect "^INFO the daily sync has not run yet: no log at $log$" "$work/out"
+refuse "^WARN\|^FAIL" "$work/out"
+
+# The same again changes nothing: no file written, launchd not asked to reload.
+: >"$work/launchctl.log"
+before=$(ls -li "$plist")
+"$sync" --schedule >"$work/out" 2>&1 || fail "a second --schedule failed"
+expect "^OK the daily sync is scheduled at 08:30 ($plist)$" "$work/out"
+refuse "^bootout\|^bootstrap" "$work/launchctl.log"
+test "$(ls -li "$plist")" = "$before" || fail "the plist was rewritten"
+
+# Another time replaces it: the old agent is unloaded first, then the new one loaded.
+: >"$work/launchctl.log"
+"$sync" --schedule 7:05 >"$work/out" 2>&1 || fail "--schedule 7:05 failed"
+expect "^SCHEDULED the daily sync at 07:05" "$work/out"
+test "$(sed -n 1p "$work/launchctl.log")" = "print gui/$uid/com.agent-skills.sync" || true
+expect "^bootout gui/$uid/com.agent-skills.sync$" "$work/launchctl.log"
+test "$(grep -n '^bootout' "$work/launchctl.log" | cut -d: -f1)" -lt "$(grep -n '^bootstrap' "$work/launchctl.log" | cut -d: -f1)" || fail "loaded before unloading"
+python3 -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb"))["StartCalendarInterval"] == {"Hour": 7, "Minute": 5}' "$plist"
+test "$(grep -cxF "gui/$uid/com.agent-skills.sync" "$work/loaded")" -eq 1 || fail "loaded twice"
+
+# Not a time of day: refused, and nothing changes.
+for bad in 24:00 8:60 0830 8:5 noon "8:30 extra"; do
+  cp "$plist" "$work/plist.before"
+  if "$sync" --schedule "$bad" >"$work/out" 2>&1; then fail "--schedule $bad passed"; fi
+  cmp -s "$plist" "$work/plist.before" || fail "--schedule $bad changed the plist"
+done
+if "$sync" --schedule 08:30 extra >"$work/out" 2>&1; then fail "--schedule took two values"; fi
+
+# The status says how the last run went, from the lines sync --from-schedule writes around a run.
+mkdir -p "$(dirname -- "$log")"
+printf 'agent-skills sync started 2026-11-15 08:30:00 +0200\nOK agent-skills is up to date\nagent-skills sync finished 2026-11-15 08:30:20 +0200: ok\n' >"$log"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO the daily sync last ran 2026-11-15 08:30:20 +0200: ok$" "$work/out"
+printf 'agent-skills sync started 2026-11-16 08:30:00 +0200\nFAIL agent-skills-private: git pull --ff-only failed\nagent-skills sync finished 2026-11-16 08:30:09 +0200: failed (exit 1)\n' >>"$log"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the last daily sync, finished 2026-11-16 08:30:09 +0200, failed (exit 1): see $log" "$work/out"
+printf 'agent-skills sync started 2026-11-17 08:30:00 +0200\n' >>"$log"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the last daily sync, started 2026-11-17 08:30:00 +0200, has not finished" "$work/out"
+printf 'OK agent-skills is up to date\n' >"$log"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO the daily sync's log ($log) was last written .*, by a sync that doesn't mark its runs" "$work/out"
+
+# Doctor reports the schedule and its last run, a failed run as a warning, never as a failure.
+printf 'agent-skills sync started 2026-11-16 08:30:00 +0200\nagent-skills sync finished 2026-11-16 08:30:09 +0200: failed (exit 1)\n' >"$log"
+AGENT_SKILLS_PRIVATE= AGENT_SKILLS_NO_UPDATE_CHECK=1 "$checkout/scripts/doctor" --host claude >"$work/doctor.out" 2>&1 || true
+expect "^INFO the daily sync is scheduled at 07:05" "$work/doctor.out"
+expect "^WARN the last daily sync, finished 2026-11-16 08:30:09 +0200, failed" "$work/doctor.out"
+refuse "^FAIL.*daily sync\|^FAIL.*launch agent" "$work/doctor.out"
+
+# Unloaded (after a crash, or removed by hand from launchd): a warning with the fix.
+grep -vxF "gui/$uid/com.agent-skills.sync" "$work/loaded" >"$work/loaded.next" || true
+mv "$work/loaded.next" "$work/loaded"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the daily sync's launch agent is not loaded" "$work/out"
+"$sync" --schedule 07:05 >"$work/out" 2>&1 || fail "--schedule did not reload"
+expect "^SCHEDULED" "$work/out"
+grep -qxF "gui/$uid/com.agent-skills.sync" "$work/loaded" || fail "not loaded again"
+
+# A hand-made agent with the same label, at the same file name and at another one: installing takes
+# both over, keeping each as a backup, and leaves one agent.
+cat >"$plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.agent-skills.sync</string>
+	<key>ProgramArguments</key>
+	<array><string>/bin/sh</string><string>-c</string><string>cd ~/Developer/agent-skills &amp;&amp; ./scripts/sync</string></array>
+	<key>StartCalendarInterval</key>
+	<dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+	<key>StandardOutPath</key>
+	<string>/tmp/whatever.log</string>
+</dict>
+</plist>
+EOF
+cp "$plist" "$work/hand-made.plist"
+cp "$plist" "$HOME/Library/LaunchAgents/sync-by-hand.plist"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN 2 launch agents carry the label com.agent-skills.sync" "$work/out"
+expect "hand-made; scripts/sync --schedule takes it over" "$work/out"
+: >"$work/launchctl.log"
+"$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "taking over failed"; }
+expect "^KEPT the launch agent $plist, which agent-skills didn't write, as $HOME/.local/state/agent-skills-sync/com.agent-skills.sync.plist.before-agent-skills-" "$work/out"
+expect "^KEPT the launch agent $HOME/Library/LaunchAgents/sync-by-hand.plist" "$work/out"
+expect "^SCHEDULED the daily sync at 08:30" "$work/out"
+test ! -e "$HOME/Library/LaunchAgents/sync-by-hand.plist" || fail "the other hand-made agent is still there"
+test "$(ls "$HOME/Library/LaunchAgents")" = com.agent-skills.sync.plist || fail "more than one agent: $(ls "$HOME/Library/LaunchAgents")"
+for kept in "$HOME"/.local/state/agent-skills-sync/*.before-agent-skills-*; do
+  cmp -s "$kept" "$work/hand-made.plist" || fail "a backup differs from the hand-made agent"
+done
+test "$(ls "$HOME/.local/state/agent-skills-sync" | wc -l | tr -d ' ')" -eq 2 || fail "expected two backups"
+"$sync" --schedule-status >"$work/out" 2>&1
+refuse "^WARN.*launch agent" "$work/out"
+expect "scripts/sync --schedule installed it" "$work/out"
+
+# Never from a linked worktree, which goes away when its work is done.
+git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null
+cp "$plist" "$work/plist.before"
+if "$work/worktree/scripts/sync" --schedule >"$work/out" 2>&1; then fail "--schedule passed in a worktree"; fi
+expect "is a linked worktree" "$work/out"
+cmp -s "$plist" "$work/plist.before" || fail "a worktree changed the plist"
+"$work/worktree/scripts/sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the daily sync runs $sync, not this checkout's scripts/sync" "$work/out"
+
+# Removing unloads it and deletes the file; the log stays. Removing again is a no-op.
+: >"$work/launchctl.log"
+"$sync" --unschedule >"$work/out" 2>&1 || fail "--unschedule failed"
+expect "^UNSCHEDULED the daily sync (com.agent-skills.sync); its log stays at $log$" "$work/out"
+expect "^bootout gui/$uid/com.agent-skills.sync$" "$work/launchctl.log"
+test ! -e "$plist" || fail "the plist is still there"
+test -f "$log" || fail "the log was removed"
+! grep -qxF "gui/$uid/com.agent-skills.sync" "$work/loaded" || fail "still loaded"
+"$sync" --unschedule >"$work/out" 2>&1 || fail "a second --unschedule failed"
+expect "^OK no daily sync is scheduled$" "$work/out"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO no daily sync is scheduled: scripts/sync --schedule installs one$" "$work/out"
+# A hand-made agent is kept as a backup when it is removed.
+cp "$work/hand-made.plist" "$plist"
+"$sync" --unschedule >"$work/out" 2>&1 || fail "--unschedule of a hand-made agent failed"
+expect "^KEPT the launch agent $plist" "$work/out"
+test ! -e "$plist" || fail "the hand-made plist is still there"
+
+# Elsewhere: the line for cron, with the same PATH, input and log, and nothing changed.
+: >"$work/launchctl.log"
+AGENT_SKILLS_SCHEDULER=cron "$sync" --schedule 06:15 >"$work/out" 2>&1 || fail "--schedule for cron failed"
+expect "^This system has no launchd" "$work/out"
+expect "^15 6 \* \* \* mkdir -p '$HOME/.local/state' && PATH='$work/bin:$work/tools:.*' '$sync' --from-schedule </dev/null >>'$HOME/.local/state/agent-skills-sync.log' 2>&1$" "$work/out"
+test ! -s "$work/launchctl.log" || fail "cron asked launchctl"
+test ! -e "$plist" || fail "cron wrote a plist"
+printf '#!/bin/sh\necho "15 6 * * * PATH=x %s --from-schedule"\n' "'$sync'" >"$work/bin/crontab"
+chmod +x "$work/bin/crontab"
+AGENT_SKILLS_SCHEDULER=cron "$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO the daily sync is scheduled by cron: 15 6" "$work/out"
+printf '#!/bin/sh\nexit 1\n' >"$work/bin/crontab"
+AGENT_SKILLS_SCHEDULER=cron "$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO no daily sync is scheduled: scripts/sync --schedule prints the line to add to cron$" "$work/out"
+AGENT_SKILLS_SCHEDULER=cron "$sync" --unschedule >"$work/out" 2>&1 || fail "--unschedule for cron failed"
+expect "remove the line that runs $sync from your crontab" "$work/out"
+
+echo "sync-schedule-test: passed"

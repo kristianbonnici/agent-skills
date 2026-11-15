@@ -162,6 +162,32 @@ chmod +x "$test_home/late-bin/chmod"
 expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/late.out"
 grep -q "LATE EDIT" "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/late.out")" || fail "the late change was not kept"
 rm "$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/late.out")"
+# After the last check, bootstrap holds the file by a second name (a hard link) and moves the new
+# one into place: a change written into it then is in the file that was replaced, and kept as a
+# backup. A stand-in ln makes the change right after the hold.
+mkdir -p "$test_home/hold-bin"
+printf '#!/bin/sh\n/bin/ln "$@" || exit\ncase "$1" in -f) eval "$HOLD_EDIT" ;; esac\n' >"$test_home/hold-bin/ln"
+chmod +x "$test_home/hold-bin/ln"
+printf '## Long responses\n\nEnd a long reply with a TLDR of two lines.\n' >"$sections/long-responses.md"
+(HOLD_EDIT='echo "HELD EDIT" >>"$HOLD_TARGET"'; HOLD_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/hold-bin:$PATH"; export HOLD_EDIT HOLD_TARGET PATH
+  on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1
+expect "^REBUILT $on_home/.codex/AGENTS.md; the change made in it is kept as " "$test_home/held.out"
+held_backup=$(sed -n "s#^REBUILT .*; the change made in it is kept as ##p" "$test_home/held.out")
+grep -q "HELD EDIT" "$held_backup" || fail "the change made after the hold was not kept"
+refuse "HELD EDIT" "$on_home/.codex/AGENTS.md"
+rm "$held_backup"
+# A file replaced by another one (an editor that saves by renaming) after the hold is left as it is,
+# for the next run, and the run says so and fails.
+printf '## Long responses\n\nEnd a long reply with a TLDR of one line.\n' >"$sections/long-responses.md"
+if (HOLD_EDIT='printf "Saved by an editor\n" >"$HOLD_TARGET.saved" && /bin/mv "$HOLD_TARGET.saved" "$HOLD_TARGET"'; HOLD_TARGET="$on_home/.codex/AGENTS.md"; PATH="$test_home/hold-bin:$PATH"; export HOLD_EDIT HOLD_TARGET PATH
+  on studio-mac "$repo_root/scripts/instructions" install --host codex) >"$test_home/held.out" 2>&1; then
+  fail "a file replaced during the rebuild was reported as rebuilt"
+fi
+expect "^KEEP $on_home/.codex/AGENTS.md: it was replaced while bootstrap was rebuilding it; run scripts/bootstrap again$" "$test_home/held.out"
+test "$(cat "$on_home/.codex/AGENTS.md")" = "Saved by an editor" || fail "the file saved by an editor was overwritten"
+test -z "$(find "$on_home/.codex" -name '.agent-skills-instructions*' -print -quit)" || fail "a temporary file was left behind"
+rm "$on_home/.codex/AGENTS.md"
+on studio-mac "$repo_root/scripts/instructions" install --host codex >/dev/null 2>&1
 # A check that stops without a FAIL line (here, no temporary folder) fails doctor all the same.
 (TMPDIR="$test_home/no-such-folder"; export TMPDIR; on studio-mac "$repo_root/scripts/doctor" --host claude) >"$test_home/doctor.out" 2>&1 || true
 expect "^FAIL the instruction files could not be checked (scripts/instructions check exited [1-9]" "$test_home/doctor.out"
@@ -245,6 +271,57 @@ test ! -e "$on_home/.claude/CLAUDE.md" && test ! -e "$on_home/.codex/AGENTS.md"
 test -f "$backup" && test -L "$link_backup" && test -f "$test_home/linked.md"
 # travel-mac's files are another home's: untouched.
 test -f "$test_home/travel-mac/.claude/CLAUDE.md"
+
+# A row removed from the table leaves a built file that no row builds any more. Bootstrap recorded
+# it, so doctor warns about it, and bootstrap removes it when nobody changed it, and keeps it, saying
+# so, when someone did; uninstall removes it too.
+on_home="$test_home/studio-mac"
+record="$XDG_STATE_HOME/agent-skills/instructions-built"
+cp "$private/install/instructions.tsv" "$test_home/instructions.full"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/orphan.out" 2>&1
+test "$(grep -c "^studio-mac	" "$record")" -eq 3 || { cat "$test_home/orphan.out" "$record" >&2; fail "the record does not hold studio-mac's three files"; }
+grep -q "^travel-mac	" "$record" || fail "travel-mac's entries went from the shared record"
+grep -v "^studio-mac	opencode" "$test_home/instructions.full" >"$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor.out" 2>&1 || true
+expect "^WARN $on_home/.config/opencode/AGENTS.md was built by bootstrap, but no row of install/instructions.tsv builds it any more: run scripts/bootstrap to remove it$" "$test_home/doctor.out"
+refuse "^FAIL.*opencode/AGENTS.md" "$test_home/doctor.out"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >"$test_home/orphan.out" 2>&1
+expect "^DRY RUN: rm $on_home/.config/opencode/AGENTS.md$" "$test_home/orphan.out"
+test -f "$on_home/.config/opencode/AGENTS.md" || fail "a dry run removed the file"
+on studio-mac "$repo_root/scripts/bootstrap" --host claude --skip-dependencies >"$test_home/orphan.out" 2>&1
+refuse "opencode/AGENTS.md" "$test_home/orphan.out"
+test -f "$on_home/.config/opencode/AGENTS.md" || fail "--host claude removed opencode's file"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/orphan.out" 2>&1
+expect "^REMOVED $on_home/.config/opencode/AGENTS.md: no row of install/instructions.tsv builds it any more$" "$test_home/orphan.out"
+test ! -e "$on_home/.config/opencode/AGENTS.md" || fail "the file no row builds is still there"
+refuse "^studio-mac	opencode" "$record"
+on studio-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor.out" 2>&1 || true
+refuse "opencode/AGENTS.md" "$test_home/doctor.out"
+# Changed by hand, it is kept, with a warning, until the owner deletes it; then it leaves the record.
+echo "a line of my own" >>"$on_home/.codex/AGENTS.md"
+grep -v "^studio-mac	opencode\|^studio-mac	codex" "$test_home/instructions.full" >"$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor.out" 2>&1 || true
+expect "^WARN $on_home/.codex/AGENTS.md was built by bootstrap and changed since, and no row of install/instructions.tsv builds it any more, so bootstrap keeps it" "$test_home/doctor.out"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/orphan.out" 2>&1 || fail "bootstrap failed over a changed file no row builds"
+expect "^KEEP $on_home/.codex/AGENTS.md: no row of install/instructions.tsv builds it any more, but it was changed since bootstrap built it" "$test_home/orphan.out"
+grep -q "a line of my own" "$on_home/.codex/AGENTS.md" || fail "the changed file no row builds was removed"
+grep -q "^studio-mac	codex" "$record" || fail "the kept file left the record"
+on studio-mac "$repo_root/scripts/uninstall" --all --dry-run >"$test_home/orphan.out" 2>&1
+expect "^KEEP $on_home/.codex/AGENTS.md: no row" "$test_home/orphan.out"
+rm "$on_home/.codex/AGENTS.md"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >"$test_home/orphan.out" 2>&1
+refuse "codex/AGENTS.md" "$test_home/orphan.out"
+refuse "^studio-mac	codex" "$record"
+# Uninstall removes a file no row builds as it removes the others, and the record goes with them.
+cp "$test_home/instructions.full" "$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+grep -v "^studio-mac	opencode" "$test_home/instructions.full" >"$private/install/instructions.tsv"
+on studio-mac "$repo_root/scripts/uninstall" --all >"$test_home/orphan.out" 2>&1
+expect "^REMOVED $on_home/.config/opencode/AGENTS.md: no row of install/instructions.tsv builds it any more$" "$test_home/orphan.out"
+expect "^REMOVED $on_home/.claude/CLAUDE.md" "$test_home/orphan.out"
+test ! -e "$on_home/.config/opencode/AGENTS.md" && test ! -e "$on_home/.claude/CLAUDE.md" && test ! -e "$on_home/.codex/AGENTS.md"
+refuse "^studio-mac	" "$record"
+cp "$test_home/instructions.full" "$private/install/instructions.tsv"
 
 # No row for this computer, and no table: nothing is built and nothing is reported.
 on_home="$test_home/spare-mac"

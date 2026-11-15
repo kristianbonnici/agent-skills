@@ -8,7 +8,12 @@
 # seen. A file at a target without the marker is the owner's own: it is left as it is until
 # install --adopt takes it over, after keeping it as a backup beside it (a link stays a link there).
 # A built file someone changed is kept as a backup beside it before it is rebuilt, and is never
-# removed. A rebuilt file keeps the permissions of the file it replaces.
+# removed. A rebuilt file keeps the permissions of the file it replaces, and so does its backup.
+#
+# Each file it built is recorded, with this computer's name and the host, in
+# ${XDG_STATE_HOME:-~/.local/state}/agent-skills/instructions-built, so a file whose row is gone from install/instructions.tsv (or whose host this
+# computer now leaves out) is still known: install removes it when nobody changed it and keeps it,
+# saying so, when someone did; check warns about it; remove removes it as it removes the others.
 #
 #   instructions install [--host HOST] [--dry-run] [--adopt]
 #                     build what is missing, rebuild a built file that no longer matches its
@@ -50,7 +55,11 @@ rows=$("$script_dir/manifest" instructions) || {
   [ "$action" != check ] || echo "FAIL install/instructions.tsv cannot be read"
   exit 1
 }
-[ -n "$rows" ] || exit 0
+record=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills/instructions-built
+# Entries of another computer (a state folder shared between two homes) are that computer's: kept,
+# never acted on.
+computer=$("$script_dir/manifest" computer) || exit 1
+[ -n "$rows" ] || [ -s "$record" ] || exit 0
 
 expand_target() {
   case "$1" in
@@ -89,6 +98,16 @@ is_built() {
   return 1
 }
 
+# Is the built file $1 as bootstrap wrote it, by the checksum its own marker carries? For a file no
+# row builds any more, whose marker this build can't write again.
+is_intact() {
+  first_line=
+  IFS= read -r first_line <"$1" || true
+  case "$first_line" in *" Checksum: "*" -->") ;; *) return 1 ;; esac
+  intact_sum=${first_line##* Checksum: }
+  [ "${intact_sum% -->}" = "$(body_sum "$1")" ]
+}
+
 # Has the built file $1 changed since bootstrap wrote it? Its first line must be the marker this
 # build writes, word for word, with the checksum of the rest of the file as it is now. Anything else,
 # a marker without a checksum included, counts as changed, to be safe.
@@ -122,11 +141,13 @@ mode_for() {
 
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/agent-skills-instructions.XXXXXX")
 next_file=
-trap 'rm -rf "$scratch"; [ -z "$next_file" ] || rm -f "$next_file"' EXIT
+held=
+trap 'rm -rf "$scratch"; [ -z "$next_file" ] || rm -f "$next_file"; [ -z "$held" ] || rm -f "$held"' EXIT
 trap 'exit 1' HUP INT TERM
 built="$scratch/built"
 status=0
 tab=$(printf '\t')
+: >"$scratch/current"
 
 while IFS= read -r row; do
   [ -n "$row" ] || continue
@@ -134,8 +155,9 @@ while IFS= read -r row; do
   rest=${row#*"$tab"}
   target=${rest%%"$tab"*}
   sections=${rest#*"$tab"}
-  [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
   target_path=$(expand_target "$target")
+  printf '%s\t%s\n' "$row_host" "$target_path" >>"$scratch/current"
+  [ "$host" = all ] || [ "$row_host" = "$host" ] || continue
   # The section paths as arguments: they are separated by tabs, and a path is never a pattern.
   old_ifs=$IFS
   IFS=$tab
@@ -234,32 +256,115 @@ while IFS= read -r row; do
       target_dir=$(dirname -- "$target_path")
       mkdir -p "$target_dir"
       # Written beside the target and moved into place, so a host never reads half a file, and the
-      # target is there throughout: the backup is made before the move replaces it.
+      # target is there throughout.
       next_file=$(mktemp "$target_dir/.agent-skills-instructions.XXXXXX")
       cat "$built" >"$next_file"
       chmod "$(mode_for "$target_path")" "$next_file"
       note=
-      if [ -n "$backup" ]; then
-        if [ -L "$target_path" ]; then
-          # A link is kept as the link it was, pointing where it pointed.
-          ln -s "$(readlink "$target_path")" "$backup"
-        else
-          cp -p "$target_path" "$backup"
+      if [ -L "$target_path" ]; then
+        # Only an adopted file can be a link: it is kept as the link it was, pointing where it pointed.
+        ln -s "$(readlink "$target_path")" "$backup"
+        note="; your file is kept as $backup"
+      elif [ -e "$target_path" ]; then
+        # The file there now gets a second name beside it, a hard link: whatever is written into it
+        # until the move replaces it stays in it, and it is judged again once the move is done.
+        held=$(mktemp "$target_dir/.agent-skills-instructions-held.XXXXXX")
+        ln -f "$target_path" "$held"
+        # Replaced by another file since (an editor that saves by renaming): that file is the newest
+        # text, so it is left for the next run to judge.
+        if ! [ "$target_path" -ef "$held" ]; then
+          rm -f "$held" "$next_file"
+          held=
+          next_file=
+          echo "KEEP $target_path: it was replaced while bootstrap was rebuilding it; run scripts/bootstrap again" >&2
+          status=1
+          continue
         fi
-        if [ "$verb" = ADOPTED ]; then note="; your file is kept as $backup"; else note="; the change made in it is kept as $backup"; fi
-      fi
-      # Changed since it was judged unchanged: kept after all.
-      if [ "$verb" = REBUILT ] && [ -z "$backup" ] && ! cmp -s "$scratch/judged" "$target_path"; then
-        backup=$(backup_name "$target_path" changed)
-        cp -p "$target_path" "$backup"
-        note="; the change made in it is kept as $backup"
       fi
       mv "$next_file" "$target_path"
       next_file=
+      if [ -n "$held" ]; then
+        # The file that was replaced: let go only when it is still what was judged unchanged.
+        if [ -z "$backup" ] && [ "$verb" = REBUILT ] && cmp -s "$scratch/judged" "$held"; then
+          rm -f "$held"
+        else
+          [ -n "$backup" ] || backup=$(backup_name "$target_path" changed)
+          mv "$held" "$backup"
+          if [ "$verb" = ADOPTED ]; then note="; your file is kept as $backup"; else note="; the change made in it is kept as $backup"; fi
+        fi
+        held=
+      fi
       echo "$verb $target_path$note"
       ;;
   esac
 done <<EOF
 $rows
 EOF
+
+# The files the record says bootstrap built that no row builds any more.
+orphans=
+if [ -s "$record" ]; then
+  orphans=$(awk -F '\t' -v c="$computer" 'NR == FNR { current[$2] = 1; next } NF == 3 && $1 == c && !($3 in current) { print $2 "\t" $3 }' "$scratch/current" "$record")
+fi
+: >"$scratch/kept"
+while IFS="$tab" read -r orphan_host orphan_path; do
+  [ -n "$orphan_path" ] || continue
+  if [ "$host" != all ] && [ "$orphan_host" != "$host" ]; then
+    printf '%s\t%s\t%s\n' "$computer" "$orphan_host" "$orphan_path" >>"$scratch/kept"
+    continue
+  fi
+  # Gone, or no longer a file bootstrap built: nothing of it is bootstrap's any more.
+  is_built "$orphan_path" || continue
+  if ! is_intact "$orphan_path"; then
+    case "$action" in
+      check) echo "WARN $orphan_path was built by bootstrap and changed since, and no row of install/instructions.tsv builds it any more, so bootstrap keeps it: move what you need from it into a section, then delete it" ;;
+      *) echo "KEEP $orphan_path: no row of install/instructions.tsv builds it any more, but it was changed since bootstrap built it; move what you need from it into a section, then delete it" >&2 ;;
+    esac
+    printf '%s\t%s\t%s\n' "$computer" "$orphan_host" "$orphan_path" >>"$scratch/kept"
+    continue
+  fi
+  if [ "$action" = check ]; then
+    echo "WARN $orphan_path was built by bootstrap, but no row of install/instructions.tsv builds it any more: run scripts/bootstrap to remove it"
+    continue
+  fi
+  earlier=$(find "$(dirname -- "$orphan_path")" -maxdepth 1 -name "$(basename -- "$orphan_path").before-agent-skills-*" 2>/dev/null | sort | tail -n 1)
+  note=
+  [ -z "$earlier" ] || note="; your file from before bootstrap built it is $earlier: rename it back to use it again"
+  if [ "$dry_run" -eq 1 ]; then
+    echo "DRY RUN: rm $orphan_path$note"
+  else
+    rm "$orphan_path"
+    echo "REMOVED $orphan_path: no row of install/instructions.tsv builds it any more$note"
+  fi
+done <<EOF
+$orphans
+EOF
+
+# The record, as this run leaves it: install adds every file bootstrap built at a target, and both
+# install and remove keep what they left in place. check and a dry run change nothing.
+if [ "$action" != check ] && [ "$dry_run" -eq 0 ]; then
+  {
+    # Other computers' entries, as they were.
+    [ ! -f "$record" ] || awk -F '\t' -v c="$computer" 'NF == 3 && $1 != c' "$record"
+    cat "$scratch/kept"
+    while IFS="$tab" read -r current_host current_path; do
+      [ -n "$current_path" ] || continue
+      if [ "$host" != all ] && [ "$current_host" != "$host" ]; then
+        # Not this run's host: as the record had it.
+        [ ! -f "$record" ] || awk -F '\t' -v c="$computer" -v h="$current_host" -v p="$current_path" '$1 == c && $2 == h && $3 == p' "$record"
+      elif is_built "$current_path"; then
+        printf '%s\t%s\t%s\n' "$computer" "$current_host" "$current_path"
+      fi
+    done <"$scratch/current"
+  } | awk '!seen[$0]++' >"$scratch/record"
+  if [ -s "$scratch/record" ]; then
+    mkdir -p "$(dirname -- "$record")"
+    if ! cmp -s "$scratch/record" "$record"; then
+      cp "$scratch/record" "$record.next-$$"
+      mv "$record.next-$$" "$record"
+    fi
+  elif [ -e "$record" ]; then
+    rm -f "$record"
+  fi
+fi
 exit "$status"

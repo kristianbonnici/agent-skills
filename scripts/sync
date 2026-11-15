@@ -12,25 +12,58 @@
 # agent-skills-state next to this one). One that is missing is skipped.
 #
 # Exits 1 when a pull or bootstrap fails; a skipped repository is not a failure.
+#
+# With no terminal on standard input (a schedule, an agent), nothing may wait for an answer: git
+# doesn't prompt (GIT_TERMINAL_PROMPT=0) and reads no input; ssh asks through an askpass program
+# that fails at once (SSH_ASKPASS_REQUIRE=force), so no ssh command, a wrapper included, can wait for
+# a passphrase, a password or a new host key, unless the caller set SSH_ASKPASS; and ssh's batch
+# mode is added where that is safe: to the repository's own ssh command when it starts with ssh, or
+# as the command when none is set. A GIT_SSH_COMMAND or GIT_SSH the caller set is left as it is.
+#
+#   sync --schedule [HH:MM]   run sync every day (08:30 unless a time is given): a launch agent on
+#                             macOS, the line to add to cron elsewhere (scripts/sync-schedule)
+#   sync --schedule-status    whether the schedule is installed, and how its last run went
+#   sync --unschedule         remove the schedule
+#   sync --from-schedule      what the schedule runs: a line with the time before and after the run,
+#                             for doctor to read from the log, and the pinned runtimes installed only
+#                             when the pull changed them
 set -u
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 parent=$(dirname -- "$repo_root")
 bootstrap_args=--all
+skip_dependencies=0
+from_schedule=0
+runtime_changed=0
 failures=0
 
 usage() {
   echo "Usage: sync [--skip-dependencies]" >&2
+  echo "       sync --schedule [HH:MM] | --schedule-status | --unschedule" >&2
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --skip-dependencies) bootstrap_args="$bootstrap_args --skip-dependencies"; shift ;;
+    --skip-dependencies) skip_dependencies=1; shift ;;
+    --from-schedule) from_schedule=1; shift ;;
+    --schedule)
+      shift
+      [ "$#" -le 1 ] || { usage; exit 2; }
+      exec "$script_dir/sync-schedule" install "$@"
+      ;;
+    --schedule-status) [ "$#" -eq 1 ] || { usage; exit 2; }; exec "$script_dir/sync-schedule" status ;;
+    --unschedule) [ "$#" -eq 1 ] || { usage; exit 2; }; exec "$script_dir/sync-schedule" remove ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+if [ "$from_schedule" -eq 1 ]; then
+  echo "agent-skills sync started $(date '+%Y-%m-%d %H:%M:%S %z')"
+  # The line doctor reads to say how the last run went, however sync ends.
+  trap 'sync_status=$?; if [ "$sync_status" -eq 0 ]; then sync_result=ok; else sync_result="failed (exit $sync_status)"; fi; echo "agent-skills sync finished $(date "+%Y-%m-%d %H:%M:%S %z"): $sync_result"' EXIT
+fi
 
 if [ "${AGENT_SKILLS_PRIVATE+set}" = set ]; then
   private_repo=$AGENT_SKILLS_PRIVATE
@@ -38,12 +71,21 @@ else
   private_repo=$parent/agent-skills-private
 fi
 state_repo=${AGENT_SKILLS_STATE:-$parent/agent-skills-state}
-# When standard input is not a terminal (a schedule, an agent), git must fail rather than wait for
-# a password: no prompt, and ssh in batch mode (the pull adds it to the repository's own ssh command).
+# When standard input is not a terminal (a schedule, an agent), git and ssh must fail rather than
+# wait for an answer (see the top of this file).
 batch=0
 if [ ! -t 0 ]; then
   batch=1
   export GIT_TERMINAL_PROMPT=0
+  if [ -z "${SSH_ASKPASS:-}" ]; then
+    for no_answer in /usr/bin/false /bin/false; do
+      [ -x "$no_answer" ] || continue
+      SSH_ASKPASS=$no_answer
+      SSH_ASKPASS_REQUIRE=force
+      export SSH_ASKPASS SSH_ASKPASS_REQUIRE
+      break
+    done
+  fi
 fi
 
 in_repo() {
@@ -84,19 +126,33 @@ sync_one() {
   else
     before=$(in_repo rev-parse HEAD)
     set -- pull --ff-only --quiet origin "$default"
+    # Git takes GIT_SSH_COMMAND first, then core.sshCommand, then GIT_SSH, then ssh. Batch mode goes
+    # right after the program's name, since ssh takes the first value it is given for an option, and
+    # only into a command that starts with ssh itself: a wrapper (env ..., a script) is left as it is,
+    # and so is the caller's GIT_SSH_COMMAND or GIT_SSH (the askpass above still keeps them quiet).
     if [ "$batch" -eq 1 ] && [ -z "${GIT_SSH_COMMAND:-}" ]; then
-      ssh_command=$(in_repo config --get core.sshCommand 2>/dev/null) || ssh_command=ssh
-      # Right after the program's name, since ssh takes the first value it is given for an option,
-      # and only when the command starts with ssh itself: a wrapper (env ..., a script) is left as
-      # it is, prompts and all.
-      ssh_program=${ssh_command%% *}
-      ssh_options=${ssh_command#"$ssh_program"}
-      case "$ssh_program" in
-        ssh|*/ssh) set -- -c "core.sshCommand=$ssh_program -o BatchMode=yes$ssh_options" "$@" ;;
-      esac
+      if ssh_command=$(in_repo config --get core.sshCommand 2>/dev/null); then
+        ssh_program=${ssh_command%% *}
+        ssh_options=${ssh_command#"$ssh_program"}
+        case "$ssh_program" in
+          ssh|*/ssh) set -- -c "core.sshCommand=$ssh_program -o BatchMode=yes$ssh_options" "$@" ;;
+        esac
+      elif [ -z "${GIT_SSH:-}" ]; then
+        set -- -c "core.sshCommand=ssh -o BatchMode=yes" "$@"
+      fi
     fi
-    if pull_out=$(in_repo "$@" 2>&1); then
+    pull_status=0
+    if [ "$batch" -eq 1 ]; then
+      pull_out=$(in_repo "$@" 2>&1 </dev/null) || pull_status=$?
+    else
+      pull_out=$(in_repo "$@" 2>&1) || pull_status=$?
+    fi
+    if [ "$pull_status" -eq 0 ]; then
       count=$(in_repo rev-list --count "$before..HEAD")
+      # A scheduled run installs the pinned runtimes only when this pull changed them.
+      if [ "$sync_root" = "$repo_root" ] && [ "$count" -gt 0 ] && ! in_repo diff --quiet "$before" HEAD -- runtime; then
+        runtime_changed=1
+      fi
       if [ "$count" -eq 0 ]; then
         echo "OK $name is up to date with origin/$default"
       else
@@ -125,6 +181,9 @@ sync_one "$private_repo"
 sync_one "$state_repo"
 
 # Bootstrap as the pull left it: the new scripts and tables.
+if [ "$skip_dependencies" -eq 1 ] || { [ "$from_schedule" -eq 1 ] && [ "$runtime_changed" -eq 0 ]; }; then
+  bootstrap_args="$bootstrap_args --skip-dependencies"
+fi
 # shellcheck disable=SC2086
 "$script_dir/bootstrap" $bootstrap_args || failures=$((failures + 1))
 

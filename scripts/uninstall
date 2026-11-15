@@ -7,6 +7,8 @@ state_repo=${AGENT_SKILLS_STATE:-$(dirname -- "$repo_root")/agent-skills-state}
 state_home=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills
 host=all
 dry_run=0
+removed_any=0
+removed_count=0
 
 usage() {
   echo "Usage: uninstall [--all | --host HOST] [--dry-run]" >&2
@@ -50,6 +52,7 @@ remove_link() {
     echo "REMOVED $remove_target"
   fi
   removed_any=1
+  removed_count=$((removed_count + 1))
 }
 
 # Is $1 the link this checkout installed for the retired source $2? Only an exact match is: that is
@@ -65,6 +68,14 @@ looks_retired() {
   retired_to=$(readlink "$1" | sed -e 's://*:/:g' -e 's:/\./:/:g' -e 's:^\./::' -e 's:/*$::')
   case "$retired_to" in skills/"$(basename -- "$2")"|*/skills/"$(basename -- "$2")") return 0 ;; esac
   return 1
+}
+
+# Does another retired row this run acts on, for the same target $1 (as the table spells it), name
+# exactly what the link at $2 points to? Then that row removes it, and this one says nothing.
+retired_elsewhere() {
+  [ -L "$2" ] || return 1
+  printf '%s\n' "$rows" | awk -F '\t' -v h="$host" -v t="$1" -v s="$(readlink "$2")" \
+    '$2 == "retired" && (h == "all" || $1 == h) && $4 == t && $3 == s { found = 1 } END { exit !found }'
 }
 
 # Every link the install tables declare, here and in the private repository: this computer's, and
@@ -85,6 +96,8 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
     retired)
       if is_retired_link "$target_path" "$source_path"; then
         if [ "$dry_run" -eq 1 ]; then echo "DRY RUN: rm $target_path"; else rm "$target_path"; echo "REMOVED $target_path"; fi
+      elif retired_elsewhere "$target" "$target_path"; then
+        :
       elif looks_retired "$target_path" "$source_path"; then
         echo "KEEP $target_path -> $(readlink "$target_path"): the retired skill from another checkout? If so, remove it by hand" >&2
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
@@ -99,12 +112,18 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
       if [ -L "$adapter_target" ]; then echo "KEEP foreign link: $adapter_target" >&2; continue; fi
       # The folder goes only with the links it held: an empty folder bootstrap never filled is kept.
       removed_any=0
+      removed_count=0
       for name in SKILL.md agents references scripts assets; do
         [ -e "$adapter_source/$name" ] || continue
         remove_link "$adapter_source/$name" "$adapter_target/$name"
       done
-      if [ "$removed_any" -eq 1 ] && [ -d "$adapter_target" ] && [ -z "$(find "$adapter_target" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-        if [ "$dry_run" -eq 1 ]; then echo "DRY RUN: rmdir $adapter_target"; else rmdir "$adapter_target"; fi
+      if [ "$removed_any" -eq 1 ] && [ -d "$adapter_target" ]; then
+        # A dry run removed nothing: the folder would be left empty if those links are all it holds.
+        if [ "$dry_run" -eq 1 ]; then
+          [ "$(find "$adapter_target" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" -ne "$removed_count" ] || echo "DRY RUN: rmdir $adapter_target"
+        elif [ -z "$(find "$adapter_target" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          rmdir "$adapter_target"
+        fi
       fi
       ;;
   esac

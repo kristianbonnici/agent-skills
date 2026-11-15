@@ -1,0 +1,350 @@
+#!/bin/sh
+# The daily schedule that runs scripts/sync. Run it through sync (sync --schedule [HH:MM],
+# --schedule-status, --unschedule); doctor runs `sync-schedule status`.
+#
+# On macOS it is a launch agent of this user, com.agent-skills.sync in ~/Library/LaunchAgents. It
+# runs `scripts/sync --from-schedule` of this checkout once a day (08:30 unless a time is given;
+# launchd runs a time missed while the Mac slept when it wakes), with standard input from /dev/null,
+# so nothing can wait for an answer, and its output appended to ~/Library/Logs/agent-skills-sync.log.
+# Its PATH is the installing shell's, limited to folders that exist, so it finds git, node and npm;
+# AGENT_SKILLS_PRIVATE, AGENT_SKILLS_STATE, AGENT_SKILLS_COMPUTER and XDG_STATE_HOME go with it when
+# they are set. Installing replaces an agent with the same label, a hand-made one included (kept
+# first as a backup under ${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/), and changes nothing
+# when the same agent is already installed and loaded.
+#
+# Elsewhere it prints the line to add to cron and changes nothing.
+#
+#   sync-schedule install [HH:MM]   install or replace the schedule
+#   sync-schedule remove            remove it
+#   sync-schedule status            INFO or WARN lines, as doctor prints them: whether it is
+#                                   installed, and when it last ran, from the log. Never FAIL.
+#
+# AGENT_SKILLS_SCHEDULER=launchd|cron chooses the kind regardless of the system (tests use it).
+set -u
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+label=com.agent-skills.sync
+# Every agent this script writes starts its plist with this comment, after the XML declaration.
+marker='<!-- Written by agent-skills scripts/sync-schedule: change it with scripts/sync and its schedule options, not here. -->'
+start_marker='agent-skills sync started '
+finish_marker='agent-skills sync finished '
+
+usage() {
+  echo "Usage: sync-schedule install [HH:MM] | remove | status" >&2
+}
+
+case "${AGENT_SKILLS_SCHEDULER:-}" in
+  launchd|cron) scheduler=$AGENT_SKILLS_SCHEDULER ;;
+  "") if [ "$(uname -s)" = Darwin ]; then scheduler=launchd; else scheduler=cron; fi ;;
+  *) echo "sync-schedule: AGENT_SKILLS_SCHEDULER is launchd or cron, not $AGENT_SKILLS_SCHEDULER" >&2; exit 2 ;;
+esac
+agents_dir=$HOME/Library/LaunchAgents
+plist=$agents_dir/$label.plist
+if [ "$scheduler" = launchd ]; then
+  log=$HOME/Library/Logs/agent-skills-sync.log
+else
+  log=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills-sync.log
+fi
+backups=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills-sync
+domain=gui/$(id -u)
+
+# $1 with &, < and > written as XML writes them.
+xml() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# $1 in single quotes, for a shell.
+quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# The installing shell's PATH, without relative entries, folders that don't exist or repeats, and
+# with the system's own folders at the end if it lacks them.
+schedule_path() {
+  kept=
+  old_ifs=$IFS
+  IFS=:
+  set -f
+  # shellcheck disable=SC2086
+  set -- $PATH /usr/bin /bin /usr/sbin /sbin
+  set +f
+  IFS=$old_ifs
+  for entry in "$@"; do
+    case "$entry" in /*) ;; *) continue ;; esac
+    [ -d "$entry" ] || continue
+    case ":$kept:" in *":$entry:"*) continue ;; esac
+    kept=${kept:+$kept:}$entry
+  done
+  printf '%s\n' "$kept"
+}
+
+# The Label of the plist $1, or nothing.
+plist_label() {
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -extract Label raw -o - "$1" 2>/dev/null && return 0
+  fi
+  awk '/<key>Label<\/key>/ { getline; if (match($0, /<string>[^<]*<\/string>/)) print substr($0, RSTART + 8, RLENGTH - 17); exit }' "$1" 2>/dev/null
+}
+
+# The launch agents' files that carry this label, whatever their names.
+labelled_plists() {
+  [ -d "$agents_dir" ] || return 0
+  for candidate in "$agents_dir"/*.plist; do
+    [ -f "$candidate" ] || continue
+    [ "$(plist_label "$candidate")" = "$label" ] && printf '%s\n' "$candidate"
+  done
+}
+
+is_ours() {
+  [ -f "$1" ] && sed -n 2p "$1" | grep -qxF -- "$marker"
+}
+
+# HH:MM (or H:MM) to "hour minute", or nothing when it isn't a time of day.
+parse_time() {
+  printf '%s\n' "$1" | awk -F: 'NF == 2 && $1 ~ /^[0-9][0-9]?$/ && $2 ~ /^[0-9][0-9]$/ && $1 + 0 < 24 && $2 + 0 < 60 { print $1 + 0, $2 + 0 }'
+}
+
+# The time of day the plist $1 runs at, as HH:MM, or nothing.
+plist_time() {
+  awk '
+    /<key>Hour<\/key>/ { getline; gsub(/[^0-9]/, ""); hour = $0 }
+    /<key>Minute<\/key>/ { getline; gsub(/[^0-9]/, ""); minute = $0 }
+    END { if (hour != "" && minute != "") printf "%02d:%02d\n", hour, minute }
+  ' "$1" 2>/dev/null
+}
+
+# The program the plist $1 runs: the first of its ProgramArguments.
+plist_program() {
+  awk '/<key>ProgramArguments<\/key>/ { inside = 1; next } inside && /<string>/ { sub(/.*<string>/, ""); sub(/<\/string>.*/, ""); print; exit }' "$1" 2>/dev/null |
+    sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'
+}
+
+stamp() {
+  date +%Y%m%d-%H%M%S
+}
+
+# Moves a plist this script didn't write to the backup folder before it is replaced or removed.
+keep_aside() {
+  mkdir -p "$backups"
+  aside="$backups/$(basename -- "$1").before-agent-skills-$(stamp)"
+  count=1
+  while [ -e "$aside" ]; do count=$((count + 1)); aside="$backups/$(basename -- "$1").before-agent-skills-$(stamp)-$count"; done
+  mv "$1" "$aside"
+  echo "KEPT the launch agent $1, which agent-skills didn't write, as $aside"
+}
+
+render_plist() {
+  hour=$1
+  minute=$2
+  path=$3
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+$marker
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$label</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(xml "$repo_root/scripts/sync")</string>
+		<string>--from-schedule</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>$hour</integer>
+		<key>Minute</key>
+		<integer>$minute</integer>
+	</dict>
+	<key>StandardInPath</key>
+	<string>/dev/null</string>
+	<key>StandardOutPath</key>
+	<string>$(xml "$log")</string>
+	<key>StandardErrorPath</key>
+	<string>$(xml "$log")</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$(xml "$path")</string>
+EOF
+  for name in AGENT_SKILLS_PRIVATE AGENT_SKILLS_STATE AGENT_SKILLS_COMPUTER XDG_STATE_HOME; do
+    eval "is_set=\${$name+set} value=\${$name-}"
+    # shellcheck disable=SC2154
+    [ "$is_set" = set ] || continue
+    printf '\t\t<key>%s</key>\n\t\t<string>%s</string>\n' "$name" "$(xml "$value")"
+  done
+  cat <<EOF
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>
+EOF
+}
+
+# The schedule must run a checkout that stays: a linked worktree is removed when its work is done.
+refuse_worktree() {
+  git_dir=$(git -C "$repo_root" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  common=$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null) || return 0
+  common=$(CDPATH= cd -- "$repo_root" && CDPATH= cd -- "$common" && pwd -P)
+  if [ "$(CDPATH= cd -- "$git_dir" && pwd -P)" != "$common" ]; then
+    echo "sync-schedule: $repo_root is a linked worktree, which goes away when its work is done; run sync --schedule from the main checkout ($(dirname -- "$common"))" >&2
+    exit 2
+  fi
+}
+
+install() {
+  when=${1:-08:30}
+  parsed=$(parse_time "$when")
+  [ -n "$parsed" ] || { echo "sync-schedule: $when is not a time of day (HH:MM, 24-hour)" >&2; exit 2; }
+  hour=${parsed% *}
+  minute=${parsed#* }
+  shown=$(printf '%02d:%02d' "$hour" "$minute")
+  refuse_worktree
+  path=$(schedule_path)
+  PATH=$path command -v git >/dev/null 2>&1 || { echo "sync-schedule: git is not on PATH ($path), and sync needs it" >&2; exit 1; }
+  for tool in node npm; do
+    PATH=$path command -v "$tool" >/dev/null 2>&1 ||
+      echo "WARN $tool is not on PATH ($path): a scheduled sync can't install the pinned runtimes when a pull changes them; run sync --schedule from a shell that has it"
+  done
+
+  if [ "$scheduler" = cron ]; then
+    echo "This system has no launchd. To run sync every day at $shown, add this line to your crontab (crontab -e); nothing was changed:"
+    echo
+    # cron reads % as a new line: written \% it is a percent sign.
+    printf '%s %s * * * mkdir -p %s && PATH=%s %s --from-schedule </dev/null >>%s 2>&1\n' "$minute" "$hour" \
+      "$(quote "$(dirname -- "$log")")" "$(quote "$path")" "$(quote "$repo_root/scripts/sync")" "$(quote "$log")" | sed 's/%/\\%/g'
+
+    return 0
+  fi
+
+  mkdir -p "$agents_dir" "$(dirname -- "$log")"
+  next=$(mktemp "$agents_dir/.agent-skills-sync.XXXXXX")
+  trap 'rm -f "$next"' EXIT
+  trap 'exit 1' HUP INT TERM
+  render_plist "$hour" "$minute" "$path" >"$next"
+  chmod 644 "$next"
+  if cmp -s "$next" "$plist" && launchctl print "$domain/$label" >/dev/null 2>&1 && [ "$(labelled_plists)" = "$plist" ]; then
+    echo "OK the daily sync is scheduled at $shown ($plist)"
+    return 0
+  fi
+  # Whatever runs with this label now stops, and every file that would load it again goes.
+  launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+  labelled_plists | while IFS= read -r other; do
+    if is_ours "$other"; then
+      [ "$other" = "$plist" ] || rm -f "$other"
+    else
+      keep_aside "$other"
+    fi
+  done
+  [ ! -e "$plist" ] || is_ours "$plist" || keep_aside "$plist"
+  mv "$next" "$plist"
+  # launchd can still be letting go of the old agent: one more try a moment later.
+  if ! launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
+    sleep 1
+    if ! loaded=$(launchctl bootstrap "$domain" "$plist" 2>&1); then
+      printf '%s\n' "$loaded" | sed 's/^/  /' >&2
+      echo "FAIL launchctl could not load $plist; it loads at the next login, or run sync --schedule again" >&2
+      exit 1
+    fi
+  fi
+  echo "SCHEDULED the daily sync at $shown: $plist runs $repo_root/scripts/sync --from-schedule, appending to $log"
+}
+
+remove() {
+  if [ "$scheduler" = cron ]; then
+    echo "This system has no launchd: remove the line that runs $repo_root/scripts/sync from your crontab (crontab -e); nothing was changed."
+    return 0
+  fi
+  # The files that carry the label, and the one at this label's name whatever it carries.
+  found=$({ labelled_plists; [ ! -e "$plist" ] || printf '%s\n' "$plist"; } | awk 'NF && !seen[$0]++')
+  was_loaded=0
+  if launchctl print "$domain/$label" >/dev/null 2>&1; then
+    was_loaded=1
+    launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+  fi
+  if [ -z "$found" ] && [ "$was_loaded" -eq 0 ]; then
+    echo "OK no daily sync is scheduled"
+    return 0
+  fi
+  printf '%s\n' "$found" | while IFS= read -r other; do
+    [ -n "$other" ] || continue
+    if is_ours "$other"; then rm -f "$other"; else keep_aside "$other"; fi
+  done
+  echo "UNSCHEDULED the daily sync ($label); its log stays at $log"
+}
+
+# When the last scheduled sync ran, from the lines sync --from-schedule writes around a run.
+last_run() {
+  if [ ! -s "$log" ]; then
+    echo "INFO the daily sync has not run yet: no log at $log"
+    return 0
+  fi
+  last=$(awk -v s="$start_marker" -v f="$finish_marker" '
+    index($0, s) == 1 { started = substr($0, length(s) + 1); finished = "" }
+    index($0, f) == 1 { finished = substr($0, length(f) + 1) }
+    END { print started "\t" finished }
+  ' "$log")
+  started=${last%%"	"*}
+  finished=${last#*"	"}
+  if [ -z "$started" ]; then
+    echo "INFO the daily sync's log ($log) was last written $(date -r "$log" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'at an unknown time'), by a sync that doesn't mark its runs; the next scheduled run will"
+  elif [ -z "$finished" ]; then
+    echo "WARN the last daily sync, started $started, has not finished: it is running now, or it was stopped; see $log"
+  else
+    case "$finished" in
+      *": ok") echo "INFO the daily sync last ran ${finished%: ok}: ok" ;;
+      *) echo "WARN the last daily sync, finished ${finished%%: *}, ${finished#*: }: see $log, and run scripts/sync to see what fails now" ;;
+    esac
+  fi
+}
+
+status() {
+  if [ "$scheduler" = cron ]; then
+    line=$(crontab -l 2>/dev/null | grep -F -- "$repo_root/scripts/sync" | head -n 1)
+    if [ -n "$line" ]; then
+      echo "INFO the daily sync is scheduled by cron: $line"
+      last_run
+    else
+      echo "INFO no daily sync is scheduled: scripts/sync --schedule prints the line to add to cron"
+    fi
+    return 0
+  fi
+  found=$(labelled_plists)
+  [ -n "$found" ] || { [ ! -e "$plist" ] || found=$plist; }
+  # launchd is asked only about an agent that has a file: one without would not survive a login.
+  if [ -z "$found" ]; then
+    echo "INFO no daily sync is scheduled: scripts/sync --schedule installs one"
+    return 0
+  fi
+  count=$(printf '%s\n' "$found" | wc -l | tr -d ' ')
+  if [ "$count" -gt 1 ]; then
+    echo "WARN $count launch agents carry the label $label: $(printf '%s\n' "$found" | paste -sd' ' -); run scripts/sync --schedule to keep one"
+  fi
+  file=$(printf '%s\n' "$found" | head -n 1)
+  at=$(plist_time "$file")
+  program=$(plist_program "$file")
+  how="scripts/sync --schedule installed it"
+  is_ours "$file" || how="hand-made; scripts/sync --schedule takes it over"
+  echo "INFO the daily sync is scheduled${at:+ at $at} ($file, $how)"
+  if ! launchctl print "$domain/$label" >/dev/null 2>&1; then
+    echo "WARN the daily sync's launch agent is not loaded, so it won't run until the next login: run scripts/sync --schedule"
+  fi
+  if is_ours "$file" && [ -n "$program" ] && [ "$program" != "$repo_root/scripts/sync" ]; then
+    echo "WARN the daily sync runs $program, not this checkout's scripts/sync"
+  fi
+  last_run
+}
+
+[ "$#" -gt 0 ] || { usage; exit 2; }
+action=$1
+shift
+case "$action" in
+  install) [ "$#" -le 1 ] || { usage; exit 2; }; install "$@" ;;
+  remove) [ "$#" -eq 0 ] || { usage; exit 2; }; remove ;;
+  status) [ "$#" -eq 0 ] || { usage; exit 2; }; status ;;
+  -h|--help) usage ;;
+  *) usage; exit 2 ;;
+esac

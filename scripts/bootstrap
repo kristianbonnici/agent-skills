@@ -13,6 +13,8 @@ dry_run=0
 install_links=1
 install_dependencies=1
 adopt_instructions=0
+left_any=0
+left_count=0
 
 usage() {
   # The hosts are the ones the install manifests give this computer, not a second list kept here.
@@ -128,6 +130,14 @@ looks_retired() {
   return 1
 }
 
+# Does another retired row this run acts on, for the same target $1 (as the table spells it), name
+# exactly what the link at $2 points to? Then that row removes it, and this one says nothing.
+retired_elsewhere() {
+  [ -L "$2" ] || return 1
+  printf '%s\n' "$rows" | awk -F '\t' -v h="$host" -v t="$1" -v s="$(readlink "$2")" \
+    '$2 == "retired" && (h == "all" || $1 == h) && $4 == t && $3 == s { found = 1 } END { exit !found }'
+}
+
 # A retired row names a link an earlier version installed (a renamed or removed skill): it is
 # removed, and anything else at that path is kept.
 retire_one() {
@@ -136,6 +146,8 @@ retire_one() {
   if is_retired_link "$retire_target" "$retire_source"; then
     run rm "$retire_target"
     [ "$dry_run" -eq 1 ] || echo "REMOVED retired link $retire_target"
+  elif retired_elsewhere "$3" "$retire_target"; then
+    :
   elif looks_retired "$retire_target" "$retire_source"; then
     echo "KEEP $retire_target -> $(readlink "$retire_target"): the retired skill from another checkout? If so, remove it by hand" >&2
   elif [ -e "$retire_target" ] || [ -L "$retire_target" ]; then
@@ -152,6 +164,7 @@ leave_one() {
   if is_retired_link "$leave_target" "$leave_source"; then
     run rm "$leave_target"
     left_any=1
+    left_count=$((left_count + 1))
     [ "$dry_run" -eq 1 ] || echo "REMOVED $leave_target: this computer leaves out $row_host"
   elif [ -e "$leave_target" ] || [ -L "$leave_target" ]; then
     echo "KEEP $leave_target: this computer leaves out $row_host, but this repository didn't install it" >&2
@@ -167,10 +180,15 @@ leave_adapter() {
   [ -d "$leave_folder" ] || return 0
   # The folder goes only with the links it held: an empty folder bootstrap never filled is kept.
   left_any=0
+  left_count=0
   for name in SKILL.md agents references scripts assets; do
     leave_one "$leave_parts/$name" "$leave_folder/$name"
   done
-  if [ "$left_any" -eq 1 ] && [ "$dry_run" -eq 0 ] && [ -z "$(find "$leave_folder" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  [ "$left_any" -eq 1 ] || return 0
+  if [ "$dry_run" -eq 1 ]; then
+    # Nothing was removed: the folder would be left empty if those links are all it holds.
+    [ "$(find "$leave_folder" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" -ne "$left_count" ] || echo "DRY RUN: rmdir $leave_folder"
+  elif [ -z "$(find "$leave_folder" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
     rmdir "$leave_folder"
   fi
 }
@@ -188,7 +206,7 @@ if [ "$install_links" -eq 1 ]; then
     [ "$mode" != external ] || continue
     source_path=$source
     target_path=$(expand_target "$target")
-    if [ "$mode" = retired ]; then retire_one "$source_path" "$target_path"; continue; fi
+    if [ "$mode" = retired ]; then retire_one "$source_path" "$target_path" "$target"; continue; fi
     [ -e "$source_path" ] || { echo "Missing source: $source_path" >&2; exit 1; }
     case "$mode" in
       link) link_one "$source_path" "$target_path" ;;

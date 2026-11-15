@@ -309,6 +309,8 @@ test -L "$test_home/.factory/skills/product-design"
 # A dry run says what bootstrap on travel-mac removes and removes nothing.
 on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >"$test_home/travel-dry.out" 2>&1
 grep -q "DRY RUN: rm $test_home/.factory/skills/product-design" "$test_home/travel-dry.out"
+# The adapter folder holds a file of someone's: a dry run doesn't say it would go.
+if grep -q "DRY RUN: rmdir" "$test_home/travel-dry.out"; then echo "a dry run would remove a folder that keeps a file" >&2; exit 1; fi
 test -L "$test_home/.factory/skills/product-design"
 if grep -q "REMOVED" "$test_home/travel-dry.out"; then echo "a dry run says it removed something" >&2; exit 1; fi
 # Bootstrap on travel-mac makes nothing for those hosts and removes the links it made there earlier.
@@ -332,6 +334,10 @@ test -f "$test_home/.gemini/config/skills/product-design/SKILL.md"
 rm "$test_home/.gemini/antigravity-cli/skills/product-design/notes.md"
 on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 test -d "$test_home/.gemini/antigravity-cli/skills/product-design"
+# A dry run says the emptied folder would go too, and removes nothing.
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >"$test_home/travel-dry.out" 2>&1
+grep -q "^DRY RUN: rmdir $test_home/.gemini/antigravity-cli/skills/product-design$" "$test_home/travel-dry.out"
+test -L "$test_home/.gemini/antigravity-cli/skills/product-design/SKILL.md"
 on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 test ! -e "$test_home/.gemini/antigravity-cli/skills/product-design"
 # An empty folder there that bootstrap didn't fill is kept, by bootstrap and by uninstall.
@@ -384,7 +390,32 @@ on travel-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-lonely.out" 
 grep -q "^WARN no row of install/computers.tsv names lonely, so no computer with a row installs it" "$test_home/doctor-lonely.out"
 export AGENT_SKILLS_PRIVATE=
 
-# Uninstall removes a retired link that is still there too.
+# Two retired rows for one target (a skill retired in both repositories): the row whose link is
+# there removes it, and the other one says nothing about it, in bootstrap, doctor and uninstall.
+export AGENT_SKILLS_PRIVATE="$computers"
+cp "$computers/install/skills.tsv" "$test_home/private-skills.tsv"
+printf 'retired\tsketch-infographic\tclaude\n' >>"$computers/install/skills.tsv"
+ln -s "$computers/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
+on studio-mac "$repo_root/scripts/doctor" --host claude >"$test_home/doctor-twice.out" 2>&1 || true
+grep -q "FAIL $test_home/.claude/skills/sketch-infographic is a retired link still installed" "$test_home/doctor-twice.out"
+if grep -q "WARN $test_home/.claude/skills/sketch-infographic -> .*looks like the retired skill" "$test_home/doctor-twice.out"; then echo "doctor warned about a link another retired row names" >&2; cat "$test_home/doctor-twice.out" >&2; exit 1; fi
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >"$test_home/twice.out" 2>&1
+grep -q "^DRY RUN: rm $test_home/.claude/skills/sketch-infographic$" "$test_home/twice.out"
+on studio-mac "$repo_root/scripts/uninstall" --all --dry-run >"$test_home/twice-uninstall.out" 2>&1
+grep -q "^DRY RUN: rm $test_home/.claude/skills/sketch-infographic$" "$test_home/twice-uninstall.out"
+on studio-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >>"$test_home/twice.out" 2>&1
+grep -q "^REMOVED retired link $test_home/.claude/skills/sketch-infographic$" "$test_home/twice.out"
+test ! -L "$test_home/.claude/skills/sketch-infographic"
+cat "$test_home/twice-uninstall.out" >>"$test_home/twice.out"
+if grep -q "KEEP $test_home/.claude/skills/sketch-infographic" "$test_home/twice.out"; then echo "a KEEP line for a link another retired row removes:" >&2; cat "$test_home/twice.out" >&2; exit 1; fi
+cp "$test_home/private-skills.tsv" "$computers/install/skills.tsv"
+export AGENT_SKILLS_PRIVATE=
+
+# Uninstall removes a retired link that is still there too, and a dry run says an adapter folder it
+# empties goes with its links.
+HOME="$test_home" "$repo_root/scripts/uninstall" --all --dry-run >"$test_home/uninstall-dry.out" 2>&1
+grep -q "^DRY RUN: rmdir $test_home/.gemini/config/skills/product-design$" "$test_home/uninstall-dry.out"
+test -d "$test_home/.gemini/config/skills/product-design"
 ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null
 test ! -L "$test_home/.claude/skills/sketch-infographic"

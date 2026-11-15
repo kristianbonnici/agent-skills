@@ -170,6 +170,10 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
     retired)
       if is_retired_link "$target_path" "$source_path"; then
         fail "$target_path is a retired link still installed: run scripts/bootstrap"
+      elif [ -L "$target_path" ] && printf '%s\n' "$rows" | awk -F '\t' -v h="$host" -v t="$target" -v s="$(readlink "$target_path")" \
+        '$2 == "retired" && (h == "all" || $1 == h) && $4 == t && $3 == s { found = 1 } END { exit !found }'; then
+        # Another retired row for this target names that link exactly: that row reports it.
+        :
       elif looks_retired "$target_path" "$source_path"; then
         echo "WARN $target_path -> $(readlink "$target_path") looks like the retired skill from another checkout: remove it by hand if so"
       elif [ -e "$target_path" ] || [ -L "$target_path" ]; then
@@ -285,6 +289,11 @@ done <<EOF
 $roots
 $state_repo
 EOF
+
+# The daily sync (scripts/sync --schedule): whether it is installed and how its last run went, as
+# information or a warning, never a failure: a computer may go without one.
+schedule_out=$("$script_dir/sync-schedule" status 2>/dev/null) || schedule_out="WARN the daily sync's schedule could not be checked (scripts/sync --schedule-status)"
+printf '%s\n' "$schedule_out" | sed -e '/^$/d' -e 's/^FAIL /WARN /'
 
 # Codex reads these folders; a computer that leaves Codex out has no Codex to hide it from.
 for forbidden in "$HOME/.agents/skills/product-design" "$HOME/.codex/skills/product-design"; do
