@@ -88,7 +88,7 @@ own = {
     "good": {"kind": "command", "argv": ["sh", "-c", f"printf '%s' '{report}'; cat count.py; test -f gone.py && echo GONE-IS-THERE; git log --oneline"]},
     "echo": {"kind": "command", "stdin": True, "paid": True, "argv": ["sh", "-c", "cat; echo; echo {work}"]},
     "cheap": {"kind": "command", "stdin": True, "argv": ["sh", "-c", "cat"]},
-    "slow": {"kind": "command", "seconds": 1, "argv": ["sh", "-c", "sleep 30 & sleep 30"]},
+    "slow": {"kind": "command", "seconds": 1, "argv": ["sh", "-c", "sleep 30.4172 & sleep 30.4172"]},
     "short": {"kind": "command", "argv": ["sh", "-c", "echo no"]},
     "flaky": {"kind": "command", "argv": ["sh", "-c", f"test -f {work}/now-it-works || {{ echo limit reached; exit 1; }}; printf '%s' '{report}'"]},
     "absent": {"kind": "command", "argv": ["no-such-reviewer-tool"]}}
@@ -136,7 +136,7 @@ assert "You have 12 minutes and about 20 commands." in open(os.path.join(data, "
 done = bench("run", "slow")
 metas = [load(data, "runs", "slow", c + ".json") for c in ("one", "two")]
 assert done.returncode == 0 and all(m["timed_out"] and m["seconds"] < 20 for m in metas), (metas, done.stderr)
-assert "sleep 30" not in subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True).stdout.replace("sleep 30 & sleep 30", ""), "what a stopped reviewer started is stopped too"
+assert "sleep 30.4172" not in subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True).stdout, "what a stopped reviewer started is stopped too"
 bench("run", "short")
 done = bench("run", "absent")
 assert done.returncode == 69 and "isn't installed" in done.stderr and not os.path.exists(os.path.join(data, "runs", "absent", "one.json")), done.stderr
@@ -150,7 +150,7 @@ done = bench("run", "flaky", "one")
 meta = load(data, "runs", "flaky", "one.json")
 assert '"model": "flaky"' in done.stdout and "failed" not in meta and meta["bytes"] > 400, (done.stdout, meta)
 # Stopping bench stops its reviewer and keeps nothing of that review.
-set_models(waits={"kind": "command", "argv": ["sh", "-c", "echo started; sleep 31"]})
+set_models(waits={"kind": "command", "argv": ["sh", "-c", "echo started; sleep 31.4172"]})
 running = subprocess.Popen([sys.executable, "-I", script, "run", "waits", "one"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 for _ in range(100):
     time.sleep(0.1)
@@ -160,12 +160,25 @@ running.send_signal(signal.SIGTERM)
 said = running.communicate(timeout=60)[1]
 assert running.returncode == 130 and "stopped during" in said, (running.returncode, said)
 assert not os.path.exists(os.path.join(data, "runs", "waits", "one.json")) and not os.path.exists(os.path.join(data, "runs", "waits", "one.md"))
-assert "sleep 31" not in subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True).stdout
+assert "sleep 31.4172" not in subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True).stdout
+# Its terminal closing stops the reviewer the same way.
+running = subprocess.Popen([sys.executable, "-I", script, "run", "waits", "one"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+for _ in range(100):
+    time.sleep(0.1)
+    if os.path.exists(os.path.join(data, "runs", "waits", "one.md")) and os.path.getsize(os.path.join(data, "runs", "waits", "one.md")):
+        break
+running.send_signal(signal.SIGHUP)
+running.communicate(timeout=60)
+assert running.returncode == 130 and "sleep 31.4172" not in subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True).stdout
+# A tool that ends in an error after printing a lot is failed all the same: what it printed is no report.
+set_models(loud={"kind": "command", "argv": ["sh", "-c", f"printf '%s' '{report}'; exit 3"]})
+bench("run", "loud", "one")
+assert load(data, "runs", "loud", "one.json").get("failed") is True
 
 # The four tools are called in the forms that can't wait for a person: each stand-in records how it was called.
 for tool in ("opencode", "claude", "codex", "agy"):
     put(os.path.join(tools, tool), "#!/bin/sh\n{ echo \"TOOL " + tool + "\"; for a in \"$@\"; do echo \"ARG $a\"; done; echo \"STDIN $(cat | wc -c | tr -d ' ')\"; } >> \"$TOOL_LOG.$1$2\"\n"
-        + ("while [ $# -gt 0 ]; do [ \"$1\" = --output-last-message ] && printf '%s' 'the last message' > \"$2\"; shift; done\n" if tool == "codex" else "")
+        + ("[ -f \"$TOOL_LOG.no-last\" ] || while [ $# -gt 0 ]; do [ \"$1\" = --output-last-message ] && printf '%s' 'the last message' > \"$2\"; shift; done\n" if tool == "codex" else "")
         + "echo a report from " + tool + "\n")
     os.chmod(os.path.join(tools, tool), 0o755)
 set_models(oc={"kind": "opencode", "model": "p/m#high"}, cl={"kind": "claude", "model": "claude-x"},
@@ -192,6 +205,11 @@ assert stdin > 500, "claude gets its brief on standard input, and none of it as 
 args, stdin = called("exec--sandbox")
 assert args[:4] == ["exec", "--sandbox", "read-only", "--ephemeral"] and args[args.index("-C") + 1] == copy and stdin == 0, args
 assert "You have" not in args[-1] and open(os.path.join(data, "runs", "cx", "one.md")).read() == "the last message"
+# Codex without a last message left no report, whatever its session printed.
+put(env["TOOL_LOG"] + ".no-last", "")
+bench("run", "cx", "two")
+assert load(data, "runs", "cx", "two.json")["bytes"] == 0 and open(os.path.join(data, "runs", "cx", "two.md")).read() == ""
+os.remove(env["TOOL_LOG"] + ".no-last")
 args, stdin = called("--modeplan")
 assert args[:4] == ["--mode", "plan", "--model", "gem-x"] and "--settings" in args and args[-2] == "-p" and stdin == 0, args
 assert "Run one shell command at a time" in args[-1] and "command(git diff)" in args[args.index("--settings") + 1]
@@ -243,6 +261,14 @@ assert not os.path.exists(os.path.join(data, "scores", "one.json")), "nothing is
 # Scores a scorer has filled aren't thrown away by another blind, unless it says so.
 done = bench("blind", "cheap")
 assert done.returncode == 64 and "aren't saved yet" in done.stderr and load(blind, "map.json") == mapping, done.stderr
+# A score of a report that was reviewed again since blind copied it is refused: it is another review's.
+kept_meta = open(os.path.join(data, "runs", "echo", "two.json")).read()
+put(os.path.join(data, "runs", "echo", "two.json"), json.dumps(dict(json.loads(kept_meta), seconds=999)))
+fill("one", good={"is_review": True, "known": {"1": 1, "2": 0}, "others": [], "nits_unchecked": 0})
+done = bench("unblind")
+assert done.returncode == 64 and "reviewed this change again" in done.stderr and "two " in done.stderr, done.stderr
+assert not os.path.exists(os.path.join(data, "scores", "one.json"))
+put(os.path.join(data, "runs", "echo", "two.json"), kept_meta)
 fill("one",
      good={"is_review": True, "known": {"1": 1, "2": 0.5}, "nits_unchecked": 3, "others": [
          {"title": "a real one", "their_tag": "follow-up", "verdict": "real", "why": "count.py"},
@@ -308,7 +334,7 @@ set_keys()
 os.remove(os.path.join(work, "now-it-works"))
 bench("run", "flaky", "two")
 done = bench("totals")
-assert "Reviews that failed and are run again by the next run: flaky (1)." in done.stdout, done.stdout
+assert "Reviews that failed and are run again by the next run: flaky (1), loud (1)." in done.stdout, done.stdout
 
 # A mistake in the command prints the usage; a broken file names itself and never ends in an error of Python's.
 for args in ((), ("run",), ("totals", "--all"), ("unblind", "x"), ("sum",)):
@@ -325,6 +351,9 @@ for bad in ("{}", "[]"):
     put(os.path.join(data, "scores", "one.json"), bad)
     done = bench("totals")
     assert done.returncode == 64 and 'needs "reports"' in done.stderr, done.stderr
+put(os.path.join(data, "keys", "one.json"), json.dumps(dict(key, defects=[{"title": "no number"}])))
+done = bench("totals")
+assert done.returncode == 64 and "numbered each once" in done.stderr and "Traceback" not in done.stderr, done.stderr
 put(os.path.join(data, "keys", "one.json"), json.dumps(dict(key, rules="Rules.\nMore rules.\n")))
 assert bench("setup").returncode == 64, "rules is a path, not the rules' text"
 put(os.path.join(data, "set.json"), "{")

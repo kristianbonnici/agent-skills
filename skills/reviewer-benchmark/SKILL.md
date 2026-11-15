@@ -30,7 +30,7 @@ Run `scripts/bench setup`. For each change it makes a small repository of two co
 
 ## 3. Run the models
 
-Run `scripts/bench run <model>` once for each model, in the background, the models side by side. It reviews one change at a time, skips a review already saved, and stops one that passes its time, recording it as timed out. That is a result, not a failure to retry: a reviewer that doesn't report in its time is of no use to a gate. A review that ends in an error with no report (a usage limit, a login) is no result: it is recorded as failed, and the same command later does it again. Stop a run with its own command's end, not by ending its reviewer.
+Run `scripts/bench run <model>` once for each model, in the background, the models side by side. It reviews one change at a time, skips a review already saved, and stops one that passes its time, recording it as timed out. That is a result, not a failure to retry: a reviewer that doesn't report in its time is of no use to a gate. A review whose tool ends in an error (a usage limit, a login) is no result, whatever it printed: it is recorded as failed, and the same command later does it again. To stop a run, stop `bench` (Ctrl-C, or ending its command): it stops its reviewer and keeps nothing of that review. Don't end the reviewer yourself.
 
 - The models it knows: `deepseek`, `glm`, `muse`, `haiku`, `hydrogen` (15 minutes, the gate's brief for a free or trial reviewer), and `terra`, `sonnet`, `opus` (30 minutes, no time line in the brief, as the gate gives a paid reviewer). Another model goes in the data folder's `models.json` ([references/set.md](references/set.md#another-model)).
 - A paid model may run as two commands, each given half of the changes' names.

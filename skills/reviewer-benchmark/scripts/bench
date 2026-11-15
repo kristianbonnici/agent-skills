@@ -31,8 +31,8 @@ reads the key's repository.
 run: has one model review each change it has no review of, one at a time, read-only, from the copy's
 folder, with the review gate's brief. A model with "paid" gets no time line in its brief. The report is
 saved as it came, with how long it took and how it ended. A review that passes its minutes is stopped and
-recorded as timed out, and the run goes on. One that ends in an error with no report (a limit, a login) is
-recorded as failed and run again by the next run. A review of other commits than the key's now names is run
+recorded as timed out, and the run goes on. One whose tool ends in an error (a limit, a login) is recorded
+as failed, whatever it printed, and run again by the next run. A review of other commits than the key's now names is run
 again, and its score is dropped. Stopping bench stops the reviewer it started. Models: the table below, and
 the owner's in models.json.
 
@@ -43,7 +43,8 @@ aren't given. It refuses while the scores of an earlier blind aren't saved; --di
 
 unblind: reads each blind/<change>/scores.json and saves its reports' scores under their models' names in
 the data's scores/<change>.json, leaving other models' scores there as they are. A scores.json that doesn't
-fit its key (a known defect missing, a verdict it doesn't know) is refused with its reasons.
+fit its key (a known defect missing, a verdict it doesn't know) is refused with its reasons, and so is the
+score of a report that was reviewed again since blind copied it.
 
 totals: one line per model: reports of reviews tried, known defects found (1 for a defect described, a half
 for the right code without the failing case), blockers among them, defects only it found among the models
@@ -56,6 +57,8 @@ installed.
 """
 
 import collections
+import contextlib
+import fcntl
 import json
 import os
 import random
@@ -133,10 +136,20 @@ def read(path, what):
 
 def write(path, value):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + ".part", "w", encoding="utf-8") as handle:
+    part = f"{path}.{os.getpid()}.part"         # its own, so two runs never write one temporary file
+    with open(part, "w", encoding="utf-8") as handle:
         json.dump(value, handle, indent=1, ensure_ascii=False)
         handle.write("\n")
-    os.replace(path + ".part", path)
+    os.replace(part, path)
+
+
+@contextlib.contextmanager
+def scores_locked(data):
+    """One run at a time reads, changes and writes a scores file: models run side by side."""
+    os.makedirs(os.path.join(data, "scores"), exist_ok=True)
+    with open(os.path.join(data, "scores", ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def plain(name):
@@ -155,6 +168,8 @@ def the_key(data, change):
     key = read(os.path.join(data, "keys", change + ".json"), "key")
     defects = key.get("defects") if isinstance(key, dict) else None
     numbers = [d.get("n") for d in defects] if isinstance(defects, list) and all(isinstance(d, dict) for d in defects) else None
+    if numbers and not all((isinstance(n, int) and not isinstance(n, bool)) or (isinstance(n, str) and n.strip()) for n in numbers):
+        numbers = None
     if not numbers or len(set(map(str, numbers))) != len(numbers) or any(
             not isinstance(key.get(name), str) or not key[name] for name in ("repo", "base", "head", "objective")):
         raise Refused(f'{change}: its key needs "repo", "base", "head", "objective" and "defects" numbered each once')
@@ -297,7 +312,8 @@ def command(spec, text, work, last):
     if kind == "claude":
         # The brief goes in on standard input, since --allowedTools would take it for a tool's name. dontAsk
         # refuses a tool that isn't allowed, where another mode raises an approval card and waits for a person.
-        # Only the copy's local settings are read: the owner's own would add tools, hooks and instructions.
+        # Of the settings files only the copy's local one is read: the owner's own would add tools and hooks.
+        # That covers settings files alone, not everything of the owner's that the tool may load.
         return ["claude", "-p", "--model", model, "--effort", "high", "--permission-mode", "dontAsk",
                 "--setting-sources", "local", "--allowedTools", CLAUDE_TOOLS], True
     if kind == "codex":
@@ -331,10 +347,11 @@ def stop(process):
 
 
 def drop_score(data, change, name):
-    reports = the_scores(data, change)
-    if name in reports:
-        del reports[name]
-        write(os.path.join(data, "scores", change + ".json"), {"id": change, "reports": reports})
+    with scores_locked(data):
+        reports = the_scores(data, change)
+        if name in reports:
+            del reports[name]
+            write(os.path.join(data, "scores", change + ".json"), {"id": change, "reports": reports})
 
 
 def run(data, copies, scoring, name, given):
@@ -350,7 +367,8 @@ def run(data, copies, scoring, name, given):
     def ended(*_):
         raise KeyboardInterrupt
 
-    signal.signal(signal.SIGTERM, ended)        # so that stopping bench stops its reviewer, below
+    for sign in (signal.SIGTERM, signal.SIGHUP):     # so that stopping bench, or closing its terminal, stops
+        signal.signal(sign, ended)                   # its reviewer, below
     for change in wanted(found, given):
         key = the_key(data, change)
         meta = os.path.join(folder, change + ".json")
@@ -369,6 +387,9 @@ def run(data, copies, scoring, name, given):
             handle.write(text)
         if os.path.exists(last):
             os.remove(last)                     # an earlier try's last message isn't this one's
+        if not shutil.which(argv[0]):
+            print(f"bench: {argv[0]} isn't installed", file=sys.stderr)
+            return 69
         started = time.time()
         try:
             # The brief is read from a file, never written down a pipe that a reviewer may stop reading.
@@ -383,21 +404,25 @@ def run(data, copies, scoring, name, given):
                     stop(process)
                     os.remove(report)
                     raise
-        except FileNotFoundError:
-            os.remove(report)
-            print(f"bench: {argv[0]} isn't installed", file=sys.stderr)
-            return 69
+        except OSError as error:
+            if os.path.exists(report):
+                os.remove(report)
+            raise Refused(f"{name}'s review of {change} couldn't start: {error}")
         except KeyboardInterrupt:
             print(f"bench: stopped during {name}'s review of {change}; nothing of it is kept", file=sys.stderr)
             return 130
-        if spec["kind"] == "codex" and os.path.exists(last):
-            shutil.copyfile(last, report)       # Codex prints its whole session; its last message is the report
-            os.remove(last)
+        if spec["kind"] == "codex":
+            # Codex prints its whole session; its last message alone is the report, and without one there is none.
+            if os.path.exists(last):
+                shutil.copyfile(last, report)
+                os.remove(last)
+            else:
+                open(report, "wb").close()
         size = os.path.getsize(report)
         result = {"model": name, "change": change, "seconds": round(time.time() - started), "returncode": code,
                   "timed_out": timed_out, "bytes": size, "set": found["version"], "commits": [key["base"], key["head"]]}
-        if code != 0 and not timed_out and size < 400:
-            result["failed"] = True             # an error and no report: not a result, and run again next time
+        if code != 0 and not timed_out:
+            result["failed"] = True             # the tool ended in an error: what it printed is no report
         write(meta, result)
         print(json.dumps(result), flush=True)
     return 0
@@ -418,7 +443,7 @@ def blind(data, scoring, names):
     folder = os.path.join(scoring, "blind")
     if os.path.exists(os.path.join(folder, "map.json")) and not os.path.exists(os.path.join(folder, "saved")) and not discard:
         raise Refused(f"the scores in {folder} aren't saved yet: run unblind, or blind --discard to throw them away")
-    mapping, copies, shuffler = {}, [], random.Random()
+    mapping, copies, shuffler, of = {}, [], random.Random(), {}
     for change in found["changes"]:
         key = the_key(data, change)
         there = []
@@ -428,6 +453,7 @@ def blind(data, scoring, names):
                 if not os.path.isfile(report):
                     raise Refused(f"{report} is missing, though its review has a report: put it back, or delete {meta}")
                 there.append(name)
+                of[f"{change}/{name}"] = review_id(read(meta, "run"))
         shuffler.shuffle(there)
         mapping[change] = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ", there))
         copies.append((change, key))
@@ -442,10 +468,16 @@ def blind(data, scoring, names):
                                            "others": [], "nits_unchecked": 0}
         write(os.path.join(building, change, "scores.json"), template)
     write(os.path.join(building, "map.json"), mapping)
+    write(os.path.join(building, "reviews.json"), of)
     shutil.rmtree(folder, ignore_errors=True)
     os.replace(building, folder)
     print(f"{sum(len(v) for v in mapping.values())} reports of {len(mapping)} changes in {folder}")
     return 0
+
+
+def review_id(meta):
+    """What tells one review of a change by a model from another of the same."""
+    return [meta.get("commits"), meta.get("bytes"), meta.get("seconds"), meta.get("returncode")]
 
 
 def score_problems(change, letter, report, key):
@@ -478,9 +510,16 @@ def score_problems(change, letter, report, key):
 def unblind(data, scoring):
     folder = os.path.join(scoring, "blind")
     mapping = read(os.path.join(folder, "map.json"), "blind map (run blind first)")
+    of = read(os.path.join(folder, "reviews.json"), "list of the reviews blind copied (run blind again)")
     problems, ready = [], {}
     for change, letters in mapping.items():
         key = the_key(data, change)
+        for letter, name in sorted(letters.items()):
+            meta = os.path.join(data, "runs", name, change + ".json")
+            now = read(meta, "run") if os.path.exists(meta) else {}
+            if state_of(now, key) != "report" or review_id(now) != of.get(f"{change}/{name}"):
+                problems.append(f"{change} {letter}: its model reviewed this change again, or its key changed, since "
+                                "blind copied the report: run blind again and score the new report")
         scores = read(os.path.join(folder, change, "scores.json"), "scores")
         reports = scores.get("reports") if isinstance(scores, dict) else None
         if not isinstance(reports, dict) or sorted(reports) != sorted(letters):
@@ -491,10 +530,11 @@ def unblind(data, scoring):
         ready[change] = {letters[letter]: reports[letter] for letter in letters}
     if problems:
         raise Refused("the scores don't fit:\n  - " + "\n  - ".join(problems))
-    for change, by_model in ready.items():
-        kept = the_scores(data, change)
-        kept.update(by_model)
-        write(os.path.join(data, "scores", change + ".json"), {"id": change, "reports": kept})
+    with scores_locked(data):
+        for change, by_model in ready.items():
+            kept = the_scores(data, change)
+            kept.update(by_model)
+            write(os.path.join(data, "scores", change + ".json"), {"id": change, "reports": kept})
     with open(os.path.join(folder, "saved"), "w") as handle:
         handle.write("unblind saved these scores\n")
     print(f"scores of {sum(len(v) for v in ready.values())} reports saved under their models' names")
