@@ -3408,6 +3408,12 @@ git -C "$multi/den-state" worktree list --porcelain | grep -q "^worktree $(cd "$
 if git -C "$multi/den-state" worktree list --porcelain | grep -q 'share-usage.dead.worktree'; then exit 1; fi
 kill "$alive"
 git -C "$multi/den-state" worktree remove --force "$multi/kill/run-x/share-usage.live.worktree/tree"
+# a folder an older send left with no pid file goes when no share-usage runs, even when this send runs inside a
+# shell whose command line names share-usage (a harness's wrapper)
+mkdir -p "$multi/kill/run-x/share-usage.old.worktree"
+git -C "$multi/den-state" worktree add -q --detach "$multi/kill/run-x/share-usage.old.worktree/tree" FETCH_HEAD
+sh -c "true; '$scripts/share-usage' send '$multi/kill/run-x' --state '$multi/den-state' --computer kill-mac" > "$multi/kill-old.out"
+grep -q 'removed share-usage.old.worktree, which a killed send left' "$multi/kill-old.out" && test ! -e "$multi/kill/run-x/share-usage.old.worktree"
 # a send that finds neither file fails, and takes that computer's earlier files off the branch, so a fetch
 # can't take them for this send's; with nothing there before, it changes nothing
 mkdir -p "$multi/empty/run-x" "$multi/spare/run-x/usage"

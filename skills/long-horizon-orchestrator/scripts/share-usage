@@ -117,7 +117,12 @@ def other_sends() -> bool:
         return True
     for line in out.stdout.splitlines():
         pid, _, command = line.strip().partition(" ")
-        if pid.isdigit() and int(pid) != os.getpid() and re.search(r"(^|[\s/])share-usage\s+(send|fetch)\b", command):
+        if not pid.isdigit() or int(pid) == os.getpid():
+            continue
+        # the program itself, run directly or by its interpreter: a shell whose command line merely mentions it isn't one
+        words = command.split()
+        program = [os.path.basename(w) for w in words[:2]]
+        if program[:1] == ["share-usage"] or (len(program) > 1 and program[0].startswith("python") and program[1] == "share-usage"):
             return True
     return False
 
@@ -161,7 +166,10 @@ def leftovers(run_dir: Path, state: Path) -> None:
 
 def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
     run = run_dir.name
-    leftovers(run_dir, state)
+    try:
+        leftovers(run_dir, state)
+    except RuntimeError as error:   # tidying up is optional; the send carries the run's samples and costs
+        print(f"share-usage: couldn't remove a killed send's worktree ({error}); sending anyway", file=sys.stderr)
     branch = f"lho/{run}-briefs"
     found = [(dest, run_dir / src) for dest, src in FILES if (run_dir / src).is_file()]
     if not found:   # still a snapshot: the folder's earlier files go, so nothing old reads as this send's
@@ -331,7 +339,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("run")
     parser.add_argument("--state", help="the owner's private state repository on this computer")
     parser.add_argument("--ssh", action="append", default=[], metavar="NAME=ALIAS", help="fetch: that computer's files over SSH")
-    parser.add_argument("--remote-run", help="fetch --ssh: the run directory's path there (default: the same path under its home)")
+    parser.add_argument("--remote-run", help="fetch --ssh: the run directory's path there, taken as it is, no ~ (default: the same path under its home)")
     parser.add_argument("--computer")
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--expect", default="")

@@ -11,7 +11,7 @@ run's start ("started") and, when the orchestrator recorded them, its own thread
 and the run's end ("finished"). --orchestrator, --from and --to override them; the end defaults to now.
 Only tokens used between the start and the end count, since one orchestrator thread may serve several
 runs. --task names a task's thread instead, for a computer without the run's watch.json: on a run's
-other computer, its finish thread runs run-costs with --from, --task for each task that ran there and
+other computer, its finish steps run run-costs with --from, --task for each task that ran there and
 --json <run directory>/costs.json, and share-usage sends that file to the orchestrator's computer.
 
 Several computers: each line says which computer its thread ran on (--computer, else watch.json's
