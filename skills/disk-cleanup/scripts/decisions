@@ -30,7 +30,8 @@ to the computer the owner names, if it has no section yet. It refuses anything e
 list with sections it doesn't know.
 
 The file may be a link into the owner's private state repository: init and migrate write the file
-it points to, never replacing the link, and git is left to the skill.
+it points to, never replacing the link, and git is left to the skill. A link into a folder that
+doesn't exist (the repository isn't cloned here) is refused, so no folder is made in its place.
 
 Exit 0: done; 1: usage or an unreadable file; 2: the file's layout is not what the command needs
 (the message says why, and nothing was written).
@@ -74,6 +75,9 @@ def this_machine():
 
 
 def read(path):
+    if os.path.islink(path) and not os.path.isdir(os.path.dirname(os.path.realpath(path))):
+        raise SystemExit(f"decisions: {path} links into {os.path.dirname(os.path.realpath(path))}, which is "
+                         "missing; clone or restore the state repository first")
     try:
         with open(path, encoding="utf-8") as handle:
             return handle.read()
