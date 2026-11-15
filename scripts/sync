@@ -86,12 +86,14 @@ sync_one() {
     set -- pull --ff-only --quiet origin "$default"
     if [ "$batch" -eq 1 ] && [ -z "${GIT_SSH_COMMAND:-}" ]; then
       ssh_command=$(in_repo config --get core.sshCommand 2>/dev/null) || ssh_command=ssh
-      # Right after the program's name: ssh takes the first value it is given for an option.
-      case "$ssh_command" in
-        *" "*) ssh_command="${ssh_command%% *} -o BatchMode=yes ${ssh_command#* }" ;;
-        *) ssh_command="$ssh_command -o BatchMode=yes" ;;
+      # Right after the program's name, since ssh takes the first value it is given for an option,
+      # and only when the command starts with ssh itself: a wrapper (env ..., a script) is left as
+      # it is, prompts and all.
+      ssh_program=${ssh_command%% *}
+      ssh_options=${ssh_command#"$ssh_program"}
+      case "$ssh_program" in
+        ssh|*/ssh) set -- -c "core.sshCommand=$ssh_program -o BatchMode=yes$ssh_options" "$@" ;;
       esac
-      set -- -c "core.sshCommand=$ssh_command" "$@"
     fi
     if pull_out=$(in_repo "$@" 2>&1); then
       count=$(in_repo rev-list --count "$before..HEAD")

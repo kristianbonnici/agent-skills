@@ -190,6 +190,12 @@ if env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND "$public/scripts/sync" --skip-d
 fi
 expect "^FAIL agent-skills-private: git pull --ff-only failed" "$work/sync.out"
 expect "^0|-o BatchMode=yes -i $work/work-key .*example.invalid" "$work/ssh.log"
+# A configured command that wraps ssh is left as it is.
+: >"$work/ssh.log"
+git -C "$private" config core.sshCommand "env SYNC_TEST=1 $work/bin/ssh -i $work/work-key"
+env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
+expect "^0|-i $work/work-key .*example.invalid" "$work/ssh.log"
+refuse "BatchMode" "$work/ssh.log"
 # A command given in GIT_SSH_COMMAND is the caller's: sync leaves it alone.
 : >"$work/ssh.log"
 GIT_SSH_COMMAND="ssh -o ConnectTimeout=1" "$public/scripts/sync" --skip-dependencies </dev/null >"$work/sync.out" 2>&1 || true
