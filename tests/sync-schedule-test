@@ -260,6 +260,19 @@ refuse "^bootstrap" "$work/launchctl.log"
 kept_back=$(sed -n "s#^FAIL could not put \(.*\) back as .*#\1#p" "$work/out")
 cmp -s "$kept_back" "$work/before-fail.plist" || fail "the agent that was there is not in the backup folder"
 mv "$kept_back" "$plist"
+# A first install that can't put its agent in doesn't speak of agents put back.
+mv "$plist" "$work/held-aside.plist"
+printf '#!/bin/sh\ncase "$*" in *.agent-skills-sync.*com.agent-skills.sync.plist) exit 1 ;; esac\nexec /bin/mv "$@"\n' >"$work/refuse-bin/mv"
+if PATH="$work/refuse-bin:$PATH" "$sync" --schedule >"$work/out" 2>&1; then fail "--schedule passed when its agent couldn't go in"; fi
+expect "^FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written)$" "$work/out"
+# launchd refusing to load the agent that was put back says so.
+mv "$work/held-aside.plist" "$plist"
+printf '#!/bin/sh\necho "$*" >>"%s/launchctl.log"\ncase "$1" in bootstrap) exit 5 ;; print) exit 0 ;; esac\nexit 0\n' "$work" >"$work/refuse-bin/launchctl"
+chmod +x "$work/refuse-bin/launchctl"
+if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 06:00 >"$work/out" 2>&1; then fail "--schedule passed when its agent couldn't go in"; fi
+expect "^FAIL launchctl could not load $plist again; it loads at the next login" "$work/out"
+rm "$work/refuse-bin/launchctl"
+cmp -s "$plist" "$work/before-fail.plist" || fail "the agent that was there did not go back"
 
 # Never from a linked worktree, which goes away when its work is done.
 git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null

@@ -332,7 +332,9 @@ install() {
     done <<EOF
 $restored
 EOF
-    echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written); the agents that were there were put back where nothing took their place" >&2
+    put_back=
+    [ -z "$staged" ] || put_back="; the agents that were there were put back where nothing took their place"
+    echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written)$put_back" >&2
     exit 1
   fi
   judge_staged

@@ -4,7 +4,7 @@
 
 - `scripts/decisions init` and `migrate` no longer lose a decision when two rounds run at once on one computer. They hold a lock on the file's folder from reading the file until the new one is in place, so the second waits and then reads what the first wrote, and they read the file again just before replacing it: an entry added by hand in between, which takes no lock, makes them start over from the changed file. A file that keeps changing is left as it is. The review of 2.0.0 found this read-modify-write race.
 - `init` and `migrate` keep a file's CRLF line ends instead of turning them into LF.
-- `DISK_CLEANUP_PAUSE` and `DISK_CLEANUP_LOCK_WAIT`, for tests, hold a command between reading and writing and shorten its wait for the lock; a lock wait that isn't a number is taken as the default, 60 seconds.
+- `DISK_CLEANUP_PAUSE` and `DISK_CLEANUP_LOCK_WAIT`, for tests, hold a command between reading and writing and shorten its wait for the lock; a lock wait that isn't a finite number of seconds, zero or more (such as `soon`, `nan`, `inf` or `-1`), is taken as the default, 60 seconds.
 - The counts `migrate` and `show` print are of each list's items at whatever indentation the list is written, without their sub-items; an indented list was counted as empty.
 
 ## 2.0.0 (2026-11-15)
