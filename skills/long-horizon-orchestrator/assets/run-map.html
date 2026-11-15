@@ -205,6 +205,15 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 /* the usage panel: the subscriptions' windows and the Mac, under the timeline on its time axis */
 .us { margin-top: 14px; }
 .us .tl-stats { margin-top: 4px; row-gap: 3px; }
+.us-pick { margin-top: 8px; display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border: 1px solid var(--rm-border); border-radius: 9px; background: var(--rm-soft); }
+.us-opt { position: relative; display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 11px; border-radius: 7px; font-size: 12.5px; color: var(--rm-muted); cursor: pointer; }
+.us-opt input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: inherit; }
+.us-opt .nm { color: var(--rm-fg); font-weight: 550; }
+.us-opt .role { font-size: 11.5px; }
+.us-opt:has(input:checked) { background: var(--rm-card); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.us-opt:has(input:focus-visible) { outline: 2px solid var(--rm-info); outline-offset: 1px; }
+.us-opt.off { cursor: default; opacity: .6; }
+.us-opt.off .nm { color: var(--rm-muted); }
 .us-lab .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 .us-labels { position: relative; min-width: 0; }
 .us-lab { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 0 10px 0 2px; min-width: 0; transition: opacity .15s; }
@@ -1124,11 +1133,20 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
 // the usage panel, under the timeline and on its time axis: each subscription's weekly (or monthly)
 // window as the percent left, falling from 100% as it is used, and a separate limit dashed; the Claude API credits,
 // when the run spent some, a grant expired or an estimate was incomplete, as the estimated dollars left (dashed, in Claude's colour, each grant's expiry dotted);
-// then the Mac's processor, memory and free disk, each minute's average with its peak behind it
+// then the Mac's processor, memory and free disk, each minute's average with its peak behind it; a run on several
+// computers gets a picker for whose Mac the panel shows (the orchestrator's first), and the panel is drawn again on a pick
 (() => {
   const U = F.usage; if (!U) return;
-  const provs = U.providers || [], mac = U.mac, A = U.api;
-  if (!provs.length && !mac && !A) return;
+  const MS = U.computers || [];
+  const named = /computer=([^&]+)/.exec(location.hash), wanted = named ? decodeURIComponent(named[1]) : null;
+  let pick = MS.findIndex(c => c.mac && c.name === wanted);
+  if (pick < 0) pick = MS[0] && MS[0].mac ? 0 : MS.findIndex(c => c.mac);
+  let current = null, watcher = null;
+  const build = first => {
+  const M = MS.length ? MS[pick] || null : null;
+  const provs = U.providers || [], mac = M ? M.mac || null : U.mac, A = U.api;
+  const macName = M ? M.name : "This Mac";
+  if (!provs.length && !mac && !A && !MS.length) return;
   const t0 = timeAxis ? timeAxis.t0 : U.t0, t1 = Math.max(t0 + 1, timeAxis ? timeAxis.t1 : U.t1);
   const runStart = ORCH.start != null ? ORCH.start : t0;
   const [sampledFrom, sampledTo] = U.sampled;
@@ -1140,8 +1158,24 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const usd = v => "$" + Math.floor(v + 0.5).toLocaleString("en-US");   // whole dollars, halves up
 
   // the frame, laid out like the timeline's so the two share one plot width
-  const S = el("section", "tl us"); S.setAttribute("aria-label", "Usage"); root.append(S);
+  const S = el("section", "tl us"); S.setAttribute("aria-label", "Usage");
+  if (current) current.replaceWith(S); else root.append(S);
+  current = S;
   const head = el("div", "tl-head"); head.append(el("div", "tl-title", "Usage")); S.append(head);
+  if (MS.length) {   // whose computer: a radio group, so Tab reaches it and the arrow keys move along it, with no network
+    const group = el("div", "us-pick"); group.setAttribute("role", "radiogroup"); group.setAttribute("aria-label", "Computer whose load the panel shows");
+    MS.forEach((c, i) => {
+      const opt = el("label", "us-opt" + (c.mac ? "" : " off")), input = document.createElement("input");
+      input.type = "radio"; input.name = "rm-us-computer"; input.value = String(i); input.checked = i === pick; input.disabled = !c.mac;
+      opt.append(input, el("span", "nm", c.name));
+      if (c.role) opt.append(el("span", "role", c.role));
+      if (!c.mac) { opt.append(el("span", "role", "no samples")); opt.title = `No machine samples arrived from ${c.name}`; }
+      input.addEventListener("change", () => { if (!input.checked) return; pick = i; build(false);
+        const again = current.querySelector('input[name="rm-us-computer"]:checked'); if (again) again.focus(); });
+      group.append(opt);
+    });
+    head.append(group);
+  }
   const markOf = p => {
     if (p.mark != null && FILES[p.mark]) { const i = el("i", "mk"); i.style.setProperty("--mk", `url("${FILES[p.mark]}")`); i.style.background = p.ink || "var(--rm-fg)"; return i; }
     return null;
@@ -1167,7 +1201,7 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     const pts = slot.segs.flat(), inside = pts.filter(([m]) => m >= t0 && m <= t1), use = inside.length ? inside : pts;
     return [use[0][1], use[use.length - 1][1]];
   };
-  const pk = U.peaks;
+  const pk = M ? M.peaks || null : U.peaks;
   if (pk) {
     const m = el("div", "tl-stats"), bits = [];
     if (num(pk.cpu)) bits.push(`CPU peaked at <b>${fmt(pk.cpu, 0)}%</b>`);
@@ -1186,9 +1220,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   const bands = [];
   if (provs.length) bands.push({ id: "subs", sec: "Subscriptions", h: Math.max(120, provs.reduce((sum, p) => sum + 20 + 15 * slotsOf(p).length + 8, 0) + 8) });
   if (A) bands.push({ id: "api", sec: "API credits (estimate)", h: 70 });
-  if (mac && (mac.cpu || mac.gpu)) bands.push({ id: "busy", sec: "This Mac", h: 80 });
-  if (mac && mac.mem) bands.push({ id: "mem", h: 62, sec: bands.some(b => b.id === "busy") ? "" : "This Mac" });
-  if (mac && mac.disk) bands.push({ id: "disk", h: 56, sec: bands.some(b => b.id === "busy" || b.id === "mem") ? "" : "This Mac" });
+  if (mac && (mac.cpu || mac.gpu)) bands.push({ id: "busy", sec: macName, h: 80 });
+  if (mac && mac.mem) bands.push({ id: "mem", h: 62, sec: bands.some(b => b.id === "busy") ? "" : macName });
+  if (mac && mac.disk) bands.push({ id: "disk", h: 56, sec: bands.some(b => b.id === "busy" || b.id === "mem") ? "" : macName });
+  if (!bands.length) bands.push({ id: "none", sec: macName, h: 40 });   // a pick with nothing to draw still says so
   const SEC = 20, GAP = 9, AX = 48;
   let y = 0;
   bands.forEach((b, i) => { if (b.sec) y += SEC; b.y = y; y += b.h + GAP; });
@@ -1411,6 +1446,13 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       ns("line", { class: "us-ended", x1: x, x2: x, y1: 0, y2: H }, over);
       yt(side ? x + 5 : x - 5, 11, "Sampling ended", side ? "" : "r");
     }
+    const own = M && M.sampled, macTop = Math.min(...bands.filter(b => ["busy", "mem", "disk"].includes(b.id)).map(b => b.y));
+    if (own && isFinite(macTop) && Math.floor(own[1]) < Math.floor(sampledTo) && t1 >= Math.floor(own[1]) + 1) {   // this computer stopped earlier
+      const x = X(Math.floor(own[1]) + 1), side = w - PADR - x > 160;
+      ns("line", { class: "us-ended", x1: x, x2: x, y1: macTop, y2: H }, over);
+      yt(side ? x + 5 : x - 5, macTop + 11, `${macName}'s sampling ended`, side ? "" : "r");
+    }
+    if (byId.none) yt(PADL + 3, byId.none.y + 24, `No machine samples from ${macName}`);
     gHover = ns("g", { class: "us-hover" }, svg); gHover.style.display = "none";
     cross = ns("line", { class: "us-cross", y1: 0, y2: H }, gHover);
     hover.forEach(h => { h.dots = []; });
@@ -1459,8 +1501,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
       row(tip, "Over the run", apiText.replace(/&/g, "&amp;").replace(/</g, "&lt;"));
       if ((A.corrections || []).length) row(tip, "Balance corrected", A.corrections.map(([e, v]) => `${sign(v)} at ${clock(Math.floor(e))}`).join(", "));
     }
-    if (mac && !before && !past) {
-      tip.append(el("div", "sec", "This Mac"));
+    const own = M && M.sampled, outside = own && (m < Math.floor(own[0]) || m >= Math.floor(own[1]) + 1);
+    if (mac && !before && !past && outside) { tip.append(el("div", "sec", macName)); tip.append(el("div", "gap", `Not sampled on ${macName} at this time`)); }
+    if (mac && !before && !past && !outside) {
+      tip.append(el("div", "sec", macName));
       const both = (name, avg, pkv, h, unit, colour) => { const a = macAt(avg, m), k = macAt(pkv, m); if (a == null) return;
         row(tip, name, `${fmt(a, 0)}${unit} <em>avg</em> · ${fmt(k, 0)}${unit} <em>peak</em>`, colour); dot(h.y(a), h.colour); };
       hover.forEach(h => {
@@ -1491,13 +1535,17 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     svg.querySelectorAll(".us-g[data-p]").forEach(g => g.classList.toggle("on", g.dataset.p === id));
   }
   draw();
-  const at = /cross=(\d+):(\d+)/.exec(location.hash);  // #cross=HH:MM puts the crosshair there (hours past 24 for the next day), for a picture
+  const at = first && /cross=(\d+):(\d+)/.exec(location.hash);  // #cross=HH:MM puts the crosshair there (hours past 24 for the next day), for a picture
   if (at) { show(+at[1] * 60 + +at[2] + 0.5); tip.style.transition = "none"; tip.classList.add("on"); }
   let lastW = plot.clientWidth;
-  new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } }).observe(plot);
+  if (watcher) watcher.disconnect();
+  watcher = new ResizeObserver(() => { if (Math.abs(plot.clientWidth - lastW) > 1) { lastW = plot.clientWidth; draw(); } });
+  watcher.observe(plot);
   svg.setAttribute("aria-label", `Usage of the run, ${clock(t0)} to ${clock(t1)}: ` + [...provs.filter(p => p.long).map(p => `${p.name} ` + slotsOf(p).map(s => `${s.label} ${pc(ends(s)[0])} to ${pc(ends(s)[1])} left`).join(", ")),
     ...(A ? [`${A.name} ${usd(apiEnds[0])} to ${usd(apiEnds[1])} left ${apiNote}`] : []),
-    ...(pk ? [`the Mac peaked at ${num(pk.cpu) ? fmt(pk.cpu, 0) + "% CPU" : ""}${num(pk.gpu) ? ", " + fmt(pk.gpu, 0) + "% GPU" : ""}`] : [])].join("; "));
+    ...(pk ? [`${M ? M.name : "the Mac"} peaked at ${num(pk.cpu) ? fmt(pk.cpu, 0) + "% CPU" : ""}${num(pk.gpu) ? ", " + fmt(pk.gpu, 0) + "% GPU" : ""}`] : [])].join("; "));
+  };
+  build(true);
 })();
 
 // start

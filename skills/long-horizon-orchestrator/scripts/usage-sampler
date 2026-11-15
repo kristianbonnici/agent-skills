@@ -29,8 +29,11 @@ when the next is due is skipped), so a slow live reading never holds up the Mac'
 sampler runs per folder: a second one exits at once. SIGTERM (or SIGINT) ends it within a moment,
 stopping a reading in progress.
 
-Usage: usage-sampler <folder> [provider-usage script]   (run it in the background; record its pid)
-       usage-sampler --final <folder> [provider-usage script]
+Usage: usage-sampler [--machine-only] <folder> [provider-usage script]   (run it in the background; record its pid)
+       usage-sampler --final [--machine-only] <folder> [provider-usage script]
+--machine-only samples the computer only (machine.jsonl, sampler.log): no subscriptions, no run-start. It is
+for a run's other computers, which record their own machine samples while the orchestrator's computer
+reads the subscriptions they all share; with --final it adds one machine sample, prints it and exits 0.
 --final is the finish's snapshot, in the foreground: one live reading and one Mac sample added to the
 folder, so every subscription has an end point however short the run, and the reading printed as
 JSON. It works while the sampler runs or after it stopped, and refuses a folder that doesn't exist;
@@ -261,12 +264,22 @@ def cpu_seconds():
     return own.ru_utime + own.ru_stime + kids.ru_utime + kids.ru_stime
 
 
-def final(folder, script):
+def final(folder, script, machine_only=False):
     """The finish's snapshot: one live reading and one Mac sample added to the folder (no lock: each is
-    one appended line, so the sampler may still be running), and the reading printed."""
+    one appended line, so the sampler may still be running), and the reading printed; machine_only: the
+    Mac sample alone, printed."""
     if not os.path.isdir(folder):
         print(f"usage-sampler: no folder {folder}", file=sys.stderr)
         return 2
+    if machine_only:
+        sample = machine()
+        try:
+            append(os.path.join(folder, "machine.jsonl"), sample)
+        except OSError as error:
+            print(f"usage-sampler: the Mac's sample failed: {error}", file=sys.stderr)
+            return 1
+        print(json.dumps(sample))
+        return 0
     reader = Reader(script, os.path.join(folder, "providers.jsonl"), run_start(folder))
     reader.start(live=True)
     reader.thread.join()
@@ -283,14 +296,15 @@ def final(folder, script):
 
 def main():
     args = sys.argv[1:]
-    last = args[:1] == ["--final"]
-    args = args[1:] if last else args
-    if not args:
+    last = "--final" in args[:2]
+    machine_only = "--machine-only" in args[:2]
+    args = [a for n, a in enumerate(args) if not (n < 2 and a in ("--final", "--machine-only"))]
+    if not args or args[0].startswith("-"):
         raise SystemExit(__doc__)
     folder = args[0]
     script = args[1] if len(args) > 1 else os.path.join(os.path.dirname(os.path.realpath(__file__)), "provider-usage")
     if last:
-        return final(folder, script)
+        return final(folder, script, machine_only)
     os.makedirs(folder, exist_ok=True)
     lock = open(os.path.join(folder, "sampler.lock"), "w")
     try:
@@ -300,8 +314,8 @@ def main():
         return 3
     for number in (signal.SIGTERM, signal.SIGINT):
         signal.signal(number, lambda *_: stopping.set())
-    reader = Reader(script, os.path.join(folder, "providers.jsonl"), run_start(folder))
-    log(folder, f"started pid {os.getpid()}")
+    reader = None if machine_only else Reader(script, os.path.join(folder, "providers.jsonl"), run_start(folder))
+    log(folder, f"started pid {os.getpid()}" + (", machine only" if machine_only else ""))
     samples = 0
     last_cached = last_live = None
     last_error = None
@@ -318,16 +332,19 @@ def main():
                     log(folder, f"machine sample failed, going on: {error}")
                 except OSError:
                     pass
-        if last_live is None or start - last_live >= LIVE_EVERY:
+        if reader is None:
+            pass
+        elif last_live is None or start - last_live >= LIVE_EVERY:
             if reader.start(live=True):
                 last_live = last_cached = start
         elif start - last_cached >= CACHED_EVERY:
             if reader.start(live=False):
                 last_cached = start
         stopping.wait(max(0.0, MACHINE_EVERY - (time.monotonic() - start)))
-    reader.kill()
-    if reader.thread:
-        reader.thread.join(5)
+    if reader:
+        reader.kill()
+        if reader.thread:
+            reader.thread.join(5)
     log(folder, f"stopped after {samples} machine samples, {cpu_seconds():.2f} s of CPU time")
     return 0
 

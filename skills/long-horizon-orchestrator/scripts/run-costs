@@ -4,13 +4,23 @@ each task, each task's reviewers and its helpers. An estimate of what the same t
 API, not what the subscriptions cost: most of the work runs on flat-rate plans or free tiers.
 
 Usage: run-costs <run directory> [--orchestrator <thread ID>] [--from <ISO time>] [--to <ISO time>]
-                 [--json <file>] [--markdown <file>]
+                 [--task <task ID>=<thread ID>]... [--computer <name>] [--json <file>] [--markdown <file>]
 
 The run: <run directory>/watch.json gives the tasks' thread IDs ("tasks": {"A": {"thread": ...}}), the
 run's start ("started") and, when the orchestrator recorded them, its own thread ("orchestrator_thread")
 and the run's end ("finished"). --orchestrator, --from and --to override them; the end defaults to now.
 Only tokens used between the start and the end count, since one orchestrator thread may serve several
-runs.
+runs. --task names a task's thread instead, for a computer without the run's watch.json: on a run's
+other computer, its finish thread runs run-costs with --from, --task for each task that ran there and
+--json <run directory>/costs.json, and share-usage sends that file to the orchestrator's computer.
+
+Several computers: each line says which computer its thread ran on (--computer, else watch.json's
+"computer", else this computer's LocalHostName). On the orchestrator's computer, every
+<run directory>/computers/<name>/costs.json that share-usage fetch wrote is added: its lines replace
+this computer's empty ones for the tasks that ran there (watch.json's "computer" of each task), so the
+total counts every task and its reviewers and helpers. A computer that tasks ran on but whose file
+didn't arrive is named, and those tasks are listed as not counted ("ran on <name>, whose costs didn't
+arrive").
 
 Where the numbers come from (T3 Code's records; T3_USERDATA moves its folder, ~/.t3/userdata by default):
   - the threads: T3's statev2.sqlite, read only: each thread's title, model and parent (a reviewer or
@@ -420,9 +430,7 @@ def harness_of(instance: str | None) -> str:
             else "copilot" if "copilot" in i else i or "unknown")
 
 
-def collect(run_dir: Path, orchestrator: str | None, start: float, end: float) -> dict:
-    watch = json.loads((run_dir / "watch.json").read_text())
-    tasks = {str(k): v.get("thread") for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict) and v.get("thread")}
+def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, tasks: dict) -> dict:
     threads, natives, runs = load_threads(userdata() / "statev2.sqlite")
     children = defaultdict(list)
     for tid, t in threads.items():
@@ -536,13 +544,17 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float) -
 
 def totals(data: dict) -> dict:
     by_model, by_role, by_owner = defaultdict(float), defaultdict(float), defaultdict(float)
-    owners: dict = defaultdict(lambda: {"total": 0.0, "roles": defaultdict(float), "models": defaultdict(float), "incomplete": set()})
+    owners: dict = defaultdict(lambda: {"total": 0.0, "roles": defaultdict(float), "models": defaultdict(float), "incomplete": set(), "computers": set()})
     counted, uncounted, reasons = defaultdict(int), defaultdict(int), defaultdict(set)
+    by_computer = defaultdict(float)
     for l in data["lines"]:
         if l.get("included"):
             continue
+        if l.get("computer"):
+            owners[l["owner"]]["computers"].add(l["computer"])
         for why in (l.get("missing") or "").split("; ") if l.get("missing") else []:
-            reasons[why + (f" ({l['harness']})" if l["usd"] is None and not why.startswith("no price") else "")].add(l["thread"])
+            plain = l["usd"] is not None or why.startswith(("no price", "ran on "))
+            reasons[why + ("" if plain else f" ({l['harness']})")].add(l["thread"])
             owners[l["owner"]]["incomplete"].add(why)
         if l["usd"] is None:
             uncounted[l["harness"]] += 1
@@ -551,6 +563,8 @@ def totals(data: dict) -> dict:
         by_model[l["model"]] += l["usd"]
         by_role[l["role"]] += l["usd"]
         by_owner[l["owner"]] += l["usd"]
+        if l.get("computer"):
+            by_computer[l["computer"]] += l["usd"]
         o = owners[l["owner"]]
         o["total"] += l["usd"]
         o["roles"][l["role"]] += l["usd"]
@@ -561,10 +575,17 @@ def totals(data: dict) -> dict:
             "by_role": {k: round(v, 2) for k, v in by_role.items()}, "by_owner": {k: round(v, 2) for k, v in by_owner.items()},
             "owners": {k: {"total": round(v["total"], 2), "roles": {r: round(x, 2) for r, x in v["roles"].items()},
                            "models": {m: round(x, 2) for m, x in sorted(v["models"].items(), key=lambda kv: -kv[1])},
-                           "incomplete": sorted(v["incomplete"])} for k, v in owners.items()},
+                           "incomplete": sorted(v["incomplete"]), "computers": sorted(v["computers"])} for k, v in owners.items()},
             "threads_counted": dict(counted), "threads_not_counted": dict(uncounted), "claude_reported": round(reported, 2),
             "incomplete": {k: len(v) for k, v in reasons.items()}, "malformed": data.get("malformed", 0),
-            "orchestrator_counted": data.get("orchestrator_counted", True)}
+            "orchestrator_counted": data.get("orchestrator_counted", True),
+            "by_computer": {k: round(v, 2) for k, v in by_computer.items()},
+            "computers_missing": data.get("computers_missing", {})}
+
+
+def several(data: dict) -> bool:
+    """Whether the run's threads ran on more than one computer, or a computer's costs didn't arrive."""
+    return len({l.get("computer") for l in data["lines"] if l.get("computer")}) > 1 or bool(data.get("computers_missing"))
 
 
 def money(v: float) -> str:
@@ -584,6 +605,9 @@ def markdown(data: dict, t: dict) -> str:
                 per[l["model"]] += l["usd"]
             label = ("Orchestrator" if role == "orchestrator" else f"Task {owner}" if role == "task" else
                      f"Orchestrator's {role}s" if owner == "orchestrator" else f"{owner} {role}s")
+            where = sorted({l["computer"] for l in sel if l.get("computer")})
+            if several(data) and where:
+                label += f" ({', '.join(where)})"
             out.append(f"| {label} | {money(sum(per.values()))} | " + " | ".join(money(per[m]) if per.get(m) else "–" for m in t["by_model"]) + " |")
     out.append(f"| **All** | **{money(t['total'])}** | " + " | ".join(f"**{money(v)}**" for v in t["by_model"].values()) + " |")
     roles = ", ".join(f"{k}s {money(t['by_role'][k])}" if k != "orchestrator" else f"orchestrator {money(t['by_role'][k])}"
@@ -594,11 +618,72 @@ def markdown(data: dict, t: dict) -> str:
         gaps.append(f"{t['malformed']} malformed log record(s) skipped")
     paragraph = (f"Cost at API prices (estimate): {money(t['total'])} — what the run's tokens would have cost at the providers' "
                  f"API list prices, not what the subscriptions cost. By role: {roles}. By model: {models}."
+                 + (" By computer: " + ", ".join(f"{c} {money(v)}" for c, v in sorted(t["by_computer"].items(), key=lambda kv: -kv[1])) + "."
+                    if several(data) and t.get("by_computer") else "")
+                 + "".join(f" {c}'s costs didn't arrive, so task{'s' if len(ids) > 1 else ''} {', '.join(ids)} and {'their' if len(ids) > 1 else 'its'}"
+                           f" reviewers and helpers aren't counted." for c, ids in sorted((t.get("computers_missing") or {}).items()))
                  + (" Incomplete: " + "; ".join(gaps) + "." if gaps else " Every thread was counted.")
                  + ("" if data.get("orchestrator_counted", True) else " The orchestrator's own tokens are not counted (no thread given).")
                  + f" Prices: {data['price_source']}, for every provider, as T3 Code prices its usage"
                  + (f" (Claude Code's own figure for the Claude tokens: {money(t['claude_reported'])})." if t.get("claude_reported") else "."))
     return "\n".join(out) + "\n\n" + paragraph + "\n"
+
+
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def this_computer() -> str | None:
+    import subprocess
+    for command in (["scutil", "--get", "LocalHostName"], ["hostname", "-s"]):
+        try:
+            out = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    return None
+
+
+def merge_computers(data: dict, run_dir: Path, own: str | None, watch: dict) -> None:
+    """Adds each other computer's costs (<run directory>/computers/<name>/costs.json) to data: its lines
+    replace this computer's for the tasks that ran there and for the threads it counted, and a computer
+    tasks ran on whose file didn't arrive is named in data["computers_missing"] with those tasks."""
+    placed = {str(k): v.get("computer") for k, v in (watch.get("tasks") or {}).items()
+              if isinstance(v, dict) and isinstance(v.get("computer"), str) and v.get("computer") != own}
+    arrived: dict[str, list] = {}
+    folder = run_dir / "computers"
+    for path in sorted(folder.glob("*/costs.json")) if folder.is_dir() else []:
+        name = path.parent.name
+        if not NAME.fullmatch(name) or name == own:
+            continue
+        try:
+            other = json.loads(path.read_text())
+            lines = other.get("lines") if isinstance(other, dict) else None
+            if not isinstance(lines, list) or not all(isinstance(l, dict) and "owner" in l and "thread" in l for l in lines):
+                raise ValueError("no lines")
+        except (OSError, ValueError) as e:
+            print(f"run-costs: can't read {path} ({e}); {name}'s costs are left out", file=sys.stderr)
+            continue
+        arrived[name] = [dict(l, computer=name) for l in lines]
+        data["malformed"] = data.get("malformed", 0) + (other.get("malformed") or 0 if isinstance(other.get("malformed"), int) else 0)
+    theirs = {l["thread"] for lines in arrived.values() for l in lines}
+    moved = {task for task, name in placed.items() if name in arrived}
+    data["lines"] = [l for l in data["lines"] if l["thread"] not in theirs and l["owner"] not in moved]
+    for lines in arrived.values():
+        data["lines"] += lines
+    missing: dict[str, list] = {}
+    for task, name in sorted(placed.items()):
+        if name in arrived:
+            continue
+        missing.setdefault(name, []).append(task)
+        why = f"ran on {name}, whose costs didn't arrive"
+        for l in data["lines"]:
+            if l["owner"] == task:
+                l.update(computer=name, tokens=None, usd=None, basis="not counted: " + why, missing=why)
+                l.pop("reported_usd", None)
+    data["computers_missing"] = missing
+    if arrived:
+        data["computers"] = sorted({own or "this computer", *arrived})
 
 
 def main(argv: list[str]) -> int:
@@ -607,14 +692,28 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--orchestrator")
     parser.add_argument("--from", dest="start")
     parser.add_argument("--to", dest="end")
+    parser.add_argument("--task", action="append", default=[], metavar="ID=THREAD")
+    parser.add_argument("--computer")
     parser.add_argument("--json")
     parser.add_argument("--markdown")
     args = parser.parse_args(argv)
     run_dir = Path(args.run)
+    named = {}
+    for pair in args.task:
+        task, _, thread = pair.partition("=")
+        if not task or not thread:
+            print(f"run-costs: --task takes <task ID>=<thread ID>, not {pair!r}", file=sys.stderr)
+            return 2
+        named[task] = thread
     try:
         watch = json.loads((run_dir / "watch.json").read_text())
     except (OSError, ValueError) as e:
-        print(f"run-costs: can't read {run_dir / 'watch.json'}: {e}", file=sys.stderr)
+        if not named:
+            print(f"run-costs: can't read {run_dir / 'watch.json'}: {e}", file=sys.stderr)
+            return 2
+        watch = {}   # a run's other computer: its tasks come from --task
+    if not isinstance(watch, dict):
+        print(f"run-costs: {run_dir / 'watch.json'} doesn't hold a JSON object", file=sys.stderr)
         return 2
     start = stamp(args.start or watch.get("started"))
     end = stamp(args.end or watch.get("finished")) or time.time()
@@ -622,11 +721,17 @@ def main(argv: list[str]) -> int:
         print("run-costs: no start: give --from or watch.json's started", file=sys.stderr)
         return 2
     orchestrator = args.orchestrator or watch.get("orchestrator_thread")
+    tasks = named or {str(k): v.get("thread") for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict) and v.get("thread")}
+    own = args.computer or (watch.get("computer") if isinstance(watch.get("computer"), str) else None) or this_computer()
     try:
-        data = collect(run_dir, orchestrator, start, end)
+        data = collect(run_dir, orchestrator, start, end, tasks)
     except (sqlite3.Error, OSError) as e:
         print(f"run-costs: T3 Code's records at {userdata()} can't be read ({e}); this works only for a run under T3", file=sys.stderr)
         return 2
+    data["computer"] = own
+    for l in data["lines"]:
+        l["computer"] = own
+    merge_computers(data, run_dir, own, watch)
     data["orchestrator_counted"] = bool(orchestrator)
     data["totals"] = totals(data)
     text = markdown(data, data["totals"])

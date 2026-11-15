@@ -56,7 +56,7 @@ Before saying a skill is installed, run:
 ./tests/install-manifest-test         # the tables in install/ expand to the expected links and refuse a contradiction, and the README's table of skills says what they say
 ./tests/instructions-test             # instruction files built for two made-up computers from shared and variant sections, the owner's own file left alone and then adopted with a backup, a stale file rebuilt, uninstall, no table, and the rows manifest refuses
 ./tests/sync-test                     # scripts/sync with made-up repositories: pulls one that is behind, skips a dirty one and one off its default branch, reports unpushed commits, pushes nothing, runs bootstrap; doctor's ahead/behind warning
-./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's scripts (lease, run-charts and the run map, usage-sampler, report-offer, prune-runs, run-watch, heartbeat, run-costs)
+./tests/orchestrator-scripts-test   # the long-horizon-orchestrator's scripts (lease, run-charts and the run map, usage-sampler, report-offer, prune-runs, run-watch, heartbeat, run-costs, share-usage)
 ./tests/skill-versions-test         # every skill's version and its changelog agree
 ./tests/skill-evolution-test        # skill-evolution's lessons script: two computers sharing the private lessons, one file per entry
 ./tests/evidence-test               # every evidence file has skill-evidence's "Last checked" line and "Left out" section

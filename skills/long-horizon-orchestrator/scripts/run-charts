@@ -77,6 +77,15 @@ Only for the run map, all optional:
                                                    # relative to the facts file): machine.jsonl and
                                                    # providers.jsonl. Adds a usage panel under the timeline, usage.mmd and
                                                    # usage-mac.mmd, and a line in summary.txt. Without it, nothing changes.
+  "usage": {..., "computers": [{"name": "studio-mac", "role": "orchestrator · daily Mac"},
+                               {"name": "den-mac", "role": "tasks C, D", "folder": "..."}]}
+                                                   # a run on several computers: the first is yours, whose samples are
+                                                   # the folder's; each other one's machine.jsonl is in its "folder", by
+                                                   # default <folder>/../computers/<name>/usage, where share-usage fetch
+                                                   # puts it. The panel gets a picker for whose CPU, GPU, memory and free
+                                                   # disk it shows (yours first), summary.txt a sentence per computer, and
+                                                   # each other computer a usage-mac-<name>.mmd; a computer with no samples
+                                                   # is named. One computer, or none listed: as before.
 
 A pause's "which" names the tasks it stopped ("F only", "A, C"); without task IDs it covers every
 task running then. Each card's mark is its model's maker, found from "maker" or the model's name,
@@ -441,7 +450,8 @@ def render(folder: Path, puppeteer_config: str | None) -> None:
     if not mmdc:
         print("run-charts: mmdc isn't installed (npm i -g @mermaid-js/mermaid-cli); charts written, not rendered")
         return
-    for name in [n for n in ("graph", "timeline", "usage", "usage-mac") if (folder / f"{n}.mmd").exists()]:
+    more = sorted(p.stem for p in folder.glob("usage-mac-*.mmd"))
+    for name in [n for n in ("graph", "timeline", "usage", "usage-mac", *more) if (folder / f"{n}.mmd").exists()]:
         for background in ("white", "black"):
             command = [mmdc, "-i", str(folder / f"{name}.mmd"), "-o", str(folder / f"{name}-{background}.png"),
                        "-b", background, "-s", "2", "-w", "1600"]
@@ -562,19 +572,88 @@ def subscriptions_used(facts: dict) -> set[str]:
             if any(h == title.lower() or h.startswith(title.lower() + " ") for h in harnesses)}
 
 
+def zone_of(records: list[dict]):
+    """The offset the first record with one was written in, else None."""
+    for record in records:
+        try:
+            moment = datetime.fromisoformat(str(record["t"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if moment.tzinfo is not None:
+            return moment.tzinfo
+    return None
+
+
+def mac_of(records: list[dict], minute, t0: float, t1: float, start: int, count: int, zone=None) -> dict | None:
+    """One computer's samples per minute of the axis: each measure's average and peak (the lowest for free
+    disk), the memory's total and the number of samples; a measure with no reading at all (GPU on a Mac
+    that doesn't report it) is left out, never drawn as zero. None when no sample falls on the axis."""
+    buckets: dict[int, list[dict]] = {}
+    for record in records:
+        m = minute(local_time(record["t"], zone))
+        if m is not None and t0 <= m < t1 + 1:
+            buckets.setdefault(int(m // 1) - start, []).append(record)
+    if not buckets:
+        return None
+
+    def series(key: str, peak=max) -> tuple[list, list]:
+        avg: list = [None] * count
+        top: list = [None] * count
+        for i, rows in buckets.items():
+            values = [r[key] for r in rows if is_number(r.get(key))]
+            if values and 0 <= i < count:
+                avg[i], top[i] = round(sum(values) / len(values), 1), round(peak(values), 1)
+        return avg, top
+
+    mac = {}
+    for key, name, peak in (("cpu", "cpu", max), ("gpu", "gpu", max), ("mem_used_gb", "mem", max), ("disk_free_gb", "disk", min)):
+        mac[name], mac[name + "_pk"] = series(key, peak)
+    totals = [r["mem_total_gb"] for rs in buckets.values() for r in rs if is_number(r.get("mem_total_gb"))]
+    mac["mem_total"] = totals[-1] if totals else None
+    mac["samples"] = sum(len(v) for v in buckets.values())
+    for name in ("cpu", "gpu", "mem", "disk"):
+        if not any(v is not None for v in mac[name]):
+            mac.pop(name), mac.pop(name + "_pk")
+    return mac if any(k in mac for k in ("cpu", "gpu", "mem", "disk")) else None
+
+
+def peaks_of(mac: dict) -> dict:
+    return {
+        "cpu": max((v for v in mac.get("cpu_pk", []) if v is not None), default=None),
+        "gpu": max((v for v in mac.get("gpu_pk", []) if v is not None), default=None),
+        "mem": max((v for v in mac.get("mem_pk", []) if v is not None), default=None),
+        "mem_total": mac.get("mem_total"),
+        "disk_first": next((v for v in mac.get("disk", []) if v is not None), None),
+        "disk_last": next((v for v in reversed(mac.get("disk", [])) if v is not None), None),
+        "disk_lowest": min((v for v in mac.get("disk_pk", []) if v is not None), default=None),
+    }
+
+
 def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | None, makers: list[dict], mark_of,
-               used: set[str] = frozenset(), labels: str = "", asleep: list[tuple] = ()) -> dict | None:
+               used: set[str] = frozenset(), labels: str = "", asleep: list[tuple] = (),
+               computers: list[dict] = ()) -> dict | None:
     """The usage panel's data: minutes on the facts' own axis (as the map's times), the Mac's samples
     aggregated per minute (average and peak), each subscription's weekly or monthly windows as runs
     of points in percent left (its 5-hour window isn't drawn), and when sampling began and ended.
     span is the timeline's (start, end) in minutes, or None; mark_of(entry) gives a mark's file index;
     used names the subscriptions that get a line even if they stayed flat; labels is the facts' agent and
     helper labels, which name the models whose separate limits get a line too; asleep lists the stretches
-    the Mac slept, whose samples (taken in dark wakes) are left out."""
+    the Mac slept, whose samples (taken in dark wakes) are left out. computers, for a run on several: each
+    {"name", "role", "folder"}, yours first (its samples are the folder's); each other one's machine.jsonl
+    is read on your clock (its times converted to the offset of your samples) and kept whole, since your
+    Mac's sleeps aren't its own."""
     machine = read_lines(folder / "machine.jsonl")
     reads = read_lines(folder / "providers.jsonl")
     stamps = [local_time(r["t"]) for r in machine + reads]
     stamps = [s for s in stamps if s]
+    zone = zone_of(machine + reads) or datetime.now().astimezone().tzinfo   # your clock, which the facts' times use
+    others = []   # (computer, its samples) for each of the other computers
+    for c in list(computers)[1:]:
+        rows = read_lines(c["folder"] / "machine.jsonl") if c.get("folder") else []
+        rows = [r for r in rows if local_time(r["t"], zone)]
+        others.append((c, rows))
+        if not stamps:   # yours sent nothing: theirs set the day and the span
+            stamps += [local_time(r["t"], zone) for r in rows]
     if not stamps:
         return None
     day = None
@@ -602,34 +681,7 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
     near = [m for m in seen if t0 - 10 <= m <= t1 + 10]   # what the panel draws from: the run's own samples
 
     # the Mac: per minute, the average and the peak of the samples in it
-    buckets: dict[int, list[dict]] = {}
-    for record in machine:
-        m = minute(local_time(record["t"]))
-        if m is not None and t0 <= m < t1 + 1:
-            buckets.setdefault(int(m // 1) - start, []).append(record)
-
-    def series(key: str, peak=max) -> tuple[list, list]:
-        avg: list = [None] * count
-        top: list = [None] * count
-        for i, records in buckets.items():
-            values = [r[key] for r in records if is_number(r.get(key))]
-            if values and 0 <= i < count:
-                avg[i], top[i] = round(sum(values) / len(values), 1), round(peak(values), 1)
-        return avg, top
-
-    mac = None
-    if buckets:
-        mac = {}
-        for key, name, peak in (("cpu", "cpu", max), ("gpu", "gpu", max), ("mem_used_gb", "mem", max), ("disk_free_gb", "disk", min)):
-            mac[name], mac[name + "_pk"] = series(key, peak)
-        totals = [r["mem_total_gb"] for rs in buckets.values() for r in rs if is_number(r.get("mem_total_gb"))]
-        mac["mem_total"] = totals[-1] if totals else None
-        mac["samples"] = sum(len(v) for v in buckets.values())
-        for name in ("cpu", "gpu", "mem", "disk"):
-            if not any(v is not None for v in mac[name]):
-                mac.pop(name), mac.pop(name + "_pk")
-        if not any(k in mac for k in ("cpu", "gpu", "mem", "disk")):
-            mac = None
+    mac = mac_of(machine, minute, t0, t1, start, count)
 
     # the subscriptions: the weekly or monthly window as runs of points, one run per reset period
     found: dict[str, dict] = {}
@@ -786,22 +838,30 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
             providers.append({"id": name, "name": PROVIDER_NAMES.get(name, name.title()), "plan": info["plan"],
                               "colour": line_colour(entry), "mark": mark, "ink": ink, **picked})
     api = api_credits(api_reads, t0, t1, next((e for e in makers if e.get("harnesses") and re.search(e["harnesses"], "claude", re.I)), None), mark_of)
-    if not mac and not providers and not api:
+    sampled = [round(min(near), 2), round(max(near), 2)] if near else [t0, t1]
+    machines = []   # a run on several computers: each one's Mac, yours first
+    if others:
+        own = list(computers)[0]
+        machines.append({"name": own["name"], "role": own.get("role", ""), "mac": mac, "sampled": sampled})
+        for c, rows in others:
+            theirs = [m for m in (minute(local_time(r["t"], zone)) for r in rows) if m is not None and t0 - 10 <= m <= t1 + 10]
+            machines.append({"name": c["name"], "role": c.get("role", ""), "mac": mac_of(rows, minute, t0, t1, start, count, zone),
+                             "sampled": [round(min(theirs), 2), round(max(theirs), 2)] if theirs else None})
+        for m in machines:
+            if m["mac"]:
+                m["peaks"] = peaks_of(m["mac"])
+            else:
+                m.pop("mac")
+                m["missing"] = True
+    if not mac and not providers and not api and not any(m.get("mac") for m in machines):
         return None
-    data = {"t0": t0, "t1": t1, "start": start, "count": count, "providers": providers, "mac": mac,
-            "sampled": [round(min(near), 2), round(max(near), 2)] if near else [t0, t1]}
+    data = {"t0": t0, "t1": t1, "start": start, "count": count, "providers": providers, "mac": mac, "sampled": sampled}
     if api:
         data["api"] = api
     if mac:
-        data["peaks"] = {
-            "cpu": max((v for v in mac.get("cpu_pk", []) if v is not None), default=None),
-            "gpu": max((v for v in mac.get("gpu_pk", []) if v is not None), default=None),
-            "mem": max((v for v in mac.get("mem_pk", []) if v is not None), default=None),
-            "mem_total": mac.get("mem_total"),
-            "disk_first": next((v for v in mac.get("disk", []) if v is not None), None),
-            "disk_last": next((v for v in reversed(mac.get("disk", [])) if v is not None), None),
-            "disk_lowest": min((v for v in mac.get("disk_pk", []) if v is not None), default=None),
-        }
+        data["peaks"] = peaks_of(mac)
+    if machines:
+        data["computers"] = machines
     return data
 
 
@@ -960,27 +1020,48 @@ def usage_line(usage: dict) -> str:
     if api:
         parts.append(f"Claude API credits {dollars(api['first'])} → {dollars(api['last'])} left {api_note(api)}")
     text = "Usage: " + "; ".join(parts) + "." if parts else "Usage:"
-    peaks = usage.get("peaks")
-    if peaks:
-        bits = []
-        if peaks["cpu"] is not None:
-            bits.append(f"{peaks['cpu']:g}% CPU")
-        if peaks["gpu"] is not None:
-            bits.append(f"{peaks['gpu']:g}% GPU")
-        if peaks["mem"] is not None:
-            bits.append(f"{peaks['mem']:g}" + (f" of {peaks['mem_total']:g}" if peaks["mem_total"] else "") + " GB memory")
-        sentence = "The Mac peaked at " + (", ".join(bits[:-1]) + " and " + bits[-1] if len(bits) > 1 else "".join(bits)) if bits else ""
-        if peaks["disk_first"] is not None and peaks["disk_last"] is not None:
-            disk = f"free disk went from {peaks['disk_first']:g} to {peaks['disk_last']:g} GB"
-            if peaks["disk_lowest"] is not None and peaks["disk_lowest"] < peaks["disk_last"]:
-                disk += f" (lowest {peaks['disk_lowest']:g})"
-            sentence = f"{sentence}, and {disk}" if sentence else f"On the Mac, {disk}"
+    machines = usage.get("computers")
+    if not machines:
+        sentence = mac_sentence(usage.get("peaks"), "The Mac", "the Mac")
+        if sentence:
+            text += " " + sentence + "."
+    for m in machines or []:
+        who = m["name"] + (f" ({m['role']})" if m.get("role") else "")
+        if m.get("missing"):
+            text += f" No machine samples arrived from {who}."
+            continue
+        sentence = mac_sentence(m.get("peaks"), who, who)
         if sentence:
             text += " " + sentence + "."
     ended = sampling_ended(usage)
     if ended is not None:
         text += f" Sampling ended at {clock_text(ended)}; the figures stop there."
+    for m in (machines or [])[1:]:   # another computer whose samples stop before the axis does
+        last = (m.get("sampled") or [None, None])[1]
+        if last is not None and usage["t1"] >= last // 1 + 1 and (ended is None or last // 1 < ended // 1):
+            text += f" {m['name']}'s sampling ended at {clock_text(last)}."
     return text
+
+
+def mac_sentence(peaks: dict | None, subject: str, place: str) -> str:
+    """One computer's peaks and free disk as a sentence: "<subject> peaked at 50% CPU, 60% GPU and 34 of 64 GB
+    memory, and free disk went from 99.5 to 98.5 GB"; a reading that is missing (GPU) is left out."""
+    if not peaks:
+        return ""
+    bits = []
+    if peaks["cpu"] is not None:
+        bits.append(f"{peaks['cpu']:g}% CPU")
+    if peaks["gpu"] is not None:
+        bits.append(f"{peaks['gpu']:g}% GPU")
+    if peaks["mem"] is not None:
+        bits.append(f"{peaks['mem']:g}" + (f" of {peaks['mem_total']:g}" if peaks["mem_total"] else "") + " GB memory")
+    sentence = f"{subject} peaked at " + (", ".join(bits[:-1]) + " and " + bits[-1] if len(bits) > 1 else "".join(bits)) if bits else ""
+    if peaks["disk_first"] is not None and peaks["disk_last"] is not None:
+        disk = f"free disk went from {peaks['disk_first']:g} to {peaks['disk_last']:g} GB"
+        if peaks["disk_lowest"] is not None and peaks["disk_lowest"] < peaks["disk_last"]:
+            disk += f" (lowest {peaks['disk_lowest']:g})"
+        sentence = f"{sentence}, and {disk}" if sentence else f"On {place}, {disk}"
+    return sentence
 
 
 def clock_text(m: float) -> str:
@@ -1035,31 +1116,44 @@ def usage_mermaid(usage: dict, facts: dict) -> dict[str, str]:
         out["usage.mmd"] = "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"', f"    x-axis [{labels}]",
                                       '    y-axis "% left" 0 --> 100'] + lines) + "\n"
 
-    mac = usage.get("mac")
-    if mac:
-        lines, colours, names = [], [], []
-        last = max((i for key in ("cpu_pk", "gpu_pk", "mem_pk") for i, v in enumerate(mac.get(key, [])) if v is not None), default=0)
-        cut = [s for s in starts if s <= usage["start"] + last] or starts[:1]
-        total = mac.get("mem_total") or 0
-        for key, name, colour, scale in (("cpu_pk", "CPU", "#2563eb", 1), ("gpu_pk", "GPU", "#7c3aed", 1),
-                                         ("mem_pk", "memory" + (f" (% of {total:g} GB)" if total else ""), "#0d9488", 100 / total if total else 0)):
-            if key not in mac or not scale:
-                continue
-            values = []
-            for s in cut:
-                inside = [v for i, v in enumerate(mac[key]) if v is not None and s <= usage["start"] + i < s + width]
-                values.append(round(max(inside) * scale, 1) if inside else 0)
-            lines.append("    line [" + ", ".join(f"{v:g}" for v in values) + "]")
-            colours.append(colour)
-            names.append(f"{name} {({'#2563eb': 'blue', '#7c3aed': 'violet', '#0d9488': 'teal'})[colour]}")
-        peaks = usage["peaks"]
-        disk = f" · free disk {peaks['disk_first']:g} → {peaks['disk_last']:g} GB" if peaks["disk_first"] is not None else ""
-        if lines:
-            title = f"The Mac, the highest reading in each {span(width)} · " + " · ".join(names) + disk
-            out["usage-mac.mmd"] = "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"',
-                                              "    x-axis [" + ", ".join(f'"{clock_text(c)}"' for c in cut) + "]",
-                                              '    y-axis "% busy" 0 --> 100'] + lines) + "\n"
+    machines = usage.get("computers")
+    if not machines:
+        chart = mac_chart(usage, usage.get("mac"), usage.get("peaks"), "The Mac", starts, width, axis)
+        if chart:
+            out["usage-mac.mmd"] = chart
+    for n, m in enumerate(machines or []):
+        chart = mac_chart(usage, m.get("mac"), m.get("peaks"), m["name"] + (f" ({m['role']})" if m.get("role") else ""), starts, width, axis)
+        if chart:
+            out["usage-mac.mmd" if n == 0 else f"usage-mac-{re.sub(r'[^A-Za-z0-9._-]', '-', m['name'])}.mmd"] = chart
     return out
+
+
+def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, starts: list, width: int, axis: str) -> str | None:
+    """One computer's Mermaid chart: CPU, GPU and memory, the peak in each stretch, free disk in the title."""
+    if not mac:
+        return None
+    lines, colours, names = [], [], []
+    last = max((i for key in ("cpu_pk", "gpu_pk", "mem_pk") for i, v in enumerate(mac.get(key, [])) if v is not None), default=0)
+    cut = [s for s in starts if s <= usage["start"] + last] or starts[:1]
+    total = mac.get("mem_total") or 0
+    for key, name, colour, scale in (("cpu_pk", "CPU", "#2563eb", 1), ("gpu_pk", "GPU", "#7c3aed", 1),
+                                     ("mem_pk", "memory" + (f" (% of {total:g} GB)" if total else ""), "#0d9488", 100 / total if total else 0)):
+        if key not in mac or not scale:
+            continue
+        values = []
+        for s in cut:
+            inside = [v for i, v in enumerate(mac[key]) if v is not None and s <= usage["start"] + i < s + width]
+            values.append(round(max(inside) * scale, 1) if inside else 0)
+        lines.append("    line [" + ", ".join(f"{v:g}" for v in values) + "]")
+        colours.append(colour)
+        names.append(f"{name} {({'#2563eb': 'blue', '#7c3aed': 'violet', '#0d9488': 'teal'})[colour]}")
+    disk = f" · free disk {peaks['disk_first']:g} → {peaks['disk_last']:g} GB" if peaks and peaks["disk_first"] is not None else ""
+    if not lines:
+        return None
+    title = f"{subject}, the highest reading in each {span(width)} · " + " · ".join(names) + disk
+    return "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"',
+                      "    x-axis [" + ", ".join(f'"{clock_text(c)}"' for c in cut) + "]",
+                      '    y-axis "% busy" 0 --> 100'] + lines) + "\n"
 
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -1306,8 +1400,14 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         ends += [v for t in tasks if t["launched"] is not None and t["ended"] is not None for v in (t["launched"], t["ended"])]
         has_timeline = any(t["launched"] is not None and t["ended"] is not None for t in tasks)
         span_ = (min(ends), max(min(ends) + 1, *ends)) if ends and has_timeline else None
+        listed = (facts.get("usage") or {}).get("computers") or []
+        computers = []
+        for n, c in enumerate(listed if len(listed) > 1 else []):
+            given = c.get("folder")
+            place = Path(given).expanduser() if given else (folder if n == 0 else folder.parent / "computers" / c["name"] / "usage")
+            computers.append({"name": c["name"], "role": c.get("role", ""), "folder": place if place.is_absolute() else base / place})
         usage = usage_data(folder, clock.dated, first, span_, makers, lambda entry: mark_of(entry), subscriptions_used(facts), facts_labels(facts),
-                           [(z["start"], z["end"]) for z in asleep])
+                           [(z["start"], z["end"]) for z in asleep], computers)
         if usage:
             data["usage"] = usage
         else:
@@ -1319,9 +1419,20 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             gaps.append(f"{t['malformed']} malformed log record(s) skipped")
         if t.get("orchestrator_counted") is False:
             gaps.append("The orchestrator's own tokens are not counted (no thread given)")
+        where = t.get("by_computer") or {}
+        missing = t.get("computers_missing") or {}
+        several = len(where) > 1 or bool(missing)
+        gaps += [f"Not counted: {c}'s costs didn't arrive (task{'s' if len(ids) > 1 else ''} {', '.join(ids)})" for c, ids in sorted(missing.items())]
         data["cost"] = {"total": t.get("total"), "incomplete": bool(gaps),
                         "lines": [f"{m}: {money_text(v)}" for m, v in (t.get("by_model") or {}).items()]
+                        + ([f"On {c}: {money_text(v)}" for c, v in sorted(where.items(), key=lambda kv: -kv[1])] if several else [])
                         + gaps + [f"Prices: {costs.get('price_source', '')}"]}
+        if several:
+            owners = t.get("owners", {})
+            for card in tasks + [orch]:
+                ran = owners.get(card.get("id", "orchestrator") if card is not orch else "orchestrator", {}).get("computers") or []
+                if card.get("cost") and ran:
+                    card["cost"]["lines"].insert(0, "Ran on " + ", ".join(ran))
     return data, inline, paths
 
 
@@ -1369,7 +1480,9 @@ def run_map(facts: dict, data: dict, paths: list[str], folder: Path) -> tuple[in
     lanes = sum(1 for t in facts["tasks"] if not t.get("replaces")) + (1 if (facts.get("run") or {}).get("start") else 0)
     extra = 0
     if data.get("usage"):  # the usage panel: its subscriptions band, the Mac's three and its frame
-        extra = 140 + (190 if data["usage"]["providers"] else 0) + (110 if data["usage"].get("api") else 0) + (250 if data["usage"]["mac"] else 0)
+        u = data["usage"]
+        extra = 140 + (190 if u["providers"] else 0) + (110 if u.get("api") else 0) + (250 if u["mac"] or any(m.get("mac") for m in u.get("computers") or []) else 0)
+        extra += 40 if u.get("computers") else 0   # the picker's row
     extra += 560 if data.get("rounds") else 0   # the taller canvas a run in rounds gets
     return len(stub), 900 + 46 * lanes + extra  # the canvas, then a lane per agent; generous: html_render shrinks the frame to the page
 
@@ -1451,6 +1564,17 @@ def check_facts(facts) -> None:
     for key in ("integration", "usage"):
         if facts.get(key) is not None and not isinstance(facts[key], dict):
             raise SystemExit(f'run-charts: "{key}" must be an object')
+    listed = (facts.get("usage") or {}).get("computers")
+    if listed is not None:
+        if not isinstance(listed, list) or not all(isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip() for c in listed):
+            raise SystemExit('run-charts: usage "computers" must be a list of objects, each with a "name"')
+        names = [c["name"] for c in listed]
+        if len(names) != len(set(names)):
+            raise SystemExit("run-charts: usage computers' names must be unique")
+        for c in listed:
+            for key in ("role", "folder"):
+                if c.get(key) is not None and not isinstance(c[key], str):
+                    raise SystemExit(f'run-charts: computer {c["name"]}\'s "{key}" must be text')
     integration = facts.get("integration") or {}
     for key in ("branch", "head", "ci"):
         if integration.get(key) is not None and not isinstance(integration[key], str):

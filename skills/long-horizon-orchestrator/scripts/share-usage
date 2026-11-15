@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Brings a run's machine samples and costs from its other computers to the orchestrator's, through the
+run's briefs branch of the owner's private state repository (lho/<run>-briefs), the way the briefs
+travel the other way. The computers share no files; this is the only thing written back on that branch.
+
+Usage:
+  share-usage send <run directory> --state <state repository> [--computer <name>] [--remote <remote>]
+  share-usage fetch <run directory> --state <state repository> [--expect <name>,<name>...] [--remote <remote>]
+
+send runs on a computer that ran tasks, at its finish, after usage-sampler --final --machine-only and
+run-costs: it commits <run directory>/usage/machine.jsonl and <run directory>/costs.json, whichever exist,
+as computers/<name>/machine.jsonl and computers/<name>/costs.json on the briefs branch, and pushes that
+branch, never forced. A push the remote rejects (someone pushed meanwhile) is made again on the branch's
+new head, up to five times. It works in a temporary worktree of the state repository,
+<run directory>/share-usage.worktree, removed afterwards, and changes nothing else there. <name> is the
+computer's LocalHostName (scutil --get LocalHostName; hostname -s elsewhere) unless given.
+
+fetch runs on the orchestrator's computer before the charts: it fetches the briefs branch and writes each
+computers/<name>/ folder it holds into <run directory>/computers/<name>/: usage/machine.jsonl, which
+run-charts reads when the facts list the computer, and costs.json, which run-costs adds to the run's
+costs. It prints one line per computer that sent something, and one per --expect name that sent nothing.
+
+The run is the run directory's name. Every git command runs with GIT_TERMINAL_PROMPT=0 and, unless
+GIT_SSH_COMMAND is set, ssh in batch mode, so nothing can prompt. Exit 0; 1 when there was nothing to
+send or git failed (the message says which); 2 for a usage error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+FILES = (("machine.jsonl", Path("usage") / "machine.jsonl"), ("costs.json", Path("costs.json")))
+TRIES = 5
+
+
+def env() -> dict:
+    e = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    e.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+    return e
+
+
+def git(repo: Path, *args: str, check: bool = True, binary: bool = False) -> subprocess.CompletedProcess:
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=not binary, env=env())
+    if check and done.returncode != 0:
+        err = done.stderr if not binary else done.stderr.decode(errors="replace")
+        raise RuntimeError(f"git {' '.join(args[:3])} failed: {err.strip()[:400]}")
+    return done
+
+
+def computer_name(given: str | None) -> str:
+    if given:
+        return given
+    for command in (["scutil", "--get", "LocalHostName"], ["hostname", "-s"]):
+        try:
+            out = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    raise SystemExit("share-usage: can't tell this computer's name: give --computer")
+
+
+def valid(name: str) -> bool:
+    return bool(NAME.fullmatch(name)) and ".." not in name
+
+
+def fetch_head(state: Path, remote: str, branch: str) -> str:
+    git(state, "fetch", "-q", remote, f"refs/heads/{branch}")
+    return git(state, "rev-parse", "FETCH_HEAD").stdout.strip()
+
+
+def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
+    run = run_dir.name
+    branch = f"lho/{run}-briefs"
+    found = [(dest, run_dir / src) for dest, src in FILES if (run_dir / src).is_file()]
+    if not found:
+        print(f"share-usage: nothing to send: neither {run_dir / FILES[0][1]} nor {run_dir / FILES[1][1]} exists", file=sys.stderr)
+        return 1
+    tree = run_dir / "share-usage.worktree"
+    if tree.exists():
+        listed = git(state, "worktree", "list", "--porcelain").stdout
+        if f"worktree {tree.resolve()}\n" not in listed + "\n":
+            print(f"share-usage: {tree} exists and isn't a worktree of {state}; move it away first", file=sys.stderr)
+            return 1
+        git(state, "worktree", "remove", "--force", str(tree))   # left by an earlier send that stopped
+    added = False
+    try:
+        for attempt in range(1, TRIES + 1):
+            head = fetch_head(state, remote, branch)
+            if not added:
+                git(state, "worktree", "add", "-q", "--detach", str(tree), head)
+                added = True
+            else:
+                git(tree, "reset", "-q", "--hard", head)
+            folder = tree / "computers" / name
+            folder.mkdir(parents=True, exist_ok=True)
+            for dest, source in found:
+                shutil.copyfile(source, folder / dest)
+            git(tree, "add", "--", f"computers/{name}")
+            if git(tree, "diff", "--cached", "--quiet", check=False).returncode == 0:
+                print(f"share-usage: {branch} already holds these files from {name}")
+                return 0
+            git(tree, "commit", "-q", "-m", f"usage: {name}'s machine samples and costs for {run}")
+            pushed = git(tree, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)
+            if pushed.returncode == 0:
+                what = " and ".join(dest for dest, _ in found)
+                print(f"share-usage: sent {what} from {name} to {branch} ({git(tree, 'rev-parse', '--short', 'HEAD').stdout.strip()})")
+                return 0
+            if attempt < TRIES:
+                time.sleep(min(2 * attempt, 6))
+        print(f"share-usage: {TRIES} pushes to {branch} failed; the last said: {pushed.stderr.strip()[:400]}", file=sys.stderr)
+        return 1
+    finally:
+        if added:
+            git(state, "worktree", "remove", "--force", str(tree), check=False)
+
+
+def fetch(run_dir: Path, state: Path, remote: str, expect: list[str]) -> int:
+    branch = f"lho/{run_dir.name}-briefs"
+    head = fetch_head(state, remote, branch)
+    listed = git(state, "ls-tree", "-d", "--name-only", head, "computers/", check=False).stdout.split()
+    names = [n.split("/", 1)[1] for n in listed if n.startswith("computers/")]
+    arrived = []
+    for name in names:
+        if not valid(name):
+            print(f"share-usage: skipped computers/{name}: not a computer's name", file=sys.stderr)
+            continue
+        got = []
+        for dest, local in FILES:
+            blob = git(state, "show", f"{head}:computers/{name}/{dest}", check=False, binary=True)
+            if blob.returncode != 0:
+                continue
+            target = run_dir / "computers" / name / local
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(blob.stdout)
+            if dest == "machine.jsonl":
+                rows = [l for l in blob.stdout.decode(errors="replace").splitlines() if l.strip()]
+                last = re.search(r'"t":\s*"([^"]+)"', rows[-1]) if rows else None
+                got.append(f"{len(rows)} machine samples" + (f", the last at {last.group(1)}" if last else ""))
+            else:
+                got.append("costs")
+        if got:
+            arrived.append(name)
+            print(f"share-usage: {name}: " + ", ".join(got) + f" -> {run_dir / 'computers' / name}")
+    for name in expect:
+        if name not in arrived:
+            print(f"share-usage: nothing arrived from {name}")
+    if not arrived and not expect:
+        print(f"share-usage: no computer has sent anything to {branch}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="share-usage", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("mode", choices=("send", "fetch"))
+    parser.add_argument("run")
+    parser.add_argument("--state", required=True, help="the owner's private state repository on this computer")
+    parser.add_argument("--computer")
+    parser.add_argument("--remote", default="origin")
+    parser.add_argument("--expect", default="")
+    args = parser.parse_args(argv)
+    run_dir = Path(args.run).expanduser().resolve()
+    state = Path(args.state).expanduser()
+    if not run_dir.is_dir():
+        print(f"share-usage: no run directory {run_dir}", file=sys.stderr)
+        return 2
+    if git(state, "rev-parse", "--git-dir", check=False).returncode != 0:
+        print(f"share-usage: {state} isn't a git repository", file=sys.stderr)
+        return 2
+    try:
+        if args.mode == "send":
+            name = computer_name(args.computer)
+            if not valid(name):
+                print(f"share-usage: {name!r} can't name a folder: give --computer", file=sys.stderr)
+                return 2
+            return send(run_dir, state, name, args.remote)
+        expect = [n for n in args.expect.split(",") if n]
+        bad = [n for n in expect if not valid(n)]
+        if bad:
+            print(f"share-usage: --expect names {', '.join(bad)}, which can't be computers' names", file=sys.stderr)
+            return 2
+        return fetch(run_dir, state, args.remote, expect)
+    except RuntimeError as error:
+        print(f"share-usage: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

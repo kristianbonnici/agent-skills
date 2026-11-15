@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch and heartbeat. RUN_MAP_CHROME names the browser for the page checks.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch, heartbeat, run-costs and share-usage. RUN_MAP_CHROME names the browser for the page checks.
 set -eu
 # Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
 # under test, which keep caps already set: start without them.
@@ -2172,6 +2172,35 @@ while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt
 wait "$sampler"
 test "$(grep -c 'machine sample failed' "$work/sampler/stuck/sampler.log")" -eq 1
 grep -q 'stopped after 0 machine samples' "$work/sampler/stuck/sampler.log"
+
+# usage-sampler --machine-only, as a run's other computer runs it: the machine's samples alone, never a
+# subscription reading (provider-usage is never started) and no run-start; --final adds one sample and prints it
+rm -f "$work/sampler/fake/reads.log"
+"$scripts/usage-sampler" --machine-only "$work/sampler/machine" "$work/sampler/fake/provider-usage" >/dev/null 2>&1 &
+sampler=$!
+background="$background $sampler"
+tries=0
+until [ "$(grep -c . "$work/sampler/machine/machine.jsonl" 2>/dev/null || echo 0)" -ge 3 ]; do
+  tries=$((tries + 1)); test "$tries" -lt 100; sleep 0.1
+done
+"$scripts/usage-sampler" --final --machine-only "$work/sampler/machine" > "$work/sampler/machine-final.json"
+kill -TERM "$sampler"
+tries=0
+while kill -0 "$sampler" 2>/dev/null; do tries=$((tries + 1)); test "$tries" -lt 80; sleep 0.1; done
+wait "$sampler"
+test ! -e "$work/sampler/fake/reads.log" && test ! -e "$work/sampler/machine/providers.jsonl" && test ! -e "$work/sampler/machine/run-start"
+grep -q 'started pid [0-9]*, machine only' "$work/sampler/machine/sampler.log"
+python3 -I - "$work/sampler" <<'EOF'
+import json, os, sys
+folder = sys.argv[1]
+rows = [json.loads(l) for l in open(os.path.join(folder, "machine", "machine.jsonl"))]
+printed = json.load(open(os.path.join(folder, "machine-final.json")))
+assert len(rows) >= 4 and printed in rows, (rows[-2:], printed)
+assert {"t", "cpu", "mem_used_gb", "disk_free_gb"} <= set(printed), printed
+EOF
+status=0
+"$scripts/usage-sampler" --machine-only >/dev/null 2>&1 || status=$?
+test "$status" -ne 0 && test ! -e ./--machine-only
 unset USAGE_SAMPLER_MACHINE_EVERY USAGE_SAMPLER_CACHED_EVERY USAGE_SAMPLER_LIVE_EVERY
 
 # report-offer: the reading and the tour from a run's facts and report, within the tools' limits;
@@ -3233,6 +3262,271 @@ a = data["tasks"][0]["cost"]
 assert a["incomplete"] is True and any(l.startswith("Not counted or partly counted") for l in a["lines"]), a
 assert data["orch"]["cost"]["incomplete"] is False, data["orch"]["cost"]   # the orchestrator's figure misses nothing
 EOF
+
+# A run on several computers, with made-up computers: studio-mac (the orchestrator's, with GPU readings),
+# den-mac (an Intel Mac: no GPU readings, its clock an hour behind) and attic-mac (whose samples and costs never
+# arrive). share-usage sends den-mac's samples and costs over the run's briefs branch of a made-up state
+# repository and fetches them on studio-mac; run-costs adds den-mac's costs and names attic-mac; run-charts
+# draws each computer's Mac with a picker, and a run on one computer looks as it always did.
+multi="$work/multi"
+mkdir -p "$multi"
+git init -q --bare -b main "$multi/state.git"
+git clone -q "$multi/state.git" "$multi/seed" 2>/dev/null
+git -C "$multi/seed" switch -q --orphan lho/run-x-briefs
+printf 'rules\n' > "$multi/seed/common.md"
+git -C "$multi/seed" add common.md
+git -C "$multi/seed" -c user.name=t -c user.email=t@example.com commit -q -m briefs
+git -C "$multi/seed" push -q origin lho/run-x-briefs
+briefs_start=$(git -C "$multi/seed" rev-parse HEAD)
+for who in studio den; do
+  git clone -q "$multi/state.git" "$multi/$who-state" 2>/dev/null
+  git -C "$multi/$who-state" config user.name t
+  git -C "$multi/$who-state" config user.email t@example.com
+done
+mkdir -p "$multi/den/run-x/usage" "$multi/studio/run-x/usage"
+python3 -I - "$multi" <<'EOF'
+import json, math, os, sys
+root = sys.argv[1]
+def rows(first, count, cpu, gpu, mem, total, disk, offset):
+    out = []
+    for i in range(count):
+        h, m = divmod(first + i, 60)
+        r = {"t": f"2026-11-16T{h:02d}:{m:02d}:10{offset}", "cpu": round(cpu + 20 * math.sin(i / 7), 1), "load1": 1.0,
+             "mem_used_gb": round(mem + 2 * math.sin(i / 11), 2), "mem_total_gb": total, "disk_free_gb": round(disk - i * 0.05, 2)}
+        if gpu is not None:
+            r["gpu"] = int(gpu + 10 * math.sin(i / 5))
+        out.append(json.dumps(r))
+    return "\n".join(out) + "\n"
+# studio-mac samples 01:00 to 03:59 on its own clock (+02:00); den-mac 01:20 to 03:19 of that clock, written as +01:00
+open(os.path.join(root, "studio/run-x/usage/machine.jsonl"), "w").write(rows(60, 180, 40, 30, 40, 64.0, 150.0, "+02:00"))
+open(os.path.join(root, "den/run-x/usage/machine.jsonl"), "w").write(rows(20, 120, 60, None, 11, 16.0, 50.0, "+01:00"))
+open(os.path.join(root, "den/run-x/usage/providers.jsonl"), "w").write("{}\n")   # an older sampler's: never sent
+prov = [json.dumps({"t": f"2026-11-16T0{h}:00:05+02:00", "kind": "live", "providers": {"claude": {"windows": {"weekly": {"used": 10.0 + 3 * n, "resets_at": "2026-11-20T00:00:00+00:00"}},
+         "observed_at": f"2026-11-16T0{h}:00:05+02:00", "plan": "max"}}}) for n, h in enumerate((1, 2, 3))]
+open(os.path.join(root, "studio/run-x/usage/providers.jsonl"), "w").write("\n".join(prov) + "\n")
+EOF
+
+# run-costs on den-mac, with no watch.json there: its tasks' threads from --task, its own T3 records
+mkdir -p "$multi/den-t3/logs/provider" "$multi/studio-t3/logs/provider"
+python3 -I - "$multi" <<'EOF'
+import json, os, sqlite3, sys
+root = sys.argv[1]
+prices = {"fetchedAtMs": 1794345905354, "document": {"claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05}}}
+def t3(name, threads, results):
+    folder = os.path.join(root, name)
+    db = sqlite3.connect(os.path.join(folder, "statev2.sqlite"))
+    for table in ("orchestration_v2_projection_threads", "orchestration_v2_projection_provider_threads"):
+        db.execute(f"create table {table} (thread_id text, payload_json text)")
+    db.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+    for tid, title, parent in threads:
+        db.execute("insert into orchestration_v2_projection_threads values (?, ?)", (tid, json.dumps({"title": title, "providerInstanceId": "claudeAgent",
+            "modelSelection": {"model": "claude-opus-5-5"}, "lineage": {"parentThreadId": parent}, "createdAt": "2026-11-15T23:30:00Z"})))
+    db.commit()
+    with open(os.path.join(folder, "logs/provider/events.x.log"), "w") as f:
+        for at, tid, uuid, tokens in results:
+            f.write(f"[{at}] NTIVE: " + json.dumps({"providerSessionId": f"provider-session:provider-instance:claudeAgent:thread:{tid.replace(':', '%3A')}:s",
+                "event": {"payload": {"uuid": uuid, "total_cost_usd": 1.0, "model_usage_since_last_result": {"claude-opus-5-5": {
+                    "inputTokens": tokens, "outputTokens": tokens // 10, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}}}}}) + "\n")
+    json.dump(prices, open(os.path.join(folder, "usage-model-rates.json"), "w"))
+t3("den-t3", [("thread:task-d", "D", None), ("thread:review-d", "D review (Terra)", "thread:task-d")],
+   [("2026-11-15T23:40:00.000Z", "thread:task-d", "d1", 100000), ("2026-11-16T00:10:00.000Z", "thread:review-d", "r1", 50000)])
+t3("studio-t3", [("orch-x", "Orchestrator", None), ("thread:task-a", "A", None)],
+   [("2026-11-15T23:30:00.000Z", "orch-x", "o1", 10000), ("2026-11-15T23:45:00.000Z", "thread:task-a", "a1", 200000)])
+json.dump({"started": "2026-11-15T23:00:00Z", "finished": "2026-11-16T02:00:00Z", "orchestrator_thread": "orch-x", "computer": "studio-mac",
+           "tasks": {"A": {"thread": "thread:task-a", "status": "merged"}, "D": {"thread": "thread:task-d", "status": "merged", "computer": "den-mac"},
+                     "E": {"thread": "thread:task-e", "status": "merged", "computer": "attic-mac"}}},
+          open(os.path.join(root, "studio/run-x/watch.json"), "w"))
+EOF
+T3_USERDATA="$multi/den-t3" "$scripts/run-costs" "$multi/den/run-x" --from 2026-11-15T23:00:00Z --to 2026-11-16T02:00:00Z --task D=thread:task-d --computer den-mac \
+  --json "$multi/den/run-x/costs.json" > "$multi/den-costs.md"
+status=0
+"$scripts/run-costs" "$multi/den/run-x" --task D > /dev/null 2>&1 || status=$?
+test "$status" -eq 2
+
+# share-usage send from den-mac: the first push is rejected (the branch moved meanwhile), the second goes up;
+# nothing but computers/den-mac/ is added, nothing is forced, and its worktree is gone afterwards
+cat > "$multi/state.git/hooks/pre-receive" <<'EOF'
+#!/bin/sh
+if [ ! -e "$GIT_DIR/rejected-once" ]; then touch "$GIT_DIR/rejected-once"; echo "made-up: the branch moved" >&2; exit 1; fi
+EOF
+chmod +x "$multi/state.git/hooks/pre-receive"
+"$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac > "$multi/send.out"
+grep -q '^share-usage: sent machine.jsonl and costs.json from den-mac to lho/run-x-briefs' "$multi/send.out"
+test -e "$multi/state.git/rejected-once"
+test ! -e "$multi/den/run-x/share-usage.worktree"
+test "$(git -C "$multi/den-state" worktree list | wc -l)" -eq 1
+git -C "$multi/state.git" merge-base --is-ancestor "$briefs_start" lho/run-x-briefs
+test "$(git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | tr '\n' ' ')" = "common.md computers/den-mac/costs.json computers/den-mac/machine.jsonl "
+"$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'already holds these files from den-mac'
+status=0
+"$scripts/share-usage" send "$multi/studio/run-x" --state "$multi/studio-state" --computer ../x >/dev/null 2>&1 || status=$?
+test "$status" -eq 2
+mkdir -p "$multi/empty/run-x"
+status=0
+"$scripts/share-usage" send "$multi/empty/run-x" --state "$multi/den-state" --computer den-mac >/dev/null 2>&1 || status=$?
+test "$status" -eq 1
+
+# share-usage fetch on studio-mac: den-mac's files land under the run directory, attic-mac is named
+"$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" --expect den-mac,attic-mac > "$multi/fetch.out"
+grep -q '^share-usage: den-mac: 120 machine samples, the last at 2026-11-16T02:19:10+01:00, costs' "$multi/fetch.out"
+grep -q '^share-usage: nothing arrived from attic-mac$' "$multi/fetch.out"
+cmp "$multi/den/run-x/usage/machine.jsonl" "$multi/studio/run-x/computers/den-mac/usage/machine.jsonl"
+cmp "$multi/den/run-x/costs.json" "$multi/studio/run-x/computers/den-mac/costs.json"
+test ! -e "$multi/studio/run-x/computers/den-mac/usage/providers.jsonl"
+
+# run-costs on studio-mac: den-mac's task and its reviewer counted, attic-mac's task named as not arrived
+T3_USERDATA="$multi/studio-t3" "$scripts/run-costs" "$multi/studio/run-x" --json "$multi/studio/costs.json" > "$multi/studio/costs.md"
+python3 -I - "$multi" <<'EOF'
+import json, os, sys
+root = sys.argv[1]
+den = json.load(open(os.path.join(root, "den/run-x/costs.json")))
+assert {(l["owner"], l["role"], l["computer"]) for l in den["lines"]} == {("D", "task", "den-mac"), ("D", "reviewer", "den-mac")}, den["lines"]
+assert den["orchestrator_counted"] is False
+d = json.load(open(os.path.join(root, "studio/costs.json")))
+by = {(l["owner"], l["role"]): l for l in d["lines"]}
+assert by[("D", "task")]["computer"] == "den-mac" and by[("D", "task")]["usd"] == round(100000 * 4e-06 + 10000 * 2e-05, 4), by[("D", "task")]
+assert by[("D", "reviewer")]["computer"] == "den-mac" and by[("D", "reviewer")]["usd"] > 0
+assert by[("A", "task")]["computer"] == "studio-mac" and by[("orchestrator", "orchestrator")]["computer"] == "studio-mac"
+assert [l["role"] for l in d["lines"] if l["owner"] == "D"].count("task") == 1, "D's empty line on studio-mac replaced"
+e = by[("E", "task")]
+assert e["usd"] is None and e["computer"] == "attic-mac" and e["missing"] == "ran on attic-mac, whose costs didn't arrive", e
+t = d["totals"]
+assert t["computers_missing"] == {"attic-mac": ["E"]} and set(t["by_computer"]) == {"studio-mac", "den-mac"}, t
+assert abs(t["total"] - (t["by_computer"]["studio-mac"] + t["by_computer"]["den-mac"])) < 0.02, t
+assert t["owners"]["D"]["computers"] == ["den-mac"], t["owners"]["D"]
+p = d["paragraph"]
+assert "By computer: studio-mac $" in p and ", den-mac $" in p, p
+assert "attic-mac's costs didn't arrive, so task E and its reviewers and helpers aren't counted." in p, p
+assert "ran on attic-mac, whose costs didn't arrive: 1 thread" in p and "(unknown)" not in p, p
+md = open(os.path.join(root, "studio/costs.md")).read()
+assert "| Task D (den-mac) |" in md and "| D reviewers (den-mac) |" in md and "| Task A (studio-mac) |" in md, md
+# a run on one computer: no computer named anywhere
+one = json.load(open(os.path.join(root, "..", "costs", "costs.json")))
+assert "By computer" not in one["paragraph"] and not one["totals"]["computers_missing"], one["paragraph"]
+assert "(" not in "".join(l.split("|")[1] for l in one["table"].splitlines()[2:]), one["table"]
+EOF
+
+# run-charts: each computer's Mac on the panel, with the picker; den-mac without GPU readings, on studio-mac's
+# clock; attic-mac named; the costs by computer in the header and on the cards
+python3 -I - "$multi" <<'EOF'
+import json, os, sys
+root = sys.argv[1]
+base = {"title": "Two computers", "date": "Mon 16 Nov", "orchestrator": "Claude Code (T3) · Opus 5.5 (High)", "integration": {"branch": "lho/run-x", "head": "abc1234"},
+        "run": {"start": "00:55", "end": "04:05", "level": "high", "worked_minutes": 20, "wakes": 8},
+        "tasks": [{"id": "A", "name": "One", "level": "high", "agent": "Claude Code · Opus 5.5", "status": "merged", "needs": [], "first_wave": True,
+                   "launched": "01:00", "ended": "03:00", "worked_minutes": 100},
+                  {"id": "D", "name": "On den-mac", "level": "high", "agent": "Claude Code · Opus 5.5", "status": "merged", "needs": [], "first_wave": True,
+                   "launched": "01:20", "ended": "03:30", "worked_minutes": 100}]}
+two = dict(base, costs={"file": "costs.json"}, usage={"folder": "run-x/usage", "computers": [
+    {"name": "studio-mac", "role": "orchestrator · daily Mac"}, {"name": "den-mac", "role": "task D · Intel"}, {"name": "attic-mac", "role": "task E"}]})
+json.dump(two, open(os.path.join(root, "studio/facts-two.json"), "w"))
+json.dump(dict(base, usage={"folder": "run-x/usage"}), open(os.path.join(root, "studio/facts-one.json"), "w"))
+json.dump(dict(base, usage={"folder": "run-x/usage", "computers": [{"name": "studio-mac", "role": "orchestrator"}]}), open(os.path.join(root, "studio/facts-one-listed.json"), "w"))
+EOF
+"$scripts/run-charts" "$multi/studio/facts-two.json" "$multi/charts-two" > "$multi/charts-two.out"
+"$scripts/run-charts" "$multi/studio/facts-one.json" "$multi/charts-one" >/dev/null
+"$scripts/run-charts" "$multi/studio/facts-one-listed.json" "$multi/charts-one-listed" >/dev/null
+for name in run-map.html summary.txt usage.mmd usage-mac.mmd; do cmp "$multi/charts-one/$name" "$multi/charts-one-listed/$name"; done
+test ! -e "$multi/charts-one/usage-mac-den-mac.mmd"
+grep -q 'usage-mac-den-mac.mmd' "$multi/charts-two.out"
+python3 -I - "$multi" <<'EOF'
+import json, os, re, sys
+root = sys.argv[1]
+def data(name):
+    return json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
+one, two = data("charts-one"), data("charts-two")
+assert "computers" not in one["usage"], one["usage"].keys()
+u = two["usage"]
+studio, den, attic = u["computers"]
+assert [c["name"] for c in u["computers"]] == ["studio-mac", "den-mac", "attic-mac"] and studio["role"] == "orchestrator · daily Mac"
+assert studio["mac"] == one["usage"]["mac"] and studio["peaks"] == one["usage"]["peaks"] and u["mac"] == one["usage"]["mac"]
+assert "gpu" not in den["mac"] and "gpu_pk" not in den["mac"] and den["peaks"]["gpu"] is None, den["mac"].keys()   # no reading: no line, never a zero
+start = u["start"]
+assert den["mac"]["cpu"][80 - start] is not None and den["mac"]["cpu"][79 - start] is None, start   # 00:20+01:00 is 01:20 on studio-mac's clock
+assert den["sampled"] == [80.17, 199.17] and den["mac"]["mem_total"] == 16.0, den["sampled"]
+assert attic == {"name": "attic-mac", "role": "task E", "sampled": None, "missing": True}, attic
+line = open(os.path.join(root, "charts-two", "summary.txt")).read().splitlines()[1]
+assert "studio-mac (orchestrator · daily Mac) peaked at 60% CPU, 39% GPU and 42 of 64 GB memory, and free disk went from 150 to 141.1 GB." in line, line
+assert re.search(r"den-mac \(task D · Intel\) peaked at 80% CPU and 13 of 16 GB memory, and free disk went from 50 to 44 GB\.", line), line
+assert "No machine samples arrived from attic-mac (task E)." in line and "den-mac's sampling ended at 03:19." in line and "The Mac" not in line, line
+one_line = open(os.path.join(root, "charts-one", "summary.txt")).read().splitlines()[1]
+assert "The Mac peaked at 60% CPU, 39% GPU" in one_line and "studio-mac" not in one_line, one_line
+den_mmd = open(os.path.join(root, "charts-two", "usage-mac-den-mac.mmd")).read()
+assert den_mmd.count("\n    line [") == 2 and "GPU" not in den_mmd and "den-mac (task D · Intel), the highest reading" in den_mmd, den_mmd
+assert "studio-mac (orchestrator · daily Mac), the highest" in open(os.path.join(root, "charts-two", "usage-mac.mmd")).read()
+assert not os.path.exists(os.path.join(root, "charts-two", "usage-mac-attic-mac.mmd"))
+cost = two["cost"]["lines"]
+assert any(l.startswith("On studio-mac: $") for l in cost) and any(l.startswith("On den-mac: $") for l in cost), cost
+assert "Not counted: attic-mac's costs didn't arrive (task E)" in cost and two["cost"]["incomplete"] is True, cost
+cards = {t["id"]: t for t in two["tasks"]}
+assert cards["D"]["cost"]["lines"][0] == "Ran on den-mac" and cards["A"]["cost"]["lines"][0] == "Ran on studio-mac", cards["D"]["cost"]
+height = lambda name: int(re.search(r"html_render height (\d+)", open(os.path.join(root, name)).read()).group(1))
+assert height("charts-two.out") >= 1500, height("charts-two.out")
+EOF
+# a computers list that can't be drawn is refused with one sentence
+python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["computers"] = [{"name": "a"}, {"name": "a"}]; json.dump(f, open(sys.argv[2], "w"))' \
+  "$multi/studio/facts-two.json" "$multi/studio/facts-twice.json"
+status=0
+"$scripts/run-charts" "$multi/studio/facts-twice.json" "$multi/charts-twice" > /dev/null 2> "$multi/twice.err" || status=$?
+test "$status" -ne 0 && grep -q "names must be unique" "$multi/twice.err"
+if command -v node >/dev/null 2>&1; then
+  python3 -I -c 'import re, sys; print(re.search(r"<script>\n(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' \
+    "$multi/charts-two/run-map.html" > "$work/run-map-two.js"
+  node --check "$work/run-map-two.js"
+fi
+# where a headless Chrome exists: the picker draws, #computer= picks den-mac (its bands under its name, no GPU
+# line), and the keyboard moves along the picker: Arrow Right picks den-mac and redraws the panel with the
+# focus kept on the picker, and the next skips attic-mac, which sent nothing, back to studio-mac
+if [ -n "$chrome" ]; then
+  dump_dom "file://$multi/charts-two/run-map.html#fit"
+  if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
+  test "$(grep -o 'class="us-opt[^"]*"' "$work/dom.html" | tr '\n' ' ')" = 'class="us-opt" class="us-opt" class="us-opt off" '
+  grep -q 'role="radiogroup"' "$work/dom.html" && grep -q '>studio-mac</div>' "$work/dom.html"
+  dump_dom "file://$multi/charts-two/run-map.html#fit&computer=den-mac&cross=03:25"
+  grep -q '>den-mac</div>' "$work/dom.html" && grep -q "den-mac's sampling ended" "$work/dom.html" && grep -q 'Not sampled on den-mac at this time' "$work/dom.html"
+  if grep -q '>GPU<' "$work/dom.html"; then exit 1; fi
+  if node -e 'process.exit(typeof WebSocket === "function" ? 0 : 1)' 2>/dev/null; then
+    node - "$chrome" "file://$multi/charts-two/run-map.html#fit" "$work/chrome-keys" > "$multi/keys.json" <<'EOF'
+const { spawn } = require("node:child_process"), fs = require("node:fs"), path = require("node:path");
+const [chrome, url, dir] = process.argv.slice(2);
+const browser = spawn(chrome, ["--headless=new", "--disable-gpu", "--no-first-run", `--user-data-dir=${dir}`, "--remote-debugging-port=0",
+  "--window-size=1300,1700", "about:blank"], { stdio: "ignore" });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+(async () => {
+  let port = null;
+  for (let i = 0; i < 150 && !port; i++) { try { port = fs.readFileSync(path.join(dir, "DevToolsActivePort"), "utf8").split("\n")[0]; } catch { await sleep(100); } }
+  if (!port) throw new Error("Chrome gave no debugging port");
+  const page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === "page");
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise((ok, fail) => { ws.onopen = ok; ws.onerror = fail; });
+  let n = 0; const waiting = new Map();
+  ws.onmessage = m => { const d = JSON.parse(m.data); if (d.id && waiting.has(d.id)) { waiting.get(d.id)(d); waiting.delete(d.id); } };
+  const send = (method, params = {}) => new Promise(ok => { const id = ++n; waiting.set(id, ok); ws.send(JSON.stringify({ id, method, params })); });
+  const value = async expression => { const r = await send("Runtime.evaluate", { expression, returnByValue: true });
+    if (!r.result || r.result.exceptionDetails) throw new Error(JSON.stringify(r)); return r.result.result.value; };
+  await send("Page.navigate", { url });
+  for (let i = 0; i < 100 && !(await value(`!!document.querySelector('input[name="rm-us-computer"]')`).catch(() => false)); i++) await sleep(100);
+  const state = () => value(`(() => { const c = document.querySelector('input[name="rm-us-computer"]:checked'), a = document.activeElement;
+    return { checked: c && c.value, focused: a && a.name === "rm-us-computer" ? a.value : null, panels: document.querySelectorAll("section.us").length,
+             bands: [...document.querySelectorAll("section.us .us-sec")].map(e => e.textContent).filter(t => t !== "Subscriptions") }; })()`);
+  const press = async () => { for (const type of ["rawKeyDown", "keyUp"]) await send("Input.dispatchKeyEvent", { type, key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39, nativeVirtualKeyCode: 39 }); await sleep(300); };
+  const out = [await state()];
+  await value(`document.querySelector('input[name="rm-us-computer"]:checked').focus()`);
+  await press(); out.push(await state());
+  await press(); out.push(await state());
+  console.log(JSON.stringify(out));
+  ws.close(); browser.kill();
+})().catch(e => { console.error(String(e)); browser.kill(); process.exit(1); });
+EOF
+    python3 -I - "$multi/keys.json" <<'EOF'
+import json, sys
+start, right, again = json.load(open(sys.argv[1]))
+assert start == {"checked": "0", "focused": None, "panels": 1, "bands": ["studio-mac"]}, start
+assert right == {"checked": "1", "focused": "1", "panels": 1, "bands": ["den-mac"]}, right
+assert again == {"checked": "0", "focused": "0", "panels": 1, "bands": ["studio-mac"]}, again
+EOF
+  fi
+fi
 
 # heartbeat: an idle wake is one line ("nothing to act on") and a ledger line; run-watch's findings and a
 # task's events say to act; a running Fable task makes the usage reading live.
