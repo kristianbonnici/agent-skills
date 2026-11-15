@@ -284,7 +284,7 @@ assert not os.path.exists(os.path.join(work, "not-cloned")), "init made no folde
 # init works again, and a later migrate gives it to the computer the owner names
 with open(shared, "w") as handle:
     handle.write(old)
-assert "migrate" in run("studio-mac", "migrate", "--to", "studio-mac", "--unassigned", code=1) and read() == old
+assert "--unassigned" in run("studio-mac", "migrate", "--to", "studio-mac", "--unassigned", code=1) and read() == old
 assert "moved 4 entries under Unassigned" in run("travel-mac", "migrate", "--unassigned")
 held = read()
 assert [line for line in held.splitlines() if line.startswith("- ")] == entries, held
