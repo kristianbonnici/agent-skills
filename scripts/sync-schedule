@@ -15,7 +15,8 @@
 # Elsewhere it prints the line to add to cron and changes nothing.
 #
 #   sync-schedule install [HH:MM]   install or replace the schedule
-#   sync-schedule remove            remove it
+#   sync-schedule remove [--dry-run]
+#                                   remove it (uninstall --all runs this)
 #   sync-schedule status            INFO or WARN lines, as doctor prints them: whether it is
 #                                   installed, and when it last ran, from the log. Never FAIL.
 #
@@ -31,7 +32,7 @@ start_marker='agent-skills sync started '
 finish_marker='agent-skills sync finished '
 
 usage() {
-  echo "Usage: sync-schedule install [HH:MM] | remove | status" >&2
+  echo "Usage: sync-schedule install [HH:MM] | remove [--dry-run] | status" >&2
 }
 
 case "${AGENT_SKILLS_SCHEDULER:-}" in
@@ -255,20 +256,25 @@ install() {
 
 remove() {
   if [ "$scheduler" = cron ]; then
-    echo "This system has no launchd: remove the line that runs $repo_root/scripts/sync from your crontab (crontab -e); nothing was changed."
+    if crontab -l 2>/dev/null | grep -qF -- "$repo_root/scripts/sync"; then
+      echo "This system has no launchd: remove the line that runs $repo_root/scripts/sync from your crontab (crontab -e); nothing was changed."
+    else
+      echo "OK no daily sync is scheduled"
+    fi
     return 0
   fi
-  # The files that carry the label, and the one at this label's name whatever it carries.
+  # The files that carry the label, and the one at this label's name whatever it carries. launchd
+  # is asked only when there is one: an agent without a file goes at the next login.
   found=$({ labelled_plists; [ ! -e "$plist" ] || printf '%s\n' "$plist"; } | awk 'NF && !seen[$0]++')
-  was_loaded=0
-  if launchctl print "$domain/$label" >/dev/null 2>&1; then
-    was_loaded=1
-    launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-  fi
-  if [ -z "$found" ] && [ "$was_loaded" -eq 0 ]; then
+  if [ -z "$found" ]; then
     echo "OK no daily sync is scheduled"
     return 0
   fi
+  if [ "$1" -eq 1 ]; then
+    printf '%s\n' "$found" | sed 's/^/DRY RUN: unload and remove the daily sync /'
+    return 0
+  fi
+  launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
   printf '%s\n' "$found" | while IFS= read -r other; do
     [ -n "$other" ] || continue
     if is_ours "$other"; then rm -f "$other"; else keep_aside "$other"; fi
@@ -343,7 +349,9 @@ action=$1
 shift
 case "$action" in
   install) [ "$#" -le 1 ] || { usage; exit 2; }; install "$@" ;;
-  remove) [ "$#" -eq 0 ] || { usage; exit 2; }; remove ;;
+  remove)
+    case "$*" in "") remove 0 ;; --dry-run) remove 1 ;; *) usage; exit 2 ;; esac
+    ;;
   status) [ "$#" -eq 0 ] || { usage; exit 2; }; status ;;
   -h|--help) usage ;;
   *) usage; exit 2 ;;

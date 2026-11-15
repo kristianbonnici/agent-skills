@@ -106,11 +106,12 @@ says `NOT ADOPTED` with the command that adopts it, and doctor warns about it wi
 beside it (`CLAUDE.md.before-agent-skills-<date>-<time>`, named in its output; a link stays a link).
 Doctor fails while a built file is missing or out of date. Uninstall removes only built files nobody
 changed, and names the backup from before the adoption, to rename back. With no table, or no row for
-this computer, nothing is built and nothing is reported. Bootstrap records each file it built, with
+this computer, nothing is built, and only files recorded as built before are reported. Bootstrap records each file it built, with
 the computer and the host, in `${XDG_STATE_HOME:-~/.local/state}/agent-skills/instructions-built`, so
 a file whose row is taken out of the table (or whose host the computer now leaves out) is still
 known: doctor warns about it, and bootstrap and uninstall remove it when it still carries the marker
-and its checksum, or keep it and say so when someone changed it. Just before it replaces a file,
+and its checksum, or keep it and say so when someone changed it. Files built before this record
+existed, and those of a computer since renamed, aren't in it: remove those by hand. Just before it replaces a file,
 bootstrap gives it a second name (a hard link) and compares that with what it judged afterwards, so
 a change written into the file in between, or a file another program put in its place before then,
 is kept as the backup; a file put in its place after the second name was given is left for the
@@ -146,7 +147,7 @@ Run it from the main checkout: a linked worktree is refused. Running it again ch
 replaces the agent with the new time; an agent with that label that it didn't write, a hand-made one
 included, is unloaded and moved to `${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/` as a
 backup. `./scripts/sync --schedule-status` says whether it is installed and how its last run went,
-and `--unschedule` removes it (the log stays). Elsewhere, `--schedule` prints the line to add to cron
+and `--unschedule` removes it (the log stays), as `./scripts/uninstall --all` does. Elsewhere, `--schedule` prints the line to add to cron
 and changes nothing.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind

@@ -39,7 +39,8 @@ reads what it wrote. The file is also read again just before the new one replace
 changed in between (an entry added by hand, which takes no lock), the command starts over from the
 changed file, so the entry is kept. A file that keeps changing is left as it is (exit 2). Both keep
 the file's line ends: CRLF stays CRLF. DISK_CLEANUP_PAUSE (seconds) waits between reading and
-writing, for tests.
+writing, and DISK_CLEANUP_LOCK_WAIT (seconds, 60 by default) how long to wait for another command's
+lock, for tests.
 
 Exit 0: done; 1: usage, an unreadable file or a lock held too long; 2: the file's layout is not what the command needs
 (the message says why, and nothing was written).
@@ -60,7 +61,7 @@ UNASSIGNED = "## Unassigned"
 LISTS = ("Keep", "Undecided", "Cleared")
 # How long a command waits for another one's lock, and how often it starts over when the file
 # changed under it.
-LOCK_WAIT = 60
+LOCK_WAIT = float(os.environ.get("DISK_CLEANUP_LOCK_WAIT") or 60)
 ATTEMPTS = 3
 USAGE = next(part for part in __doc__.split("\n\n") if part.startswith("Usage:"))
 
@@ -150,7 +151,7 @@ class Locked:
                 if time.monotonic() > deadline:
                     os.close(self.fd)
                     raise SystemExit(f"decisions: another command has been writing {self.folder} for "
-                                     f"{LOCK_WAIT} seconds; try again when it is done")
+                                     f"{LOCK_WAIT:g} seconds; try again when it is done")
                 time.sleep(0.05)
 
     def __exit__(self, *_):

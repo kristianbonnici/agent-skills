@@ -168,7 +168,7 @@ print("disk-cleanup scan: ok")
 EOF
 
 python3 -I - "$repo_root/skills/disk-cleanup/scripts/decisions" "$work/decisions" <<'EOF'
-import os, subprocess, sys, time
+import fcntl, os, subprocess, sys, threading, time
 
 script, work = sys.argv[1], sys.argv[2]
 shared = os.path.join(work, "repo", "disk-cleanup", "decisions.md")  # the state repository's file
@@ -357,8 +357,23 @@ def finish(process):
     return out
 
 
-# two rounds at once on one computer: the second waits for the first one's lock, then reads what it
-# wrote, so neither section is lost
+# a command waits while another holds the folder's lock, and writes once it is free; one that
+# can't get it in time gives up and writes nothing
+with open(shared, "w") as handle:
+    handle.write(laid)
+folder = os.open(os.path.dirname(shared), os.O_RDONLY)
+fcntl.flock(folder, fcntl.LOCK_EX)
+waiting = start("travel-mac", "init")
+time.sleep(1)
+assert waiting.poll() is None and read() == laid, "init wrote while another held the lock"
+impatient = subprocess.run([script, "init"], capture_output=True, text=True, env={
+    **os.environ, "XDG_STATE_HOME": state("den-mac"), "DISK_CLEANUP_MACHINE": "den-mac", "DISK_CLEANUP_LOCK_WAIT": "0.5"})
+assert impatient.returncode == 1 and "has been writing" in impatient.stderr and read() == laid, impatient
+fcntl.flock(folder, fcntl.LOCK_UN)
+os.close(folder)
+assert "added a section for travel-mac" in finish(waiting)
+
+# two rounds at once on one computer: neither section is lost
 with open(shared, "w") as handle:
     handle.write(laid)
 first = start("travel-mac", "init", pause=1)
@@ -368,7 +383,33 @@ assert "added a section for travel-mac" in finish(first)
 assert "added a section for den-mac" in finish(second)
 both = read()
 assert both.startswith(laid.rstrip("\n")) and "## Machine: travel-mac\n" in both and "## Machine: den-mac\n" in both, both
-assert both.index("## Machine: travel-mac") < both.index("## Machine: den-mac"), both
+
+# a file that keeps changing (a writer that takes no lock, every few hundredths of a second) is
+# left as it is after three tries
+with open(shared, "w") as handle:
+    handle.write(laid)
+stop = threading.Event()
+
+
+def churn():
+    number = 0
+    while not stop.is_set():
+        number += 1
+        with open(shared, "w") as handle:
+            handle.write(laid + f"- `~/churn/{number}` (2026-11-16): kept.\n")
+        time.sleep(0.02)
+
+
+churner = threading.Thread(target=churn)
+churner.start()
+try:
+    env = {**os.environ, "XDG_STATE_HOME": state("travel-mac"), "DISK_CLEANUP_MACHINE": "travel-mac", "DISK_CLEANUP_PAUSE": "0.2"}
+    done = subprocess.run([script, "init"], capture_output=True, text=True, env=env, timeout=60)
+finally:
+    stop.set()
+    churner.join()
+assert done.returncode == 2 and "changed 3 times" in done.stderr, done
+assert "## Machine: travel-mac" not in read(), "a file that kept changing was written"
 
 # an entry added by hand (no lock) while a command is between reading and writing: it starts over
 # from the changed file, so the entry is kept

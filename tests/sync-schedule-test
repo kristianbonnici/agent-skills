@@ -106,7 +106,6 @@ test "$(ls -li "$plist")" = "$before" || fail "the plist was rewritten"
 : >"$work/launchctl.log"
 "$sync" --schedule 7:05 >"$work/out" 2>&1 || fail "--schedule 7:05 failed"
 expect "^SCHEDULED the daily sync at 07:05" "$work/out"
-test "$(sed -n 1p "$work/launchctl.log")" = "print gui/$uid/com.agent-skills.sync" || true
 expect "^bootout gui/$uid/com.agent-skills.sync$" "$work/launchctl.log"
 test "$(grep -n '^bootout' "$work/launchctl.log" | cut -d: -f1)" -lt "$(grep -n '^bootstrap' "$work/launchctl.log" | cut -d: -f1)" || fail "loaded before unloading"
 python3 -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb"))["StartCalendarInterval"] == {"Hour": 7, "Minute": 5}' "$plist"
@@ -198,7 +197,20 @@ cmp -s "$plist" "$work/plist.before" || fail "a worktree changed the plist"
 "$work/worktree/scripts/sync" --schedule-status >"$work/out" 2>&1
 expect "^WARN the daily sync runs $sync, not this checkout's scripts/sync" "$work/out"
 
-# Removing unloads it and deletes the file; the log stays. Removing again is a no-op.
+# Uninstall --all removes it too, since its next run would install everything again; a dry run
+# only says so.
+AGENT_SKILLS_PRIVATE= "$checkout/scripts/uninstall" --all --dry-run >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "uninstall --dry-run failed"; }
+expect "^DRY RUN: unload and remove the daily sync $plist$" "$work/out"
+test -f "$plist" || fail "a dry run removed the plist"
+AGENT_SKILLS_PRIVATE= "$checkout/scripts/uninstall" --host claude >"$work/out" 2>&1 || true
+test -f "$plist" || fail "uninstall --host removed the schedule"
+AGENT_SKILLS_PRIVATE= "$checkout/scripts/uninstall" --all >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "uninstall failed"; }
+expect "^UNSCHEDULED the daily sync" "$work/out"
+test ! -e "$plist" || fail "uninstall left the plist"
+"$sync" --schedule >/dev/null 2>&1 || fail "--schedule after uninstall failed"
+
+# Removing unloads it and deletes the file; the log stays. Removing again is a no-op that asks
+# launchd nothing.
 : >"$work/launchctl.log"
 "$sync" --unschedule >"$work/out" 2>&1 || fail "--unschedule failed"
 expect "^UNSCHEDULED the daily sync (com.agent-skills.sync); its log stays at $log$" "$work/out"
@@ -206,8 +218,10 @@ expect "^bootout gui/$uid/com.agent-skills.sync$" "$work/launchctl.log"
 test ! -e "$plist" || fail "the plist is still there"
 test -f "$log" || fail "the log was removed"
 ! grep -qxF "gui/$uid/com.agent-skills.sync" "$work/loaded" || fail "still loaded"
+: >"$work/launchctl.log"
 "$sync" --unschedule >"$work/out" 2>&1 || fail "a second --unschedule failed"
 expect "^OK no daily sync is scheduled$" "$work/out"
+test ! -s "$work/launchctl.log" || fail "launchctl was asked with no agent to remove"
 "$sync" --schedule-status >"$work/out" 2>&1
 expect "^INFO no daily sync is scheduled: scripts/sync --schedule installs one$" "$work/out"
 # A hand-made agent is kept as a backup when it is removed.
@@ -230,6 +244,9 @@ expect "^INFO the daily sync is scheduled by cron: 15 6" "$work/out"
 printf '#!/bin/sh\nexit 1\n' >"$work/bin/crontab"
 AGENT_SKILLS_SCHEDULER=cron "$sync" --schedule-status >"$work/out" 2>&1
 expect "^INFO no daily sync is scheduled: scripts/sync --schedule prints the line to add to cron$" "$work/out"
+AGENT_SKILLS_SCHEDULER=cron "$sync" --unschedule >"$work/out" 2>&1 || fail "--unschedule for cron failed"
+expect "^OK no daily sync is scheduled$" "$work/out"
+printf '#!/bin/sh\necho "15 6 * * * PATH=x %s --from-schedule"\n' "'$sync'" >"$work/bin/crontab"
 AGENT_SKILLS_SCHEDULER=cron "$sync" --unschedule >"$work/out" 2>&1 || fail "--unschedule for cron failed"
 expect "remove the line that runs $sync from your crontab" "$work/out"
 
