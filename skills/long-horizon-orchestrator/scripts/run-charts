@@ -1166,21 +1166,24 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
     # a stretch holds the minutes from its whole starting minute on: the axis may start mid-minute, the per-minute
     # series at a whole one
     cut = [s for s in starts if int(s // 1) + width > usage["start"] + first and int(s // 1) <= usage["start"] + last] or starts[:1]
+
+    def got(key: str, s) -> list:
+        return [v for i, v in enumerate(mac.get(key, [])) if v is not None and int(s // 1) <= usage["start"] + i < int(s // 1) + width]
+
+    # a stretch with no sample at all (the computer slept, or its sampler stopped) is left out of the chart for every
+    # line, so none of them draws a 0 there
+    kept = [s for s in cut if any(got(k, s) for k in ("cpu_pk", "gpu_pk", "mem_pk"))] or cut[:1]
+    skipped = " · stretches with no samples left out" if len(kept) < len(cut) else ""
+    cut = kept
     total = mac.get("mem_total") or 0
     left_out = ""
     for key, name, colour, scale in (("cpu_pk", "CPU", "#2563eb", 1), ("gpu_pk", "GPU", "#7c3aed", 1),
                                      ("mem_pk", "memory" + (f" (% of {total:g} GB)" if total else ""), "#0d9488", 100 / total if total else 0)):
         if key not in mac or not scale:
             continue
-        values, sampled = [], []
-        for s in cut:
-            inside = [v for i, v in enumerate(mac[key]) if v is not None and int(s // 1) <= usage["start"] + i < int(s // 1) + width]
-            values.append(round(max(inside) * scale, 1) if inside else None)
-            # whether the computer was sampled at all in this stretch (a sleep or a stopped sampler is a gap for every line)
-            sampled.append(any(v is not None for k in ("cpu_pk", "mem_pk") for i, v in enumerate(mac.get(k, []))
-                               if int(s // 1) <= usage["start"] + i < int(s // 1) + width))
-        if key == "gpu_pk" and any(v is None and up for v, up in zip(values, sampled)):
-            # a line chart can't leave a point out, and a stretch sampled with no GPU reading isn't an idle GPU: no GPU line
+        values = [round(max(got(key, s)) * scale, 1) if got(key, s) else None for s in cut]
+        if key == "gpu_pk" and None in values:
+            # a line chart can't leave a point out, and a sampled stretch with no GPU reading isn't an idle GPU: no GPU line
             left_out = " · GPU left out: some stretches have no reading"
             continue
         lines.append("    line [" + ", ".join(f"{v or 0:g}" for v in values) + "]")
@@ -1189,7 +1192,7 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
     disk = f" · free disk {peaks['disk_first']:g} → {peaks['disk_last']:g} GB" if peaks and peaks["disk_first"] is not None else ""
     if not lines:
         return None
-    title = f"{subject}, the highest reading in each {span(width)} · " + " · ".join(names) + left_out + disk
+    title = f"{subject}, the highest reading in each {span(width)} · " + " · ".join(names) + left_out + skipped + disk
     return "\n".join([axis.replace("PALETTE", ", ".join(colours)), "xychart-beta", f'    title "{label(title)}"',
                       "    x-axis [" + ", ".join(f'"{clock_text(c)}"' for c in cut) + "]",
                       '    y-axis "% busy" 0 --> 100'] + lines) + "\n"

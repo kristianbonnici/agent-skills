@@ -169,7 +169,7 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
     run = run_dir.name
     try:
         leftovers(run_dir, state)
-    except RuntimeError as error:   # tidying up is optional; the send carries the run's samples and costs
+    except (RuntimeError, OSError) as error:   # tidying up is optional; the send carries the run's samples and costs
         print(f"share-usage: couldn't remove a killed send's worktree ({error}); sending anyway", file=sys.stderr)
     branch = f"lho/{run}-briefs"
     found = [(dest, run_dir / src) for dest, src in FILES if (run_dir / src).is_file()]
