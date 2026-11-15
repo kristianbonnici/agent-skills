@@ -4,6 +4,7 @@
 
 - **No task gets a trial reviewer any more** (owner, 2026-11-15). review-gate 6.0.0 ended the trial: the contract no longer splits standard and deep tasks among trial reviewers, and the task brief names none. The gate itself now adds Gemini 4 Hydrogen at standard and deep.
 - **Hydrogen's reviews count in the Gemini windows:** one for each standard and deep task, and for a light one while the 5-hour window is under about 60%, from the windows the Hydrogen helper uses. The gate skips Hydrogen while the 5-hour window is past about 85%, so the orchestrator leaves room for the reviews when it plans Hydrogen hand-offs.
+- **Review:** with review-gate 6.0.0, in one gate (Deep, 4 rounds, blockers 0, 1, 0, 0; its changelog has the account). Two findings were this skill's, both fixed: the advanced-helper brief still called Hydrogen a trial reviewer (Codex GPT-6.1 Terra, DeepSeek V4.1 Flash), and one Hydrogen review was counted for every task, light ones past 60% of the window too (DeepSeek).
 
 ## 5.4.0 (2026-11-14)
 

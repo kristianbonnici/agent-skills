@@ -6,6 +6,7 @@
 - **A Claude reviewer reads no settings file.** With `--setting-sources local`, a `.claude/settings.local.json` in the copy that allows a tool gave the reviewer that tool whatever its list said: one that allows writing let a reviewer write a file (shown by a run, 2026-11-15; found by Codex GPT-6.1 Terra). The source list is now empty, and the reviewer starts in safe mode, without the owner's plugins, hooks and MCP servers (found by Terra, suspected; a run showed safe mode keeps the sign-in and the allowed tools).
 - **A Claude reviewer can't write through `git diff --output=<file>`.** The allowed `git diff`, `git log` and `git show` take that option, and a run wrote a file with it. It is denied now, and a run shows the three commands still read.
 - The built-in cheap models' brief is "the gate's brief for a free reviewer": review-gate 6.0.0 ended the trial that the wording named.
+- **Review:** with review-gate 6.0.0, in one gate (Deep, 4 rounds, blockers 0, 1, 0, 0; its changelog has the account). **Open, there before:** a `diff.external` command in git's configuration runs when a Claude reviewer calls `git diff`; the copies have no such configuration of their own, the owner's would apply.
 
 ## 1.0.0 (2026-11-15)
 
