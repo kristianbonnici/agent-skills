@@ -111,10 +111,10 @@ def parse(text):
     headings = [heading for heading, _ in sections]
     machines = [h for h in headings if h.startswith(MACHINE)]
     old = [h for h in headings if h in tuple(f"## {name}" for name in LISTS)]
-    if machines and old:
+    if (machines or SHARED in headings) and old:
         raise LayoutError("the file has both computer sections and top-level lists: fix it by hand")
     if machines or SHARED in headings:
-        names = [h[len(MACHINE):].strip() for h in machines]
+        names = [machine_name(h) for h in machines]
         if len(set(names)) != len(names):
             raise LayoutError("a computer has two sections: fix it by hand")
         if "" in names:
@@ -125,6 +125,14 @@ def parse(text):
     if headings:
         raise LayoutError("the file has sections this script doesn't know: fix it by hand")
     return "empty", preamble, sections
+
+
+def machine_name(heading):
+    return heading[len(MACHINE):].strip()
+
+
+def machine_sections(sections):
+    return {machine_name(h): body for h, body in sections if h.startswith(MACHINE)}
 
 
 def block(heading, body):
@@ -161,13 +169,14 @@ def show(path):
         print(text.rstrip())
         return 0
     found = dict(sections)
-    others = [h[len(MACHINE):].strip() for h, _ in sections if h.startswith(MACHINE) and h != f"{MACHINE}{name}"]
+    machines = machine_sections(sections)
+    others = [other for other in machines if other != name]
     print("other computers (not applied here): " + (", ".join(others) if others else "none"))
     print()
     print(block(SHARED, found.get(SHARED, [])) if SHARED in found else f"{SHARED}\n(missing)")
     print()
-    if f"{MACHINE}{name}" in found:
-        print(block(f"{MACHINE}{name}", found[f"{MACHINE}{name}"]))
+    if name in machines:
+        print(block(f"{MACHINE}{name}", machines[name]))
     else:
         print(f"new computer: no section for {name} yet. Start clean: decisions made on other computers")
         print("were not applied. `decisions init` adds the section.")
@@ -184,7 +193,7 @@ def init(path):
     layout, preamble, sections = parse(text)
     if layout == "single":
         raise LayoutError("the file is a single list: migrate it first")
-    if f"{MACHINE}{name}" in dict(sections):
+    if name in machine_sections(sections):
         print(f"{name} already has a section")
         return 0
     if layout == "empty":
