@@ -120,9 +120,9 @@ A pause the owner asks for mid-run (to close a lid or move a computer) is not a 
 3. Wait until each task is idle, then stop its leftover processes by process ID ([machine.md](machine.md#8-leftover-processes); on another computer, in a short thread there, [computers.md](computers.md#3-pre-flight-on-the-other-computer)).
 4. Set the ledger to `Status: paused until the owner continues`, each task you stopped to `paused (owner)` there and `paused` in `watch.json` (a task already paused by quota stays as it is), and tell the owner it is safe now.
 
-On their word to continue: switch the heartbeat on, and each resume wake whose reset is still ahead (a quota-paused task whose reset passed meanwhile continues now, as on its resume wake); check each computer's keep-awake and power (restart a keep-awake that ended); set the ledger back to `Status: running` and the tasks you stopped back to `running`, and send each of them "continue".
+On their word to continue: switch the heartbeat on, and each resume wake whose reset is still ahead (a quota-paused task whose reset passed meanwhile continues now, as on its resume wake); check each computer's keep-awake and power (restart a keep-awake that ended); set the ledger back to `Status: running` and the tasks you stopped back to `running`, there and in `watch.json`, and send each of them "continue".
 
-The steps name T3's tools. In Claude Code, the heartbeat and resume wakes are `CronCreate` jobs: delete them (`CronDelete`) and create them again on continuing, and send the stop and the "continue" with `SendMessage`. In Codex, send them with `send_input`; with nothing scheduled to switch off, end your turn once the tasks are idle and the owner has been told, and continue when the owner's next message resumes the session.
+The steps name T3's tools. In Claude Code, the heartbeat and resume wakes are `CronCreate` jobs: delete them (`CronDelete`) and create them again on continuing, and send the stop and the "continue" with `SendMessage`. In Codex, send them with `send_input` (or `followup_task`) and wait for the tasks with `wait_agent`; your goal ([host-codex.md](host-codex.md#staying-in-control)) would keep the turn going, so clear it (or ask the owner to) before you end the turn, and on continuing set it again and go back to the `wait_agent` loop.
 
 ## A task the user stopped
 
