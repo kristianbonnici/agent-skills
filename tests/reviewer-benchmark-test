@@ -121,7 +121,7 @@ text = open(os.path.join(data, "runs", "good", "one.md")).read()
 assert text.startswith("A finding.") and "len(items) + 1" in text and "GONE-IS-THERE" not in text and "LATER" not in text, text
 meta = load(data, "runs", "good", "one.json")
 assert meta["timed_out"] is False and meta["returncode"] == 0 and meta["bytes"] > 400 and meta["set"] == "1.0", meta
-assert meta["commits"] == [base, head] and "failed" not in meta, meta
+assert meta["commits"] == [base, head] and "failed" not in meta and len(meta["id"]) == 32, meta
 assert bench("run", "good").stdout == "", "a review already saved isn't run again"
 done = bench("run", "echo", "one")
 sent = open(os.path.join(data, "runs", "echo", "one.md")).read()
@@ -261,14 +261,6 @@ assert not os.path.exists(os.path.join(data, "scores", "one.json")), "nothing is
 # Scores a scorer has filled aren't thrown away by another blind, unless it says so.
 done = bench("blind", "cheap")
 assert done.returncode == 64 and "aren't saved yet" in done.stderr and load(blind, "map.json") == mapping, done.stderr
-# A score of a report that was reviewed again since blind copied it is refused: it is another review's.
-kept_meta = open(os.path.join(data, "runs", "echo", "two.json")).read()
-put(os.path.join(data, "runs", "echo", "two.json"), json.dumps(dict(json.loads(kept_meta), seconds=999)))
-fill("one", good={"is_review": True, "known": {"1": 1, "2": 0}, "others": [], "nits_unchecked": 0})
-done = bench("unblind")
-assert done.returncode == 64 and "reviewed this change again" in done.stderr and "two " in done.stderr, done.stderr
-assert not os.path.exists(os.path.join(data, "scores", "one.json"))
-put(os.path.join(data, "runs", "echo", "two.json"), kept_meta)
 fill("one",
      good={"is_review": True, "known": {"1": 1, "2": 0.5}, "nits_unchecked": 3, "others": [
          {"title": "a real one", "their_tag": "follow-up", "verdict": "real", "why": "count.py"},
@@ -295,8 +287,19 @@ assert bench("blind", "--discard", "cheap").returncode == 0, "--discard throws u
 mapping = load(blind, "map.json")
 fill("one", cheap={"is_review": True, "known": {"1": 0, "2": 1}, "others": [], "nits_unchecked": 0})
 fill("two", cheap={"is_review": True, "known": {"1": 0}, "others": [], "nits_unchecked": 0})
-assert bench("unblind").returncode == 0
+# A change reviewed again since blind copied its report: that score is left out and named, the rest are saved,
+# and blind can be run again for the new report.
+kept_meta = open(os.path.join(data, "runs", "cheap", "two.json")).read()
+put(os.path.join(data, "runs", "cheap", "two.json"), json.dumps(dict(json.loads(kept_meta), id="another review")))
+done = bench("unblind")
+assert done.returncode == 0 and "scores of 1 reports saved" in done.stdout and "not saved" in done.stdout and "two A" in done.stdout, done.stdout
 assert sorted(load(data, "scores", "one.json")["reports"]) == ["cheap", "echo", "good"]
+assert "cheap" not in load(data, "scores", "two.json")["reports"]
+assert bench("blind", "cheap").returncode == 0, "after unblind saved what it could, blind runs again"
+mapping = load(blind, "map.json")
+fill("one", cheap={"is_review": True, "known": {"1": 0, "2": 1}, "others": [], "nits_unchecked": 0})
+fill("two", cheap={"is_review": True, "known": {"1": 0}, "others": [], "nits_unchecked": 0})
+assert bench("unblind").returncode == 0 and load(data, "scores", "two.json")["reports"]["cheap"]["review"] == "another review"
 
 # totals.
 done = bench("totals", "--json")
@@ -325,6 +328,12 @@ line = next(l for l in done.stdout.splitlines() if l.startswith("good"))
 assert line.split()[1:] == ["2", "of", "2", "2.5", "(83.3%)", "2", "of", "2", "1", "1", "2", "1", "14.3%", "0"], line
 assert "Tried only part of the set" in done.stdout and "flaky (1 of 2)" in done.stdout, done.stdout
 assert "Reports not scored yet: " in done.stdout and "flaky (1)" in done.stdout, done.stdout
+# A score is its own review's: one saved for another review of the change isn't counted.
+kept_meta = open(os.path.join(data, "runs", "good", "one.json")).read()
+put(os.path.join(data, "runs", "good", "one.json"), json.dumps(dict(json.loads(kept_meta), id="a later review")))
+other = {r["model"]: r for r in json.loads(bench("totals", "--json").stdout)["models"]}["good"]
+assert (other["reports"], other["unscored"], other["known"]) == (1, 1, 1), other
+put(os.path.join(data, "runs", "good", "one.json"), kept_meta)
 # A defect added to a key: a score that says nothing of it is named, and counts as not found.
 put(os.path.join(data, "keys", "two.json"), json.dumps(dict(key, id="two", defects=key["defects"])))
 done = bench("totals")

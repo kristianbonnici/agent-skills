@@ -34,7 +34,8 @@ Run `scripts/bench run <model>` once for each model, in the background, the mode
 
 - The models it knows: `deepseek`, `glm`, `muse`, `haiku`, `hydrogen` (15 minutes, the gate's brief for a free or trial reviewer), and `terra`, `sonnet`, `opus` (30 minutes, no time line in the brief, as the gate gives a paid reviewer). Another model goes in the data folder's `models.json` ([references/set.md](references/set.md#another-model)).
 - A paid model may run as two commands, each given half of the changes' names.
-- When a model fails its first two reviews the same way (no report, or out of time), stop it and say so. Don't spend the whole set on it.
+- When a model fails its first two reviews the same way (no report, out of time, or an error after a good report), stop it and say so. Don't spend the whole set on it: a failed review is run again by every later run.
+- A review that left almost nothing and no error counts as tried with no report. Read its log in the scoring folder: when it was a usage limit or a login, delete that review's `.json` in `runs/<model>/` and run the model again.
 - A model with saved reports of the set isn't run again to be compared with a new one: its reports are scored, and stay scored.
 - Models side by side review the same copies. Don't run two commands of one model on the same change.
 
@@ -42,7 +43,7 @@ Run `scripts/bench run <model>` once for each model, in the background, the mode
 
 1. Run `scripts/bench blind <model> ...` once, for all the models to score. It copies their reports to `blind/<change>/<letter>.md` in the scoring folder and leaves a `scores.json` to fill beside them. Filled scores exist only there until step 3: a second `blind` before it is refused.
 2. For each change, have a scorer fill that file, with the two briefs in [references/scoring.md](references/scoring.md): first each report against the key, then every other finding the report calls a blocker or follow-up against the code. Give the second pass to the strongest model you have.
-3. Run `scripts/bench unblind`. It checks each `scores.json` against its key and saves the scores under the models' names; one that doesn't fit is refused with its reasons.
+3. Run `scripts/bench unblind`. It checks each `scores.json` against its key and saves the scores under the models' names; one that doesn't fit is refused with its reasons, and nothing is saved until it does. A report whose change was reviewed again since step 1 is left out and named, and the others are saved: run `blind` for that model again and score its new report.
 
 ## 5. Add what was confirmed to the key
 

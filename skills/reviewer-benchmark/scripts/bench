@@ -43,8 +43,9 @@ aren't given. It refuses while the scores of an earlier blind aren't saved; --di
 
 unblind: reads each blind/<change>/scores.json and saves its reports' scores under their models' names in
 the data's scores/<change>.json, leaving other models' scores there as they are. A scores.json that doesn't
-fit its key (a known defect missing, a verdict it doesn't know) is refused with its reasons, and so is the
-score of a report that was reviewed again since blind copied it.
+fit its key (a known defect missing, a verdict it doesn't know) is refused with its reasons. The score of a
+report whose change was reviewed again since blind copied it is left out and named, and the rest are saved.
+Every review has an id of its own and its score carries it, so totals never count a score for another review.
 
 totals: one line per model: reports of reviews tried, known defects found (1 for a defect described, a half
 for the right code without the failing case), blockers among them, defects only it found among the models
@@ -67,6 +68,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 
 CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
 AGY_ALLOW = ["git diff", "git log", "git show", "git status", "grep", "ls", "cat", "sed -n", "find"]
@@ -387,7 +389,8 @@ def run(data, copies, scoring, name, given):
             handle.write(text)
         if os.path.exists(last):
             os.remove(last)                     # an earlier try's last message isn't this one's
-        if not shutil.which(argv[0]):
+        # A path is looked for from the copy's folder, where the tool runs; a name, among the installed tools.
+        if not (os.path.exists(os.path.join(work, argv[0])) if os.sep in argv[0] else shutil.which(argv[0])):
             print(f"bench: {argv[0]} isn't installed", file=sys.stderr)
             return 69
         started = time.time()
@@ -420,7 +423,8 @@ def run(data, copies, scoring, name, given):
                 open(report, "wb").close()
         size = os.path.getsize(report)
         result = {"model": name, "change": change, "seconds": round(time.time() - started), "returncode": code,
-                  "timed_out": timed_out, "bytes": size, "set": found["version"], "commits": [key["base"], key["head"]]}
+                  "timed_out": timed_out, "bytes": size, "set": found["version"], "commits": [key["base"], key["head"]],
+                  "id": uuid.uuid4().hex}
         if code != 0 and not timed_out:
             result["failed"] = True             # the tool ended in an error: what it printed is no report
         write(meta, result)
@@ -476,8 +480,9 @@ def blind(data, scoring, names):
 
 
 def review_id(meta):
-    """What tells one review of a change by a model from another of the same."""
-    return [meta.get("commits"), meta.get("bytes"), meta.get("seconds"), meta.get("returncode")]
+    """What tells one review of a change by a model from another of the same: its own id, or, for a review
+    saved before reviews had one, what is known of it."""
+    return meta.get("id") or [meta.get("commits"), meta.get("bytes"), meta.get("seconds"), meta.get("returncode")]
 
 
 def score_problems(change, letter, report, key):
@@ -511,26 +516,28 @@ def unblind(data, scoring):
     folder = os.path.join(scoring, "blind")
     mapping = read(os.path.join(folder, "map.json"), "blind map (run blind first)")
     of = read(os.path.join(folder, "reviews.json"), "list of the reviews blind copied (run blind again)")
-    problems, ready = [], {}
-    for change, letters in mapping.items():
-        key = the_key(data, change)
-        for letter, name in sorted(letters.items()):
-            meta = os.path.join(data, "runs", name, change + ".json")
-            now = read(meta, "run") if os.path.exists(meta) else {}
-            if state_of(now, key) != "report" or review_id(now) != of.get(f"{change}/{name}"):
-                problems.append(f"{change} {letter}: its model reviewed this change again, or its key changed, since "
-                                "blind copied the report: run blind again and score the new report")
-        scores = read(os.path.join(folder, change, "scores.json"), "scores")
-        reports = scores.get("reports") if isinstance(scores, dict) else None
-        if not isinstance(reports, dict) or sorted(reports) != sorted(letters):
-            problems.append(f"{change}: scores.json needs exactly the reports {', '.join(sorted(letters)) or 'none'}")
-            continue
-        for letter in sorted(letters):
-            problems += score_problems(change, letter, reports[letter], key)
-        ready[change] = {letters[letter]: reports[letter] for letter in letters}
-    if problems:
-        raise Refused("the scores don't fit:\n  - " + "\n  - ".join(problems))
-    with scores_locked(data):
+    problems, ready, stale = [], {}, []
+    with scores_locked(data):       # a run that reviews a change again drops its score under the same lock
+        for change, letters in mapping.items():
+            key = the_key(data, change)
+            scores = read(os.path.join(folder, change, "scores.json"), "scores")
+            reports = scores.get("reports") if isinstance(scores, dict) else None
+            if not isinstance(reports, dict) or sorted(reports) != sorted(letters):
+                problems.append(f"{change}: scores.json needs exactly the reports {', '.join(sorted(letters)) or 'none'}")
+                continue
+            for letter in sorted(letters):
+                name = letters[letter]
+                meta = os.path.join(data, "runs", name, change + ".json")
+                now = read(meta, "run") if os.path.exists(meta) else {}
+                if state_of(now, key) != "report" or review_id(now) != of.get(f"{change}/{name}"):
+                    stale.append(f"{change} {letter}")
+                    continue
+                found = score_problems(change, letter, reports[letter], key)
+                problems += found
+                if not found:
+                    ready.setdefault(change, {})[name] = dict(reports[letter], review=review_id(now))
+        if problems:
+            raise Refused("the scores don't fit:\n  - " + "\n  - ".join(problems))
         for change, by_model in ready.items():
             kept = the_scores(data, change)
             kept.update(by_model)
@@ -538,6 +545,9 @@ def unblind(data, scoring):
     with open(os.path.join(folder, "saved"), "w") as handle:
         handle.write("unblind saved these scores\n")
     print(f"scores of {sum(len(v) for v in ready.values())} reports saved under their models' names")
+    if stale:
+        print("not saved, since the change was reviewed again or its key changed after blind copied the report: "
+              + ", ".join(stale) + ". Run blind for those models again and score the new reports.")
     return 0
 
 
@@ -569,8 +579,8 @@ def totals(data, as_json):
             report = scores.get(name)
             if state == "none":
                 continue
-            if not isinstance(report, dict):
-                s["unscored"] += 1
+            if not isinstance(report, dict) or (meta.get("id") and report.get("review") != meta["id"]):
+                s["unscored"] += 1          # no score, or the score of another review of this change
                 continue
             if not report.get("is_review", True):
                 continue
