@@ -644,6 +644,18 @@ def this_computer() -> str | None:
     return None
 
 
+def costs_line(l) -> bool:
+    """Whether l has what the totals and the table read, of the right kinds: text for who and where, a model's
+    name or none, and dollars as a number or none (not counted)."""
+    text = lambda v: isinstance(v, str) and v != ""
+    usd = l.get("usd") if isinstance(l, dict) else None
+    reported = l.get("reported_usd") if isinstance(l, dict) else None
+    money = lambda v: v is None or isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+    return (isinstance(l, dict) and all(text(l.get(k)) for k in ("owner", "thread", "role", "harness")) and "usd" in l
+            and (l.get("model") is None or isinstance(l["model"], str)) and money(usd) and money(reported)
+            and (l.get("missing") is None or isinstance(l["missing"], str)))
+
+
 def merge_computers(data: dict, run_dir: Path, own: str | None, watch: dict) -> None:
     """Adds each other computer's costs (<run directory>/computers/<name>/costs.json) to data: its lines
     replace this computer's for the tasks that ran there and for the threads it counted, and a computer
@@ -659,8 +671,7 @@ def merge_computers(data: dict, run_dir: Path, own: str | None, watch: dict) -> 
         try:
             other = json.loads(path.read_text())
             lines = other.get("lines") if isinstance(other, dict) else None
-            keys = ("owner", "thread", "role", "harness", "model", "usd")   # what the totals and the table read
-            if not isinstance(lines, list) or not all(isinstance(l, dict) and all(k in l for k in keys) for l in lines):
+            if not isinstance(lines, list) or not all(costs_line(l) for l in lines):
                 raise ValueError("its lines aren't run-costs lines")
         except (OSError, ValueError) as e:
             print(f"run-costs: can't read {path} ({e}); {name}'s costs are left out", file=sys.stderr)

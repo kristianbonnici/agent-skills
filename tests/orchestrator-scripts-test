@@ -3383,10 +3383,20 @@ mv "$multi/den/costs.json.aside" "$multi/den/run-x/costs.json"
 status=0
 "$scripts/share-usage" send "$multi/studio/run-x" --state "$multi/studio-state" --computer ../x >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
-mkdir -p "$multi/empty/run-x"
+# a send that finds neither file fails, and takes that computer's earlier files off the branch, so a fetch
+# can't take them for this send's; with nothing there before, it changes nothing
+mkdir -p "$multi/empty/run-x" "$multi/spare/run-x/usage"
+cp "$multi/den/run-x/usage/machine.jsonl" "$multi/spare/run-x/usage/machine.jsonl"
+"$scripts/share-usage" send "$multi/spare/run-x" --state "$multi/den-state" --computer spare-mac > /dev/null
+git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | grep -q '^computers/spare-mac/machine.jsonl$'
 status=0
-"$scripts/share-usage" send "$multi/empty/run-x" --state "$multi/den-state" --computer den-mac >/dev/null 2>&1 || status=$?
-test "$status" -eq 1
+"$scripts/share-usage" send "$multi/empty/run-x" --state "$multi/den-state" --computer spare-mac > "$multi/empty.out" 2>&1 || status=$?
+test "$status" -eq 1 && grep -q 'removed the earlier machine.jsonl from spare-mac' "$multi/empty.out"
+if git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | grep -q spare-mac; then exit 1; fi
+before=$(git -C "$multi/state.git" rev-parse lho/run-x-briefs)
+status=0
+"$scripts/share-usage" send "$multi/empty/run-x" --state "$multi/den-state" --computer spare-mac >/dev/null 2>&1 || status=$?
+test "$status" -eq 1 && test "$(git -C "$multi/state.git" rev-parse lho/run-x-briefs)" = "$before"
 
 # share-usage fetch on studio-mac: den-mac's files land under the run directory, attic-mac is named
 "$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" --expect den-mac,attic-mac > "$multi/fetch.out"
@@ -3443,7 +3453,7 @@ python3 -I -c 'import json, sys; w = json.load(open(sys.argv[1])); del w["tasks"
 # a file whose lines aren't run-costs lines is left out with a note, not a traceback
 mv "$multi/studio/run-x/computers/den-mac" "$multi/studio/run-x/computers/den-mac.local"
 mkdir -p "$multi/studio/run-x/computers/odd-mac"
-printf '%s\n' '{"lines": [{"owner": "Q", "thread": "thread:q"}]}' > "$multi/studio/run-x/computers/odd-mac/costs.json"
+printf '%s\n' '{"lines": [{"owner": "Q", "thread": "thread:q", "role": "task", "harness": "claude", "model": "m", "usd": "12"}]}' > "$multi/studio/run-x/computers/odd-mac/costs.json"
 T3_USERDATA="$multi/studio-t3" "$scripts/run-costs" "$multi/studio/run-x" --json "$multi/studio/costs-local.json" > /dev/null 2> "$multi/studio/costs-local.err"
 grep -q "computers/odd-mac/costs.json (its lines aren't run-costs lines); odd-mac's costs are left out" "$multi/studio/costs-local.err"
 python3 -I - "$multi/studio/costs-local.json" <<'EOF'
@@ -3524,6 +3534,17 @@ assert str(ours("2026-10-25T00:30:00+00:00")) == "2026-10-25 03:30:00", ours("20
 assert str(ours("2026-10-25T01:30:00Z")) == "2026-10-25 03:30:00"                                             # winter time
 assert str(ours("2026-10-24T22:00:00+00:00")) == "2026-10-25 01:00:00" and ours("nonsense") is None
 EOF
+# with this computer's own time zone behind your samples, its rules convert even after your samples stop
+# (here before the change); a zone that doesn't match them falls back to their own offsets
+for zone in Europe/Helsinki UTC; do
+  TZ=$zone python3 -I - "$scripts/run-charts" "$zone" <<'EOF'
+import runpy, sys
+clock_of = runpy.run_path(sys.argv[1], run_name="charts")["clock_of"]
+ours = clock_of([{"t": "2026-10-25T03:50:00+03:00"}])   # your sampler stopped before the clocks went back at 04:00
+want = "2026-10-25 03:30:00" if sys.argv[2] == "Europe/Helsinki" else "2026-10-25 04:30:00"
+assert str(ours("2026-10-25T01:30:00Z")) == want, (sys.argv[2], ours("2026-10-25T01:30:00Z"))
+EOF
+done
 # a computer that samples on after yours stopped: its bands and hover follow its own times, the subscriptions yours
 mkdir -p "$multi/studio/run-x/usage-early"
 head -60 "$multi/studio/run-x/usage/machine.jsonl" > "$multi/studio/run-x/usage-early/machine.jsonl"   # 01:00 to 01:59

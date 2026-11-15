@@ -573,10 +573,11 @@ def subscriptions_used(facts: dict) -> set[str]:
 
 
 def clock_of(records: list[dict]):
-    """A function that reads another computer's sample time on the clock these records were written on:
-    each instant gets the offset of the latest of these records at or before it (the first one's before
-    them all), so a daylight-saving change during the run moves it with your own samples. Without a record
-    with an offset, this computer's own time zone."""
+    """A function that reads another computer's sample time on the clock these records were written on. When
+    every record's offset is what this computer's own time zone gives at that instant (run-charts runs on
+    the orchestrator's computer), that zone's rules convert each time, daylight-saving changes included,
+    even after your samples stop; otherwise each instant gets the offset of the latest record at or before
+    it (the first one's before them all). Without a record with an offset, this computer's own time zone."""
     marks = []
     for record in records:
         try:
@@ -586,6 +587,7 @@ def clock_of(records: list[dict]):
         if moment.tzinfo is not None:
             marks.append((moment.timestamp(), moment.tzinfo))
     marks.sort(key=lambda m: m[0])
+    own_zone = all(datetime.fromtimestamp(at).astimezone().utcoffset() == tz.utcoffset(None) for at, tz in marks)
 
     def read(value):
         try:
@@ -594,7 +596,7 @@ def clock_of(records: list[dict]):
             return None
         if moment.tzinfo is None:
             return moment
-        if not marks:
+        if not marks or own_zone:
             return moment.astimezone().replace(tzinfo=None)
         at = moment.timestamp()
         zone = marks[0][1]
