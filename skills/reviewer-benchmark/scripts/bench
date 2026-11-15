@@ -73,6 +73,7 @@ import time
 import uuid
 
 CLAUDE_TOOLS = "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+CLAUDE_DENIED = "Bash(*--output*)"
 AGY_ALLOW = ["git diff", "git log", "git show", "git status", "grep", "ls", "cat", "sed -n", "find"]
 KINDS = ("opencode", "claude", "codex", "agy", "command")
 MODELS = {
@@ -320,8 +321,10 @@ def command(spec, text, work, last):
         # No settings file is read, the copy's own .claude/settings.local.json included: a tool one of them
         # allows is allowed whatever the list says. That covers settings files alone, not everything of the
         # owner's that the tool may load.
-        return ["claude", "-p", "--model", model, "--effort", "high", "--permission-mode", "dontAsk",
-                "--setting-sources", "", "--allowedTools", CLAUDE_TOOLS], True
+        # Safe mode leaves out the owner's plugins, hooks and MCP servers, and the copy's CLAUDE.md (the
+        # brief names the rules file). The denied --output is how git diff, log and show write a file.
+        return ["claude", "-p", "--safe-mode", "--model", model, "--effort", "high", "--permission-mode", "dontAsk",
+                "--setting-sources", "", "--allowedTools", CLAUDE_TOOLS, "--disallowedTools", CLAUDE_DENIED], True
     if kind == "codex":
         return ["codex", "exec", "--sandbox", "read-only", "--ephemeral", "-m", model, "-c",
                 'model_reasoning_effort="high"', "-C", work, "--output-last-message", last, text], False
