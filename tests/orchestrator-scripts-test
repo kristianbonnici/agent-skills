@@ -3483,14 +3483,16 @@ cp "$multi/den/run-x/usage/machine.jsonl" "$multi/den-home/state/run-x/usage/mac
 cp "$multi/den/run-x/costs.json" "$multi/den-home/state/run-x/costs.json"
 mkdir -p "$fakehome/state/run-x/computers/far-mac/usage"
 printf 'old\n' > "$fakehome/state/run-x/computers/far-mac/usage/machine.jsonl"
+status=0
 HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
-  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --ssh far-mac=unreachable --expect den-mac,far-mac > "$multi/ssh-fetch.out" 2> "$multi/ssh-fetch.err"
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --ssh far-mac=unreachable --expect den-mac,far-mac > "$multi/ssh-fetch.out" 2> "$multi/ssh-fetch.err" || status=$?
+test "$status" -eq 1 && grep -q '^share-usage: far-mac: not reached over ssh unreachable; its earlier copies, if any, are kept$' "$multi/ssh-fetch.out"
 grep -q '^share-usage: den-mac: 120 machine samples, the last at 2026-11-16T02:19:10+01:00, costs -> .* (over ssh den-mac)$' "$multi/ssh-fetch.out"
 grep -q '^share-usage: nothing arrived from far-mac$' "$multi/ssh-fetch.out" && grep -q 'far-mac: ssh unreachable failed' "$multi/ssh-fetch.err"
 cmp "$multi/den/run-x/usage/machine.jsonl" "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl"
 cmp "$multi/den/run-x/costs.json" "$fakehome/state/run-x/computers/den-mac/costs.json"
 test "$(cat "$fakehome/state/run-x/computers/far-mac/usage/machine.jsonl")" = old
-grep -q "^den-mac if \[ -f state/run-x/usage/machine.jsonl \]" "$multi/ssh.log"
+grep -q "^den-mac if \[ ! -d state/run-x \]; then exit 4; elif \[ -f state/run-x/usage/machine.jsonl \]" "$multi/ssh.log"
 rm "$multi/den-home/state/run-x/costs.json"   # costs that failed there: the earlier copy goes
 HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
   "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac > /dev/null
@@ -3499,14 +3501,19 @@ test ! -e "$fakehome/state/run-x/computers/den-mac/costs.json" && test -s "$fake
 printf '{"t": "2026-11-16T09:00:00+01:00", "cpu": 1}\n' >> "$multi/den-home/state/run-x/usage/machine.jsonl"
 cp "$multi/den/run-x/costs.json" "$multi/den-home/state/run-x/costs.json"
 before_samples=$(cksum < "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl")
+status=0
 HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" FAKE_SSH_DROP_COSTS=1 \
-  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac > /dev/null 2> "$multi/ssh-half.err"
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac > /dev/null 2> "$multi/ssh-half.err" || status=$?
+test "$status" -eq 1
 grep -q 'den-mac: ssh den-mac failed: Connection reset' "$multi/ssh-half.err"
 test "$(cksum < "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl")" = "$before_samples" && test ! -e "$fakehome/state/run-x/computers/den-mac/costs.json"
 # with --state too: a computer SSH reached is left alone by the branch's fetch; one it couldn't reach falls back
 # to the branch, its files there (den-mac's send put them there), or keeps its earlier copies when there are none (far-mac)
+status=0
 HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
-  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=unreachable --ssh far-mac=unreachable --state "$multi/studio-state" > "$multi/ssh-fallback.out" 2>/dev/null
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=unreachable --ssh far-mac=unreachable --state "$multi/studio-state" > "$multi/ssh-fallback.out" 2>/dev/null || status=$?
+test "$status" -eq 1 && grep -q '^share-usage: far-mac: not reached' "$multi/ssh-fallback.out"   # far-mac had nothing on the branch either
+if grep -q '^share-usage: den-mac: not reached' "$multi/ssh-fallback.out"; then exit 1; fi        # den-mac came from the branch
 grep -q '^share-usage: den-mac: 120 machine samples, .*costs -> ' "$multi/ssh-fallback.out"
 cmp "$multi/den/run-x/costs.json" "$fakehome/state/run-x/computers/den-mac/costs.json"
 test "$(cat "$fakehome/state/run-x/computers/far-mac/usage/machine.jsonl")" = old
@@ -3520,6 +3527,19 @@ test "$status" -eq 2
 status=0
 "$scripts/share-usage" fetch "$multi/studio/run-x" --ssh 'den-mac=den;rm' > /dev/null 2>&1 || status=$?
 test "$status" -eq 2
+# flags in the wrong place are refused, not ignored
+for wrong in "send --state $multi/studio-state --ssh den-mac=den-mac" "fetch --state $multi/studio-state --remote-run x" "fetch --ssh den-mac=den-mac --remote-run ~/runs/run-x"; do
+  status=0
+  # shellcheck disable=SC2086
+  "$scripts/share-usage" ${wrong%% *} "$multi/studio/run-x" ${wrong#* } > /dev/null 2>&1 || status=$?
+  test "$status" -eq 2
+done
+# a run directory that isn't there (a wrong --remote-run) keeps the earlier copies and fails, unlike a file that didn't come
+status=0
+HOME="$fakehome" PATH="$multi/fake-bin:$PATH" FAKE_SSH_HOME="$multi/den-home" FAKE_SSH_LOG="$multi/ssh.log" \
+  "$scripts/share-usage" fetch "$fakehome/state/run-x" --ssh den-mac=den-mac --remote-run elsewhere/run-x > /dev/null 2> "$multi/ssh-wrong.err" || status=$?
+test "$status" -eq 1 && grep -q 'den-mac: no run directory elsewhere/run-x there' "$multi/ssh-wrong.err"
+test -s "$fakehome/state/run-x/computers/den-mac/usage/machine.jsonl" && test -s "$fakehome/state/run-x/computers/den-mac/costs.json"
 
 # run-costs on studio-mac: den-mac's task and its reviewer counted, attic-mac's task named as not arrived
 T3_USERDATA="$multi/studio-t3" "$scripts/run-costs" "$multi/studio/run-x" --json "$multi/studio/costs.json" > "$multi/studio/costs.md"
@@ -3699,6 +3719,13 @@ assert mid.count("\n    line [") == 3 and "left out" not in mid and all("None" n
 short = {"cpu": [30.0], "cpu_pk": [40.0], "gpu": [5.0], "gpu_pk": [6.0], "mem": [4.0], "mem_pk": [4.0], "mem_total": 16.0}
 one = mac_chart({"start": 60, "t0": 60.5, "t1": 61}, short, peaks, "den-mac", [60.5], 5, axis)
 assert "line [40]" in one and "line [6]" in one and "left out" not in one, one   # a run of under a minute
+# a stretch the computer wasn't sampled in at all (it slept, or the sampler stopped) costs the GPU line nothing
+slept = {k: list(v) for k, v in mac.items() if isinstance(v, list)}
+slept["mem_total"] = 16.0
+for k in ("cpu", "cpu_pk", "gpu", "gpu_pk", "mem", "mem_pk"):
+    slept[k][10:20] = [None] * 10
+gap = mac_chart(usage, slept, peaks, "den-mac", [60, 70, 80, 90], 10, axis)
+assert "GPU violet" in gap and "left out" not in gap and gap.count("\n    line [") == 3, gap
 EOF
 # a computers list that can't be drawn is refused with one sentence
 python3 -I -c 'import json, sys; f = json.load(open(sys.argv[1])); f["usage"]["computers"] = [{"name": "a"}, {"name": "a"}]; json.dump(f, open(sys.argv[2], "w"))' \

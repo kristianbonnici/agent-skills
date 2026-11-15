@@ -40,7 +40,8 @@ its earlier copies kept). Give --state or --ssh, or both.
 
 The run is the run directory's name. Every git command runs with GIT_TERMINAL_PROMPT=0 and, unless
 GIT_SSH_COMMAND is set, ssh in batch mode, so nothing can prompt. Exit 0; 1 when there was nothing to
-send or git failed (the message says which); 2 for a usage error.
+send, git failed or a computer fetched over SSH couldn't be reached (the message says which); 2 for a
+usage error.
 """
 
 from __future__ import annotations
@@ -234,14 +235,20 @@ def over_ssh(run_dir: Path, name: str, alias: str, remote_run: str) -> list[str]
     there removes the earlier copy. Both files are read before either is written, so a connection that fails
     halfway changes nothing. What arrived, or None when SSH couldn't reach it (copies kept)."""
     read = []   # (dest, local, bytes or None when the file isn't there)
+    folder = shlex.quote(remote_run)
     for dest, local in FILES:
         there = shlex.quote(f"{remote_run}/{local}")
         try:
+            # 4: no run directory there at all (a wrong path, not a file that didn't come), which removes nothing
             done = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", alias,
-                                   f"if [ -f {there} ]; then cat -- {there}; else exit 3; fi"],
+                                   f"if [ ! -d {folder} ]; then exit 4; elif [ -f {there} ]; then cat -- {there}; else exit 3; fi"],
                                   capture_output=True, timeout=300)
         except (OSError, subprocess.SubprocessError) as error:
             print(f"share-usage: {name}: ssh {alias} failed ({error}); its earlier copies are kept", file=sys.stderr)
+            return None
+        if done.returncode == 4:
+            print(f"share-usage: {name}: no run directory {remote_run} there (give --remote-run); its earlier copies are kept",
+                  file=sys.stderr)
             return None
         if done.returncode not in (0, 3):
             print(f"share-usage: {name}: ssh {alias} failed: {done.stderr.decode(errors='replace').strip()[:300]}; "
@@ -284,12 +291,15 @@ def fetch(run_dir: Path, state: Path | None, remote: str, expect: list[str], ssh
         # a computer SSH couldn't reach falls back to the branch, where its send may have put its files; with no
         # folder there, its earlier copies stay
         arrived += fetch_branch(run_dir, state, remote, reached, failed)
+    unreached = sorted(n for n in failed if n not in arrived)
+    for name in unreached:
+        print(f"share-usage: {name}: not reached over ssh {ssh[name]}; its earlier copies, if any, are kept")
     for name in expect:
         if name not in arrived:
             print(f"share-usage: nothing arrived from {name}")
-    if not arrived and not expect:
+    if not arrived and not expect and not unreached:
         print("share-usage: no computer has sent anything")
-    return 0
+    return 1 if unreached else 0
 
 
 def fetch_branch(run_dir: Path, state: Path, remote: str, skip: set, keep: set = frozenset()) -> list[str]:
@@ -348,6 +358,15 @@ def main(argv: list[str]) -> int:
     state = Path(args.state).expanduser() if args.state else None
     if not run_dir.is_dir():
         print(f"share-usage: no run directory {run_dir}", file=sys.stderr)
+        return 2
+    if args.mode == "send" and (args.ssh or args.remote_run or args.expect):
+        print("share-usage: send takes no --ssh, --remote-run or --expect (those are fetch's)", file=sys.stderr)
+        return 2
+    if args.remote_run and not args.ssh:
+        print("share-usage: --remote-run goes with --ssh", file=sys.stderr)
+        return 2
+    if args.remote_run and args.remote_run.startswith("~"):
+        print("share-usage: --remote-run is taken as it is: give the path there without ~ (relative to its home, or absolute)", file=sys.stderr)
         return 2
     if state is None and (args.mode == "send" or not args.ssh):
         print("share-usage: give --state (the state repository), or for fetch --ssh <name>=<alias>", file=sys.stderr)
