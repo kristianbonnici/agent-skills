@@ -300,11 +300,14 @@ mv "$work/loaded.next" "$work/loaded"
 "$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed again"
 cp "$plist" "$work/before-fail.plist"
 
-# Another run takes the backup name first (a stand-in mv puts a file there just before the move):
-# that backup is never moved over, and the agent goes to the next free name.
-printf '#!/bin/sh\nif [ "$1" = -n ]; then case "$3" in *agent-skills-sync/*.before-agent-skills-*) [ -e "%s/raced" ] || { echo "another run" >"$3"; : >"%s/raced"; } ;; esac; fi\nexec /bin/mv "$@"\n' "$work" "$work" >"$work/refuse-bin/mv"
+# Another run takes the backup name first (a stand-in ln puts a file there just before it links):
+# that backup is never replaced, and the agent goes to the next free name.
+printf '#!/bin/sh\ncase "$2" in *agent-skills-sync/*.before-agent-skills-*) [ -e "%s/raced" ] || { echo "another run" >"$2"; : >"%s/raced"; } ;; esac\nexec /bin/ln "$@"\n' "$work" "$work" >"$work/refuse-bin/ln"
+chmod +x "$work/refuse-bin/ln"
+rm -f "$work/refuse-bin/mv"
 cp "$plist" "$work/before-race.plist"
 if ! PATH="$work/refuse-bin:$PATH" "$sync" --schedule 05:55 >"$work/out" 2>&1; then cat "$work/out" >&2; fail "--schedule failed when a backup name was taken"; fi
+rm "$work/refuse-bin/ln"
 taken=$(grep -lx "another run" "$HOME"/.local/state/agent-skills-sync/* | head -n 1)
 [ -n "$taken" ] || fail "the stand-in took no backup name"
 test "$(cat "$taken")" = "another run" || fail "a backup another run made was moved over"

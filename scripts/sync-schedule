@@ -161,6 +161,14 @@ stage_all() {
       [ "$count" -eq 1 ] || aside="$aside-$count"
       count=$((count + 1))
       [ ! -e "$aside" ] || continue
+      # A hard link is made only where no file is, in one step: the same file under its backup name,
+      # then its old name goes. On another volume (no hard link possible), mv -n instead.
+      if ln "$original" "$aside" 2>/dev/null; then
+        rm -f "$original"
+        moved=1
+        break
+      fi
+      [ ! -e "$aside" ] || continue
       mv -n "$original" "$aside" 2>/dev/null || break
       if [ ! -e "$original" ] && [ -e "$aside" ]; then moved=1; break; fi
     done
