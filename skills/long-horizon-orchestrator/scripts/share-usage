@@ -135,7 +135,7 @@ def other_sends() -> bool:
 def leftovers(run_dir: Path, state: Path) -> None:
     """Removes the worktrees earlier sends left in this run directory when they were killed: each
     share-usage.*.worktree folder that exists, whose send is no longer running (its pid file names a
-    process that is gone; one with no pid file only when no share-usage runs at all), through `git worktree
+    process that is gone; one with no pid file only when it is over ten minutes old and no share-usage runs at all), through `git worktree
     remove` of the worktree in it when the state repository lists it. A folder whose tree isn't listed (its
     registration is gone) is left as it is and named. Never `git worktree prune`."""
     holders = sorted(p for p in run_dir.glob("share-usage.*.worktree") if p.is_dir())
