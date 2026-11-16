@@ -17,8 +17,8 @@ samples with old costs; a send that finds neither file removes the folder's earl
 branch's new head, up to five times. It works in a temporary worktree of the state repository, a new
 folder <run directory>/share-usage.<random>.worktree for each send, removed afterwards, with this send's
 process ID in it. Before it starts, a send removes the folders an earlier send of this run directory left
-when it was killed: only share-usage.*.worktree folders that exist, whose recorded process (or, for one
-with none, any share-usage at all) is no longer running, and only through `git worktree remove` of their
+when it was killed: only share-usage.*.worktree folders that exist, whose recorded process is no longer running
+(one with no pid file, only when it is over ten minutes old and no share-usage runs at all), and only through `git worktree remove` of their
 own worktree; it never runs `git worktree prune`, which would also forget the owner's own worktrees whose
 folders are missing (on an unmounted disk, say), and it never touches another worktree. <name> is the computer's LocalHostName
 (scutil --get LocalHostName; hostname -s elsewhere) unless given.
@@ -108,6 +108,13 @@ def running(pid: int) -> bool:
     return True
 
 
+def is_share_usage(command: str) -> bool:
+    """Whether a ps command line is share-usage itself, run directly or by its interpreter (macOS shows a
+    framework Python as ".../MacOS/Python"); a shell whose command line merely names it isn't."""
+    program = [os.path.basename(w) for w in command.split()[:2]]
+    return program[:1] == ["share-usage"] or (len(program) > 1 and program[0].lower().startswith("python") and program[1] == "share-usage")
+
+
 def other_sends() -> bool:
     """Whether a share-usage other than this one is running (ps; on failure, assume one is)."""
     try:
@@ -120,10 +127,7 @@ def other_sends() -> bool:
         pid, _, command = line.strip().partition(" ")
         if not pid.isdigit() or int(pid) == os.getpid():
             continue
-        # the program itself, run directly or by its interpreter: a shell whose command line merely mentions it isn't one
-        words = command.split()
-        program = [os.path.basename(w) for w in words[:2]]
-        if program[:1] == ["share-usage"] or (len(program) > 1 and program[0].startswith("python") and program[1] == "share-usage"):
+        if is_share_usage(command):
             return True
     return False
 
@@ -146,9 +150,14 @@ def leftovers(run_dir: Path, state: Path) -> None:
             pid = int(mark.read_text().strip())
             alive = running(pid)
         except (OSError, ValueError):
-            if nobody is None:
+            # no pid file: an older send's, or one that has made its folder and not yet written it; a young one is kept
+            try:
+                young = time.time() - holder.stat().st_mtime < 600
+            except OSError:
+                young = True
+            if nobody is None and not young:
                 nobody = not other_sends()
-            alive = not nobody
+            alive = young or not nobody
         if alive:
             continue
         tree = holder / "tree"

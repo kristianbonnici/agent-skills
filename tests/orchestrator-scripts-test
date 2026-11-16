@@ -3412,8 +3412,20 @@ git -C "$multi/den-state" worktree remove --force "$multi/kill/run-x/share-usage
 # shell whose command line names share-usage (a harness's wrapper)
 mkdir -p "$multi/kill/run-x/share-usage.old.worktree"
 git -C "$multi/den-state" worktree add -q --detach "$multi/kill/run-x/share-usage.old.worktree/tree" FETCH_HEAD
+touch -t 202601010000 "$multi/kill/run-x/share-usage.old.worktree"   # older than ten minutes: a younger one may be a send starting
+python3 -I - "$scripts/share-usage" <<'EOF'
+import runpy, sys
+is_share_usage = runpy.run_path(sys.argv[1], run_name="share_usage")["is_share_usage"]
+assert is_share_usage("/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /x/scripts/share-usage send /r --state /s")
+assert is_share_usage("/usr/bin/python3 /x/share-usage fetch /r") and is_share_usage("/x/share-usage send /r")
+assert not is_share_usage("/bin/zsh -c true; /x/share-usage send /r") and not is_share_usage("grep share-usage")
+EOF
 sh -c "true; '$scripts/share-usage' send '$multi/kill/run-x' --state '$multi/den-state' --computer kill-mac" > "$multi/kill-old.out"
 grep -q 'removed share-usage.old.worktree, which a killed send left' "$multi/kill-old.out" && test ! -e "$multi/kill/run-x/share-usage.old.worktree"
+# a folder with no pid file made a moment ago may be a send that hasn't written it yet: kept
+mkdir -p "$multi/kill/run-x/share-usage.new.worktree"
+"$scripts/share-usage" send "$multi/kill/run-x" --state "$multi/den-state" --computer kill-mac > /dev/null
+test -d "$multi/kill/run-x/share-usage.new.worktree"
 # a send that finds neither file fails, and takes that computer's earlier files off the branch, so a fetch
 # can't take them for this send's; with nothing there before, it changes nothing
 mkdir -p "$multi/empty/run-x" "$multi/spare/run-x/usage"
