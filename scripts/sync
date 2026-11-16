@@ -176,7 +176,8 @@ sync_one "$state_repo"
 
 # Is a pinned runtime not installed from its lockfile as it is now? npm ci leaves a copy of the
 # lockfile in node_modules; a pull that changes the lockfile makes it newer than that copy, and a
-# failed install leaves no copy, so the next scheduled run tries again.
+# failed install leaves no copy, so the next scheduled run tries again. A package the runtime's
+# package.json pins that is missing or at another version counts too.
 # A runtime bootstrap skips on this computer (excalidraw's, below Node 20) never counts, or every
 # run would reinstall them all.
 runtimes_stale() {
@@ -184,8 +185,24 @@ runtimes_stale() {
   for lockfile in "$repo_root"/runtime/*/package-lock.json; do
     [ -f "$lockfile" ] || continue
     case "$lockfile" in */runtime/excalidraw/*) [ "$node_major" -ge 20 ] 2>/dev/null || continue ;; esac
-    installed="${lockfile%/package-lock.json}/node_modules/.package-lock.json"
+    runtime=${lockfile%/package-lock.json}
+    installed="$runtime/node_modules/.package-lock.json"
     if [ ! -f "$installed" ] || [ "$lockfile" -nt "$installed" ]; then
+      return 0
+    fi
+    # Each package the runtime pins is there at its pinned version, as doctor checks: a package
+    # removed or replaced by hand counts as not installed.
+    # With node, which npm needs anyway (no node: nothing could be installed, so nothing is checked).
+    if command -v node >/dev/null 2>&1 && ! node -e '
+      const fs = require("fs"), path = require("path"), runtime = process.argv[1];
+      let pins;
+      try { pins = JSON.parse(fs.readFileSync(path.join(runtime, "package.json"))).dependencies || {}; } catch (e) { process.exit(0); }
+      for (const [name, pin] of Object.entries(pins)) {
+        let found;
+        try { found = JSON.parse(fs.readFileSync(path.join(runtime, "node_modules", name, "package.json"))).version; } catch (e) { process.exit(1); }
+        if (found !== pin) process.exit(1);
+      }
+    ' "$runtime" 2>/dev/null; then
       return 0
     fi
   done

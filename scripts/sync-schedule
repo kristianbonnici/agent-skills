@@ -182,19 +182,27 @@ unstage_all() {
   done
 }
 
-# Lets go of each staged file this script wrote and nobody changed; keeps the others where they are
-# now, and says so.
+# Keeps every staged file where it is now, in the backup folder, and names those this script didn't
+# write or someone changed. None is deleted: a program may still hold one open and write to it.
 judge_staged() {
   printf '%s' "$staged" | while IFS="$tab" read -r original aside; do
     [ -n "$original" ] || continue
     if is_intact "$aside"; then
-      rm -f "$aside"
+      :
     elif is_ours "$aside"; then
       echo "KEPT the launch agent $original, changed since agent-skills wrote it, as $aside"
     else
       echo "KEPT the launch agent $original, which agent-skills didn't write, as $aside"
     fi
   done
+}
+
+# The plist launchd loaded this label from, when it has it loaded and that file is in this home's
+# LaunchAgents folder; nothing otherwise, so another home's agent (a test's made-up HOME) is never
+# touched.
+loaded_here() {
+  loaded_from=$(launchctl print "$domain/$label" 2>/dev/null | awk '/^[[:space:]]*path = / { sub(/^[[:space:]]*path = /, ""); print; exit }')
+  case "$loaded_from" in "$agents_dir"/*) printf '%s\n' "$loaded_from" ;; esac
 }
 
 # The files that carry the label, and the one at the label's name whatever it carries.
@@ -308,32 +316,19 @@ install() {
     echo "OK the daily sync is scheduled at $shown ($plist)"
     return 0
   fi
-  # Every file that would load this label again is moved aside (if one can't be, nothing is changed),
-  # whatever runs with the label stops, and the new agent goes in. Of the files moved aside, those
-  # this script wrote and nobody changed go; the others stay as backups.
+  # Every file that would load this label again is moved aside, into the backup folder, where it stays
+  # (if one can't be moved, nothing is changed); whatever runs with the label stops; the new agent
+  # goes in.
   stage_all "$(agent_files)" || exit 1
   launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
   # Never over a file that appeared meanwhile.
   mv -n "$next" "$plist" 2>/dev/null
   if [ -e "$next" ]; then
-    # The agents that were there go back, and one of them, with this label, is loaded again: never
-    # a file that appeared meanwhile.
-    restored=$(unstage_all)
-    reloaded=
-    while IFS= read -r back; do
-      [ -n "$back" ] && [ -z "$reloaded" ] || continue
-      [ "$(plist_label "$back")" = "$label" ] || continue
-      if launchctl bootstrap "$domain" "$back" >/dev/null 2>&1; then
-        reloaded=$back
-      else
-        echo "FAIL launchctl could not load $back again; it loads at the next login" >&2
-        reloaded=-
-      fi
-    done <<EOF
-$restored
-EOF
+    # The agents that were there go back where nothing took their place, but none is loaded again:
+    # which file launchd would read can't be known for sure, so the owner runs --schedule again.
+    unstage_all >/dev/null
     put_back=
-    [ -z "$staged" ] || put_back="; the agents that were there were put back where nothing took their place"
+    [ -z "$staged" ] || put_back="; the agents that were there were put back where nothing took their place, unloaded until the next login: run scripts/sync --schedule again"
     echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written)$put_back" >&2
     exit 1
   fi
@@ -359,10 +354,18 @@ remove() {
     fi
     return 0
   fi
-  # launchd is asked only when there is a file: an agent without one goes at the next login.
   found=$(agent_files)
   if [ -z "$found" ]; then
-    echo "OK no daily sync is scheduled"
+    # Its file deleted by hand, an agent stays loaded until the next login.
+    gone=$(loaded_here)
+    if [ -z "$gone" ]; then
+      echo "OK no daily sync is scheduled"
+    elif [ "$1" -eq 1 ]; then
+      echo "DRY RUN: unload the daily sync, loaded from $gone, which is gone"
+    else
+      launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+      echo "UNSCHEDULED the daily sync ($label), loaded from $gone, which was already gone"
+    fi
     return 0
   fi
   if [ "$1" -eq 1 ]; then
@@ -413,9 +416,13 @@ status() {
   fi
   found=$(labelled_plists)
   [ -n "$found" ] || { [ ! -e "$plist" ] || found=$plist; }
-  # launchd is asked only about an agent that has a file: one without would not survive a login.
   if [ -z "$found" ]; then
-    echo "INFO no daily sync is scheduled: scripts/sync --schedule installs one"
+    gone=$(loaded_here)
+    if [ -n "$gone" ]; then
+      echo "WARN the daily sync is loaded from $gone, which is gone, so it runs until the next login: scripts/sync --unschedule stops it, --schedule replaces it"
+    else
+      echo "INFO no daily sync is scheduled: scripts/sync --schedule installs one"
+    fi
     return 0
   fi
   count=$(printf '%s\n' "$found" | wc -l | tr -d ' ')

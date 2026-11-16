@@ -17,6 +17,12 @@ export XDG_STATE_HOME="$test_home/.local/state"
 export AGENT_SKILLS_NO_UPDATE_CHECK=1
 # Only this repository's tables until the stand-in private repository below: never the owner's own.
 export AGENT_SKILLS_PRIVATE=
+# Doctor and uninstall ask launchd about the daily sync: a stand-in launchctl answers that nothing is
+# loaded and records each call, so the test never reaches the real launchd; only questions are expected.
+mkdir -p "$test_home/launchctl-bin"
+printf '#!/bin/sh\necho "$*" >>"%s/launchctl.log"\ncase "$1" in print) exit 113 ;; esac\nexit 1\n' "$test_home" >"$test_home/launchctl-bin/launchctl"
+chmod +x "$test_home/launchctl-bin/launchctl"
+export PATH="$test_home/launchctl-bin:$PATH"
 
 # An upgrade from a release that installed sketch-infographic (renamed excalidraw-drawing in 2.0.0):
 # this repository's old links are retired; a path someone else put there is kept.
@@ -439,4 +445,7 @@ test ! -e "$test_home/.codex/skills/skill-evidence"
 test ! -L "$state_link"
 test -f "$state_repo/long-horizon-orchestrator/providers.md"
 
+if [ -e "$test_home/launchctl.log" ] && grep -qv '^print ' "$test_home/launchctl.log"; then
+  echo "launchctl was asked to change something:" >&2; cat "$test_home/launchctl.log" >&2; exit 1
+fi
 echo "bootstrap-test: passed"

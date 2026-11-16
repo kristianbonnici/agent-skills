@@ -19,6 +19,12 @@ test_home=$(CDPATH= cd -- "$test_home" && pwd)
 export AGENT_SKILLS_STATE="$test_home/no-state"
 export XDG_STATE_HOME="$test_home/.local/state"
 export AGENT_SKILLS_NO_UPDATE_CHECK=1
+# Doctor and uninstall ask launchd about the daily sync: a stand-in launchctl answers that nothing is
+# loaded and records each call, so the test never reaches the real launchd; only questions are expected.
+mkdir -p "$test_home/launchctl-bin"
+printf '#!/bin/sh\necho "$*" >>"%s/launchctl.log"\ncase "$1" in print) exit 113 ;; esac\nexit 1\n' "$test_home" >"$test_home/launchctl-bin/launchctl"
+chmod +x "$test_home/launchctl-bin/launchctl"
+export PATH="$test_home/launchctl-bin:$PATH"
 # Doctor --all asks the OpenCode CLI which skills it sees: a stand-in answers.
 stand_in_bin="$test_home/stand-in-bin"
 mkdir -p "$stand_in_bin"
@@ -449,4 +455,7 @@ test -z "$(find "$on_home" -mindepth 1 -print -quit)" || fail "bootstrap changed
 on studio-mac "$repo_root/scripts/doctor" --all >"$test_home/doctor-bad.out" 2>&1 && fail "doctor passed a table it cannot read"
 expect "FAIL the install tables cannot be read" "$test_home/doctor-bad.out"
 
+if [ -e "$test_home/launchctl.log" ] && grep -qv '^print ' "$test_home/launchctl.log"; then
+  echo "instructions-test: launchctl was asked to change something:" >&2; cat "$test_home/launchctl.log" >&2; exit 1
+fi
 echo "instructions-test: passed"

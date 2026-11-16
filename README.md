@@ -141,18 +141,21 @@ it installs the launch agent `com.agent-skills.sync` in `~/Library/LaunchAgents`
 checkout's `scripts/sync --from-schedule` with no input, appends its output to
 `~/Library/Logs/agent-skills-sync.log`, between a line with the time it started and one with the
 time it finished and how, and installs the pinned runtimes only when one isn't installed from its
-lockfile as it is now (after a pull changed it, or an install that failed). Its PATH is the
-installing shell's, limited to folders that exist, so run it from a shell that finds git, node and
-npm; `AGENT_SKILLS_PRIVATE`, `AGENT_SKILLS_STATE`, `AGENT_SKILLS_COMPUTER` and `XDG_STATE_HOME` go
-with it when they are set. A time missed while the Mac slept runs when it wakes. Run it from the
-main checkout: a linked worktree is refused. Running it again changes nothing, or replaces the agent
-with the new time; an agent with that label that it didn't write, a hand-made one included, is
-unloaded and moved to `${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/` as a backup.
+lockfile as it is now (after a pull changed it, an install that failed, or a pinned package removed
+or changed by hand). Its PATH is the installing shell's, limited to folders that exist, so run it
+from a shell that finds git, node and npm; `AGENT_SKILLS_PRIVATE`, `AGENT_SKILLS_STATE`,
+`AGENT_SKILLS_COMPUTER` and `XDG_STATE_HOME` go with it when they are set. A time missed while the
+Mac slept runs when it wakes. Run it from the main checkout: a linked worktree is refused. Running
+it again changes nothing, or replaces the agent with the new time. Every plist with that label it
+replaces, a hand-made one included, is unloaded and moved to
+`${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/`, where it stays as a backup; the output names
+those it didn't write or that were changed. If the new agent can't be put in place, the old ones go
+back but stay unloaded until the next login, and the output says to run `--schedule` again.
 `./scripts/sync --schedule-status` says whether it is installed and how its last run went, and
-`--unschedule` removes it (the log stays), as `./scripts/uninstall --all` does. Both look for the
-agent's file: if you deleted it by hand, launchd runs the agent it loaded until you log out, or
-until `launchctl bootout gui/$(id -u)/com.agent-skills.sync`. Elsewhere, `--schedule` prints the
-line to add to cron and changes nothing.
+`--unschedule` removes it (the log stays), as `./scripts/uninstall --all` does. An agent whose file
+was deleted by hand stays loaded until the next login: the status warns about it, and `--unschedule`
+unloads it, but only when launchd loaded it from this home's `~/Library/LaunchAgents`. Elsewhere,
+`--schedule` prints the line to add to cron and changes nothing.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind
 `origin` as of the last fetch, with the count and the command to run. It also reports the daily
