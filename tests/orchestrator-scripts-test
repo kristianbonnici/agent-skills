@@ -3738,7 +3738,7 @@ for k in ("cpu", "cpu_pk", "gpu", "gpu_pk", "mem", "mem_pk"):
     slept[k][10:20] = [None] * 10
 gap = mac_chart(usage, slept, peaks, "den-mac", [60, 70, 80, 90], 10, axis)
 assert "GPU violet" in gap and "GPU left out" not in gap and gap.count("\n    line [") == 3, gap
-assert "stretches with no samples left out" in gap and '"01:10"' not in gap, gap   # the slept stretch isn't drawn at all
+assert "no samples 01:10–01:20, left out" in gap and '"01:10"' not in gap, gap   # the slept stretch isn't drawn, and the title says where
 assert all(len(l.split(",")) == 3 and " 0" not in l for l in gap.splitlines() if l.startswith("    line [")), gap
 EOF
 # a computers list that can't be drawn is refused with one sentence

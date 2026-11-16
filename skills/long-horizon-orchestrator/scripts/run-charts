@@ -1173,7 +1173,14 @@ def mac_chart(usage: dict, mac: dict | None, peaks: dict | None, subject: str, s
     # a stretch with no sample at all (the computer slept, or its sampler stopped) is left out of the chart for every
     # line, so none of them draws a 0 there
     kept = [s for s in cut if any(got(k, s) for k in ("cpu_pk", "gpu_pk", "mem_pk"))] or cut[:1]
-    skipped = " · stretches with no samples left out" if len(kept) < len(cut) else ""
+    gaps, run = [], []   # each run of left-out stretches, named by its times, so the axis's jump is said where it is
+    for s in cut + [None]:
+        if s is not None and s not in kept:
+            run.append(s)
+        elif run:
+            gaps.append(f"{clock_text(run[0])}–{clock_text(run[-1] + width)}")
+            run = []
+    skipped = (" · no samples " + ", ".join(gaps) + ", left out") if gaps else ""
     cut = kept
     total = mac.get("mem_total") or 0
     left_out = ""
