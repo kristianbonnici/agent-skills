@@ -136,6 +136,27 @@ plist_program() {
     sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'
 }
 
+# One --schedule or --unschedule at a time: a folder made in one step is the lock, and a second run
+# waits up to 30 seconds for it. A run that was killed leaves it behind; the message names it.
+lock=
+take_lock() {
+  mkdir -p "$backups" 2>/dev/null || return 0
+  waited=0
+  until mkdir "$backups/.lock" 2>/dev/null; do
+    if [ "$waited" -ge 30 ]; then
+      echo "FAIL another scripts/sync --schedule or --unschedule has held $backups/.lock for 30 seconds; if none is running, remove that folder and try again" >&2
+      exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  lock=$backups/.lock
+}
+release_lock() {
+  [ -z "$lock" ] || rmdir "$lock" 2>/dev/null || true
+  lock=
+}
+
 stamp() {
   date +%Y%m%d-%H%M%S
 }
@@ -165,6 +186,11 @@ stage_all() {
       # then its old name goes. On another volume (no hard link possible), mv -n instead.
       if ln "$original" "$aside" 2>/dev/null; then
         rm -f "$original"
+        if [ -e "$original" ]; then
+          echo "FAIL could not remove the launch agent $original once it was copied to $aside, so nothing was changed" >&2
+          rm -f "$aside"
+          break
+        fi
         moved=1
         break
       fi
@@ -323,11 +349,12 @@ install() {
 
   mkdir -p "$agents_dir" "$(dirname -- "$log")"
   next=$(mktemp "$agents_dir/.agent-skills-sync.XXXXXX")
-  trap 'rm -f "$next" "$next.body" "$next.plist"' EXIT
+  trap 'rm -f "$next" "$next.body" "$next.plist"; release_lock' EXIT
   trap 'exit 1' HUP INT TERM
   render_plist "$next" "$hour" "$minute" "$path" >"$next.plist"
   mv "$next.plist" "$next"
   chmod 644 "$next"
+  take_lock
   if cmp -s "$next" "$plist" && launchctl print "$domain/$label" >/dev/null 2>&1 && [ "$(labelled_plists)" = "$plist" ]; then
     echo "OK the daily sync is scheduled at $shown ($plist)"
     return 0
@@ -370,6 +397,9 @@ remove() {
     fi
     return 0
   fi
+  trap 'release_lock' EXIT
+  trap 'exit 1' HUP INT TERM
+  [ "$1" -eq 1 ] || take_lock
   found=$(agent_files)
   if [ -z "$found" ]; then
     # Its file deleted by hand, an agent stays loaded until the next login.
