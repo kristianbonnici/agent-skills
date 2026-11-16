@@ -300,6 +300,19 @@ mv "$work/loaded.next" "$work/loaded"
 "$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed again"
 cp "$plist" "$work/before-fail.plist"
 
+# Another run takes the backup name first (a stand-in mv puts a file there just before the move):
+# that backup is never moved over, and the agent goes to the next free name.
+printf '#!/bin/sh\nif [ "$1" = -n ]; then case "$3" in *agent-skills-sync/*.before-agent-skills-*) [ -e "%s/raced" ] || { echo "another run" >"$3"; : >"%s/raced"; } ;; esac; fi\nexec /bin/mv "$@"\n' "$work" "$work" >"$work/refuse-bin/mv"
+cp "$plist" "$work/before-race.plist"
+if ! PATH="$work/refuse-bin:$PATH" "$sync" --schedule 05:55 >"$work/out" 2>&1; then cat "$work/out" >&2; fail "--schedule failed when a backup name was taken"; fi
+taken=$(grep -lx "another run" "$HOME"/.local/state/agent-skills-sync/* | head -n 1)
+[ -n "$taken" ] || fail "the stand-in took no backup name"
+test "$(cat "$taken")" = "another run" || fail "a backup another run made was moved over"
+found_race=0
+for kept in "$HOME"/.local/state/agent-skills-sync/*; do cmp -s "$kept" "$work/before-race.plist" && found_race=1; done
+[ "$found_race" -eq 1 ] || fail "the replaced agent is not in the backup folder"
+"$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed afterwards"
+
 # Never from a linked worktree, which goes away when its work is done.
 git -C "$checkout" worktree add -q "$work/worktree" 2>/dev/null
 cp "$plist" "$work/plist.before"

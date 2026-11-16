@@ -153,10 +153,18 @@ stage_all() {
   fi
   while IFS= read -r original; do
     [ -n "$original" ] || continue
-    aside="$backups/$(basename -- "$original").before-agent-skills-$(stamp)"
+    # Never over a backup already there: another run may have taken the same name meanwhile.
     count=1
-    while [ -e "$aside" ]; do count=$((count + 1)); aside="$backups/$(basename -- "$original").before-agent-skills-$(stamp)-$count"; done
-    if ! mv "$original" "$aside" 2>/dev/null; then
+    moved=0
+    while [ "$count" -le 20 ]; do
+      aside="$backups/$(basename -- "$original").before-agent-skills-$(stamp)"
+      [ "$count" -eq 1 ] || aside="$aside-$count"
+      count=$((count + 1))
+      [ ! -e "$aside" ] || continue
+      mv -n "$original" "$aside" 2>/dev/null || break
+      if [ ! -e "$original" ] && [ -e "$aside" ]; then moved=1; break; fi
+    done
+    if [ "$moved" -eq 0 ]; then
       echo "FAIL could not move the launch agent $original into $backups, so nothing was changed" >&2
       unstage_all >/dev/null
       return 1
