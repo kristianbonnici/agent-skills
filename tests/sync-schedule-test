@@ -317,14 +317,14 @@ for kept in "$HOME"/.local/state/agent-skills-sync/*; do cmp -s "$kept" "$work/b
 "$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed afterwards"
 
 # One run at a time: while another holds the lock, a run waits, and goes on once it is free.
-mkdir "$HOME/.local/state/agent-skills-sync/.lock"
-(sleep 2; rmdir "$HOME/.local/state/agent-skills-sync/.lock") &
+mkdir "$HOME/Library/LaunchAgents/.agent-skills-sync.lock"
+(sleep 2; rmdir "$HOME/Library/LaunchAgents/.agent-skills-sync.lock") &
 started=$(date +%s)
 "$sync" --schedule 05:50 >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule failed after waiting for the lock"; }
 [ $(($(date +%s) - started)) -ge 2 ] || fail "--schedule didn't wait for the lock"
 wait
-test ! -e "$HOME/.local/state/agent-skills-sync/.lock" || fail "the lock was left behind"
-"$sync" --unschedule >/dev/null 2>&1 && test ! -e "$HOME/.local/state/agent-skills-sync/.lock" || fail "--unschedule left the lock"
+test ! -e "$HOME/Library/LaunchAgents/.agent-skills-sync.lock" || fail "the lock was left behind"
+"$sync" --unschedule >/dev/null 2>&1 && test ! -e "$HOME/Library/LaunchAgents/.agent-skills-sync.lock" || fail "--unschedule left the lock"
 "$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed afterwards"
 
 # Never from a linked worktree, which goes away when its work is done.

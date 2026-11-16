@@ -136,21 +136,23 @@ plist_program() {
     sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'
 }
 
-# One --schedule or --unschedule at a time: a folder made in one step is the lock, and a second run
-# waits up to 30 seconds for it. A run that was killed leaves it behind; the message names it.
+# One --schedule or --unschedule at a time for this home's LaunchAgents folder, whatever state folder
+# a run uses: a folder made in one step beside the agents is the lock (launchd reads only *.plist
+# files), and a second run waits up to 30 seconds for it. A run that was killed leaves it behind;
+# the message names it.
 lock=
 take_lock() {
-  mkdir -p "$backups" 2>/dev/null || return 0
+  mkdir -p "$agents_dir" 2>/dev/null || return 0
   waited=0
-  until mkdir "$backups/.lock" 2>/dev/null; do
+  until mkdir "$agents_dir/.agent-skills-sync.lock" 2>/dev/null; do
     if [ "$waited" -ge 30 ]; then
-      echo "FAIL another scripts/sync --schedule or --unschedule has held $backups/.lock for 30 seconds; if none is running, remove that folder and try again" >&2
+      echo "FAIL another scripts/sync --schedule or --unschedule has held $agents_dir/.agent-skills-sync.lock for 30 seconds; if none is running, remove that folder and try again" >&2
       exit 1
     fi
     sleep 1
     waited=$((waited + 1))
   done
-  lock=$backups/.lock
+  lock=$agents_dir/.agent-skills-sync.lock
 }
 release_lock() {
   [ -z "$lock" ] || rmdir "$lock" 2>/dev/null || true
@@ -186,9 +188,15 @@ stage_all() {
       # then its old name goes. On another volume (no hard link possible), mv -n instead.
       if ln "$original" "$aside" 2>/dev/null; then
         rm -f "$original"
-        if [ -e "$original" ]; then
-          echo "FAIL could not remove the launch agent $original once it was copied to $aside, so nothing was changed" >&2
-          rm -f "$aside"
+        if [ -e "$original" ] || [ -L "$original" ]; then
+          # Still the same file (the removal failed): its second name goes, and nothing changed.
+          # Another file there now: the backup is the only name of the old one, so it stays.
+          if [ "$original" -ef "$aside" ]; then
+            rm -f "$aside"
+            echo "FAIL could not remove the launch agent $original once it was linked to $aside, so nothing was changed" >&2
+          else
+            echo "FAIL another file appeared at $original while it was being moved to $aside, which keeps the old one" >&2
+          fi
           break
         fi
         moved=1
