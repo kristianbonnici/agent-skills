@@ -465,6 +465,36 @@ free order at Standard and Deep (level with GLM here, quick, and always done). N
 paid one. A model now earns a place through the benchmark, not a live trial. Whether Sonnet keeps its paid
 place beside Terra is open: on this set every defect it found, another model found too, on one run.*
 
+## Opus as Deep's Claude reviewer (2026-11-18)
+
+Until 7.0.0 a Deep gate on a change a Claude model wrote had Terra and "the Claude model you aren't": Sonnet
+for a change Opus or Fable wrote, which is most of them, since Opus is the tasks' home model. So the
+stronger Claude reviewer on the benchmark's second run seldom reviewed.
+
+| Deep's reviewers, for a Claude change | Defects found in full, of 143 | Blockers, of 20 |
+|---|---|---|
+| Terra and Sonnet | 63 | 11 |
+| Terra and Opus | 69 | 14 |
+| Terra, Sonnet, DeepSeek and Hydrogen | 88 | 15 |
+| Terra, Opus, DeepSeek and Hydrogen | 96 | 16 |
+
+- **Alone,** Opus found 54 defects, 10.5 of the 20 blockers and 6 defects no other model found; Sonnet 45,
+  5 and none. Opus took 5.3 minutes a review, Sonnet 2.5.
+- **The rule against a model reviewing its own change wasn't tested as such, but the set leans that way.**
+  15 of the 16 changes had Terra as the cross reviewer of their own first round, which the gate gives only
+  to a change a Claude model wrote, and 11 of those had Sonnet and not Opus as the Claude reviewer beside it, which it
+  gives to a change Opus or Fable wrote. The set doesn't record each change's author, so this is read from
+  who reviewed. The owner's account is the same: "most of the code that was part of this benchmark was,
+  anyways, written with Opus". On those changes Opus, as a new agent with the brief alone, found more
+  than Sonnet did.
+- **Limits:** one review per model and change, so the gap in all defects (54 against 45) may be chance;
+  the gap in blockers is wider. No run compared Opus on its own changes with Opus on another model's.
+  The cost is about twice the review time, and Opus's share of the Claude week where Sonnet's was.
+
+→ *review-gate 7.0.0 (owner, 2026-11-18: "I think we should maybe change Sonnet in here to Opus"): at Deep,
+a Claude change's Claude reviewer is Opus, whichever Claude model wrote it. Standard, the change of another
+family, and the Claude substitute when Codex is short are as they were.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
