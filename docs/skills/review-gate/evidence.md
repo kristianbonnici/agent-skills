@@ -495,6 +495,30 @@ stronger Claude reviewer on the benchmark's second run seldom reviewed.
 a Claude change's Claude reviewer is Opus, whichever Claude model wrote it. Standard, the change of another
 family, and the Claude substitute when Codex is short are as they were.*
 
+## The benchmark's third run (2026-11-18)
+
+The owner asked whether two newly offered OpenCode models would fit as reviewers: GLM-5.3, the larger GLM, whose
+Go allowance had just grown, and Hy4 flash Free, free for a limited time. Each reviewed the same 16 changes once,
+with a free reviewer's brief and 15 minutes, and was scored blind as before. The key grew to 144 defects (20
+blockers) with the one this run confirmed.
+
+| Reviewer | Reports, of 16 | Known defects found, of 144 | Blockers, of 20 | Found by it alone | False, of its blockers and follow-ups | Minutes per review |
+|---|---|---|---|---|---|---|
+| Hy4 flash Free | 16 | 23.5 (16%) | 3.5 | 3 | 0% | 3.5 |
+| GLM-5.3 | 12 | 22 (15%) | 1 | 0 | 6% | 4.8 |
+
+- **GLM-5.3 gave no report on a quarter of the changes.** On 4 of 16 it started the project's tests in the
+  background, wrote that it would report when they finished, and ended its turn. A headless run isn't resumed,
+  so no report came, with no limit or error to show for it. A gate would lose that reviewer's time each time.
+- **Hy4 flash Free was reliable and accurate, but found little:** every review reported, none of its findings
+  was false, and it found about as much as Haiku and the smaller GLM.
+- **Neither adds more than the free order's models.** Beside Terra and Hydrogen (72 defects in full, 11
+  blockers), DeepSeek adds 10 defects and 2 blockers, Hy4 flash Free and Haiku 7 and 1, GLM-5.3 5 and 1.
+- **The two checkers once disagreed.** A finding this run's checker ran and called real had been called true
+  but minor in an earlier run's report; it now counts for both.
+
+→ *No change (2026-11-18): neither model gets a place in the free order.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
