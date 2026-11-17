@@ -4,6 +4,7 @@
 
 - **The brief says to start nothing in the background to wait for,** as the review gate's does from 7.1.0: in the third run GLM-5.3 ended 4 of its 16 reviews waiting on its own background test run, with no report. The reports saved before this version were briefed without it.
 - **`blind` says what it left out:** how many reports it skipped as scored already, how many reviews had no report (out of time or under 400 bytes), and how many weren't reviewed yet or are to be reviewed again. Until now it gave only the count it copied, and a model's missing reports went unremarked (the open item of 1.0.0; seen again in the third run, where one review under 400 bytes was left out silently).
+- **Review (Standard, 1 round, no finding):** Codex GPT-6.1 Terra traced `blind` through every state a saved review can be in; Gemini 4 Hydrogen ran the suites on the commit. With review-gate 7.1.0.
 
 ## 1.0.1 (2026-11-15)
 

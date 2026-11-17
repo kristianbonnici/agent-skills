@@ -3,6 +3,7 @@
 ## 7.1.0 (2026-11-18)
 
 - **The reviewer's brief says to start nothing in the background to wait for.** Nothing resumes a reviewer once it stops, so a report it puts off until a background command finishes is never written. On the benchmark's third run GLM-5.3 did that on 4 of 16 changes: it started the project's tests in the background, wrote that it would report when they finished, and ended with no report, and no limit or error to show for it ([evidence.md](evidence.md#the-benchmarks-third-run-2026-11-18)). The brief still allows running the existing tests when that is quick.
+- **Review (Standard, 1 round, no finding):** Codex GPT-6.1 Terra and Gemini 4 Hydrogen, with reviewer-benchmark 1.1.0.
 
 ## 7.0.0 (2026-11-18)
 
