@@ -5,6 +5,8 @@
 Major because a Deep gate on a change Opus or Fable wrote now spends an Opus review where it spent a Sonnet one.
 - **At Deep, a Claude change's Claude reviewer is Opus 5.5, whichever Claude model wrote it** (owner, 2026-11-18: "I think we should maybe change Sonnet in here to Opus"). It was "the Claude model you aren't": Sonnet for a change Opus or Fable wrote, which is most of them. For Opus's own change the reviewer is Opus as a new agent that gets the brief and nothing else of the author's. On the benchmark's 16 past changes, most of them written by Opus going by who reviewed them and by the owner's account, Opus found 54 of the 143 known defects, 10.5 of the 20 blockers and 6 defects no other model found; Sonnet 45, 5 and none. Terra and Opus together found 69 defects and 14 blockers, Terra and Sonnet 63 and 11 ([evidence.md](evidence.md#opus-as-deeps-claude-reviewer-2026-11-18)). An Opus review took about twice a Sonnet one's time.
 - **Unchanged:** Standard's cross reviewer; a change another family wrote (Opus and Sonnet at Deep, Sonnet as cross reviewer); the Claude substitute when Codex is short (still the Claude model you aren't); and who replaces a paid reviewer that fails on a limit, so Sonnet replaces Terra or Opus at such a gate.
+- `references/record.md`'s example, a Deep gate where Sonnet reviewed, now lists Opus as skipped on a usage limit, which is how Sonnet comes to review one.
+- **Review (Standard, 1 round, no blocker):** Codex GPT-6.1 Terra and Gemini 4 Hydrogen each found one nit, both fixed: the README's Deep summaries left out the pair when Codex is short (Terra), and the example record showed a set of reviewers this version doesn't produce (Hydrogen).
 
 ## 6.0.0 (2026-11-15)
 
