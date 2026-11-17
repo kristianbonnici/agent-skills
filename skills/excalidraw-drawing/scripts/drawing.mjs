@@ -227,12 +227,82 @@ export const indexAfter = index => `${index ?? 'a0'}V`;
 
 const load = rel => import(pathToFileURL(path.join(runtimePackage, rel)).href);
 
+// ---------- fonts ----------
+
+// Fonts a text can have besides Excalifont, drawn only in the PNG. Excalidraw can't use any
+// other font, so the drawing keeps the text in Excalifont and names the font to draw it in
+// with customData.font; an editor keeps that, so a preview after a hand edit draws it too.
+// Each is a font that comes with an operating system, never copied into the skill; a computer
+// without it draws Excalifont (missingFonts says which are missing).
+export const FONTS = {
+  // A serif with a slightly inked edge, for a title that should read more serious than hand
+  // lettering but still belong on a sketch. 0.93 of the Excalifont size matches its height.
+  'iowan-inked': { name: 'Iowan Old Style Bold', family: 'Iowan Old Style', weight: 700, size: 52 / 56,
+    inked: true, files: ['/System/Library/Fonts/Supplemental/Iowan Old Style.ttc'] }
+};
+const fontFile = font => FONTS[font]?.files.find(f => fs.existsSync(f)) ?? null;
+const styledTexts = elements => elements.filter(e => e.type === 'text' && !e.isDeleted && FONTS[e.customData?.font]);
+export const missingFonts = elements =>
+  [...new Set(styledTexts(elements).map(e => e.customData.font))].filter(f => !fontFile(f));
+
+// The inked edge: the letters' outlines nudged by two sizes of noise (fine nicks, a slow wobble),
+// then softened and sharpened again, like ink that spread a little into the paper. In the
+// drawing's units, so it looks the same at every scale.
+const INKED_FILTER = `<filter id="excalidraw-drawing-inked" x="-2%" y="-20%" width="104%" height="140%" color-interpolation-filters="sRGB">` +
+  `<feTurbulence type="fractalNoise" baseFrequency="0.29" numOctaves="1" seed="7" result="fine"/>` +
+  `<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="1" seed="11" result="coarse"/>` +
+  `<feDisplacementMap in="SourceGraphic" in2="fine" scale="1.7" xChannelSelector="R" yChannelSelector="G" result="nicked"/>` +
+  `<feDisplacementMap in="nicked" in2="coarse" scale="4" xChannelSelector="R" yChannelSelector="G" result="wobbled"/>` +
+  `<feGaussianBlur in="wobbled" stdDeviation="0.45"/>` +
+  `<feComponentTransfer><feFuncA type="linear" slope="4" intercept="-1.3"/></feComponentTransfer></filter>`;
+
+const xmlText = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const reText = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Renders a scene to a PNG as the runtime's renderScene does, and draws each text that names a
+// font from FONTS (and that this computer has) in that font. Returns renderScene's result.
+export async function renderPng(elements, files = {}, { scale = 1, padding = 0, systemFonts } = {}) {
+  const { renderScene, maxDimension } = await load('dist/core/render/index.js');
+  const styled = styledTexts(elements).filter(e => fontFile(e.customData.font));
+  if (!styled.length) return renderScene({ elements, files }, { format: 'png', scale, padding, systemFonts });
+  const { svgToPng } = await load('dist/core/render/png.js');
+  const { collectFontEntriesFromSvg, fontFilesFor, needsSystemFonts } = await load('dist/core/render/fonts.js');
+  const out = await renderScene({ elements, files }, { format: 'svg', padding });
+  let svg = out.data;
+  const used = new Set();
+  for (const e of styled) {
+    const font = FONTS[e.customData.font];
+    const size = Math.round(e.fontSize * font.size * 10) / 10, line = e.fontSize * (e.lineHeight ?? 1.25);
+    used.add(e.customData.font);
+    String(e.text).split('\n').forEach((text, i) => {
+      if (!text.trim()) return;
+      // Excalidraw writes each line as its own <text>, placed by its baseline in Excalifont; the
+      // new font is centred on the line instead, since its baseline sits elsewhere.
+      const re = new RegExp(`<text x="([^"]*)" y="[^"]*" font-family="[^"]*" font-size="${e.fontSize}px"([^>]*?) ` +
+        `dominant-baseline="alphabetic">${reText(xmlText(text))}</text>`);
+      if (!re.test(svg)) throw new Error(`couldn't find the text "${text}" in the rendered drawing to draw it in ${font.name}`);
+      svg = svg.replace(re, (_, x, rest) => `<text x="${x}" y="${Math.round(((i + 0.5) * line - 0.02 * e.fontSize) * 100) / 100}" ` +
+        `font-family="${font.family}" font-weight="${font.weight}" font-size="${size}px"${rest} dominant-baseline="central"` +
+        `${font.inked ? ' filter="url(#excalidraw-drawing-inked)"' : ''}>${xmlText(text)}</text>`);
+    });
+  }
+  if (styled.some(e => FONTS[e.customData.font].inked)) svg = svg.replace('<defs>', `<defs>${INKED_FILTER}`);
+  // The same size limit as renderScene's.
+  const largest = Math.max(out.width, out.height), limit = maxDimension(), warnings = [...out.warnings];
+  if (largest > 0 && largest * scale > limit) {
+    scale = Math.max(0.1, Math.floor((limit / largest) * 1000) / 1000);
+    warnings.push(`scale reduced to ${scale} so the image stays within ${limit}px`);
+  }
+  const png = svgToPng(svg, { scale, loadSystemFonts: systemFonts ?? needsSystemFonts(elements), defaultFontFamily: 'Excalifont',
+    fontFiles: [...fontFilesFor(collectFontEntriesFromSvg(svg)), ...[...used].map(fontFile)] });
+  return { format: 'png', data: png.data.toString('base64'), width: png.width, height: png.height, warnings };
+}
+
 export async function renderDrawing(file, out, { scale = 1 } = {}) {
   if (!fs.existsSync(runtimePackage)) {
     throw new Error(`the Excalidraw runtime is not installed at ${runtimeRoot}: run npm ci --ignore-scripts --prefix ${runtimeRoot}`);
   }
   const { scene } = readDrawing(file);
-  const { renderScene } = await load('dist/core/render/index.js');
   const { measureTextWidth } = await load('dist/core/render/text-metrics.js');
   const elements = scene.elements.filter(e => !e.isDeleted);
   // System fonts only for characters Excalifont lacks, as build.mjs does.
@@ -241,9 +311,11 @@ export async function renderDrawing(file, out, { scale = 1 } = {}) {
     const w = measureTextWidth(ch, '1000px Excalifont');
     return w === 600 || w === 1000;
   }));
-  const png = await renderScene({ elements, files: scene.files ?? {} }, { format: 'png', scale, padding: 10, systemFonts });
+  const png = await renderPng(elements, scene.files ?? {}, { scale, padding: 10, systemFonts });
   fs.writeFileSync(out, Buffer.from(png.data, 'base64'));
-  return { width: png.width, height: png.height, warnings: png.warnings ?? [],
+  const fontWarnings = missingFonts(elements).map(f => `${FONTS[f].name} isn't on this computer, so text meant ` +
+    `for it is drawn in Excalifont (${FONTS[f].files.join(', ')})`);
+  return { width: png.width, height: png.height, warnings: [...(png.warnings ?? []), ...fontWarnings],
     images: elements.filter(e => e.type === 'image').length };
 }
 

@@ -21,7 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { SOURCE, findVault, isStepPicture, markStep, runtimePackage as pkg, runtimeRoot, savedByEditor, toMarkdown } from './drawing.mjs';
+import { FONTS, SOURCE, findVault, isStepPicture, markStep, missingFonts, renderPng, runtimePackage as pkg, runtimeRoot, savedByEditor, toMarkdown } from './drawing.mjs';
 
 // ---------- runtime ----------
 
@@ -32,7 +32,6 @@ if (!fs.existsSync(pkg)) {
 }
 const load = rel => import(pathToFileURL(path.join(pkg, rel)).href);
 const { prepareScene } = await load('dist/core/render/excalidraw-node/index.js');
-const { renderScene } = await load('dist/core/render/index.js');
 const { measureTextWidth } = await load('dist/core/render/text-metrics.js');
 
 // ---------- style ----------
@@ -552,6 +551,11 @@ export async function build(spec, opts = {}) {
   const formatName = spec.format ?? '3:4';
   if (!(formatName in FORMATS)) throw new Error(`format must be one of ${Object.keys(FORMATS).join(', ')}`);
   const ratio = FORMATS[formatName];
+  // The title's font in the PNG (drawing.mjs FONTS); the drawing keeps it in Excalifont.
+  const titleFont = spec.titleFont ?? 'excalifont';
+  if (titleFont !== 'excalifont' && !(titleFont in FONTS)) {
+    throw new Error(`titleFont must be one of excalifont, ${Object.keys(FONTS).join(', ')}`);
+  }
 
   // Header
   let y = P.top;
@@ -559,6 +563,11 @@ export async function build(spec, opts = {}) {
   if (String(spec.title ?? '').trim()) {
     const title = textEl('page.title', P.margin, y, spec.title, STYLE.title.size, { width: innerW });
     if (wordTooWide(title)) warnings.push('page: the title has a word wider than the page: shorten it');
+    if (titleFont !== 'excalifont') {
+      title.customData = { font: titleFont };
+      if (missingFonts([title]).length) warnings.push(`page: titleFont ${titleFont} needs ${FONTS[titleFont].name}, which isn't ` +
+        `on this computer (${FONTS[titleFont].files.join(', ')}), so the title is drawn in Excalifont`);
+    }
     elements.push(title); y += title.height + 6;
   }
   if (spec.subtitle) {
@@ -894,14 +903,14 @@ async function main() {
     const frames = [], buildId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
     for (let k = 1; k <= want; k++) {
       const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
-      const shot = await renderScene({ elements: frame, files: {} }, { format: 'png', scale, padding: 0, systemFonts: missingGlyphs });
+      const shot = await renderPng(frame, {}, { scale, padding: 0, systemFonts: missingGlyphs });
       frames.push([stepFile(k), markStep(Buffer.from(shot.data, 'base64'), k, steps, buildId, base)]);
     }
     const scene = { type: 'excalidraw', version: 2, source: SOURCE,
       elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };
     // Render first: if it fails, neither file is touched, so the PNG and the
     // .excalidraw on disk never come from different builds.
-    const png = await renderScene({ elements, files: {} }, { format: 'png', scale, padding: 0,
+    const png = await renderPng(elements, {}, { scale, padding: 0,
       // Every glyph was checked against Excalifont above; system fonts are
       // only needed for the ones it lacks.
       systemFonts: missingGlyphs });

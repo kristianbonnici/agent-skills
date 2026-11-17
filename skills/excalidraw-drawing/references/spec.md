@@ -115,6 +115,10 @@ A point outside the axis range, a tick outside it, or a plot squeezed under 120�
 
 The title is 56 px, the subtitle 21, headings 24 and takeaways 17, set by the build. Inside drawings: box labels 16 to 19, captions 15 to 16, never under 14. The PNG collapses a run of spaces to one (the `.excalidraw` file keeps them), so to space things out, use separate text elements. Excalifont has Latin letters, digits and common punctuation (•, –, —, ’, “ ”, …, ×, −, °), but no arrows, check marks, stars or emoji: draw those.
 
+### Title font
+
+`"titleFont": "iowan-inked"` draws the title in Iowan Old Style Bold with a slightly inked edge, for a picture that should look more serious than hand lettering, such as a chart of benchmark results, while the rest stays hand-drawn. Offer it when the user finds the hand-drawn title too casual; the default is `excalifont`. Only the PNG gets it: Excalidraw can't use another font, so the `.excalidraw` file keeps the title in Excalifont and names the font in the title's `customData`. A preview from `drawing.mjs render` uses it too, but Obsidian's auto-export of an `.excalidraw.md` and excalidraw.com show Excalifont. Iowan Old Style comes with macOS; on a computer without it the build warns and draws Excalifont. The title wraps by Excalifont's widths, which are wider, so the serif title never runs over.
+
 ## Build options
 
 ```bash

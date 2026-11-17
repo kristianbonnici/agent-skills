@@ -1,5 +1,9 @@
 # excalidraw-drawing changelog
 
+## 3.3.0 (2026-11-17)
+
+- New page option `"titleFont": "iowan-inked"`: the title in Iowan Old Style Bold with a slightly inked edge, drawn only in the PNG. From a benchmark chart whose hand-drawn title read too casual for the post; after side-by-side tries of serif, slab and mono titles, plain and roughened, the owner chose this one. Excalidraw can't use another font, so the `.excalidraw` file keeps the title in Excalifont and names the font in its `customData`; `drawing.mjs render` draws it too, so a preview after a hand edit keeps it. The edge is an SVG filter (two sizes of noise displacing the outline, then a blur and a sharpened alpha) rendered by the runtime's resvg, so no new dependency. The font comes with macOS and isn't copied into the skill; without it the build warns and draws Excalifont. An unknown `titleFont` stops the build.
+
 ## 3.2.0 (2026-11-14)
 
 Slide decks for talks. From building a 20-minute talk of about 35 slides with the skill, where everything beyond a single `16:9` slide had to be made by hand around it: planning the story, writing slides people can follow, revealing parts click by click, and the files a speaker needs.

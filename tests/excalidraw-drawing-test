@@ -6,7 +6,8 @@
 # charts put every point where its numbers say, wrapped text keeps room to spare, a build into an
 # Obsidian vault writes the Excalidraw plugin's files, a hand-edited drawing is never replaced
 # unasked, drawing.mjs keeps a drawing byte for byte while it edits and previews it, a slide's steps
-# render one picture per click, and deck.mjs writes a browser deck, a PDF and a PowerPoint.
+# render one picture per click, deck.mjs writes a browser deck, a PDF and a PowerPoint, and a title font
+# other than Excalifont is drawn only in the PNG.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -696,5 +697,44 @@ node "$build" "$work/longname/$long.json" --steps >/dev/null || fail "a slide wi
 node "$build" "$work/longname/$long.json" --steps >"$work/longname.out" 2>&1 || { cat "$work/longname.out"; fail "a rebuild should recognise its own step pictures of a long non-ASCII name"; }
 node "$deck" "$work/longname" --no-build >"$work/longname-deck.out" 2>&1 || { cat "$work/longname-deck.out"; fail "a deck of a long non-ASCII slide name should be clean"; }
 grep -q "^1 slides, 2 steps after the first$" "$work/longname-deck.out" || { cat "$work/longname-deck.out"; fail "a long non-ASCII slide name lost its steps"; }
+
+# 23. titleFont: the PNG's title is drawn in Iowan Old Style with an inked edge, the drawing keeps it in
+# Excalifont and names the font, a preview draws it too, and an unknown font stops the build.
+mkdir -p "$work/titlefont"
+for f in excalifont iowan-inked; do
+  python3 -I - "$work/titlefont/$f.json" "$f" <<'EOF3'
+import json, sys
+json.dump({"title": "Rust & Go <compared>: what small teams learned shipping services for three years",
+           "titleFont": sys.argv[2], "format": "fit", "frame": False,
+           "panels": [{"id": "a", "span": 2, "elements": [{"type": "rectangle", "x": 0, "y": 0, "width": 300, "height": 80, "label": "box"}]}]},
+          open(sys.argv[1], "w"))
+EOF3
+done
+node "$build" "$work/titlefont/excalifont.json" >/dev/null || fail "a page with the default title font should build cleanly"
+iowan="/System/Library/Fonts/Supplemental/Iowan Old Style.ttc"
+set +e; node "$build" "$work/titlefont/iowan-inked.json" >"$work/titlefont.out" 2>&1; status=$?; set -e
+if [ -f "$iowan" ]; then
+  [ "$status" -eq 0 ] || { cat "$work/titlefont.out"; fail "a page with titleFont iowan-inked should build cleanly, got $status"; }
+else
+  [ "$status" -eq 3 ] && grep -q "isn't on this computer" "$work/titlefont.out" || { cat "$work/titlefont.out"; fail "a missing title font should be a warning, got $status"; }
+fi
+python3 -I - "$work/titlefont" "$([ -f "$iowan" ] && echo yes || echo no)" <<'EOF3' || fail "titleFont should change only the PNG's title"
+import json, struct, sys
+d, have = sys.argv[1], sys.argv[2] == "yes"
+plain, styled = (json.load(open(f"{d}/{n}.excalidraw"))["elements"] for n in ("excalifont", "iowan-inked"))
+title = next(e for e in styled if e["id"] == "page.title")
+assert title["fontFamily"] == 5 and title["customData"] == {"font": "iowan-inked"}, title
+assert len(title["text"].split("\n")) == 2, "the test title should wrap onto two lines"
+strip = lambda els: [{k: v for k, v in e.items() if k not in ("customData", "seed", "versionNonce", "updated")} for e in els]
+assert strip(plain) == strip(styled), "the drawings should differ only in the title's customData"
+size = lambda f: struct.unpack(">II", open(f, "rb").read()[16:24])
+a, b = f"{d}/excalifont.png", f"{d}/iowan-inked.png"
+assert size(a) == size(b), (size(a), size(b))
+assert (open(a, "rb").read() != open(b, "rb").read()) == have, "the PNG's title should change exactly when the font is here"
+EOF3
+node "$skill/scripts/drawing.mjs" render "$work/titlefont/iowan-inked.excalidraw" "$work/titlefont/preview.png" >/dev/null || fail "a drawing with a title font should preview"
+echo '{"title": "x", "titleFont": "comic"}' >"$work/titlefont/bad.json"
+set +e; node "$build" "$work/titlefont/bad.json" >"$work/titlefont-bad.out" 2>&1; status=$?; set -e
+[ "$status" -eq 1 ] && grep -q "titleFont must be one of excalifont, iowan-inked" "$work/titlefont-bad.out" || { cat "$work/titlefont-bad.out"; fail "an unknown titleFont should stop the build, got $status"; }
 
 echo "excalidraw-drawing: ok"
