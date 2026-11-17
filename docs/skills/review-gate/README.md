@@ -14,7 +14,7 @@ flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
   level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
   level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Terra for a Claude change,<br/>Sonnet for any other,<br/>+ Gemini 4 Hydrogen"]
-  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Terra and Opus for a Claude change,<br/>Opus and Sonnet for any other,<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer if one answers"]
+  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Terra and Opus for a Claude change<br/>(Opus and Sonnet when Codex is short),<br/>Opus and Sonnet for any other,<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer if one answers"]
   light -->|neither Hydrogen nor a free model answers| standard
   standard -.->|Codex short| sub["Claude substitute<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
@@ -35,7 +35,7 @@ flowchart TD
 |---|---|---|
 | Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
 | Standard | the cross reviewer and Gemini 4 Hydrogen (Codex short: its Claude substitute, Hydrogen and a free reviewer); a free reviewer in Hydrogen's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
-| Deep | two paid reviewers, different focus (Terra and Opus for a Claude change, Opus and Sonnet for any other), + Gemini 4 Hydrogen and a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Deep | two paid reviewers, different focus (Terra and Opus for a Claude change, or Opus and Sonnet when Codex is short; Opus and Sonnet for any other), + Gemini 4 Hydrogen and a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
 - **Paid reviewers** run at high reasoning: Codex's GPT-6.1 Terra (preferred to Sol, which costs more of
   the Codex plan), Claude Sonnet 5.5 and Opus 5.5.
@@ -104,7 +104,7 @@ Every gate ends with a Review section that starts with lines like these, printed
 
 *Replies on the blockers tagged lower: 1 agreed, 0 held, 0 no answer.*
 
-*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*
+*Skipped: Claude Opus 5.5: usage limit; DeepSeek V4.1 Flash (free): Free usage limit reached; DeepSeek V4.1 Flash (Go): no answer in its time.*
 
 *Record: ~/.local/state/agent-skills/long-horizon-orchestrator/run/task-B/review.*
 

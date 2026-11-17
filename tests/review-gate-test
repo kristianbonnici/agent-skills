@@ -89,7 +89,7 @@ none = copy.deepcopy(example)
 none["reviewers"], none["findings"], none["result"] = [], [], "no reviewer"
 done = run("table", save(os.path.join(work, "none"), none))
 assert done.returncode == 0 and "**Review: Deep, no round.**" in done.stdout, (done.stdout, done.stderr)
-assert "*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*" in done.stdout
+assert "*Skipped: Claude Opus 5.5: usage limit; DeepSeek V4.1 Flash (free): Free usage limit reached.*" in done.stdout
 
 # What the check catches: each prints its reason and no table.
 def fails(name, change, *expected, reports=True):
@@ -144,7 +144,7 @@ only["reviewers"].append({"name": "Claude Opus 5.5, high", "rounds": ["reply"], 
 only["findings"][3]["reply_from"] = "Claude Opus 5.5, high"
 folder = save(os.path.join(work, "only"), only)
 done = run("table", folder)
-assert done.returncode == 0 and "Opus" not in done.stdout and "**Review: Deep, 2 rounds.**" in done.stdout, done.stdout
+assert done.returncode == 0 and "| Claude Opus" not in done.stdout and "**Review: Deep, 2 rounds.**" in done.stdout, done.stdout
 assert "*Replies on the blockers tagged lower: 1 agreed, 1 held, 0 no answer.*" in done.stdout, done.stdout
 # Such a reviewer has no findings: one given to it is refused, since the table would leave it out.
 def found_while_answering(record):

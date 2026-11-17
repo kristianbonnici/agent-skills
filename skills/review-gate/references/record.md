@@ -36,6 +36,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
     {"name": "Gemini 4 Hydrogen, high", "rounds": [1], "reports": ["round-1-hydrogen.md"]}
   ],
   "skipped": [
+    {"name": "Claude Opus 5.5", "why": "usage limit"},
     {"name": "DeepSeek V4.1 Flash (free)", "why": "Free usage limit reached"}
   ],
   "findings": [
@@ -95,7 +96,7 @@ Each finding:
 
 *Replies on the blockers tagged lower: 1 agreed, 1 held, 0 no answer.*
 
-*Skipped: DeepSeek V4.1 Flash (free): Free usage limit reached.*
+*Skipped: Claude Opus 5.5: usage limit; DeepSeek V4.1 Flash (free): Free usage limit reached.*
 
 *Record: /Users/you/.local/state/agent-skills/review-gate/20261114-0930-notes-app.*
 ```
