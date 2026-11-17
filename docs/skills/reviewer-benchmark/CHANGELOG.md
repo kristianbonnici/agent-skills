@@ -1,5 +1,10 @@
 # reviewer-benchmark changelog
 
+## 1.1.0 (2026-11-18)
+
+- **The brief says to start nothing in the background to wait for,** as the review gate's does from 7.1.0: in the third run GLM-5.3 ended 4 of its 16 reviews waiting on its own background test run, with no report. The reports saved before this version were briefed without it.
+- **`blind` says what it left out:** how many reports it skipped as scored already, how many reviews had no report (out of time or under 400 bytes), and how many weren't reviewed yet or are to be reviewed again. Until now it gave only the count it copied, and a model's missing reports went unremarked (the open item of 1.0.0; seen again in the third run, where one review under 400 bytes was left out silently).
+
 ## 1.0.1 (2026-11-15)
 
 - **A Claude reviewer's brief gives the diff as a command its allow list permits.** The brief said `git -C <copy> diff`, which the `Bash(git diff:*)` rule refuses, so the Claude models of the first two runs had their first command refused and went on with plain `git diff` (shown with one command each way, 2026-11-15; found by Claude Sonnet 5.5 reviewing review-gate 6.0.0). Now it says `git diff <base>...<head>`, run from the copy's folder, as it does for `agy`. Their saved reports stand: a later run of those models is that little bit easier for them.

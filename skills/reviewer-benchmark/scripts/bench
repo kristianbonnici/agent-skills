@@ -301,8 +301,9 @@ def brief(key, work, note, spec):
     return (
         "You are reviewing a code change before it merges. Review only: don't edit, create or delete files, don't "
         "commit, and run only commands that read (git diff, git log, git show, reading files, running the existing "
-        "tests if that is quick and writes nothing outside a temporary folder). Don't ask anyone anything; answer "
-        "with your report.\n\n"
+        "tests if that is quick and writes nothing outside a temporary folder). Start nothing in the background to "
+        "wait for: nothing resumes you once you stop, so a report you put off for a command still running is never "
+        "written. Don't ask anyone anything; answer with your report.\n\n"
         f"The change: {key['objective']}\n"
         f"Where: {work}. The diff: {diff}. Read the related code and tests as well, not only the diff.\n"
         f"The project's rules: {rules}.\n"
@@ -455,14 +456,21 @@ def blind(data, scoring, names):
     if os.path.exists(os.path.join(folder, "map.json")) and not os.path.exists(os.path.join(folder, "saved")) and not discard:
         raise Refused(f"the scores in {folder} aren't saved yet: run unblind, or blind --discard to throw them away")
     mapping, copies, shuffler, of = {}, [], random.Random(), {}
+    left = {"scored": 0, "none": 0, "unrun": 0}
     for change in found["changes"]:
         key = the_key(data, change)
         there, scored = [], the_scores(data, change)
         for name in sorted(set(names)):
             meta, report = os.path.join(data, "runs", name, change + ".json"), os.path.join(data, "runs", name, change + ".md")
-            if os.path.exists(meta) and state_of(read(meta, "run"), key) == "report":
+            state = state_of(read(meta, "run"), key) if os.path.exists(meta) else "unrun"
+            if state == "none":
+                left["none"] += 1
+            elif state != "report":
+                left["unrun"] += 1      # not reviewed yet, or to review again: a later run does it
+            else:
                 saved = scored.get(name)
                 if isinstance(saved, dict) and saved.get("review") == review_id(read(meta, "run")):
+                    left["scored"] += 1
                     continue        # scored already: shown again, its empty score would take the saved one's place
                 if not os.path.isfile(report):
                     raise Refused(f"{report} is missing, though its review has a report: put it back, or delete {meta}")
@@ -486,6 +494,8 @@ def blind(data, scoring, names):
     shutil.rmtree(folder, ignore_errors=True)
     os.replace(building, folder)
     print(f"{sum(len(v) for v in mapping.values())} reports of {len(mapping)} changes in {folder}")
+    print(f"Left out: {left['scored']} scored already, {left['none']} with no report (out of time or under 400 bytes), "
+          f"{left['unrun']} not reviewed yet or to review again.")
     return 0
 
 

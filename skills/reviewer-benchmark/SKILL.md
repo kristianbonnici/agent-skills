@@ -2,7 +2,7 @@
 name: reviewer-benchmark
 description: Measure how well a model reviews code, by having it review past changes whose defects are known and scoring its reports blind. Run models through the owner's private set of past changes, score each report against the set's answer key, check every other finding against the code (real, minor or false), add the confirmed finds to the key, and report one table for the set's version. Use when the owner asks how good a model is as a reviewer, wants reviewers compared or a new model tested before it reviews in the review gate, or wants changes added to the benchmark. It never changes who reviews in the review gate.
 metadata:
-  version: 1.0.1
+  version: 1.1.0
 ---
 
 # Reviewer Benchmark

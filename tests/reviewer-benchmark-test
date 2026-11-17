@@ -128,6 +128,7 @@ sent = open(os.path.join(data, "runs", "echo", "one.md")).read()
 assert done.returncode == 0 and "The change: Count the items." in sent and f"Where: {copy}." in sent, sent
 assert f"The project's rules: {copy}/AGENTS.md." in sent and f"git -C {copy} diff " in sent, sent
 assert "You have 12 minutes" not in sent, "a paid model's brief has no time line"
+assert "Start nothing in the background to wait for" in sent, "the brief, like the gate's, says nothing resumes a reviewer"
 assert sent.rstrip().endswith(copy), "{work} in a command is the copy's folder"
 assert not os.path.exists(os.path.join(data, "runs", "echo", "two.json")), "only the change named was reviewed"
 bench("run", "cheap", "one")
@@ -255,6 +256,8 @@ for name in ("good", "echo", "cheap"):
 # blind: letters for the reports there are, none for a review that timed out or left almost nothing.
 done = bench("blind", "good", "echo", "slow", "short")
 assert done.returncode == 0 and "4 reports of 2 changes" in done.stdout, (done.stdout, done.stderr)
+# It says what it left out: here the two reviews of each change that timed out or left almost nothing.
+assert "Left out: 0 scored already, 4 with no report (out of time or under 400 bytes), 0 not reviewed yet" in done.stdout, done.stdout
 blind = os.path.join(scoring, "blind")
 mapping = load(blind, "map.json")
 assert sorted(mapping["one"].values()) == ["echo", "good"] and sorted(mapping["one"]) == ["A", "B"], mapping
@@ -315,13 +318,19 @@ done = bench("unblind")
 assert done.returncode == 0 and "scores of 1 reports saved" in done.stdout and "not saved" in done.stdout and "two A" in done.stdout, done.stdout
 assert sorted(load(data, "scores", "one.json")["reports"]) == ["cheap", "echo", "good"]
 assert "cheap" not in load(data, "scores", "two.json")["reports"]
-assert bench("blind", "cheap").returncode == 0, "after unblind saved what it could, blind runs again"
+done = bench("blind", "cheap")
+assert done.returncode == 0, "after unblind saved what it could, blind runs again"
+assert "Left out: 1 scored already, 0 with no report (out of time or under 400 bytes), 0 not reviewed yet" in done.stdout, done.stdout
 mapping = load(blind, "map.json")
 # Only the report with no score yet is shown again: the saved score of "one" can't be replaced by an empty one.
 assert mapping == {"one": {}, "two": {"A": "cheap"}}, mapping
 fill("two", cheap={"is_review": True, "known": {"1": 0}, "others": [], "nits_unchecked": 0})
 assert bench("unblind").returncode == 0 and load(data, "scores", "two.json")["reports"]["cheap"]["review"] == "another review"
 assert load(data, "scores", "one.json")["reports"]["cheap"]["known"] == {"1": 0, "2": 1}
+# A model with no review of either change has nothing to show, and says so.
+done = bench("blind", "deepseek")
+assert done.returncode == 0 and "0 reports of 2 changes" in done.stdout, (done.stdout, done.stderr)
+assert "Left out: 0 scored already, 0 with no report (out of time or under 400 bytes), 2 not reviewed yet or to review again." in done.stdout, done.stdout
 
 # totals.
 done = bench("totals", "--json")

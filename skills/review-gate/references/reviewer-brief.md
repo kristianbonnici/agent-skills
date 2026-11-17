@@ -3,7 +3,7 @@
 Send each reviewer this brief with the angle-bracketed parts filled in. Every reviewer of a round gets the same text except its focus. Keep it neutral: say what the change is meant to do, never what you suspect is wrong, and never mention the other reviewers.
 
 ```text
-You are reviewing a code change before it merges. Review only: don't edit, create or delete files, don't commit, and run only commands that read (git diff, git log, git show, reading files, running the existing tests if that is quick and writes nothing outside a temporary folder). Don't ask anyone anything; answer with your report.
+You are reviewing a code change before it merges. Review only: don't edit, create or delete files, don't commit, and run only commands that read (git diff, git log, git show, reading files, running the existing tests if that is quick and writes nothing outside a temporary folder). Start nothing in the background to wait for: nothing resumes you once you stop, so a report you put off for a command still running is never written. Don't ask anyone anything; answer with your report.
 
 The change: <the objective in two to four sentences: what it is meant to do, for whom, and what it must not change>.
 Where: <worktree or checkout path>. The diff: git -C <path> diff <base>...<head>. Read the related code and tests as well, not only the diff.
