@@ -26,7 +26,8 @@ The Go targets below draw on the owner's OpenCode Go plan, and Gemini 4 Hydrogen
 
 Launch every reviewer, a single one too, with mode `"async"`. Then, until each has reported or been stopped:
 
-- **Wait for the next checkpoint:** `t3_thread_wait` on the thread of the reviewer whose checkpoint comes first, with `timeoutMs` set to the time left to it. A wait that returns early because that reviewer finished: read its result and wait for the next checkpoint. Don't poll with `task_status` in between.
+- **Wait for the next checkpoint:** `t3_thread_wait` on the thread of the reviewer whose checkpoint comes first, with `timeoutMs` set to the time left to it, but no more than 5 minutes. A wait that returns early because that reviewer finished: read its result and wait for the next checkpoint. Don't poll with `task_status` in between.
+- **Each time a wait returns, check every running reviewer for an approval:** `t3_thread_read` its thread; a `pendingRequestCount` above 0, or "Subagent needs approval" in the thread, means it waits on a prompt nobody is there to answer, and a host can show that prompt on the owner's screen. Stop it with `task_cancel` at once and relaunch it once, with the same brief; its time restarts from the new launch, and the record lists the first launch under `skipped` with why "asked for approval, relaunched". One that asks again is limited (SKILL.md, section 2) and is replaced as a limited reviewer is.
 - **At a pace check:** `t3_thread_read` the reviewer's thread with `view: "activity"`; each item has its time (`updatedAt`). Judge its pace as above.
 - **At a deadline, or a limited pace:** stop the reviewer with `task_cancel` (a wait that times out doesn't stop it), then launch what replaces it, if anything does.
 

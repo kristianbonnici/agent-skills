@@ -3,7 +3,7 @@
 Send each reviewer this brief with the angle-bracketed parts filled in. Every reviewer of a round gets the same text except its focus. Keep it neutral: say what the change is meant to do, never what you suspect is wrong, and never mention the other reviewers.
 
 ```text
-You are reviewing a code change before it merges. Review only: don't edit, create or delete files, don't commit, and run only commands that read (git diff, git log, git show, reading files, running the existing tests if that is quick and writes nothing outside a temporary folder). Start nothing in the background to wait for: nothing resumes you once you stop, so a report you put off for a command still running is never written. Don't ask anyone anything; answer with your report.
+You are reviewing a code change before it merges. Review only: don't edit, create or delete files or folders, don't commit, and run only commands that read (git diff, git log, git show, reading files). Don't run tests or scripts, and don't run any command that might ask for approval: nobody is there to give it. If you'd like a test run, name the test and what it should show in your report instead. Start nothing in the background to wait for: nothing resumes you once you stop, so a report you put off for a command still running is never written. Don't ask anyone anything; answer with your report.
 
 The change: <the objective in two to four sentences: what it is meant to do, for whom, and what it must not change>.
 Where: <worktree or checkout path>. The diff: git -C <path> diff <base>...<head>. Read the related code and tests as well, not only the diff.
@@ -20,7 +20,7 @@ Report each issue as:
 - blocker (a defect this change introduces or exposes that causes data loss or corruption, a security or privacy hole, a crash, hang or wrong result on a common path, a broken build or test, or another serious defect on a common path), follow-up (a defect this change introduces or exposes that needs unusual timing, rare input or a corner case, or a missing hardening), nit (real but minor) or pre-existing (true, but not caused by this diff);
 - for a blocker or follow-up, the fix it needs;
 - how often it would happen, from 1 to 10, and how bad it would be, from 1 to 10;
-- confirmed (you traced it through the code or ran it) or suspected.
+- confirmed (you traced it through the code) or suspected.
 
 Skip style preferences and theoretical cases you can't make concrete. If you find nothing serious, say so plainly and list what you checked.
 ```
@@ -30,7 +30,7 @@ Skip style preferences and theoretical cases you can't make concrete. If you fin
 When you reject a finding a reviewer tagged a blocker, or give it a lower tag (SKILL.md, section 4), send this, alone or inside that reviewer's next brief. Give the finding whole, as it was reported, and your reason as you recorded it: don't argue further.
 
 ```text
-You are asked one question about a code change under review. Answer it only: don't review the change, don't edit, create or delete files, don't commit, and run only commands that read. Don't ask anyone anything.
+You are asked one question about a code change under review. Answer it only: don't review the change, don't edit, create or delete files or folders, don't commit, and run only commands that read (git diff, git log, git show, reading files). Don't run tests or scripts, and don't run any command that might ask for approval: nobody is there to give it. Don't ask anyone anything.
 
 Where: <worktree or checkout path>. The diff: git -C <path> diff <base>...<head>.
 A reviewer reported: <the finding as it was reported, whole: its title, file and line, the case, its tag and the fix it asked for>.

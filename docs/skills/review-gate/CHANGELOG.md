@@ -1,5 +1,10 @@
 # review-gate changelog
 
+## 8.2.0 (2026-11-19)
+
+- **Reviewers run only read-only commands: no tests, no scripts, nothing that may ask for approval** (owner, 2026-11-19, accepted in advance). In an orchestrated run a cross reviewer, allowed by the brief to run the existing tests from a temporary folder, ran the suite from one it made with `mktemp` and removed in an exit trap; its host asked for approval even in full access, the prompt reached the owner's screen while they were away, and the task kept waiting on its reviewer with nothing in the run showing why. The brief, and the question about a tag, now say to read only (git diff, log, show, files), create no files or folders, run no tests or scripts and no command that may ask for approval, and to name a test they would like run in the report instead; "confirmed" no longer means "ran it".
+- **In T3, a reviewer waiting on an approval is stopped and relaunched once.** Waits on reviewers last 5 minutes at most, and each time one returns the agent reads every running reviewer's thread: a `pendingRequestCount` above 0, or "Subagent needs approval", means it waits on a prompt. It is stopped with `task_cancel` at once and relaunched with the same brief, its time restarting; the record lists the first launch under `skipped` ("asked for approval, relaunched"). One that asks again is limited and replaced as section 2 says.
+
 ## 8.1.0 (2026-11-18)
 
 - **Sol is the cross reviewer of any change Codex didn't write** (owner, 2026-11-18: "yes to this"): a change Gemini or a free model wrote now gets Sol at Standard, and Sol and Opus at Deep, where it had Sonnet, and Opus and Sonnet. On the benchmark Sol at medium found 61 of 144 defects known before its run, Sonnet 45 of them ([evidence.md](evidence.md#gpt-62-sol-at-medium-2026-11-18)); such changes are rare, so it costs little of the Codex plan. A change Codex wrote keeps Sonnet, and Opus and Sonnet at Deep. When Codex is short, such a change's cross reviewer is Sonnet. Light is unchanged.
