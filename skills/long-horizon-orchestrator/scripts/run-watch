@@ -123,7 +123,8 @@ times.log, so one that couldn't be added is added next time). Over SSH it writes
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
 RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
-inputs, RUN_WATCH_SSH_SECONDS the SSH check's time limit, RUN_WATCH_COMPUTER this computer's name, and
+inputs, RUN_WATCH_SSH_SECONDS the SSH check's time limit, RUN_WATCH_COMPUTER this computer's name,
+RUN_WATCH_INVOCATION the heartbeat's ID for the run (kept with each other computer's reading), and
 CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code. In --as mode it exits
 3 when this computer isn't the one named.
 """
@@ -1416,7 +1417,7 @@ def main(argv: list[str]) -> int:
             got = payload.get("summary") or {}
             machines_seen[name] = {"checked": iso(t0), "invocation": invocation, "reached": True,   # only the values the heartbeat shows
                                    **{k: v for k, v in got.items() if (k in ("disk_free_gb", "swap_gb", "load", "dialogs")
-                                      and isinstance(v, (int, float)) and not isinstance(v, bool))
+                                      and isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e6)
                                       or (k in ("keep_awake", "sampler") and v in ("up", "DOWN", "none"))}}
             continue
         running_there = sorted(t for t, v in mine.items() if v.get("status", "running") == "running")

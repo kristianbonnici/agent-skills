@@ -18,7 +18,9 @@ already reported is a reminder in the summary ("VMs still running", "leftovers s
 finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
 the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,
 password dialogs, keep-awake and sampler ("den-mac: disk 120 GB free, …, keep-awake up, sampler up"), read
-from run-watch's state file, or "den-mac not reached over SSH", which comes with an "unreachable" line.
+from run-watch's state file ("unknown" for a value it couldn't read), or "den-mac not reached over SSH",
+which comes with an "unreachable" line, or "den-mac not checked this wake" when this heartbeat's run-watch
+didn't finish (its "run-watch failed" note says why), so no earlier reading passes for this one.
 
 The summary: the running tasks, the integration branch's head and how many tracked files are changed
 in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
@@ -237,7 +239,7 @@ def main(argv):
             there.append(f"load {m['load']:.1f}")
         if isinstance(m.get("dialogs"), int) and m["dialogs"]:
             there.append(f"{m['dialogs']} password dialog(s)")
-        there += [f"{word} {m.get(k) or 'none'}" for word, k in (("keep-awake", "keep_awake"), ("sampler", "sampler"))]
+        there += [f"{word} {m.get(k) or 'unknown'}" for word, k in (("keep-awake", "keep_awake"), ("sampler", "sampler"))]
         bits.append(f"{name}: " + ", ".join(there))
     if blind_running:
         bits.append(f"blind, read their threads: {', '.join(blind_running)}")

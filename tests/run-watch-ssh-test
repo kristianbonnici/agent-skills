@@ -369,9 +369,9 @@ sys.exit(done.returncode)
     # a summary value it doesn't show (a lone surrogate, a list) is left out, and the heartbeat prints its line
     write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nprint('run-watch-remote {\"protocol\": 1, "
           "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"summary\": {\"keep_awake\": \"\\\\ud800\", "
-          "\"disk_free_gb\": [1], \"sampler\": \"up\"}}')\n", 0o755)
+          "\"disk_free_gb\": [1], \"swap_gb\": 1" + "0" * 309 + ", \"sampler\": \"up\"}}')\n", 0o755)
     hb = beat()
-    assert "den-mac: keep-awake none, sampler up" in hb[0], hb
+    assert "den-mac: keep-awake unknown, sampler up" in hb[0], hb
     del watch["machines"]["den-mac"]["run_watch"]
 
     # 6. An old copy there (5.9.2 and before take no --as: a usage error, exit 2), an old Python there, no run
