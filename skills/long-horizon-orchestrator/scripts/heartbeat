@@ -13,8 +13,12 @@ It reads <run directory>/watch.json, as run-watch does, and prints:
   <run-watch's lines, each as it printed it>             otherwise
 
 A task run-watch can't read (its "blind" list) is named on every wake and keeps it from being idle, since
-only its thread shows an approval prompt or a turn that ended; a virtual machine already reported is a
-reminder in the summary ("VMs still running"), not a finding.
+only its thread shows an approval prompt or a turn that ended; a virtual machine or a leftover process
+already reported is a reminder in the summary ("VMs still running", "leftovers still running"), not a
+finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
+the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,
+password dialogs, keep-awake and sampler ("den-mac: disk 120 GB free, …, keep-awake up, sampler up"), read
+from run-watch's state file, or "den-mac not reached over SSH", which comes with an "unreachable" line.
 
 The summary: the running tasks, the integration branch's head and how many tracked files are changed
 in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
@@ -48,7 +52,7 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
-REMINDER = re.compile(r"^vm \d+ .*: still running")
+REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
 DIALOG_PATH = "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
 
 
@@ -155,12 +159,19 @@ def main(argv):
     except (OSError, subprocess.TimeoutExpired) as e:
         watch_lines = [f"note: run-watch didn't run ({e}); run it yourself"]
     flagged = [l for l in watch_lines if not EVENT.match(l) and not REMINDER.match(l)]
-    reminders = [l.split(":", 1)[0][3:] + l.split("still running", 1)[1] for l in watch_lines if REMINDER.match(l)]
-    # tasks run-watch can't read (it names each once): their threads need a look on every wake
+    reminders = {"vm": [], "leftover": []}
+    for l in watch_lines:
+        if REMINDER.match(l):
+            reminders[l.split(" ", 1)[0]].append(l.split(":", 1)[0].split(" ", 1)[1] + l.split("still running", 1)[1])
+    # tasks run-watch can't read (it names each once): their threads need a look on every wake; and what
+    # its SSH check found on each other computer
     try:
-        blind = set(json.load(open(os.path.join(run_dir, "run-watch.state.json"))).get("blind") or [])
-    except (OSError, ValueError, AttributeError):
-        blind = set()
+        state = json.load(open(os.path.join(run_dir, "run-watch.state.json")))
+        state = state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        state = {}
+    blind = set(state.get("blind") or []) if isinstance(state.get("blind"), list) else set()
+    machines = state.get("machines") if isinstance(state.get("machines"), dict) else {}
     blind_running = sorted(t for t in running if t in blind)
     events = {}
     for l in watch_lines:
@@ -200,8 +211,27 @@ def main(argv):
         bits.append(f"{dialogs} password dialog(s)")
     if alive:
         bits.append(", ".join(alive))
-    if reminders:
-        bits.append("VMs still running: " + "; ".join(reminders))
+    if reminders["vm"]:
+        bits.append("VMs still running: " + "; ".join(reminders["vm"]))
+    if reminders["leftover"]:
+        bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
+    for name, m in sorted(machines.items()):
+        if not isinstance(m, dict) or m.get("checked") != state.get("last_run"):
+            continue    # not from this wake's run-watch
+        if not m.get("reached"):
+            bits.append(f"{name} not reached over SSH")
+            continue
+        there = []
+        if isinstance(m.get("disk_free_gb"), (int, float)):
+            there.append(f"disk {m['disk_free_gb']:.0f} GB free")
+        if isinstance(m.get("swap_gb"), (int, float)):
+            there.append(f"swap {m['swap_gb']:.1f} GB")
+        if isinstance(m.get("load"), (int, float)):
+            there.append(f"load {m['load']:.1f}")
+        if isinstance(m.get("dialogs"), int) and m["dialogs"]:
+            there.append(f"{m['dialogs']} password dialog(s)")
+        there += [f"{word} {m.get(k) or 'none'}" for word, k in (("keep-awake", "keep_awake"), ("sampler", "sampler"))]
+        bits.append(f"{name}: " + ", ".join(there))
     if blind_running:
         bits.append(f"blind, read their threads: {', '.join(blind_running)}")
     marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}

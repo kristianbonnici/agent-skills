@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch, heartbeat, run-costs and share-usage. RUN_MAP_CHROME names the browser for the page checks.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch (also over SSH), heartbeat, run-costs and share-usage. RUN_MAP_CHROME names the browser for the page checks.
 set -eu
 # Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
 # under test, which keep caps already set: start without them.
@@ -3206,6 +3206,8 @@ fi
 
 # run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority
 nice -n 10 "$script_dir/run-watch-test" >/dev/null
+# and over SSH: another computer's tasks and the computer itself, through a stand-in ssh, and the heartbeat's summary of it
+"$script_dir/run-watch-ssh-test" >/dev/null
 
 # run-costs: a run's tokens at API list prices, from made-up T3 records (threads, a Claude result line, Codex
 # token counts), OpenCode's session totals and a price list; only the run's span counts; a Claude Code subagent

@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""Checks that the long-horizon-orchestrator's run-watch and heartbeat watch a task on another computer
+over SSH as closely as one on their own: two made-up computers, studio-mac (the orchestrator's) and
+den-mac, each with its own made-up home folder, and a stand-in ssh that runs what it is sent with sh in
+den-mac's home (never a real connection). It checks one ssh call per computer per wake, in batch mode,
+through the login shell; a reachable computer with findings (an approval wait, a commit, a blind task,
+a stopped keep-awake, a password dialog, low disk, a leftover process), each line naming the computer,
+told once where a local line is, its times added to the orchestrator's times.log, and the heartbeat's
+summary of it; a reachable, clean computer (the heartbeat says "nothing to act on"); a computer that
+doesn't answer, one that times out, an old copy of run-watch there, an old Python there, no run
+directory there, an alias that reaches another computer and an entry it won't pass to ssh, each one
+"unreachable" line with its tasks blind as before, and never a traceback; and that a run without an
+SSH reach is checked exactly as before, with no ssh call. Processes are made up by a stand-in ps."""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+
+here = os.path.dirname(os.path.abspath(__file__))
+scripts = os.path.join(here, "..", "skills", "long-horizon-orchestrator", "scripts")
+run_watch = os.path.realpath(os.path.join(scripts, "run-watch"))
+heartbeat = os.path.realpath(os.path.join(scripts, "heartbeat"))
+DIALOG = "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
+work = os.path.realpath(tempfile.mkdtemp(prefix="run-watch-ssh-test."))
+REL = ".local/state/agent-skills/long-horizon-orchestrator/run-x"
+
+
+def stamp(t):
+    return datetime.fromtimestamp(t, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def write(path, text, mode=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+    if mode:
+        os.chmod(path, mode)
+
+
+def put_json(path, data):
+    write(path, json.dumps(data))
+
+
+try:
+    bin_dir = os.path.join(work, "bin")
+    studio_home, den_home = os.path.join(work, "studio-home"), os.path.join(work, "den-home")
+    studio_run, den_run = os.path.join(studio_home, REL), os.path.join(den_home, REL)
+    os.makedirs(os.path.join(studio_run, "usage"))
+    os.makedirs(os.path.join(den_run, "usage"))
+    ssh_log = os.path.join(work, "ssh.log")
+    open(ssh_log, "w").close()
+
+    # A stand-in ps: the processes listed in $FAKE_PS_FILE (none when unset), in ps's own columns.
+    write(os.path.join(bin_dir, "fake-ps"), f"""#!{sys.executable}
+import json, os, sys, time
+procs = json.load(open(os.environ["FAKE_PS_FILE"])) if os.environ.get("FAKE_PS_FILE") else []
+args = " ".join(sys.argv[1:])
+for p in procs:
+    if "lstart=" in args:
+        start = time.strftime("%a %b %d %H:%M:%S %Y", time.localtime(p["start"]))
+        print(f"{{p['pid']}} {{p.get('ppid', 1)}} 0.0 0:00.10 {{start}} {{p['args']}}")
+    elif "comm=" in args:
+        print(f"{{p['pid']}} {{p.get('comm') or p['args'].split()[0]}}")
+""", 0o755)
+    write(os.path.join(bin_dir, "fake-pmset"), "#!/bin/sh\n", 0o755)
+    # python3 for the "remote" shell: this one, or a made-up older one for the old-Python case
+    os.symlink(sys.executable, os.path.join(bin_dir, "python3"))
+    old_py = os.path.join(work, "old-python")
+    write(os.path.join(old_py, "python3"), f"""#!/bin/sh
+exec "{sys.executable}" -I -c 'import runpy, sys
+sys.version_info = (3, 9, 6, "final", 0); sys.version = "3.9.6 (made up)"
+sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' "$@"
+""", 0o755)
+
+    # The stand-in ssh: options, the alias, the remote command (the login shell); the script comes on its
+    # standard input. Each alias is a made-up computer: its home, its name, its processes; "gone" fails as ssh
+    # does, "slow" never answers. Every call is logged, with its options and command.
+    homes = {"den": (den_home, "den-mac"), "old": (os.path.join(work, "old-home"), "den-mac"),
+             "oldpy": (den_home, "den-mac"), "wrong": (den_home, "attic-mac")}
+    write(os.path.join(bin_dir, "ssh"), f"""#!{sys.executable}
+import json, os, subprocess, sys, time
+args, opts = sys.argv[1:], []
+while args and args[0].startswith("-"):
+    if args[0] == "-o":
+        opts.append(args[1]); args = args[2:]
+    else:
+        opts.append(args[0]); args = args[1:]
+alias, command = args[0], args[1:]
+script = sys.stdin.read()
+with open({ssh_log!r}, "a") as f:
+    f.write(json.dumps({{"alias": alias, "opts": opts, "command": command, "pid": os.getpid()}}) + "\\n")
+if alias == "gone":
+    print("ssh: connect to host gone port 22: Operation timed out", file=sys.stderr); sys.exit(255)
+if alias == "slow":
+    time.sleep(120); sys.exit(0)
+home, name = {homes!r}[alias]
+env = dict(os.environ, HOME=home, RUN_WATCH_COMPUTER=name)
+env.pop("FAKE_PS_FILE", None)
+extra = os.path.join(home, "env.json")
+if os.path.exists(extra):
+    env.update(json.load(open(extra)))
+if alias == "oldpy":
+    env["PATH"] = {old_py!r} + ":" + env["PATH"]
+print("Last login: a login shell's own output, which the result line must survive")
+sys.stdout.flush()
+done = subprocess.run(["sh"], input=script, env=env, text=True, capture_output=True, cwd=home)
+sys.stdout.write(done.stdout); sys.stderr.write(done.stderr)
+sys.exit(done.returncode)
+""", 0o755)
+
+    now = time.time()
+    started = now - 3600
+    env = dict(os.environ, HOME=studio_home, PATH=bin_dir + ":" + os.environ["PATH"], RUN_WATCH_PS=os.path.join(bin_dir, "fake-ps"),
+               RUN_WATCH_PMSET=os.path.join(bin_dir, "fake-pmset"), RUN_WATCH_IOREG="true", RUN_WATCH_SAMPLE_SECONDS="0",
+               RUN_WATCH_DISK_FREE_GB="138", RUN_WATCH_SWAP_GB="0", RUN_WATCH_COMPUTER="studio-mac",
+               HEARTBEAT_PS=os.path.join(bin_dir, "fake-ps"), CLAUDE_CONFIG_DIR=os.path.join(studio_home, ".claude"),
+               CODEX_HOME=os.path.join(studio_home, ".codex"))
+    for k in ("FAKE_PS_FILE", "RUN_WATCH_SSH_SECONDS", "XDG_STATE_HOME"):
+        env.pop(k, None)
+
+    # den-mac: its installed copy of run-watch (a link, as bootstrap makes), its run directory with the pid
+    # files its pre-flight wrote, task B's worktree with a commit and its session log with a shell call open
+    # for 10 minutes and no process for it (an approval), task C on a harness run-watch can't read, and task
+    # D, merged, whose build still runs (a leftover).
+    os.makedirs(os.path.join(den_home, ".claude", "skills"))
+    os.symlink(os.path.realpath(os.path.join(scripts, "..")), os.path.join(den_home, ".claude", "skills", "long-horizon-orchestrator"))
+    wt_b = os.path.join(den_home, "worktrees", "b")
+    os.makedirs(wt_b)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run(git + ["init", "-q"], cwd=wt_b, check=True)
+    write(os.path.join(wt_b, "f.txt"), "x\n")
+    subprocess.run(git + ["add", "f.txt"], cwd=wt_b, check=True)
+    subprocess.run(git + ["commit", "-qm", "the change on den"], cwd=wt_b, check=True)
+    head_b = subprocess.run(["git", "rev-parse", "HEAD"], cwd=wt_b, capture_output=True, text=True).stdout.strip()
+    log_b = os.path.join(den_home, ".claude", "projects", "b", "session-b.jsonl")
+    write(log_b, json.dumps({"type": "assistant", "timestamp": stamp(now - 600), "message": {"content": [
+        {"type": "tool_use", "id": "toolu_b1", "name": "Bash", "input": {"command": "make install"}}]}}) + "\n")
+    os.makedirs(os.path.join(den_run, "D"))
+    write(os.path.join(den_run, "keep-awake.pid"), "777\n")
+    write(os.path.join(den_run, "usage", "sampler.pid"), "778\n")
+    den_procs = os.path.join(work, "den-procs.json")
+    put_json(den_procs, [
+        {"pid": 778, "start": now - 3500, "args": f"python3 {den_home}/.claude/skills/long-horizon-orchestrator/scripts/usage-sampler "
+                                                    f"--machine-only {den_run}/usage"},
+        {"pid": 779, "start": now - 60, "args": "SecurityAgent", "comm": DIALOG},
+        {"pid": 780, "start": now - 120, "args": f"sleep 600 {den_run}/D/build.log"},
+        {"pid": 781, "ppid": 780, "start": now - 110, "args": "sleep 601"},
+        {"pid": 790, "start": now - 7200, "args": f"sleep 600 {den_run}/before-the-run"},   # started before the run
+    ])
+    put_json(os.path.join(den_home, "env.json"), {"FAKE_PS_FILE": den_procs, "RUN_WATCH_DISK_FREE_GB": "15"})
+
+    watch = {"started": stamp(started), "computer": "studio-mac", "repo": "", "integration_branch": "lho/run-x",
+             "tasks": {"B": {"worktree": wt_b, "harness": "claude-code", "session_log": log_b, "computer": "den-mac",
+                             "launched": stamp(started), "branch": "lho/run-x-B", "status": "running"},
+                       "C": {"worktree": os.path.join(den_home, "worktrees", "c"), "harness": "opencode", "computer": "Den-Mac",
+                             "launched": stamp(started), "status": "running"},
+                       "D": {"worktree": os.path.join(den_home, "worktrees", "d"), "harness": "codex", "computer": "den-mac",
+                             "launched": stamp(started), "status": "merged"}},
+             "machines": {"den-mac": {"environmentId": "env-den", "thread": "thread-den", "reach": "ssh den"}}}
+    watch_json = os.path.join(studio_run, "watch.json")
+
+    def calls():
+        return [json.loads(l) for l in open(ssh_log)]
+
+    def watch_run(extra_env=None, data=None, timeout=120):
+        put_json(watch_json, data or watch)
+        n = len(calls())
+        t = time.time()
+        done = subprocess.run([sys.executable, "-I", run_watch, studio_run], capture_output=True, text=True,
+                              env=dict(env, **(extra_env or {})), timeout=timeout)
+        assert done.returncode == 0 and "Traceback" not in done.stderr, (done.returncode, done.stderr)
+        return done.stdout.splitlines(), calls()[n:], time.time() - t
+
+    def beat(extra_env=None):
+        put_json(watch_json, watch)
+        done = subprocess.run([sys.executable, "-I", heartbeat, studio_run, "--no-ledger"], capture_output=True, text=True,
+                              env=dict(env, **(extra_env or {})), timeout=200)
+        assert done.returncode == 0 and "Traceback" not in done.stderr, done.stderr
+        return done.stdout.splitlines()
+
+    def state():
+        return json.load(open(os.path.join(studio_run, "run-watch.state.json")))
+
+    studio_before = sorted(os.listdir(studio_run))
+    den_before = sorted(os.listdir(den_run))
+
+    # 1. Reachable, with findings: one ssh call, in batch mode, through the login shell; each line names den-mac.
+    out, made, _ = watch_run()
+    text = "\n".join(out)
+    assert len(made) == 1 and made[0]["alias"] == "den" and made[0]["command"] == ["zsh", "-l"], made
+    assert "BatchMode=yes" in made[0]["opts"] and "ConnectTimeout=15" in made[0]["opts"], made
+    assert [l for l in out if l.startswith("approval B on den-mac: Bash call open 10 min") and "make install" in l], text
+    assert [l for l in out if l.startswith("commit B on den-mac ") and head_b[:10] in l and "the change on den" in l], text
+    assert [l for l in out if l.startswith("blind C on den-mac (opencode)")], text
+    assert not [l for l in out if l.startswith("blind B") or l.startswith("blind D")], text
+    assert [l for l in out if l.startswith("keep-awake on den-mac: caffeinate pid 777 isn't running") and "keep-awake.pid" in l], text
+    assert [l for l in out if l.startswith("dialog on den-mac: a password dialog is up (SecurityAgent pid 779)")], text
+    assert [l for l in out if l.startswith("disk on den-mac: 15.0 GB free, below 20 GB")], text
+    left = [l for l in out if l.startswith("leftover ")]
+    assert len(left) == 1 and left[0].startswith("leftover 780 on den-mac sleep: task D's (merged)") and "with 1 it started" in left[0], text
+    assert not [l for l in out if "sampler" in l.split(":")[0] or "Last login" in l or "790" in l.split(":")[0]], text
+    assert not [l for l in out if l.startswith(("unreachable", "note"))], text
+    # the times are in the orchestrator's times.log too; its state has den-mac's summary for the heartbeat
+    times = open(os.path.join(studio_run, "times.log")).read().splitlines()
+    assert times == [l for l in out if l.startswith("commit ")] and len(times) == 1, times
+    seen = state()["machines"]["den-mac"]
+    assert seen["reached"] and seen["keep_awake"] == "DOWN" and seen["sampler"] == "up" and seen["disk_free_gb"] == 15.0 \
+        and seen["dialogs"] == 1 and seen["checked"] == state()["last_run"], seen
+    assert sorted(state()["blind"]) == ["C"], state()["blind"]
+    # nothing written there but what a local run-watch writes (its state and times.log), nor here
+    assert sorted(os.listdir(den_run)) == sorted(den_before + ["run-watch.state.json", "times.log"]), os.listdir(den_run)
+    assert sorted(os.listdir(studio_run)) == sorted(studio_before + ["run-watch.state.json", "times.log", "watch.json"]), os.listdir(studio_run)
+    assert os.listdir(os.path.join(den_home, ".claude", "skills")) == ["long-horizon-orchestrator"]
+
+    # the heartbeat: not idle, den-mac's lines, and its free disk, keep-awake and sampler in the summary
+    hb = beat()
+    assert hb[0].startswith("heartbeat ") and "act on the lines below" in hb[0], hb
+    assert "den-mac: disk 15 GB free, swap 0.0 GB" in hb[0] and "1 password dialog(s), keep-awake DOWN, sampler up" in hb[0], hb
+    assert "blind, read their threads: C" in hb[0], hb
+    assert [l for l in hb if l.startswith("approval B on den-mac")], hb
+    assert len(calls()) == 2, calls()   # the heartbeat's run-watch made one more call, no more
+
+    # 2. The next wake: what is told once there (the commit, blind C, the leftover) isn't told again; the leftover
+    # is a reminder, which the heartbeat puts in its summary
+    out, made, _ = watch_run()
+    assert len(made) == 1, made
+    assert not [l for l in out if l.startswith(("commit", "blind"))], out
+    assert [l for l in out if l.startswith("approval B on den-mac")], out
+    assert [l for l in out if l == "leftover 780 on den-mac sleep: still running"], out
+    assert open(os.path.join(studio_run, "times.log")).read().splitlines() == times
+    hb = beat()
+    assert "leftovers still running: 780 on den-mac sleep" in hb[0], hb
+
+    # 3. Reachable and clean: the call got its result, the keep-awake runs, the dialog, the leftover and C are
+    # gone, the disk has room. run-watch prints nothing; the heartbeat says nothing to act on, with den-mac's state.
+    with open(log_b, "a") as f:
+        f.write(json.dumps({"type": "user", "timestamp": stamp(time.time()), "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_b1", "content": "done"}]}}) + "\n")
+    put_json(den_procs, [{"pid": 777, "start": now - 3500, "args": "caffeinate -i -t 86400"},
+                         {"pid": 778, "start": now - 3500, "args": "python3 usage-sampler --machine-only usage"}])
+    put_json(os.path.join(den_home, "env.json"), {"FAKE_PS_FILE": den_procs, "RUN_WATCH_DISK_FREE_GB": "138"})
+    watch["tasks"]["C"]["status"] = "merged"
+    out, made, _ = watch_run()
+    assert out == [] and len(made) == 1, out
+    hb = beat()
+    assert len(hb) == 1 and "nothing to act on" in hb[0] and "running B" in hb[0], hb
+    assert "den-mac: disk 138 GB free, swap 0.0 GB" in hb[0] and "keep-awake up, sampler up" in hb[0], hb
+
+    # 4. Unreachable: one plain line, and its running tasks fall back to the blind line (once), which the
+    # heartbeat names on every wake; back in reach, they leave the blind list.
+    watch["machines"]["den-mac"]["reach"] = "ssh gone"
+    out, made, _ = watch_run()
+    assert len(made) == 1 and made[0]["alias"] == "gone", made
+    un = [l for l in out if l.startswith("unreachable den-mac: ")]
+    assert len(un) == 1 and "ssh gone failed: ssh: connect to host gone port 22: Operation timed out" in un[0] \
+        and "its running tasks (B) are blind this wake" in un[0], out
+    assert [l for l in out if l.startswith("blind B (claude-code, on den-mac)")] and len(out) == 2, out
+    assert state()["machines"]["den-mac"]["reached"] is False and "B" in state()["blind"], state()
+    hb = beat()
+    assert "act on the lines below" in hb[0] and "den-mac not reached over SSH" in hb[0] and "blind, read their threads: B" in hb[0], hb
+    assert not [l for l in hb if l.startswith("blind B")], hb   # told once, on the wake before
+    watch["machines"]["den-mac"]["reach"] = "ssh den"
+    out, _, _ = watch_run()
+    assert out == [] and "B" not in state()["blind"], (out, state()["blind"])
+
+    # 5. A timeout: the call is stopped at its limit, and the stand-in ssh no longer runs.
+    watch["machines"]["den-mac"]["reach"] = "ssh slow"
+    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "2"})
+    assert [l for l in out if l.startswith("unreachable den-mac: ssh slow gave no answer within 2 s (stopped)")], out
+    assert took < 30, took
+    assert subprocess.run(["ps", "-p", str(made[0]["pid"])], capture_output=True).returncode != 0, "the stand-in ssh still runs"
+
+    # 6. An old copy there (5.9.2 and before take no --as: a usage error, exit 2), an old Python there, no run
+    # directory there, an alias that reaches another computer, and an entry it won't pass to ssh.
+    old_home = homes["old"][0]
+    os.makedirs(os.path.join(old_home, REL))
+    write(os.path.join(old_home, ".claude", "skills", "long-horizon-orchestrator", "scripts", "run-watch"),
+          "#!/usr/bin/env python3\n# a stand-in for 5.9.2's argument check, the part an --as call meets\nimport sys\n"
+          "args = sys.argv[1:]\nif '--watch' in args:\n    i = args.index('--watch'); del args[i:i + 2]\n"
+          "if len(args) != 1:\n    print('Usage: run-watch <run directory> [--watch <file>]', file=sys.stderr); sys.exit(2)\n", 0o755)
+    cases = {"ssh old": "its copy of run-watch (" + os.path.join(old_home, ".claude/skills/long-horizon-orchestrator/scripts/run-watch")
+                        + ") is older than 5.10.0",
+             "ssh oldpy": "stopped on an old Python: run-watch: needs Python 3.10 or newer",
+             "ssh wrong": "ssh wrong reached another computer: run-watch: this computer is attic-mac, not den-mac",
+             "ssh -oProxyCommand=evil": "won't pass to ssh"}
+    for reach, why in cases.items():
+        watch["machines"]["den-mac"]["reach"] = reach
+        out, made, _ = watch_run()
+        un = [l for l in out if l.startswith("unreachable den-mac: ")]
+        assert len(un) == 1 and why in un[0] and "its running tasks (B)" in un[0], (reach, out)
+        assert len(made) == (0 if "evil" in reach else 1), (reach, made)
+    watch["machines"]["den-mac"].update(reach="ssh den", run_dir="runs/missing")
+    out, _, _ = watch_run()
+    assert [l for l in out if l.startswith("unreachable den-mac: no run directory ") and "runs/missing there" in l], out
+    del watch["machines"]["den-mac"]["run_dir"]
+    # its own run directory and copy given in watch.json: an absolute path there, and one relative to its home
+    watch["machines"]["den-mac"].update(run_dir=den_run, run_watch=".claude/skills/long-horizon-orchestrator/scripts/run-watch")
+    out, made, _ = watch_run()
+    assert out == [] and len(made) == 1, out
+
+    # 7. Without an SSH reach, exactly as before: a task elsewhere is blind (once), nothing goes over ssh, and
+    # the state and the heartbeat say nothing of other computers.
+    shutil.rmtree(os.path.join(studio_run))
+    os.makedirs(os.path.join(studio_run, "usage"))
+    watch["machines"]["den-mac"] = {"environmentId": "env-den", "thread": "thread-den", "reach": "thread"}
+    out, made, _ = watch_run()
+    assert made == [] and sorted(l.split(" (")[0] for l in out) == ["blind B"] and "(claude-code, on den-mac)" in out[0], out
+    assert "machines" not in state() and "times_pending" not in state(), state()
+    hb = beat()
+    assert "den-mac" not in hb[0] and "blind, read their threads: B" in hb[0], hb
+    del watch["machines"]
+    out, made, _ = watch_run()
+    assert made == [] and out == [], out
+    # and a run on one computer: no "computer" anywhere, nothing goes over ssh, its lines as before
+    one = {"started": stamp(started), "tasks": {}}
+    out, made, _ = watch_run(data=one)
+    assert made == [] and out == [], out
+    out, made, _ = watch_run({"RUN_WATCH_DISK_FREE_GB": "12"}, data=one)
+    assert made == [] and len(out) == 2 and out[0].startswith("disk: free disk fell 126.0 GB") \
+        and out[1].startswith("disk: 12.0 GB free, below 20 GB"), out
+finally:
+    shutil.rmtree(work, ignore_errors=True)
+
+print("run-watch over ssh: ok")

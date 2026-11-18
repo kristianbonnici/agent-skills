@@ -3,7 +3,7 @@
 network) and prints one line per finding, nothing when all is well. references/run-watch.md says
 what to do with each line.
 
-Usage: run-watch <run directory> [--watch <file>]
+Usage: run-watch <run directory> [--watch <file>|-] [--as <computer>]
 
 It reads <run directory>/watch.json (or --watch), which the orchestrator writes in Prepare and
 adds each task to at launch:
@@ -17,6 +17,24 @@ adds each task to at launch:
 
 Only tasks whose "status" is "running" (or absent) are checked for hangs and quiet; the times
 below are printed for every task.
+
+Another computer reached over SSH (computers.md section 10): when watch.json's "machines" gives a
+computer "reach": "ssh <alias>", run-watch checks that computer and its tasks (those whose "computer"
+names it) with one ssh call per wake, in batch mode (nothing can prompt), through that computer's
+login shell, within RUN_WATCH_SSH_SECONDS (90) in all, while it checks this one. The call runs that
+computer's own copy of run-watch, `run-watch <its run directory> --as <computer> --watch -`, with a
+watch.json for its tasks on standard input, so every check below runs there on that computer's own
+processes, files and logs, and keeps its state there as a local run does; it prints one line,
+"run-watch-remote <JSON>" (its lines, its blind tasks and a summary for the heartbeat). Each of its
+lines is printed here with " on <computer>" after its word (and the task or process it names):
+"hang B on den-mac: …", "disk on den-mac: …", whose process IDs are that computer's. The entry's
+optional keys: "run_watch", the path of run-watch there (default: the first of
+~/.claude/skills, ~/.agents/skills and ~/.codex/skills/long-horizon-orchestrator/scripts/run-watch
+there); "run_dir", the run directory there (default: this one's path under that computer's home
+folder when it is under this home folder, else the same path); "shell", the login shell (default
+"zsh -l"); a relative path is taken from that computer's home folder. In --as mode, run-watch also
+reads the keep-awake's process ID from <run directory>/keep-awake.pid when watch.json gives none,
+names leftover processes, and never reaches another computer itself.
 
 Each line starts with a word saying what it is:
 
@@ -41,7 +59,8 @@ Each line starts with a word saying what it is:
                    whole run for a task on another computer) a running task whose session log this script can't read (a
                    harness it doesn't know, or a log it didn't find): it sees only that task's
                    processes and files; or a task whose watch.json "computer" isn't this one (watch.json's
-                   own "computer", else this Mac's LocalHostName): it reads nothing of that task
+                   own "computer", else this Mac's LocalHostName) and isn't reached over SSH (or
+                   wasn't this wake): it reads nothing of that task
   hog <pid>        a process started since the run began, not the run's, above 80% of a core for
                    10 minutes
   disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB, naming the running
@@ -62,8 +81,15 @@ Each line starts with a word saying what it is:
                    report-back it sent, once each, for the ledger; they are also added to
                    <run directory>/times.log, so a wake that skimmed them loses none
   note             watch.json is missing or unreadable (the machine checks still ran)
+  unreachable <computer>   (each wake it happens) the SSH check of that computer gave nothing: ssh
+                   failed or timed out, no run directory or no copy of run-watch there, a copy
+                   older than 5.10.0 (no --as), a Python too old, or the alias reached another
+                   computer; its running tasks then get the blind line above
+  leftover <pid>   (--as mode only, so on another computer; later wakes say "still running") a
+                   process started since the run began that names the run directory or works in a
+                   task's folder, and isn't a running task's, the keep-awake's or the sampler's
 
-What it reads (nothing of a task on another computer, whose paths name folders over there):
+What it reads (here, nothing of a task on another computer, whose paths name folders over there):
   - a task's session log: watch.json's "session_log" when given (a Claude Code subagent's
     <session>/subagents/agent-<agent ID>.jsonl), else Claude Code's ~/.claude/projects/<worktree path, every character but
     letters and digits as "-">/<session>.jsonl (the session is watch.json's "session", else the
@@ -87,11 +113,15 @@ starting processes (a sleep loop) or writes files.
 
 It writes only its state file, <run directory>/run-watch.state.json, to compare with its last
 run (CPU samples for the hog check, the disk's recent readings and folder sizes, the times it already
-printed), and adds the time lines to <run directory>/times.log. It exits 0 (2 for a
+printed, and each SSH-reached computer's summary for the heartbeat), and adds the time lines to
+<run directory>/times.log, another computer's too (a copy that couldn't be added is kept in the state
+and added next time). Over SSH it writes the same two files in the run directory there, nothing else. It exits 0 (2 for a
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
 RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
-inputs, and CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code.
+inputs, RUN_WATCH_SSH_SECONDS the SSH check's time limit, RUN_WATCH_COMPUTER this computer's name, and
+CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code. In --as mode it exits
+3 when this computer isn't the one named.
 """
 
 import sys
@@ -104,10 +134,12 @@ if sys.version_info < (3, 10):   # its annotations need 3.10; macOS's own /usr/b
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -126,6 +158,16 @@ GROWTH_KB = 1024 * float(os.environ.get("RUN_WATCH_GROWTH_MB", 1024))  # grew th
 TIMES_LOG = "times.log"
 RESIZE_S = float(os.environ.get("RUN_WATCH_RESIZE_SECONDS", 600))  # while free disk only stays low, the folders are sized again at most this often
 KEEP_SAMPLES_S = 2 * 3600
+SSH_S = float(os.environ.get("RUN_WATCH_SSH_SECONDS", 90))   # the whole SSH check of one other computer
+SSH_CONNECT_S = 15
+REMOTE_MARK = "run-watch-remote "    # the one line a run-watch --as prints, before its JSON
+REMOTE_PROTOCOL = 1
+SSH_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@-]*")   # an alias ssh can't take for an option, and the shell needs no quotes for
+SHELL_WORD = re.compile(r"-?[A-Za-z0-9][A-Za-z0-9._/-]*")
+INSTALLED = (".claude/skills", ".agents/skills", ".codex/skills")   # where the hosts read this skill there (install/hosts.tsv)
+# The words whose line names a task or a process right after the word: another computer's name goes after it.
+NAMED = {"hang", "idle", "approval", "quiet", "blind", "commit", "merged", "report", "hog", "vm", "leftover", "slept"}
+TIME_WORDS = ("commit ", "merged ", "report ")
 
 WAIT_TOOL = re.compile(r"(^|__)(t3_thread_wait|t3_background_wait|delegate_task|task_status|wait_agent|"
                        r"wait|Agent|Task|TaskOutput|Workflow|spawn_agent|resume_agent)$")
@@ -172,7 +214,8 @@ def run(cmd: list[str], timeout: float = 10) -> str:
 
 def this_computer() -> str:
     """This computer's name as the owner's profile names it: macOS's LocalHostName, else the short host name."""
-    return run(["scutil", "--get", "LocalHostName"]).strip() or socket.gethostname().split(".")[0]
+    return (os.environ.get("RUN_WATCH_COMPUTER") or run(["scutil", "--get", "LocalHostName"]).strip()
+            or socket.gethostname().split(".")[0])
 
 
 def run_ok(cmd: list[str], timeout: float = 10, ok=(0,)) -> str | None:
@@ -597,39 +640,190 @@ def rate_since(samples: list, cpu_now: float, t_now: float, window_s: float):
     return max(0.0, cpu_now - c0) / max(1.0, t_now - t0)
 
 
+# ---------------------------------------------------------------- other computers, over SSH
+
+def path_there(path: str, mirror: bool) -> str:
+    """A path for the other computer's shell, quoted. mirror: this computer's own path, which under this
+    home folder becomes the same path under that computer's home ("$HOME"/…), else stays as it is. A path
+    given for there: "~/…" and a relative one are taken from its home folder, an absolute one as it is."""
+    if path.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(path[2:])
+    if mirror:
+        home = os.path.expanduser("~").rstrip("/")
+        if home and path.startswith(home + "/"):
+            return '"$HOME"/' + shlex.quote(path[len(home) + 1:])
+        return shlex.quote(path)
+    return shlex.quote(path) if os.path.isabs(path) else '"$HOME"/' + shlex.quote(path)
+
+
+def ssh_machines(watch: dict, here: str) -> dict:
+    """watch.json's "machines" reached over SSH ("reach": "ssh <alias>"), but this computer: name ->
+    {alias, shell, run_watch, run_dir}, or {error} for an entry this script can't use."""
+    found = {}
+    machines = watch.get("machines")
+    for name, m in sorted(machines.items()) if isinstance(machines, dict) else []:
+        reach = m.get("reach") if isinstance(m, dict) else None
+        if not isinstance(reach, str) or reach.split()[:1] != ["ssh"] or str(name).casefold() == here:
+            continue
+        alias = reach.split(None, 1)[1].strip() if len(reach.split()) > 1 else ""
+        shell = str(m.get("shell") or "zsh -l").split()
+        paths = [m.get(k) for k in ("run_watch", "run_dir") if m.get(k) is not None]
+        if not SSH_ALIAS.fullmatch(str(name)) or not SSH_ALIAS.fullmatch(alias):
+            found[name] = {"error": f'watch.json\'s "machines" entry names it or its alias in a way this script won\'t pass to ssh ({reach!r})'}
+        elif not shell or not all(SHELL_WORD.fullmatch(w) for w in shell):
+            found[name] = {"error": f'watch.json\'s "shell" for it, {m.get("shell")!r}, isn\'t a plain command such as "zsh -l"'}
+        elif not all(isinstance(p, str) and p.strip() and "\n" not in p and "\0" not in p for p in paths):
+            found[name] = {"error": 'watch.json\'s "run_watch" or "run_dir" for it isn\'t a path'}
+        else:
+            found[name] = {"alias": alias, "shell": shell, "run_watch": m.get("run_watch"), "run_dir": m.get("run_dir")}
+    return found
+
+
+def remote_script(name: str, cfg: dict, run_dir: str, sub_watch: dict) -> str:
+    """What the login shell there runs: find the run directory and run-watch, then run-watch --as with
+    the watch.json for that computer's tasks on its standard input."""
+    there = path_there(cfg["run_dir"], False) if cfg.get("run_dir") else path_there(run_dir, True)
+    if cfg.get("run_watch"):
+        candidates = [path_there(cfg["run_watch"], False)]
+    else:
+        candidates = ['"$HOME"/' + shlex.quote(f"{d}/long-horizon-orchestrator/scripts/run-watch") for d in INSTALLED]
+    return "\n".join([
+        f"R={there}",
+        'if [ ! -d "$R" ]; then echo "no run directory $R there" >&2; exit 65; fi',
+        "W=",
+        f'for c in {" ".join(candidates)}; do if [ -f "$c" ]; then W=$c; break; fi; done',
+        'if [ -z "$W" ]; then echo "no copy of run-watch there (give its path as run_watch in watch.json\'s machines)" >&2; exit 66; fi',
+        'echo "run-watch-script $W"',
+        f"python3 \"$W\" \"$R\" --as {shlex.quote(name)} --watch - <<'RUN_WATCH_JSON'",
+        json.dumps(sub_watch),
+        "RUN_WATCH_JSON",
+        "",
+    ])
+
+
+def check_over_ssh(cfg: dict, script: str, out: dict) -> None:
+    """One ssh call, in batch mode so nothing can prompt, within SSH_S in all (run in a thread)."""
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_CONNECT_S}", "-T", cfg["alias"], *cfg["shell"]]
+    try:
+        done = subprocess.run(cmd, input=script, capture_output=True, text=True, errors="replace", timeout=SSH_S)
+        out.update(code=done.returncode, stdout=done.stdout, stderr=done.stderr)
+    except subprocess.TimeoutExpired:
+        out["error"] = f"ssh {cfg['alias']} gave no answer within {SSH_S:g} s (stopped)"
+    except (OSError, subprocess.SubprocessError) as e:
+        out["error"] = f"ssh couldn't run ({e})"
+
+
+def remote_result(name: str, cfg: dict, res: dict) -> tuple[dict | None, str]:
+    """The payload of a run-watch --as there, or None and why there is none."""
+    if "error" in res or "code" not in res:
+        return None, res.get("error") or "the SSH check didn't finish"
+    code, err, out = res["code"], res["stderr"].strip(), res["stdout"]
+    last = short(err.splitlines()[-1], 200) if err else ""
+    script = re.search(r"^run-watch-script (.+)$", out, re.M)
+    where = f" ({script.group(1).strip()})" if script else ""
+    payload = None
+    for line in reversed(out.splitlines()):
+        if line.startswith(REMOTE_MARK):
+            try:
+                payload = json.loads(line[len(REMOTE_MARK):])
+            except ValueError:
+                pass
+            break
+    if code == 0 and isinstance(payload, dict) and payload.get("protocol") == REMOTE_PROTOCOL \
+            and isinstance(payload.get("lines"), list) and str(payload.get("computer", "")).casefold() == name.casefold():
+        return payload, ""
+    if code == 255:
+        return None, f"ssh {cfg['alias']} failed: {last or 'exit 255'}"
+    if code == 65:
+        return None, f"{last or 'no run directory there'} (its pre-flight makes it; give its path as run_dir in watch.json's machines)"
+    if code == 66:
+        return None, last or "no copy of run-watch there"
+    if code == 69:
+        return None, f"its run-watch{where} stopped on an old Python: {last}"
+    if code == 3:
+        return None, f"ssh {cfg['alias']} reached another computer: {last}"
+    if code == 2 and "Usage" in err:
+        return None, (f"its copy of run-watch{where} is older than 5.10.0 and can't be run with --as: update the skills "
+                      "there, or copy a newer run-watch into its run directory and give that path as run_watch in watch.json's machines")
+    if code == 0:
+        why = "a newer or older protocol" if isinstance(payload, dict) else "no result line"
+        return None, f"its run-watch{where} gave {why}: run the same version of this skill on both computers"
+    return None, f"its run-watch{where} failed (exit {code}): {last or 'no message'}"
+
+
+def on_computer(line: str, name: str) -> str:
+    """Another computer's line, with " on <computer>" after its word, and after the task or process it
+    names: "hang B on den-mac: …", "disk on den-mac: …"."""
+    m = re.match(r"([a-z][a-z-]*)(?: (\S+?))?(?=:?(?:\s|$))", line)
+    if not m:
+        return f"note on {name}: {line}"
+    cut = m.end(2) if m.group(1) in NAMED and m.group(2) else m.end(1)
+    return f"{line[:cut]} on {name}{line[cut:]}"
+
+
 # ---------------------------------------------------------------- the checks
 
 def main(argv: list[str]) -> int:
     args = list(argv)
-    watch_path = None
-    if "--watch" in args:
-        i = args.index("--watch")
-        if i + 1 >= len(args):
-            print(__doc__.split("\n\n")[1], file=sys.stderr)
-            return 2
-        watch_path = args[i + 1]
-        del args[i:i + 2]
-    if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]):
+    options = {}
+    for flag in ("--watch", "--as"):
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 >= len(args):
+                print(__doc__.split("\n\n")[1], file=sys.stderr)
+                return 2
+            options[flag] = args[i + 1]
+            del args[i:i + 2]
+    watch_path, as_computer = options.get("--watch"), options.get("--as")
+    if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or \
+            (as_computer is not None and not SSH_ALIAS.fullmatch(as_computer)):
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
+    if as_computer is not None and this_computer().casefold() != as_computer.casefold():
+        print(f"run-watch: this computer is {this_computer()}, not {as_computer} (watch.json names each computer by its "
+              "LocalHostName)", file=sys.stderr)
+        return 3
     run_dir = os.path.abspath(args[0])
     watch_path = watch_path or os.path.join(run_dir, "watch.json")
     state_path = os.path.join(run_dir, "run-watch.state.json")
     state = load_json(state_path) or {}
-    watch = load_json(watch_path)
+    if watch_path == "-":
+        try:
+            watch = json.load(sys.stdin)
+        except (OSError, ValueError):
+            watch = None
+    else:
+        watch = load_json(watch_path)
     lines: list[str] = []
     t0 = now()
 
     if not isinstance(watch, dict):
-        lines.append(f"note: no readable {watch_path}: tasks aren't watched (launch adds them); the machine checks ran")
+        lines.append(f"note: no readable {'watch.json on standard input' if watch_path == '-' else watch_path}: "
+                     "tasks aren't watched (launch adds them); the machine checks ran")
         watch = {}
+    if as_computer is not None:   # checked for an orchestrator on another computer: this one is the watch's computer
+        watch["computer"] = as_computer
+        watch.pop("machines", None)
+        for name, path in (("keep_awake_pid", "keep-awake.pid"), ("sampler_pid", os.path.join("usage", "sampler.pid"))):
+            if not isinstance(watch.get(name), int):
+                try:
+                    watch[name] = int(open(os.path.join(run_dir, path)).read().strip())
+                except (OSError, ValueError):
+                    pass
     all_tasks = {k: v for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict)}
     # A task on another computer (T3's linked environments): its worktree and logs are over there, and a
-    # folder of the same path here would be another one, so it is only named, as blind.
-    elsewhere = {}
-    if any(v.get("computer") for v in all_tasks.values()):
+    # folder of the same path here would be another one, so it is only named, as blind, unless that
+    # computer is reached over SSH, where its own run-watch checks it.
+    elsewhere, remote = {}, {}
+    if any(v.get("computer") for v in all_tasks.values()) or watch.get("machines"):
         here = str(watch.get("computer") or this_computer()).casefold()
         elsewhere = {k: v for k, v in all_tasks.items() if v.get("computer") and str(v["computer"]).casefold() != here}
+        remote = ssh_machines(watch, here)
+    remote_names = {str(n).casefold(): n for n in remote}
+    remote_tasks = {n: {} for n in remote}
+    for tid, task in elsewhere.items():
+        if str(task["computer"]).casefold() in remote_names:
+            remote_tasks[remote_names[str(task["computer"]).casefold()]][tid] = task
     tasks = {k: v for k, v in all_tasks.items() if v.get("worktree") and k not in elsewhere}
     started = parse_time(watch.get("started"))
     if started is None:
@@ -640,6 +834,17 @@ def main(argv: list[str]) -> int:
     if started is None:
         st = os.stat(run_dir)
         started = getattr(st, "st_birthtime", st.st_mtime)
+
+    # Each other computer reached over SSH is checked by its own run-watch while this one checks here.
+    jobs = {}
+    for name, cfg in remote.items():
+        if "error" in cfg:
+            continue
+        sub_watch = {"started": iso(started), "computer": name, "tasks": remote_tasks[name]}
+        res: dict = {}
+        job = threading.Thread(target=check_over_ssh, args=(cfg, remote_script(name, cfg, run_dir, sub_watch), res), daemon=True)
+        job.start()
+        jobs[name] = (job, res)
 
     procs = processes()
     gpu = gpu_times()
@@ -673,6 +878,8 @@ def main(argv: list[str]) -> int:
     sessions = state.get("sessions", {})
     blind_told = set(state.get("blind", []))
     for tid, task in sorted(elsewhere.items()):
+        if str(task["computer"]).casefold() in remote_names:
+            continue    # its computer's own run-watch checks it, below
         if tid not in blind_told and task.get("status", "running") == "running":
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}, on {task['computer']}): it runs on another "
                          "computer, whose processes, files and session log this script can't see: read its thread "
@@ -951,9 +1158,23 @@ def main(argv: list[str]) -> int:
     if dialogs:
         lines.append(f"dialog: a password dialog is up ({DIALOG} pid {' '.join(map(str, dialogs))}): nobody will answer it; "
                      "find the command that asked, stop it by its pid, and tell the task")
+    summary = {"disk_free_gb": round(free, 1), "swap_gb": round(swap, 1), "dialogs": len(dialogs),
+               "keep_awake": "none", "sampler": "none"}
+    try:
+        summary["load"] = round(os.getloadavg()[0], 1)
+    except OSError:
+        pass
     pid = watch.get("keep_awake_pid")
     if isinstance(pid, int) and "caffeinate" not in procs.get(pid, {}).get("args", ""):
-        lines.append(f"keep-awake: caffeinate pid {pid} isn't running: start it again and record the new pid in watch.json and the ledger")
+        summary["keep_awake"] = "DOWN"
+        lines.append(f"keep-awake: caffeinate pid {pid} isn't running: start it again and record the new pid in watch.json and the ledger"
+                     if as_computer is None else
+                     f"keep-awake: caffeinate pid {pid} isn't running: start it again there and record the new pid in "
+                     f"{os.path.join(run_dir, 'keep-awake.pid')} there and the ledger")
+    elif isinstance(pid, int):
+        summary["keep_awake"] = "up"
+    elif as_computer is not None:   # every other computer of a run keeps one (computers.md section 3)
+        lines.append(f"keep-awake: none recorded in {os.path.join(run_dir, 'keep-awake.pid')} there: start one there and record its pid in that file")
     pid = watch.get("sampler_pid")
     if not isinstance(pid, int):
         try:
@@ -961,11 +1182,52 @@ def main(argv: list[str]) -> int:
         except (OSError, ValueError):
             pid = None
     if isinstance(pid, int):
+        summary["sampler"] = "up"
         if "usage-sampler" not in procs.get(pid, {}).get("args", ""):
+            summary["sampler"] = "DOWN"
             lines.append(f"sampler: the usage sampler (pid {pid}) isn't running: start it again on the same folder and record its pid")
     elif os.path.exists(machine) and t_now - os.path.getmtime(machine) > 180:
+        summary["sampler"] = "DOWN"
         lines.append(f"sampler: the usage sampler's last sample is {(t_now - os.path.getmtime(machine)) / 60:.0f} min old: "
                      "start it again on the same folder and record its pid")
+
+    # Leftovers, on another computer (where nobody else looks for them during the run): processes started
+    # since the run began that name the run directory or work in a task's folders, and aren't a running
+    # task's, the keep-awake's or the sampler's. On the orchestrator's computer, step 4 of a wake looks.
+    if as_computer is not None:
+        spared = descendants([p for p in (watch.get("keep_awake_pid"), pid) if isinstance(p, int)], kids)
+        spared |= descendants([os.getpid()], kids)
+        up = os.getpid()
+        while up in procs and up not in spared:   # this check's own shell and ssh session
+            spared.add(up)
+            up = procs[up]["ppid"]
+        for tid, task in tasks.items():
+            if task.get("status", "running") == "running":
+                spared |= task_procs.get(tid, set())
+        left = {}
+        for lpid, p in procs.items():
+            if lpid in spared or p["start"] < started - 60:
+                continue
+            owners = [tid for tid, task in sorted(tasks.items()) if task.get("status", "running") != "running" and
+                      (lpid in task_procs.get(tid, set()) or task["worktree"] in p["args"] or os.path.join(run_dir, tid) in p["args"])]
+            if owners or run_dir in p["args"] or inside(cwd.get(lpid, ""), run_dir):
+                left[lpid] = owners
+        left_told, still = set(state.get("leftovers", [])), set()
+        for lpid, owners in sorted(left.items()):
+            if procs[lpid]["ppid"] in left:
+                continue        # named with the process that started it
+            p, k = procs[lpid], key(lpid, procs[lpid])
+            still.add(k)
+            if k in left_told:
+                lines.append(f"leftover {lpid} {short(exe(p), 40)}: still running")
+                continue
+            more = len(descendants([lpid], kids) & set(procs)) - 1
+            whose = (f"task {', '.join(owners)}'s ({', '.join(str(tasks[t].get('status')) for t in owners)})" if owners
+                     else "it names the run directory")
+            lines.append(f"leftover {lpid} {short(exe(p), 40)}: {whose}, started {hm(p['start'])}"
+                         f"{f', with {more} it started' if more > 0 else ''}: {short(p['args'], 80)}: stop it by its pid "
+                         "once nothing of the run needs it (ps -p <pid> -o command= there first)")
+        state["leftovers"] = sorted(still)
 
     # Virtual machines started since the run began (L-FPUP): they run under a daemon, so their command
     # lines name neither the run nor a worktree, and nothing else would see one left running.
@@ -1076,6 +1338,55 @@ def main(argv: list[str]) -> int:
             for tid, k, _ in timed:   # not told, so the next wake prints and adds them again
                 told[tid] = [x for x in told[tid] if x != k]
 
+    # The other computers' checks: their lines, each naming the computer, their times for times.log, and
+    # their tasks' blind state; a computer that gave nothing is one line, and its tasks are blind as before.
+    machines_seen, remote_times = {}, []
+    for name in sorted(remote):
+        cfg, mine = remote[name], remote_tasks[name]
+        if name in jobs:
+            jobs[name][0].join(SSH_S + 10)
+        payload, why = (None, cfg["error"]) if "error" in cfg else remote_result(name, cfg, dict(jobs[name][1]))
+        if payload is not None:
+            for line in payload["lines"]:
+                line = " ".join(str(line).split("\n"))
+                tagged = on_computer(line, name)
+                lines.append(tagged)
+                if line.startswith(TIME_WORDS):
+                    remote_times.append(tagged)
+                elif re.match(r"slept \S+ (?!- )\S+ \(", line):
+                    remote_times.append(tagged.split("): ", 1)[0] + ")")
+            blind_told -= set(mine)
+            blind_told |= {t for t in payload.get("blind") or [] if t in mine}
+            got = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+            machines_seen[name] = {"checked": iso(t0), "reached": True,
+                                   **{k: v for k, v in got.items() if k in ("disk_free_gb", "swap_gb", "load", "dialogs",
+                                                                            "keep_awake", "sampler")}}
+            continue
+        running_there = sorted(t for t, v in mine.items() if v.get("status", "running") == "running")
+        lines.append(f"unreachable {name}: {why}; " + (f"its running tasks ({', '.join(running_there)}) are blind this wake: read "
+                     "their threads (with its environmentId)" if running_there else "no task of the run is running there") +
+                     ", and if it lasts, check that computer through its machine thread (computers.md section 10)")
+        machines_seen[name] = {"checked": iso(t0), "reached": False, "why": short(why, 160)}
+        for tid in running_there:
+            if tid not in blind_told:
+                lines.append(f"blind {tid} ({mine[tid].get('harness') or 'unknown harness'}, on {mine[tid]['computer']}): it runs on "
+                             "another computer, which this wake's SSH check didn't reach: read its thread (with that computer's "
+                             "environmentId) on every wake until it does")
+                blind_told.add(tid)
+    if machines_seen:
+        state["machines"] = machines_seen
+    else:
+        state.pop("machines", None)
+    pending = [l for l in state.pop("times_pending", []) if isinstance(l, str)] + remote_times
+    if pending:   # another computer's times, kept here too; one that couldn't be added is tried again next time
+        try:
+            with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
+                fh.write("".join(line + "\n" for line in pending))
+        except OSError as e:
+            lines.append(f"note: couldn't add another computer's times to {os.path.join(run_dir, TIMES_LOG)}: {e}; "
+                         "they are added next time")
+            state["times_pending"] = pending[-500:]
+
     # Keep samples of processes started since the run began, for the next run's comparisons.
     keep = {}
     for pid, p in procs.items():
@@ -1092,8 +1403,12 @@ def main(argv: list[str]) -> int:
     state.update({"last_run": iso(t0), "samples": keep, "sessions": sessions,
                   "blind": sorted(blind_told), "told": told, "idle": idle_now,
                   "hogs": sorted(hogs_told)})
-    for line in lines:
-        print(line)
+    if as_computer is not None:   # one line for the orchestrator's run-watch, which reads it over SSH
+        print(REMOTE_MARK + json.dumps({"protocol": REMOTE_PROTOCOL, "computer": as_computer, "lines": lines,
+                                        "blind": sorted(blind_told), "summary": summary}))
+    else:
+        for line in lines:
+            print(line)
     try:
         save_state(state_path, state)
     except OSError as e:
