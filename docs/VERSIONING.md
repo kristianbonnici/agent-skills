@@ -17,13 +17,21 @@ be compared with runs on earlier versions, instead of guessing whether a change 
 
 `MAJOR.MINOR.PATCH`, judged by what an agent following the skill does, not by how much text changed:
 
-- **MAJOR:** the skill now does something the user would notice and might not expect: a new kind of
-  action, a removed step, a changed default about what it may touch or spend.
-- **MINOR:** a new capability or rule that keeps earlier behavior working, such as a new review level
-  or a new chart.
+- **MAJOR:** the change breaks something that relies on the skill: a file format others read (such as
+  the review gate's record), a script's commands, options, output or exit codes, or what another skill
+  or the orchestrator expects from it. Something written for the earlier version no longer works
+  unchanged.
+- **MINOR:** the skill behaves differently, and nothing that relies on it breaks: a new capability or
+  rule, a changed default, a different model in a role (such as a reviewer swapped for another), a
+  removed step that nothing else depended on.
 - **PATCH:** a fix or clarification: wording, a wrong command, a check that didn't do what it said.
 
-When unsure between two, take the higher.
+When unsure between MINOR and MAJOR, ask what would break: if nothing would, it is MINOR. A version
+traces a run to the skill text it used at any number, so a smaller step loses nothing; the larger
+step is kept for the change a reader has to act on.
+
+These rules apply from 2026-11-18; earlier versions keep their numbers, many of them set under a
+wider MAJOR (any change the user would notice).
 
 ## Releasing a change
 
@@ -36,7 +44,8 @@ In the commit that changes a skill:
 3. After the commit, tag it: `git tag <skill>/v<version>`.
 
 Several commits may go into one release: raise the version once, in the first, and add to the same
-entry until it is tagged.
+entry until it is tagged. Fixes asked for by the review of a release that isn't tagged yet go into that
+release, not a new version.
 
 `tests/skill-versions-test` checks that every skill has a version and that its changelog's newest
 entry is that version.
