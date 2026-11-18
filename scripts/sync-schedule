@@ -8,9 +8,12 @@
 # so nothing can wait for an answer, and its output appended to ~/Library/Logs/agent-skills-sync.log.
 # Its PATH is the installing shell's, limited to folders that exist, so it finds git, node and npm;
 # AGENT_SKILLS_PRIVATE, AGENT_SKILLS_STATE, AGENT_SKILLS_COMPUTER and XDG_STATE_HOME go with it when
-# they are set. Installing replaces an agent with the same label, a hand-made one included (kept
-# first as a backup under ${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/), and changes nothing
-# when the same agent is already installed and loaded.
+# they are set. Installing replaces an agent with the same label, a hand-made one included, and
+# changes nothing when the same agent is already installed and loaded. Every agent it replaces or
+# removes is moved into ~/Library/LaunchAgents/.agent-skills-sync-backups/, on the agents' own volume,
+# so the move keeps the file itself (a program still writing to it writes into the backup). Hand-made
+# and changed ones stay there; of the ones it wrote and nobody changed, the newest three stay. Backups
+# from before that folder existed stay in ${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/.
 #
 # Elsewhere it prints the line to add to cron and changes nothing.
 #
@@ -19,6 +22,9 @@
 #                                   remove it (uninstall --all runs this)
 #   sync-schedule status            INFO or WARN lines, as doctor prints them: whether it is
 #                                   installed, and when it last ran, from the log. Never FAIL.
+#   sync-schedule trim-log          keeps the log under AGENT_SKILLS_SYNC_LOG_MAX bytes (1 MiB unless
+#                                   set): over it, only its last quarter stays, from a whole line on,
+#                                   bytes and line ends as they were. sync --from-schedule runs this.
 #
 # AGENT_SKILLS_SCHEDULER=launchd|cron chooses the kind regardless of the system (tests use it).
 set -u
@@ -33,7 +39,7 @@ start_marker='agent-skills sync started '
 finish_marker='agent-skills sync finished '
 
 usage() {
-  echo "Usage: sync-schedule install [HH:MM] | remove [--dry-run] | status" >&2
+  echo "Usage: sync-schedule install [HH:MM] | remove [--dry-run] | status | trim-log" >&2
 }
 
 case "${AGENT_SKILLS_SCHEDULER:-}" in
@@ -48,7 +54,13 @@ if [ "$scheduler" = launchd ]; then
 else
   log=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills-sync.log
 fi
-backups=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills-sync
+# Beside the agents, hidden, so a backup is the same file under another name (launchd reads only
+# *.plist files directly in the folder, and no backup name ends in .plist).
+backups=$agents_dir/.agent-skills-sync-backups
+# Where backups went before: still named in the status, never changed.
+old_backups=${XDG_STATE_HOME:-$HOME/.local/state}/agent-skills-sync
+# How many of the agents this script wrote, unchanged, stay in the backup folder.
+keep_intact=3
 domain=gui/$(id -u)
 
 # $1 with &, < and > written as XML writes them.
@@ -81,6 +93,10 @@ schedule_path() {
   printf '%s\n' "$kept"
 }
 
+# Reading a plist: with plutil (macOS has it), whatever its layout. Without it, a line-by-line
+# reading that understands only the layout this script writes, one key or value per line; only
+# systems without launchd lack plutil, and they have no agents to read.
+
 # The Label of the plist $1, or nothing.
 plist_label() {
   if command -v plutil >/dev/null 2>&1; then
@@ -110,8 +126,8 @@ is_ours() {
   return 1
 }
 
-# Did this script write $1, and has nobody changed it since? Only such a file is replaced or removed
-# without a backup.
+# Did this script write $1, and has nobody changed it since? Only such a backup may be deleted, when
+# newer ones like it are kept (prune_backups).
 is_intact() {
   is_ours "$1" && [ "$(sed -n 2p "$1")" = "$marker$(plist_sum "$1") -->" ]
 }
@@ -123,6 +139,14 @@ parse_time() {
 
 # The time of day the plist $1 runs at, as HH:MM, or nothing.
 plist_time() {
+  if command -v plutil >/dev/null 2>&1; then
+    at_hour=$(plutil -extract StartCalendarInterval.Hour raw -o - "$1" 2>/dev/null) || return 0
+    at_minute=$(plutil -extract StartCalendarInterval.Minute raw -o - "$1" 2>/dev/null) || return 0
+    case "$at_hour" in ''|*[!0-9]*) return 0 ;; esac
+    case "$at_minute" in ''|*[!0-9]*) return 0 ;; esac
+    printf '%02d:%02d\n' "$at_hour" "$at_minute"
+    return 0
+  fi
   awk '
     /<key>Hour<\/key>/ { getline; gsub(/[^0-9]/, ""); hour = $0 }
     /<key>Minute<\/key>/ { getline; gsub(/[^0-9]/, ""); minute = $0 }
@@ -132,6 +156,10 @@ plist_time() {
 
 # The program the plist $1 runs: the first of its ProgramArguments.
 plist_program() {
+  if command -v plutil >/dev/null 2>&1; then
+    plutil -extract ProgramArguments.0 raw -o - "$1" 2>/dev/null && echo
+    return 0
+  fi
   awk '/<key>ProgramArguments<\/key>/ { inside = 1; next } inside && /<string>/ { sub(/.*<string>/, ""); sub(/<\/string>.*/, ""); print; exit }' "$1" 2>/dev/null |
     sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'
 }
@@ -165,7 +193,7 @@ stamp() {
 
 # Moves every file in $1 (one per line) into the backup folder, so that nothing can change one there
 # between judging it and letting it go. A file that can't be moved stops it: those already moved go
-# back, and nothing is changed. Sets $staged to "original<TAB>backup" lines.
+# back, and nothing else is changed. Sets $staged to "original<TAB>backup" lines.
 stage_all() {
   staged=
   tab=$(printf '\t')
@@ -185,15 +213,15 @@ stage_all() {
       count=$((count + 1))
       [ ! -e "$aside" ] || continue
       # A hard link is made only where no file is, in one step: the same file under its backup name,
-      # then its old name goes. On another volume (no hard link possible), mv -n instead.
+      # then its old name goes. Where the folder can't hold hard links, mv -n: on the same volume, a
+      # rename, which keeps the file itself too.
       if ln "$original" "$aside" 2>/dev/null; then
-        rm -f "$original"
+        rm -f "$original" 2>/dev/null
         if [ -e "$original" ] || [ -L "$original" ]; then
-          # Still the same file (the removal failed): its second name goes, and nothing changed.
-          # Another file there now: the backup is the only name of the old one, so it stays.
+          # The old name is still there: the removal failed, or another file took the name in that
+          # instant. The backup is never deleted here, since it may now be the old file's only name.
           if [ "$original" -ef "$aside" ]; then
-            rm -f "$aside"
-            echo "FAIL could not remove the launch agent $original once it was linked to $aside, so nothing was changed" >&2
+            echo "FAIL could not remove the launch agent $original once it was linked to $aside, which stays as a second name of the same file" >&2
           else
             echo "FAIL another file appeared at $original while it was being moved to $aside, which keeps the old one" >&2
           fi
@@ -207,8 +235,13 @@ stage_all() {
       if [ ! -e "$original" ] && [ -e "$aside" ]; then moved=1; break; fi
     done
     if [ "$moved" -eq 0 ]; then
-      echo "FAIL could not move the launch agent $original into $backups, so nothing was changed" >&2
-      unstage_all >/dev/null
+      before=$(printf '%s' "$staged" | grep -c . || true)
+      back=$(unstage_all | grep -c . || true)
+      if [ "$back" -eq "$before" ]; then
+        echo "FAIL could not move the launch agent $original into $backups, so no agent was moved or unloaded" >&2
+      else
+        echo "FAIL could not move the launch agent $original into $backups; no agent was unloaded, and those moved before it that couldn't go back are named above" >&2
+      fi
       return 1
     fi
     staged="$staged$original$tab$aside
@@ -232,27 +265,67 @@ unstage_all() {
   done
 }
 
-# Keeps every staged file where it is now, in the backup folder, and names those this script didn't
-# write or someone changed. None is deleted: a program may still hold one open and write to it.
+# Keeps every staged file where it is now, in the backup folder, and names each one: a program may
+# still hold one open and write to it. Then prune_backups.
 judge_staged() {
   printf '%s' "$staged" | while IFS="$tab" read -r original aside; do
     [ -n "$original" ] || continue
     if is_intact "$aside"; then
-      :
+      echo "KEPT the launch agent $original, unchanged since agent-skills wrote it, at $aside"
     elif is_ours "$aside"; then
       echo "KEPT the launch agent $original, changed since agent-skills wrote it, as $aside"
     else
       echo "KEPT the launch agent $original, which agent-skills didn't write, as $aside"
     fi
   done
+  prune_backups
 }
 
-# The plist launchd loaded this label from, when it has it loaded and that file is in this home's
-# LaunchAgents folder; nothing otherwise, so another home's agent (a test's made-up HOME) is never
-# touched.
-loaded_here() {
-  loaded_from=$(launchctl print "$domain/$label" 2>/dev/null | awk '/^[[:space:]]*path = / { sub(/^[[:space:]]*path = /, ""); print; exit }')
-  case "$loaded_from" in "$agents_dir"/*) printf '%s\n' "$loaded_from" ;; esac
+# Of the backups this script wrote and nobody changed, the newest $keep_intact stay and the older ones
+# go, so the folder doesn't grow with every new time. A hand-made or changed one always stays, as does
+# anything in the folder before it existed ($old_backups).
+prune_backups() {
+  [ -d "$backups" ] || return 0
+  for candidate in "$backups"/*.before-agent-skills-*; do
+    [ -f "$candidate" ] && [ ! -L "$candidate" ] || continue
+    is_intact "$candidate" || continue
+    printf '%s\t%s\n' "${candidate##*.before-agent-skills-}" "$candidate"
+  done | sort -r | awk -F '\t' -v keep="$keep_intact" 'NR > keep { print $2 }' | while IFS= read -r older; do
+    # Still unchanged a moment later: only then it goes.
+    is_intact "$older" || continue
+    rm -f "$older" && echo "REMOVED the older backup $older, unchanged since agent-skills wrote it ($keep_intact newer ones stay)"
+  done
+}
+
+# What launchd has loaded with this label, from `launchctl print`; sets $loaded_from to the file its
+# `path =` line names. Returns 0 when that file is in this home's LaunchAgents folder; 1 when nothing
+# is loaded; 2 when it is loaded from another folder (another home's, as a test's made-up HOME is),
+# which is never touched; 3 when it is loaded but the output names no file, since launchctl's format
+# changed: the callers then act as if it might be this home's and say so, rather than guess.
+loaded_state() {
+  loaded_from=
+  printed=$(launchctl print "$domain/$label" 2>/dev/null) || return 1
+  loaded_from=$(printf '%s\n' "$printed" | awk '/^[[:space:]]*path = / { sub(/^[[:space:]]*path = /, ""); print; exit }')
+  case "$loaded_from" in
+    "") return 3 ;;
+    "$agents_dir"/*) return 0 ;;
+    *) return 2 ;;
+  esac
+}
+
+# Unloads the agent with this label, and checks with `launchctl print` that launchd let it go (once
+# more a moment later). Returns 1 when it is still loaded.
+unload() {
+  launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+  launchctl print "$domain/$label" >/dev/null 2>&1 || return 0
+  sleep 1
+  launchctl print "$domain/$label" >/dev/null 2>&1 || return 0
+  return 1
+}
+
+# "is gone" or "no longer carries the label", for a file launchd loaded an agent from.
+gone_or_changed() {
+  if [ -e "$1" ] || [ -L "$1" ]; then echo "which no longer carries the label"; else echo "which is gone"; fi
 }
 
 # The files that carry the label, and the one at the label's name whatever it carries.
@@ -367,23 +440,31 @@ install() {
     echo "OK the daily sync is scheduled at $shown ($plist)"
     return 0
   fi
-  # Every file that would load this label again is moved aside, into the backup folder, where it stays
-  # (if one can't be moved, nothing is changed); whatever runs with the label stops; the new agent
-  # goes in.
+  # Every file that would load this label again is moved aside, into the backup folder (if one can't
+  # be moved, nothing is changed); whatever runs with the label stops; the new agent goes in.
   stage_all "$(agent_files)" || exit 1
-  launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+  still_loaded=0
+  unload || still_loaded=1
   # Never over a file that appeared meanwhile.
   mv -n "$next" "$plist" 2>/dev/null
   if [ -e "$next" ]; then
     # The agents that were there go back where nothing took their place, but none is loaded again:
     # which file launchd would read can't be known for sure, so the owner runs --schedule again.
-    unstage_all >/dev/null
+    back=$(unstage_all)
     put_back=
-    [ -z "$staged" ] || put_back="; the agents that were there were put back where nothing took their place, unloaded until the next login: run scripts/sync --schedule again"
+    if [ -n "$back" ]; then
+      put_back="; the agents that were there were put back ($(printf '%s\n' "$back" | paste -sd' ' -)), unloaded until the next login: run scripts/sync --schedule again"
+    elif [ -n "$staged" ]; then
+      put_back="; the agents that were there couldn't go back and stay in $backups, as named above: run scripts/sync --schedule again"
+    fi
     echo "FAIL could not put the new launch agent at $plist (another file is there now, or the folder can't be written)$put_back" >&2
     exit 1
   fi
   judge_staged
+  if [ "$still_loaded" -eq 1 ]; then
+    echo "FAIL launchd still has the old daily sync loaded after launchctl bootout, so it runs until the next login, when $plist replaces it; to switch now, run launchctl bootout $domain/$label, then scripts/sync --schedule again" >&2
+    exit 1
+  fi
   # launchd can still be letting go of the old agent: one more try a moment later.
   if ! launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1; then
     sleep 1
@@ -410,16 +491,32 @@ remove() {
   [ "$1" -eq 1 ] || take_lock
   found=$(agent_files)
   if [ -z "$found" ]; then
-    # Its file deleted by hand, an agent stays loaded until the next login.
-    gone=$(loaded_here)
-    if [ -z "$gone" ]; then
-      echo "OK no daily sync is scheduled"
-    elif [ "$1" -eq 1 ]; then
-      echo "DRY RUN: unload the daily sync, loaded from $gone, which is gone"
-    else
-      launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
-      echo "UNSCHEDULED the daily sync ($label), loaded from $gone, which was already gone"
-    fi
+    # Its file deleted by hand (or no longer carrying the label), an agent stays loaded until the
+    # next login.
+    loaded_state
+    case $? in
+      0)
+        why=$(gone_or_changed "$loaded_from")
+        if [ "$1" -eq 1 ]; then
+          echo "DRY RUN: unload the daily sync, loaded from $loaded_from, $why"
+        elif unload; then
+          echo "UNSCHEDULED the daily sync ($label), loaded from $loaded_from, $why"
+        else
+          echo "FAIL launchd still has the daily sync ($label) loaded from $loaded_from after launchctl bootout; it runs until the next login unless launchctl bootout $domain/$label succeeds" >&2
+          exit 1
+        fi
+        ;;
+      3)
+        # Loaded, but from where can't be read: it may be this home's, so never "nothing scheduled".
+        if [ "$1" -eq 1 ]; then
+          echo "WARN launchd has the daily sync ($label) loaded, but launchctl print names no file it was loaded from, so it would be left loaded: if it is this home's, launchctl bootout $domain/$label unloads it"
+        else
+          echo "FAIL launchd has the daily sync ($label) loaded, but launchctl print names no file it was loaded from, so it was left loaded: if it is this home's, launchctl bootout $domain/$label unloads it" >&2
+          exit 1
+        fi
+        ;;
+      *) echo "OK no daily sync is scheduled" ;;
+    esac
     return 0
   fi
   if [ "$1" -eq 1 ]; then
@@ -427,9 +524,30 @@ remove() {
     return 0
   fi
   stage_all "$found" || exit 1
-  launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+  if ! unload; then
+    judge_staged
+    echo "FAIL launchd still has the daily sync ($label) loaded after launchctl bootout; its files are in $backups, so it won't load at the next login, but it runs until then unless launchctl bootout $domain/$label succeeds" >&2
+    exit 1
+  fi
   judge_staged
   echo "UNSCHEDULED the daily sync ($label); its log stays at $log"
+}
+
+# Keeps the log under AGENT_SKILLS_SYNC_LOG_MAX bytes (1 MiB unless set to a whole number): over it,
+# only its last quarter stays, from its first whole line on, byte for byte (line ends of any kind
+# stay as they were). It is written back into the same file, not replaced: launchd (or cron's >>)
+# holds it open for appending, so what the run writes next goes after it.
+trim_log() {
+  max=${AGENT_SKILLS_SYNC_LOG_MAX:-1048576}
+  case "$max" in ''|*[!0-9]*) max=1048576 ;; esac
+  [ -f "$log" ] && [ ! -L "$log" ] || return 0
+  size=$(wc -c <"$log" | tr -d ' ')
+  [ "$size" -gt "$max" ] || return 0
+  trimmed=$(mktemp "$log.XXXXXX") || return 0
+  if tail -c "$((max / 4))" "$log" | LC_ALL=C sed 1d >"$trimmed"; then
+    cat "$trimmed" >"$log"
+  fi
+  rm -f "$trimmed"
 }
 
 # When the last scheduled sync ran, from the lines sync --from-schedule writes around a run.
@@ -439,6 +557,7 @@ last_run() {
     return 0
   fi
   last=$(awk -v s="$start_marker" -v f="$finish_marker" '
+    { sub(/\r$/, "") }
     index($0, s) == 1 { started = substr($0, length(s) + 1); finished = "" }
     index($0, f) == 1 { finished = substr($0, length(f) + 1) }
     END { print started "\t" finished }
@@ -471,12 +590,13 @@ status() {
   found=$(labelled_plists)
   [ -n "$found" ] || { [ ! -e "$plist" ] || found=$plist; }
   if [ -z "$found" ]; then
-    gone=$(loaded_here)
-    if [ -n "$gone" ]; then
-      echo "WARN the daily sync is loaded from $gone, which is gone, so it runs until the next login: scripts/sync --unschedule stops it, --schedule replaces it"
-    else
-      echo "INFO no daily sync is scheduled: scripts/sync --schedule installs one"
-    fi
+    loaded_state
+    case $? in
+      0) echo "WARN the daily sync is loaded from $loaded_from, $(gone_or_changed "$loaded_from"), so it runs until the next login: scripts/sync --unschedule stops it, --schedule replaces it" ;;
+      3) echo "WARN launchd has the daily sync ($label) loaded, but launchctl print names no file it was loaded from: if it is this home's, launchctl bootout $domain/$label unloads it" ;;
+      *) echo "INFO no daily sync is scheduled: scripts/sync --schedule installs one" ;;
+    esac
+    backups_kept
     return 0
   fi
   count=$(printf '%s\n' "$found" | wc -l | tr -d ' ')
@@ -500,7 +620,19 @@ status() {
   if is_ours "$file" && [ -n "$program" ] && [ "$program" != "$repo_root/scripts/sync" ]; then
     echo "WARN the daily sync runs $program, not this checkout's scripts/sync"
   fi
+  backups_kept
   last_run
+}
+
+# Where the agents it replaced or removed are kept, when there are any.
+backups_kept() {
+  for folder in "$backups" "$old_backups"; do
+    kept=0
+    for candidate in "$folder"/*.before-agent-skills-*; do
+      [ -e "$candidate" ] && kept=$((kept + 1))
+    done
+    [ "$kept" -eq 0 ] || echo "INFO $kept launch agent(s) that scripts/sync --schedule or --unschedule replaced or removed are kept in $folder"
+  done
 }
 
 [ "$#" -gt 0 ] || { usage; exit 2; }
@@ -512,6 +644,7 @@ case "$action" in
     case "$*" in "") remove 0 ;; --dry-run) remove 1 ;; *) usage; exit 2 ;; esac
     ;;
   status) [ "$#" -eq 0 ] || { usage; exit 2; }; status ;;
+  trim-log) [ "$#" -eq 0 ] || { usage; exit 2; }; trim_log ;;
   -h|--help) usage ;;
   *) usage; exit 2 ;;
 esac

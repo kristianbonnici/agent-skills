@@ -257,6 +257,17 @@ chmod +x "$work/bin/npm" "$work/bin/node"
 expect "^agent-skills sync started [0-9-]* [0-9:]* [-+][0-9]*$" "$work/sync.out"
 expect "^agent-skills sync finished [0-9-]* [0-9:]* [-+][0-9]*: ok$" "$work/sync.out"
 test ! -s "$work/npm.log" || fail "a scheduled sync installed runtimes nothing changed"
+# The log it appends to is kept under its size limit: past it, its end is kept, and this run's lines
+# go after it (sync-schedule-test checks the trimming itself).
+sync_log="$HOME/Library/Logs/agent-skills-sync.log"
+mkdir -p "$(dirname -- "$sync_log")"
+awk 'BEGIN { for (i = 1; i <= 200; i++) printf "old line %03d\n", i }' >"$sync_log"
+AGENT_SKILLS_SCHEDULER=launchd AGENT_SKILLS_SYNC_LOG_MAX=1000 "$public/scripts/sync" --from-schedule </dev/null >>"$sync_log" 2>&1 || { cat "$sync_log" >&2; fail "a scheduled sync with a long log failed"; }
+refuse "^old line 001$" "$sync_log"
+expect "^old line 200$" "$sync_log"
+expect "^agent-skills sync started " "$sync_log"
+test "$(tail -n 1 "$sync_log" | cut -c1-27)" = "agent-skills sync finished " || fail "the run's lines are not at the log's end"
+test "$(head -n 1 "$sync_log" | cut -c1-9)" = "old line " || fail "the trimmed log doesn't start with a whole line"
 mkdir -p "$work/seeds/agent-skills/runtime/playwright"
 echo '{}' >"$work/seeds/agent-skills/runtime/playwright/package-lock.json"
 commit_seed agent-skills "A runtime pin"

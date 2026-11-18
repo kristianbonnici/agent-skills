@@ -147,15 +147,24 @@ from a shell that finds git, node and npm; `AGENT_SKILLS_PRIVATE`, `AGENT_SKILLS
 `AGENT_SKILLS_COMPUTER` and `XDG_STATE_HOME` go with it when they are set. A time missed while the
 Mac slept runs when it wakes. Run it from the main checkout: a linked worktree is refused. Running
 it again changes nothing, or replaces the agent with the new time. Every plist with that label it
-replaces, a hand-made one included, is unloaded and moved to
-`${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/`, where it stays as a backup; the output names
-those it didn't write or that were changed. If the new agent can't be put in place, the old ones go
-back but stay unloaded until the next login, and the output says to run `--schedule` again.
+replaces or removes, a hand-made one included, is unloaded and moved into
+`~/Library/LaunchAgents/.agent-skills-sync-backups/`. That folder is beside the agents, on their
+volume, so the backup is the file itself: a program still writing to the old plist writes into the
+backup. The output names each backup. Hand-made and changed ones stay; of the ones it wrote and
+nobody changed, the newest three stay. Backups made before that folder existed stay in
+`${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/`, and the status names each folder that holds
+any. If the new agent can't be put in place, the old ones go back but stay unloaded until the next
+login; the output names those put back (one that can't go back stays in the backup folder) and says
+to run `--schedule` again. If launchd still has the old agent loaded after `launchctl bootout`,
+`--schedule` and `--unschedule` fail and give the command to unload it.
 `./scripts/sync --schedule-status` says whether it is installed and how its last run went, and
 `--unschedule` removes it (the log stays), as `./scripts/uninstall --all` does. An agent whose file
-was deleted by hand stays loaded until the next login: the status warns about it, and `--unschedule`
-unloads it, but only when launchd loaded it from this home's `~/Library/LaunchAgents`. Elsewhere,
-`--schedule` prints the line to add to cron and changes nothing.
+was deleted by hand, or no longer carries the label, stays loaded until the next login: the status
+warns about it, and `--unschedule` unloads it, but only when launchd loaded it from this home's
+`~/Library/LaunchAgents`. When `launchctl print` names no file it was loaded from, nothing is
+unloaded: the status warns, and `--unschedule` fails, with the command to run if it is this home's.
+Past 1 MiB, a scheduled run keeps only the log's last quarter, from its first whole line on.
+Elsewhere, `--schedule` prints the line to add to cron and changes nothing.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind
 `origin` as of the last fetch, with the count and the command to run. It also reports the daily
