@@ -27,8 +27,13 @@ watch.json for its tasks on standard input, so every check below runs there on t
 processes, files and logs, and keeps its state there as a local run does; it prints one line,
 "run-watch-remote <JSON>" (its lines, its blind tasks, a summary for the heartbeat and the end of
 its times.log, whose lines this times.log lacks are added here, so a time a lost result carried still
-arrives); it stops itself without saving its state (exit 70) 10 seconds before the ssh call's limit
-less its 15-second connect, and saves its state only once its result line has gone out. Each of its
+arrives). Its one-time lines (a hog, a first VM or leftover line, a sleep, a commit) stay pending
+there, each with an ID, and come with every result until a later wake's watch.json names them in "ack",
+which this run-watch sends once the result carrying them arrived, so a result lost to a dropped connection
+loses none and none is printed twice. It runs each command there in a session of its own, stops itself
+without saving its state (exit 70) 10 seconds before the ssh call's limit less its 15-second connect,
+killing the process group of the command it waits on (what that started included), and saves its state
+only once its result line has gone out; a reading it can't take there (swap, the load) goes as null. Each of its
 lines is printed here with " on <computer>" after its word (and the task or process it names):
 "hang B on den-mac: …", "disk on den-mac: …", whose process IDs are that computer's. The entry's
 optional keys: "run_watch", the path of run-watch there (default: the first of
@@ -210,10 +215,32 @@ def parse_time(s) -> float | None:
         return None
 
 
+NEW_SESSIONS = False   # --as mode: each command in a session of its own, so a limit stops all it started
+
+
+def capture(cmd: list[str], timeout: float, env=None) -> subprocess.CompletedProcess:
+    """subprocess.run(cmd, capture_output=True, text=True, timeout=timeout). In --as mode the command runs in
+    a session of its own, with no input, and a timeout or the run's own limit (OutOfTime) kills its whole
+    process group, what it started included, and reaps it."""
+    if not NEW_SESSIONS:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    with subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          env=env, start_new_session=True) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except BaseException:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait()
+            raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def run(cmd: list[str], timeout: float = 10) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                              env=dict(os.environ, LC_ALL="C")).stdout
+        return capture(cmd, timeout, env=dict(os.environ, LC_ALL="C")).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -228,7 +255,7 @@ def run_ok(cmd: list[str], timeout: float = 10, ok=(0,)) -> str | None:
     """Like run, but None when the command couldn't run, timed out, failed or said anything on
     stderr (lsof exits 1 both for "nothing found" and for an error; only the error says so)."""
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=dict(os.environ, LC_ALL="C"))
+        done = capture(cmd, timeout, env=dict(os.environ, LC_ALL="C"))
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout if done.returncode in ok and not done.stderr.strip() else None
@@ -392,7 +419,7 @@ def folder_sizes(paths: list[str], seconds: float) -> tuple[dict, bool]:
         if left <= 0:
             return sizes, True
         try:
-            out = subprocess.run(["du", "-sk", "-x", path], capture_output=True, text=True, timeout=left).stdout
+            out = capture(["du", "-sk", "-x", path], left).stdout
             sizes[path] = int(out.split()[0])
         except subprocess.TimeoutExpired:
             return sizes, True
@@ -655,8 +682,8 @@ def rate_since(samples: list, cpu_now: float, t_now: float, window_s: float):
 # ---------------------------------------------------------------- other computers, over SSH
 
 class OutOfTime(BaseException):
-    """Raised by --as mode's alarm: subprocess.run then kills and reaps the command it waits on, and no
-    handler in between can catch it."""
+    """Raised by --as mode's alarm: capture() then kills and reaps the process group of the command it waits
+    on, and no handler in between can catch it."""
 
 def path_there(path: str, mirror: bool) -> str:
     """A path for the other computer's shell, quoted. mirror: this computer's own path, which under this
@@ -741,6 +768,7 @@ def usable(payload, name: str) -> bool:
     return (isinstance(payload, dict) and payload.get("protocol") == REMOTE_PROTOCOL
             and str(payload.get("computer", "")).casefold() == name.casefold() and strings(payload.get("lines"))
             and strings(payload.get("blind", [])) and strings(payload.get("times", []))
+            and isinstance(payload.get("once", []), list) and all(strings(p) and len(p) == 2 for p in payload.get("once", []))
             and isinstance(payload.get("summary", {}), dict))
 
 
@@ -786,6 +814,16 @@ def remote_result(name: str, cfg: dict, res: dict) -> tuple[dict | None, str]:
         why = "a result this copy can't read (another version?)" if isinstance(payload, dict) else "no result line"
         return None, f"its run-watch{where} gave {why}: run the same version of this skill on both computers"
     return None, f"its run-watch{where} failed (exit {code}): {last or 'no message'}"
+
+
+def one_time(line: str) -> bool:
+    """A line run-watch says once (a hog, a first VM or leftover, a sleep, a commit, a fall of the disk), as
+    against one it says on every wake while it holds (a hang, low disk, a stopped keep-awake, a reminder)."""
+    if line.startswith(("hog ", "blind ", "commit ", "merged ", "report ", "disk: free disk fell")):
+        return True
+    if line.startswith(("vm ", "leftover ")):
+        return not re.match(r"\S+ \d+ [^:]*: still running", line)
+    return bool(re.match(r"slept \S+ (?!- )\S+ \(", line))
 
 
 def on_computer(line: str, name: str) -> str:
@@ -839,6 +877,8 @@ def main(argv: list[str]) -> int:
                      "tasks aren't watched (launch adds them); the machine checks ran")
         watch = {}
     if as_computer is not None:   # checked for an orchestrator on another computer: this one is the watch's computer
+        global NEW_SESSIONS
+        NEW_SESSIONS = True
         limit = watch.get("deadline_seconds")
         if isinstance(limit, (int, float)) and limit > 0:   # stop before the orchestrator's ssh does, saving nothing
             def out_of_time(*_):
@@ -880,11 +920,14 @@ def main(argv: list[str]) -> int:
 
     # Each other computer reached over SSH is checked by its own run-watch while this one checks here.
     jobs = {}
+    acks = state.get("acks") if isinstance(state.get("acks"), dict) else {}
+    acks = {n: [a for a in v if isinstance(a, str)] for n, v in acks.items() if n in remote and isinstance(v, list)}
     for name, cfg in remote.items():
         if "error" in cfg:
             continue
         sub_watch = {"started": iso(started), "computer": name, "tasks": remote_tasks[name],
-                     "deadline_seconds": max(5, int(SSH_S - SSH_CONNECT_S) - 10)}   # after the connect, with room
+                     "deadline_seconds": max(5, int(SSH_S - SSH_CONNECT_S) - 10),   # after the connect, with room
+                     "ack": acks.get(name, [])}   # the one-time lines the last result that arrived carried
         res: dict = {}
         job = threading.Thread(target=check_over_ssh, args=(cfg, remote_script(name, cfg, run_dir, sub_watch), res), daemon=True)
         job.start()
@@ -1188,11 +1231,13 @@ def main(argv: list[str]) -> int:
                 break
     disk.append([t_now, round(free, 2)])
     state["disk"] = disk[-40:]
+    swap_known = True
     if "RUN_WATCH_SWAP_GB" in os.environ:
         swap = float(os.environ["RUN_WATCH_SWAP_GB"])
     else:
         m = re.search(r"used = ([\d.]+)([MG])", run(["sysctl", "-n", "vm.swapusage"]))
         swap = (float(m.group(1)) / (1024 if m.group(2) == "M" else 1)) if m else 0.0
+        swap_known = bool(m)
     if swap > SWAP_GB:
         lines.append(f"swap: {swap:.1f} GB in swap, above {SWAP_GB} GB: one large model at a time; stop what holds memory")
 
@@ -1202,8 +1247,8 @@ def main(argv: list[str]) -> int:
     if dialogs:
         lines.append(f"dialog: a password dialog is up ({DIALOG} pid {' '.join(map(str, dialogs))}): nobody will answer it; "
                      "find the command that asked, stop it by its pid, and tell the task")
-    summary = {"disk_free_gb": round(free, 1), "swap_gb": round(swap, 1), "dialogs": len(dialogs),
-               "keep_awake": "none", "sampler": "none"}
+    summary = {"disk_free_gb": round(free, 1), "swap_gb": round(swap, 1) if swap_known else None, "dialogs": len(dialogs),
+               "keep_awake": "none", "sampler": "none", "load": None}   # None: it couldn't be read here
     try:
         summary["load"] = round(os.getloadavg()[0], 1)
     except OSError:
@@ -1388,7 +1433,7 @@ def main(argv: list[str]) -> int:
 
     # The other computers' checks: their lines, each naming the computer, their times for times.log, and
     # their tasks' blind state; a computer that gave nothing is one line, and its tasks are blind as before.
-    machines_seen, remote_times = {}, []
+    machines_seen, remote_times, new_acks = {}, [], dict(acks)
     invocation = os.environ.get("RUN_WATCH_INVOCATION") or iso(t0)   # the heartbeat's ID for this run, to know its reading
     try:   # the times already here, so another computer's are added once, however often they come
         with open(os.path.join(run_dir, TIMES_LOG), encoding="utf-8", errors="replace") as fh:
@@ -1403,6 +1448,12 @@ def main(argv: list[str]) -> int:
         if payload is not None:
             if why:
                 lines.append(f"note on {name}: {why}")
+            # one-time lines come until the result carrying them arrives here: those this wake's ack named
+            # were printed already; the others are new, or a lost result's
+            for oid, line in payload.get("once", []):
+                if oid not in acks.get(name, []):
+                    lines.append(on_computer(" ".join(line.split("\n")), name))
+            new_acks[name] = [oid for oid, _ in payload.get("once", [])]
             for line in payload["lines"]:
                 lines.append(on_computer(" ".join(line.split("\n")), name))
             # its own times.log, whose end comes back each time: a time the last check printed but didn't
@@ -1417,7 +1468,7 @@ def main(argv: list[str]) -> int:
             got = payload.get("summary") or {}
             machines_seen[name] = {"checked": iso(t0), "invocation": invocation, "reached": True,   # only the values the heartbeat shows
                                    **{k: v for k, v in got.items() if (k in ("disk_free_gb", "swap_gb", "load", "dialogs")
-                                      and isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e6)
+                                      and (v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e6)))
                                       or (k in ("keep_awake", "sampler") and v in ("up", "DOWN", "none"))}}
             continue
         running_there = sorted(t for t, v in mine.items() if v.get("status", "running") == "running")
@@ -1433,8 +1484,10 @@ def main(argv: list[str]) -> int:
                 blind_told.add(tid)
     if machines_seen:
         state["machines"] = machines_seen
+        state["acks"] = new_acks
     else:
         state.pop("machines", None)
+        state.pop("acks", None)
     if remote_times:   # one that couldn't be added comes again with the next check
         try:
             with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
@@ -1468,9 +1521,23 @@ def main(argv: list[str]) -> int:
                 times = fh.read().decode(errors="replace").splitlines()[1 if size > TIMES_SENT_BYTES else 0:]
         except OSError:
             pass
+        # One-time lines stay pending, with an ID, until the orchestrator names them in a later wake's "ack"
+        # (it does once the result carrying them arrived); every-wake lines go as they are.
+        ack = {a for a in watch.get("ack") or [] if isinstance(a, str)}
+        once = [p for p in state.get("once", []) if isinstance(p, list) and len(p) == 2 and p[0] not in ack]
+        seq = state.get("once_seq") if isinstance(state.get("once_seq"), int) else 0
+        every = []
+        for line in lines:
+            if one_time(line):
+                seq += 1
+                once.append([f"{int(t0)}-{seq}", line])
+            else:
+                every.append(line)
+        state["once"], state["once_seq"] = once[-300:], seq
         try:   # out to the orchestrator before the state marks anything told; if it can't be, nothing is saved
-            print(REMOTE_MARK + json.dumps({"protocol": REMOTE_PROTOCOL, "computer": as_computer, "lines": lines,
-                                            "blind": sorted(blind_told), "summary": summary, "times": times}), flush=True)
+            print(REMOTE_MARK + json.dumps({"protocol": REMOTE_PROTOCOL, "computer": as_computer, "lines": every,
+                                            "once": state["once"], "blind": sorted(blind_told), "summary": summary,
+                                            "times": times}), flush=True)
         except OSError:
             return 0
         signal.alarm(0)   # it went out: the state is saved whatever the time
@@ -1489,5 +1556,5 @@ if __name__ == "__main__":
         sys.exit(main(sys.argv[1:]))
     except OutOfTime as e:   # --as mode's limit: the command it waited on is stopped, and nothing more is saved
         print(f"run-watch: stopped at its {e.args[0]:g} s limit, before saving its state (something it runs there hangs, "
-              "such as pmset, lsof, git or du; the command it was waiting on was stopped)", file=sys.stderr)
+              "such as pmset, lsof, git or du; the command it was waiting on was stopped, with what it started)", file=sys.stderr)
         sys.exit(70)

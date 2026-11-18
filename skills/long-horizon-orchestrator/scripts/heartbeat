@@ -18,10 +18,10 @@ already reported is a reminder in the summary ("VMs still running", "leftovers s
 finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
 the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,
 password dialogs, keep-awake and sampler ("den-mac: disk 120 GB free, …, keep-awake up, sampler up"), read
-from run-watch's state file (keep-awake or sampler "unknown" when that computer's reading of it couldn't be
-read; a number it couldn't read is left out), or "den-mac not reached over SSH",
-which comes with an "unreachable" line, or "den-mac not checked this wake" when this heartbeat's run-watch
-didn't finish (its "run-watch failed" note says why), so no earlier reading passes for this one.
+from run-watch's state file (any of them "unknown" when that computer couldn't take or send it), or
+"den-mac not reached over SSH", which comes with an "unreachable" line, or "den-mac not checked this wake"
+when this heartbeat's run-watch didn't finish (its "run-watch failed" note says why), so no earlier reading
+passes for this one; every computer watch.json's "machines" reaches over SSH is named, a first wake's too.
 
 The summary: the running tasks, the integration branch's head and how many tracked files are changed
 in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
@@ -223,7 +223,12 @@ def main(argv):
         bits.append("VMs still running: " + "; ".join(reminders["vm"]))
     if reminders["leftover"]:
         bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
-    for name, m in sorted(machines.items()):
+    # every computer watch.json reaches over SSH, so one this wake's run-watch never got to is still named
+    here = str(watch.get("computer") or "").casefold()
+    expected = {str(n) for n, e in (watch.get("machines") or {}).items() if isinstance(e, dict) and isinstance(e.get("reach"), str)
+                and e["reach"].split()[:1] == ["ssh"] and str(n).casefold() != here} if isinstance(watch.get("machines"), dict) else set()
+    for name in sorted(expected | set(machines)):
+        m = machines.get(name)
         fresh = isinstance(m, dict) and m.get("invocation") == invocation   # written by this heartbeat's run-watch
         if not isinstance(m, dict) or not fresh:   # an earlier wake's: this one's run-watch didn't finish
             bits.append(f"{name} not checked this wake")
@@ -231,13 +236,12 @@ def main(argv):
         if not m.get("reached"):
             bits.append(f"{name} not reached over SSH")
             continue
-        there = []
-        if isinstance(m.get("disk_free_gb"), (int, float)):
-            there.append(f"disk {m['disk_free_gb']:.0f} GB free")
-        if isinstance(m.get("swap_gb"), (int, float)):
-            there.append(f"swap {m['swap_gb']:.1f} GB")
-        if isinstance(m.get("load"), (int, float)):
-            there.append(f"load {m['load']:.1f}")
+        def number(k):   # a reading run-watch couldn't take or read there is "unknown", never left out
+            v = m.get(k)
+            return v if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e6 else None
+        there = [f"disk {number('disk_free_gb'):.0f} GB free" if number("disk_free_gb") is not None else "disk unknown",
+                 f"swap {number('swap_gb'):.1f} GB" if number("swap_gb") is not None else "swap unknown",
+                 f"load {number('load'):.1f}" if number("load") is not None else "load unknown"]
         if isinstance(m.get("dialogs"), int) and m["dialogs"]:
             there.append(f"{m['dialogs']} password dialog(s)")
         there += [f"{word} {m.get(k) or 'unknown'}" for word, k in (("keep-awake", "keep_awake"), ("sampler", "sampler"))]

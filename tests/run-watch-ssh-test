@@ -102,8 +102,9 @@ home, name = {homes!r}[alias]
 env = dict(os.environ, HOME=home, RUN_WATCH_COMPUTER=name)
 env.pop("FAKE_PS_FILE", None)
 extra = os.path.join(home, "env.json")
-if os.path.exists(extra):
-    env.update(json.load(open(extra)))
+if os.path.exists(extra):   # null takes a variable away
+    for k, v in json.load(open(extra)).items():
+        env.pop(k, None) if v is None else env.__setitem__(k, v)
 if alias == "oldpy":
     env["PATH"] = {old_py!r} + ":" + env["PATH"]
 print("Last login: a login shell's own output, which the result line must survive")
@@ -258,19 +259,26 @@ sys.exit(done.returncode)
     assert [t for t in times[1:] if t.startswith("slept ") and " on den-mac " in t and t.endswith("(Software Sleep pid=1)")], times
 
     # A result that never arrived (here: run-watch there ran on its own, as for a dropped connection): its
-    # commit isn't printed again, but its time still reaches times.log here, from times.log there.
+    # one-time lines (a commit, a first leftover line) come again with the next check, once, and the commit's
+    # time reaches times.log here, from times.log there.
     write(os.path.join(wt_b, "h.txt"), "z\n")
     subprocess.run(git + ["add", "h.txt"], cwd=wt_b, check=True)
     subprocess.run(git + ["commit", "-qm", "a change whose result was lost"], cwd=wt_b, check=True)
+    put_json(den_procs, json.load(open(den_procs)) + [{"pid": 783, "start": now - 30, "args": f"sleep 600 {den_run}/D/other"}])
     lost = subprocess.run([sys.executable, "-I", run_watch, den_run, "--as", "den-mac", "--watch", "-"],
-                          input=json.dumps({"started": stamp(started), "tasks": {"B": watch["tasks"]["B"]}}), capture_output=True,
-                          text=True, env=dict(env, HOME=den_home, RUN_WATCH_COMPUTER="den-mac", FAKE_PS_FILE=den_procs))
-    assert lost.returncode == 0 and "a change whose result was lost" in lost.stdout, lost
+                          input=json.dumps({"started": stamp(started), "tasks": watch["tasks"]}), capture_output=True,
+                          text=True, env=dict(env, HOME=den_home, RUN_WATCH_COMPUTER="den-mac", FAKE_PS_FILE=den_procs,
+                                              RUN_WATCH_DISK_FREE_GB="15", RUN_WATCH_PMSET=os.path.join(bin_dir, "den-pmset")))
+    assert lost.returncode == 0 and "a change whose result was lost" in lost.stdout and "leftover 783" in lost.stdout, lost
     out, _, _ = watch_run()
-    assert not [l for l in out if "whose result was lost" in l], out
+    assert len([l for l in out if l.startswith("commit B on den-mac ") and "whose result was lost" in l]) == 1, out
+    assert [l for l in out if l.startswith("leftover 783 on den-mac sleep: task D's (merged)")], out
+    assert not [l for l in out if "another change on den" in l or l.startswith("slept ")], out   # told and acknowledged before
     times = open(os.path.join(studio_run, "times.log")).read().splitlines()
     assert len(times) == 4 and times[-1].startswith("commit B on den-mac ") and "whose result was lost" in times[-1], times
-    out, _, _ = watch_run()
+    out, _, _ = watch_run()   # acknowledged: not again
+    assert not [l for l in out if "whose result was lost" in l or l.startswith("leftover 783 on den-mac sleep: task")], out
+    assert [l for l in out if l == "leftover 783 on den-mac sleep: still running"], out
     assert open(os.path.join(studio_run, "times.log")).read().splitlines() == times   # once only
 
     # 3. Reachable and clean: the call got its result, the keep-awake runs, the dialog, the leftover and C are
@@ -288,6 +296,14 @@ sys.exit(done.returncode)
     hb = beat()
     assert len(hb) == 1 and "nothing to act on" in hb[0] and "running B" in hb[0], hb
     assert "den-mac: disk 138 GB free, swap 0.0 GB" in hb[0] and "keep-awake up, sampler up" in hb[0], hb
+    # swap there that can't be read (its sysctl fails) is "unknown", not 0.0
+    write(os.path.join(work, "den-bin", "sysctl"), "#!/bin/sh\nexit 1\n", 0o755)
+    den_env = json.load(open(os.path.join(den_home, "env.json")))
+    put_json(os.path.join(den_home, "env.json"), dict(den_env, RUN_WATCH_SWAP_GB=None,
+                                                      PATH=os.path.join(work, "den-bin") + ":" + env["PATH"]))
+    hb = beat()
+    assert "den-mac: disk 138 GB free, swap unknown, load " in hb[0], hb
+    put_json(os.path.join(den_home, "env.json"), den_env)
     # with no task there any more, a process working in the run directory there is still found, by its folder;
     # and one working in merged task D's worktree, by that folder, naming neither
     wt_d = watch["tasks"]["D"]["worktree"]
@@ -344,7 +360,8 @@ sys.exit(done.returncode)
     # run-watch there that runs out of its time (a pmset there that hangs) stops itself first, saving nothing
     watch["machines"]["den-mac"]["reach"] = "ssh den"
     hung_pid = os.path.join(work, "hung-pmset.pid")
-    write(os.path.join(bin_dir, "hung-pmset"), f"#!/bin/sh\necho $$ > {hung_pid}\nexec sleep 60\n", 0o755)
+    child_pid = os.path.join(work, "hung-child.pid")   # and what it started: a wrapper that doesn't exec
+    write(os.path.join(bin_dir, "hung-pmset"), f"#!/bin/sh\necho $$ > {hung_pid}\nsleep 60 &\necho $! > {child_pid}\nwait\n", 0o755)
     den_env = json.load(open(os.path.join(den_home, "env.json")))
     put_json(os.path.join(den_home, "env.json"), dict(den_env, RUN_WATCH_PMSET=os.path.join(bin_dir, "hung-pmset")))
     den_state = open(os.path.join(den_run, "run-watch.state.json")).read()
@@ -352,8 +369,9 @@ sys.exit(done.returncode)
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "ran out of its time there" in l
             and "stopped at its 5 s limit" in l], out
     assert open(os.path.join(den_run, "run-watch.state.json")).read() == den_state and took < 30, took
-    hung = int(open(hung_pid).read())   # the command it waited on was stopped and reaped, not left running
-    assert subprocess.run(["ps", "-p", str(hung)], capture_output=True).returncode != 0, f"pmset stand-in {hung} still runs"
+    for path in (hung_pid, child_pid):   # the command it waited on, and what that started, were stopped
+        hung = int(open(path).read())
+        assert subprocess.run(["ps", "-p", str(hung)], capture_output=True).returncode != 0, f"{path}: {hung} still runs"
     put_json(os.path.join(den_home, "env.json"), den_env)
     # a result line it can't read whole (a list where it wants names) is one plain line, never a traceback
     write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nimport json\nprint('run-watch-remote ' + json.dumps("
@@ -371,7 +389,7 @@ sys.exit(done.returncode)
           "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"summary\": {\"keep_awake\": \"\\\\ud800\", "
           "\"disk_free_gb\": [1], \"swap_gb\": 1" + "0" * 309 + ", \"sampler\": \"up\"}}')\n", 0o755)
     hb = beat()
-    assert "den-mac: keep-awake unknown, sampler up" in hb[0], hb
+    assert "den-mac: disk unknown, swap unknown, load unknown, keep-awake unknown, sampler up" in hb[0], hb
     del watch["machines"]["den-mac"]["run_watch"]
 
     # 6. An old copy there (5.9.2 and before take no --as: a usage error, exit 2), an old Python there, no run
@@ -415,6 +433,9 @@ sys.exit(done.returncode)
     # the state and the heartbeat say nothing of other computers.
     shutil.rmtree(os.path.join(studio_run))
     os.makedirs(os.path.join(studio_run, "usage"))
+    # (a first wake whose run-watch fails still names each computer watch.json reaches over SSH)
+    hb = beat({"HEARTBEAT_RUN_WATCH": os.path.join(bin_dir, "broken-run-watch")})
+    assert "den-mac not checked this wake" in hb[0] and "run-watch failed" in "\n".join(hb), hb
     watch["machines"]["den-mac"] = {"environmentId": "env-den", "thread": "thread-den", "reach": "thread"}
     out, made, _ = watch_run()
     assert made == [] and sorted(l.split(" (")[0] for l in out) == ["blind B"] and "(claude-code, on den-mac)" in out[0], out

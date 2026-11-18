@@ -1,5 +1,13 @@
 # long-horizon-orchestrator changelog
 
+## 5.10.2 (2026-11-19)
+
+- **Another computer's one-time lines survive a lost result** (5.10.0's open follow-up 1). `run-watch --as` keeps each one-time line (a hog, a first VM or leftover line, a sleep, a commit or report, a fall of the disk) pending there with an ID, and sends it with every result until the orchestrator's next `watch.json` names it in `"ack"`, which the orchestrator's `run-watch` sends only once a result carrying it has arrived; so a connection dropped after the result went out loses no line, and none is printed twice.
+- **The other computer's time limit stops what a hung command started too** (follow-up 2): in `--as` mode each command (`ps`, `lsof`, `pmset`, `git`, `du`, …) runs in a session of its own with no input, and a timeout or the limit kills its whole process group and reaps it, not only the command itself.
+- **A reading the other computer can't take is "unknown", never a number** (follow-up 4): a failed `sysctl` there sends swap as null rather than 0.0, a load it can't read the same, and the heartbeat shows `disk unknown`, `swap unknown` or `load unknown` for any number that didn't arrive or couldn't be read, as it does for the keep-awake and the sampler.
+- **The heartbeat names every computer it should have checked** (follow-up 5): it lists the computers `watch.json`'s `"machines"` reaches over SSH, so a first wake whose `run-watch` fails before saving anything still says `den-mac not checked this wake`.
+- Still open from 5.10.0, for later: overlapping heartbeats share the state's blind list; a worktree path followed by a space can match a longer path; times beyond the 200 KB replay window aren't added.
+
 ## 5.10.1 (2026-11-19)
 
 - **The T3 heartbeat checks the tasks' reviewers and helpers for an approval prompt** (owner, 2026-11-19, accepted in advance). In a run, a task's reviewer asked for approval for a test run it started; the prompt reached the owner's screen while they were away, and nothing in the run saw it: `run-watch` reads files and processes, and the task thread's own `pendingRequestCount` stayed 0 while it waited on its reviewer. Every heartbeat now takes the running tasks' threads from `watch.json`, lists each computer's active threads (`t3_thread_list` with `includeSubagents` and `allProjects`, every page), reads the subagents of running tasks for `pendingRequestCount` or "Subagent needs approval", and tells the task (mode `auto`, which also starts a task that has ended its turn) to stop one that waits and relaunch it once, noting it so it isn't sent twice; a heartbeat with nothing to act on and no subagent waiting stays idle. SKILL.md's "On every wake" step 2 says so in one sentence.
