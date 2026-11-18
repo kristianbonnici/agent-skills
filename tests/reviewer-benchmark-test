@@ -232,8 +232,17 @@ os.remove(next(os.path.join(work, n) for n in os.listdir(work) if n.startswith("
 bench("run", "cxm", "one")
 args, stdin = called("exec--sandbox")
 assert args[args.index("-c") + 1] == 'model_reasoning_effort="medium"', args
-set_models(bad={"kind": "opencode", "model": "p/m", "effort": "medium"})
-assert "effort" in bench("run", "bad", "one").stderr
+set_models(clm={"kind": "claude", "model": "claude-x", "effort": "low"})
+os.remove(next(os.path.join(work, n) for n in os.listdir(work) if n.startswith("tool-log.-p--safe-mode")))
+bench("run", "clm", "one")
+args, stdin = called("-p--safe-mode")
+assert args[args.index("--effort") + 1] == "low", args
+for bad in ({"kind": "opencode", "model": "p/m", "effort": "medium"}, {"kind": "agy", "model": "gem-x", "effort": "high"},
+            {"kind": "codex", "model": "gpt-x", "effort": "Medium"}, {"kind": "codex", "model": "gpt-x", "effort": ""},
+            {"kind": "claude", "model": "claude-x", "effort": 1}):
+    set_models(bad=bad)
+    refused = bench("run", "bad", "one")
+    assert refused.returncode == 64 and '"effort"' in refused.stderr, (bad, refused.stderr)
 set_models(oc={"kind": "opencode", "model": "p/m#high"}, cl={"kind": "claude", "model": "claude-x"},
            cx={"kind": "codex", "model": "gpt-x", "paid": True, "minutes": 30}, ag={"kind": "agy", "model": "gem-x"})
 # Codex without a last message left no report, whatever its session printed.

@@ -219,7 +219,7 @@ def models(data):
         if not (isinstance(effort, str) and effort.isalpha() and effort.islower()):
             raise Refused(f'model {name}: "effort" is a reasoning level in lowercase letters, as "medium"')
         if "effort" in spec and spec["kind"] not in ("claude", "codex"):
-            raise Refused(f'model {name}: "effort" is for claude and codex; opencode names its level in "model"')
+            raise Refused(f'model {name}: "effort" is for claude and codex, not {spec["kind"]} (OpenCode names its level in "model")')
     return known
 
 
