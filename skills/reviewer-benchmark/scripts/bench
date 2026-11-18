@@ -438,6 +438,8 @@ def run(data, copies, scoring, name, given):
         result = {"model": name, "change": change, "seconds": round(time.time() - started), "returncode": code,
                   "timed_out": timed_out, "bytes": size, "set": found["version"], "commits": [key["base"], key["head"]],
                   "id": uuid.uuid4().hex}
+        if spec["kind"] in ("claude", "codex"):
+            result["effort"] = spec.get("effort", "high")   # the level the report was made at
         if code != 0 and not timed_out:
             result["failed"] = True             # the tool ended in an error: what it printed is no report
         write(meta, result)

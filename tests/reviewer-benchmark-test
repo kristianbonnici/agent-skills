@@ -232,6 +232,7 @@ os.remove(next(os.path.join(work, n) for n in os.listdir(work) if n.startswith("
 bench("run", "cxm", "one")
 args, stdin = called("exec--sandbox")
 assert args[args.index("-c") + 1] == 'model_reasoning_effort="medium"', args
+assert load(data, "runs", "cxm", "one.json")["effort"] == "medium" and "effort" not in load(data, "runs", "oc", "one.json")
 set_models(clm={"kind": "claude", "model": "claude-x", "effort": "low"})
 os.remove(next(os.path.join(work, n) for n in os.listdir(work) if n.startswith("tool-log.-p--safe-mode")))
 bench("run", "clm", "one")

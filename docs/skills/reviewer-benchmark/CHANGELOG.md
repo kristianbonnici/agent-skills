@@ -3,6 +3,8 @@
 ## 1.2.0 (2026-11-18)
 
 - **A model in `models.json` can set its reasoning level with `effort`,** for `claude` and `codex`; left out, it is `high`, as before. Until now both were fixed at high, so a paid model couldn't be tried at another level (owner, 2026-11-18: GPT-6.2 Sol at medium, as a possible Codex reviewer at lower cost). `effort` on another kind is refused: OpenCode's level is part of the model's name.
+- **A review records the level it ran at** (`effort` in its `.json`, for `claude` and `codex`), and `references/set.md` says to give a new level a name of its own, since saved reviews aren't run again when `effort` changes, and that an entry with a built-in model's name replaces it whole, `minutes` and `paid` included.
+- **Review (Standard, Codex short by the owner's word, 1 round):** Claude Sonnet 5.5 and Gemini 4 Hydrogen found no blocker or follow-up; Hydrogen's two nits (a refusal message naming OpenCode for every kind, untested Claude levels and bad levels) were fixed. DeepSeek V4.1 Flash (free) raised the two documentation gaps and the unrecorded level above, fixed; its fourth, the missing tag, is the release step that follows the gate.
 
 ## 1.1.0 (2026-11-18)
 
