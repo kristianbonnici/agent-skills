@@ -544,6 +544,11 @@ confirmed.
 - High reasoning wasn't run, to spare the owner's Codex allowance; nor was Sol tested against a usage limit
   across a real run of gates.
 
+- **Set 1.5 tags every defect by today's definitions.** The oldest changes' gates had one tag, must-fix, for
+  blockers and follow-ups alike; their 17 defects were tagged again, by a model reading each in its code without
+  the scores, as 2 blockers and 15 follow-ups. On the 144 defects known before Sol's run, now 22 blockers and 122
+  follow-ups, Sol at medium found 18 blockers and 43 follow-ups, Opus 11 and 40, Terra 10 and 32.
+
 → *Changed in 8.0.0 (owner, 2026-11-18: "let's swap it in for Terra"): GPT-6.2 Sol at medium is the Codex reviewer, in every place Terra had.*
 
 ## Left out
