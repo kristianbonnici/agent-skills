@@ -10,14 +10,20 @@ Usage:
   prune-runs --scratch <run folder>/<task ID>
   prune-runs --harness-temp <worktree> [<run folder>/<task ID> ...] [--apply]
   prune-runs --size <run folder>
+  prune-runs --mark-finished <run folder>
 
 The root is the folder of ledgers and run folders, always
 ${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orchestrator, where SKILL.md puts them
 (a check sets XDG_STATE_HOME to a folder of its own; there is no option to point it elsewhere). A run is a folder there
-with a ledger of the same name beside it (<name>.md).
+with a ledger of the same name beside it (<name>.md), or, on a computer where the run had tasks but no
+orchestrator (no ledger there), a folder holding a run.json that names it: {"run": "<its name>", "role":
+"other computer", "orchestrator": "<the orchestrator's computer>"}, which that computer's pre-flight writes.
 
 Older runs (the first form). Only a run whose ledger says "Status: finished" and hasn't changed
-for --older-than days (7 unless given) is touched. A folder holding a file named KEEP, the run's
+for --older-than days (7 unless given) is touched. A run with only a run.json is touched once its
+"finished" time (an ISO time, which --mark-finished writes in that computer's finish steps) and the
+file's own last change are both that old; without one it is never pruned, however old, since only
+the finish knows its tasks have stopped. A folder holding a file named KEEP, the run's
 own or a task's (the orchestrator puts one in each unmerged task's folder at the finish), is left
 whole. Without
 --apply it only lists what it would remove; with --apply it removes it and adds a line to the
@@ -66,8 +72,12 @@ in their own folders, not a folder per working folder, so this form leaves them 
 once the task and everything it started have stopped.
 
 --size prints a run folder's size on disk, for the report's closing line, and, on a second line, the
-harness temp folders still left for its tasks (the worktrees and task folders its watch.json names),
-when there are any.
+harness temp folders still left for its tasks (the worktrees and task folders its watch.json names, or,
+in a run folder with a run.json and no watch.json, its folders), when there are any.
+
+--mark-finished <run folder> writes the current time as "finished" into the folder's run.json,
+keeping its other fields: the last of that computer's finish steps, after its cleanup. It refuses a
+folder whose ledger is beside it (the ledger says when that run finished) or with no run.json naming it.
 
 Every removal goes folder by folder from
 the root without following a link, so a folder swapped for a link meanwhile is refused, not
@@ -77,6 +87,13 @@ Exit 0: done (or listed); 1: something couldn't be removed (it says what); 64: a
 command or a folder that isn't a run's.
 """
 
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"prune-runs: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
+
 import argparse
 import json
 import math
@@ -85,7 +102,9 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import time
+from datetime import datetime, timezone
 
 TEXT_LIMIT = 10 * 1024 * 1024
 TEXT = {
@@ -325,6 +344,68 @@ def ledger_status(ledger):
     return ""
 
 
+def run_file(run):
+    """The run's run.json (written by the pre-flight on a computer where the run has tasks but no
+    ledger) as a dict, or None when the folder holds no regular file of that name naming this run."""
+    path = os.path.join(run, "run.json")
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return None
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("run") == os.path.basename(run) else None
+
+
+def is_run_folder(run):
+    return os.path.isfile(run + ".md") or run_file(run) is not None
+
+
+def run_file_finished(run, data):
+    """When a run with only a run.json counts as finished: the later of its "finished" time and the
+    file's own last change, as a timestamp, or why it doesn't count as finished."""
+    finished = data.get("finished")
+    if finished is None:
+        return None, "not finished (its run.json has no finished time)"
+    try:
+        moment = datetime.fromisoformat(str(finished).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        changed = os.lstat(os.path.join(run, "run.json")).st_mtime
+    except (ValueError, OSError):
+        return None, f"its run.json's finished time isn't a time ({str(finished)[:40]!r})"
+    return max(moment.timestamp(), changed), None
+
+
+def mark_finished(root, run):
+    real = os.path.realpath(run)
+    if os.path.islink(run.rstrip(os.sep)) or os.path.dirname(real) != root or not os.path.isdir(real):
+        usage_error(f"{run} isn't a run folder under {root}")
+    if os.path.lexists(real + ".md"):
+        usage_error(f"{run} has its ledger beside it: the ledger's Status says when that run finished")
+    data = run_file(real)
+    if data is None:
+        usage_error(f"{run} holds no run.json naming {os.path.basename(real)}")
+    data["finished"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    path = os.path.join(real, "run.json")
+    try:
+        fd, temp = tempfile.mkstemp(prefix=".run.json.", dir=real)   # a new file of its own, never a link followed
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+                f.write("\n")
+            os.replace(temp, path)
+        except BaseException:
+            os.unlink(temp)
+            raise
+    except OSError as error:
+        print(f"prune-runs: couldn't write {path}: {error}", file=sys.stderr)
+        return 1
+    print(f"{os.path.basename(real)}: finished at {data['finished']}, in its run.json")
+    return 0
+
+
 def runs_in(root):
     for name in sorted(os.listdir(root)):
         path = os.path.join(root, name)
@@ -347,14 +428,22 @@ def prune_old(root, days, apply):
     total_now = total_removable = total_freed = 0
     touched, problems = 0, []
     for name, run, ledger in runs_in(root):
-        if not os.path.isfile(ledger):
-            print(f"{name}: skipped, no ledger beside it")
-            continue
-        status = ledger_status(ledger)
-        if not (status or "").startswith("finished"):
-            print(f"{name}: skipped, not finished (Status: {status or 'none'})")
-            continue
-        age = (now - os.path.getmtime(ledger)) / 86400
+        if os.path.isfile(ledger):
+            status = ledger_status(ledger)
+            if not (status or "").startswith("finished"):
+                print(f"{name}: skipped, not finished (Status: {status or 'none'})")
+                continue
+            age = (now - os.path.getmtime(ledger)) / 86400
+        else:
+            data = run_file(run)
+            if data is None:
+                print(f"{name}: skipped, no ledger beside it and no run.json in it")
+                continue
+            finished, why = run_file_finished(run, data)
+            if finished is None:
+                print(f"{name}: skipped, {why}")
+                continue
+            age = (now - finished) / 86400
         if age < days:
             print(f"{name}: skipped, finished {age:.1f} days ago")
             continue
@@ -410,7 +499,7 @@ def prune_old(root, days, apply):
 def prune_scratch(root, task):
     real = os.path.realpath(task)
     run = os.path.dirname(real)
-    if (os.path.islink(task.rstrip(os.sep)) or os.path.dirname(run) != root or not os.path.isfile(run + ".md")
+    if (os.path.islink(task.rstrip(os.sep)) or os.path.dirname(run) != root or not is_run_folder(run)
             or not os.path.isdir(real) or os.path.basename(real) in KEPT_WHOLE | {EVIDENCE}):
         usage_error(f"{task} isn't a task's folder in a run folder under {root}")
     scratch = os.path.join(real, "scratch")
@@ -725,7 +814,14 @@ def run_task_ids(run):
 
 
 def run_tasks_paths(run):
-    """The worktrees and task folders the run's watch.json names."""
+    """The worktrees and task folders the run's watch.json names; in a run folder with a run.json and
+    no watch.json (another computer's), its folders."""
+    if not os.path.lexists(os.path.join(run, "watch.json")) and run_file(os.path.realpath(run)) is not None:
+        try:
+            names = sorted(e.name for e in os.scandir(run) if e.is_dir(follow_symlinks=False))
+        except OSError:
+            return []
+        return [os.path.join(os.path.abspath(run), n) for n in names if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", n)]
     try:
         with open(os.path.join(run, "watch.json"), encoding="utf-8") as f:
             tasks = (json.load(f) or {}).get("tasks") or {}
@@ -748,12 +844,13 @@ def main():
     parser.add_argument("--scratch", metavar="TASK_FOLDER")
     parser.add_argument("--size", metavar="RUN_FOLDER")
     parser.add_argument("--harness-temp", nargs="+", metavar="PATH")
+    parser.add_argument("--mark-finished", metavar="RUN_FOLDER")
     try:
         args = parser.parse_args()
     except SystemExit as exit_:
         sys.exit(0 if exit_.code == 0 else 64)
-    if sum(bool(x) for x in (args.scratch, args.size, args.harness_temp)) > 1:
-        usage_error("give one of --scratch, --harness-temp and --size")
+    if sum(bool(x) for x in (args.scratch, args.size, args.harness_temp, args.mark_finished)) > 1:
+        usage_error("give one of --scratch, --harness-temp, --size and --mark-finished")
     if args.size:
         if not os.path.isdir(args.size):
             usage_error(f"no such folder: {args.size}")
@@ -771,10 +868,14 @@ def main():
         usage_error("--older-than takes days, 0 or more")
     root = safe_root(default_root())
     if root is None:
-        if args.scratch:
+        if args.scratch or args.mark_finished:
             usage_error(f"no state folder at {default_root()}")
         print("No run folders yet: nothing to prune.")
         return 0
+    if args.mark_finished:
+        if args.apply:
+            usage_error("--mark-finished writes at once; leave out --apply")
+        return mark_finished(root, args.mark_finished)
     if args.scratch:
         if args.apply:
             usage_error("--scratch removes at once; leave out --apply")

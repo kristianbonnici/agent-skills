@@ -3070,7 +3070,97 @@ tmp_put(enc("/fake/worktrees/proj/task-c"), 2)
 tmp_put(enc(os.path.join(root, "recent", "C", "scratch", "x")))
 size = trun("--size", os.path.join(root, "recent"))
 assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 3.0 MB in 2 harness temp folders of its tasks"), size.stdout
+
+# Another computer's run folder: no ledger beside it, a run.json naming it (the pre-flight's shape). --scratch,
+# --harness-temp and --size treat it as a run's; pruning it as an older run waits for --mark-finished and then
+# --older-than days of both that time and the file's last change. A run.json naming another run, a link, or a
+# finished time that isn't one counts for nothing.
+other = "run-on-den"
+other_file = os.path.join(root, other, "run.json")
+def write_run(path, data, age_days=None):
+    put(path, json.dumps(data).encode(), age_days)
+write_run(f"{other}/run.json", {"run": other, "role": "other computer", "orchestrator": "studio-mac"})
+put(f"{other}/G/scratch/build.bin", big)
+put(f"{other}/G/handoff.md", b"h")
+put(f"{other}/G/render.mp4", big)
+done = run("--scratch", os.path.join(root, other, "G"))
+assert done.returncode == 0 and "removed scratch" in done.stdout, done.stdout + done.stderr
+assert not exists(f"{other}/G/scratch") and exists(f"{other}/G/handoff.md")
+tmp_put(enc(os.path.join(root, other, "G", "scratch", "y")))
+size = trun("--size", os.path.join(root, other))
+assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 1.0 MB in 1 harness temp folders of its tasks"), size.stdout
+done = trun("--harness-temp", os.path.join(root, other, "G"), "--apply")
+assert done.returncode == 0 and not os.path.isdir(os.path.join(temp, enc(os.path.join(root, other, "G", "scratch", "y")))), done.stdout + done.stderr
+t = time.time() - 30 * 86400
+os.utime(other_file, (t, t))
+done = run("--older-than", "0")
+assert f"{other}: skipped, not finished (its run.json has no finished time)" in done.stdout, done.stdout
+done = run("--mark-finished", os.path.join(root, other))
+assert done.returncode == 0 and "finished at " in done.stdout, done.stdout + done.stderr
+data = json.load(open(other_file))
+assert data["run"] == other and data["role"] == "other computer" and data["orchestrator"] == "studio-mac", data
+assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", data["finished"]), data
+assert sorted(os.listdir(os.path.join(root, other))) == ["G", "run.json"]   # no temporary file left
+done = run("--apply")
+assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
+data["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 10 * 86400))
+write_run(f"{other}/run.json", data)                     # finished long ago, but the file changed today
+done = run("--apply")
+assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
+os.utime(other_file, (t, t))
+done = run("--apply")
+assert done.returncode == 0 and any(l.startswith(f"{other}: ") and "removing" in l for l in done.stdout.splitlines()), done.stdout
+assert not exists(f"{other}/G/render.mp4") and exists(f"{other}/G/handoff.md") and exists(f"{other}/run.json")
+# what counts for nothing, and --mark-finished's refusals
+write_run("misnamed/run.json", {"run": "elsewhere", "finished": "2020-01-01T00:00:00Z"}, age_days=30)
+put("misnamed/T/scratch/x.bin", big)
+put("misnamed/T/x.mp4", big)
+write_run("badtime/run.json", {"run": "badtime", "finished": "soon"}, age_days=30)
+put("badtime/T/x.mp4", big)
+put("run-linked/T/scratch/x.bin", big)
+put("run-linked/T/x.mp4", big)
+write_run("run-linked-target.json", {"run": "run-linked", "finished": "2020-01-01T00:00:00Z"})
+os.symlink(os.path.join(root, "run-linked-target.json"), os.path.join(root, "run-linked/run.json"))
+done = run("--apply")
+assert "misnamed: skipped, no ledger beside it and no run.json in it" in done.stdout, done.stdout
+assert "run-linked: skipped, no ledger beside it and no run.json in it" in done.stdout, done.stdout
+assert "badtime: skipped, its run.json's finished time isn't a time ('soon')" in done.stdout, done.stdout
+assert exists("misnamed/T/x.mp4") and exists("badtime/T/x.mp4") and exists("run-linked/T/x.mp4")
+for folder in ("misnamed/T", "run-linked/T"):
+    assert run("--scratch", os.path.join(root, folder)).returncode == 64, folder
+    assert exists(folder + "/scratch/x.bin"), folder
+for args in (("--mark-finished", os.path.join(root, "recent")), ("--mark-finished", os.path.join(root, "loose")),
+             ("--mark-finished", os.path.join(root, "misnamed")), ("--mark-finished", os.path.join(root, other), "--apply"),
+             ("--mark-finished", os.path.join(root, other), "--size", os.path.join(root, other))):
+    done = run(*args)
+    assert done.returncode == 64 and done.stderr.startswith("prune-runs: "), (args, done.stderr)
+assert json.load(open(os.path.join(root, "misnamed/run.json")))["finished"] == "2020-01-01T00:00:00Z"   # left as it was
 EOF
+
+# Every Python script stops with one plain line on a Python older than it needs (run-watch 3.10, the others
+# 3.9, the oldest their checks pass on): a made-up python3 that reports a version just below that runs each
+# of them (the shebang finds it first on PATH).
+mkdir -p "$work/old-python"
+real_python=$(command -v python3)
+cat > "$work/old-python/python3" <<EOF
+#!/bin/sh
+exec "$real_python" -I -c 'import os, runpy, sys
+version = os.environ["MADE_UP_PYTHON"]
+sys.version_info = tuple(int(n) for n in version.split(".")) + ("final", 0); sys.version = version + " (made up)"
+sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' "\$@"
+EOF
+chmod +x "$work/old-python/python3"
+for name in heartbeat lease provider-usage prune-runs report-offer run-charts run-costs run-watch share-usage usage-sampler; do
+  if [ "$name" = run-watch ]; then needs=3.10 old=3.9.6; else needs=3.9 old=3.8.18; fi
+  status=0
+  out=$(MADE_UP_PYTHON=$old PATH="$work/old-python:$PATH" "$scripts/$name" --help 2>&1) || status=$?
+  test "$status" -eq 69 || { echo "$name on Python $old: exit $status: $out"; exit 1; }
+  case "$out" in "$name: needs Python $needs or newer, and "*" is $old: run it with a newer python3"*) ;; *) echo "$name on Python $old: $out"; exit 1;; esac
+  test "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 1 || { echo "$name on Python $old said more than one line: $out"; exit 1; }
+  status=0
+  MADE_UP_PYTHON=$needs.0 PATH="$work/old-python:$PATH" "$scripts/$name" --help >/dev/null 2>&1 || status=$?
+  test "$status" -ne 69 || { echo "$name refused Python $needs.0"; exit 1; }
+done
 
 # run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority
 nice -n 10 "$script_dir/run-watch-test" >/dev/null
@@ -3375,11 +3465,12 @@ test "$(git -C "$multi/state.git" ls-tree -r --name-only lho/run-x-briefs | tr '
 test "$(git -C "$multi/state.git" log -1 --format=%ae lho/run-x-briefs)" = "share-usage@den-mac"
 "$scripts/share-usage" fetch "$multi/studio/run-x" --state "$multi/studio-state" > /dev/null
 test ! -e "$multi/studio/run-x/computers/den-mac/costs.json"
-git -C "$multi/den-state" config user.name t
-git -C "$multi/den-state" config user.email t@example.com
+git -C "$multi/den-state" config user.name t                 # a name without an email: the name is kept
 git -C "$multi/den-state" config --unset commit.gpgsign
 mv "$multi/den/costs.json.aside" "$multi/den/run-x/costs.json"
-"$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'sent machine.jsonl and costs.json from den-mac'
+HOME="$multi/no-home" GIT_CONFIG_NOSYSTEM=1 "$scripts/share-usage" send "$multi/den/run-x" --state "$multi/den-state" --computer den-mac | grep -q 'sent machine.jsonl and costs.json from den-mac'
+test "$(git -C "$multi/state.git" log -1 --format='%an <%ae>' lho/run-x-briefs)" = "t <share-usage@den-mac>"
+git -C "$multi/den-state" config user.email t@example.com
 status=0
 "$scripts/share-usage" send "$multi/studio/run-x" --state "$multi/studio-state" --computer ../x >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
@@ -3760,9 +3851,12 @@ if [ -n "$chrome" ]; then
   if grep -q 'class="rm-error"' "$work/dom.html"; then exit 1; fi
   test "$(grep -o 'class="us-opt[^"]*"' "$work/dom.html" | tr '\n' ' ')" = 'class="us-opt" class="us-opt" class="us-opt off" '
   grep -q 'role="radiogroup"' "$work/dom.html" && grep -q '>studio-mac</div>' "$work/dom.html"
+  grep -q 'aria-label="Computer whose load the panel shows; no machine samples arrived from attic-mac"' "$work/dom.html"
   dump_dom "file://$multi/charts-two/run-map.html#fit&computer=den-mac&cross=03:25"
   grep -q '>den-mac</div>' "$work/dom.html" && grep -q "den-mac's sampling ended" "$work/dom.html" && grep -q 'Not sampled on den-mac at this time' "$work/dom.html"
   if grep -q '>GPU<' "$work/dom.html"; then exit 1; fi
+  # the other computers' stats lines sit hidden in the same cell, so a pick never moves what is below
+  test "$(grep -o 'class="tl-stats us-ghost" aria-hidden="true"' "$work/dom.html" | wc -l | tr -d ' ')" -eq 1
   dump_dom "file://$multi/charts-early/run-map.html#fit&computer=den-mac&cross=02:30"
   grep -q 'Subscriptions not sampled: sampling ended at 01:59' "$work/dom.html" && grep -Eq 'class="v">[0-9]+% <em>avg</em>' "$work/dom.html"
   grep -q "den-mac's sampling ended" "$work/dom.html" && grep -q '>Sampling ended<' "$work/dom.html"

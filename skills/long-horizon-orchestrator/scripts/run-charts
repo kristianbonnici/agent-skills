@@ -140,6 +140,13 @@ line (mmdc), when it is installed, so you can look at them before posting.
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"run-charts: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
+
 import argparse
 import base64
 import json

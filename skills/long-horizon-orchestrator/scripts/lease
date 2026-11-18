@@ -78,6 +78,13 @@ at the computer; 2 the screen is locked, or its state can't be read; 3 you don't
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"lease: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
+
 import argparse
 import fcntl
 import json

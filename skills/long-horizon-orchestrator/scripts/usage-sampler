@@ -42,6 +42,13 @@ USAGE_SAMPLER_CACHED_EVERY and USAGE_SAMPLER_LIVE_EVERY change the intervals (se
 USAGE_SAMPLER_READ_TIMEOUT the longest a reading may take.
 """
 
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"usage-sampler: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
+
 import fcntl
 import json
 import os

@@ -94,6 +94,13 @@ RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGE
 inputs, and CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code.
 """
 
+import sys
+
+if sys.version_info < (3, 10):   # its annotations need 3.10; macOS's own /usr/bin/python3 is 3.9
+    print(f"run-watch: needs Python 3.10 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
+
 import json
 import os
 import re

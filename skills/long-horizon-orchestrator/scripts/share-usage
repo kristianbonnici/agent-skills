@@ -9,19 +9,22 @@ Usage:
                     [--expect <name>,<name>...] [--remote <remote>]
 
 send runs on a computer that ran tasks, at its finish, after usage-sampler --final --machine-only and
-run-costs: it commits <run directory>/usage/machine.jsonl and <run directory>/costs.json, whichever exist,
-as computers/<name>/machine.jsonl and computers/<name>/costs.json on the briefs branch, and pushes that
-branch, never forced. The folder then holds exactly what this send found: a file an earlier send left
-there and this one didn't find (costs that failed this time) is removed, so the branch never pairs new
-samples with old costs; a send that finds neither file removes the folder's earlier files and exits 1. A push the remote rejects (someone pushed meanwhile) is made again on the
-branch's new head, up to five times. It works in a temporary worktree of the state repository, a new
-folder <run directory>/share-usage.<random>.worktree for each send, removed afterwards, with this send's
-process ID in it. Before it starts, a send removes the folders an earlier send of this run directory left
-when it was killed: only share-usage.*.worktree folders that exist, whose recorded process is no longer running
-(one with no pid file, only when it is over ten minutes old and no share-usage runs at all), and only through `git worktree remove` of their
-own worktree; it never runs `git worktree prune`, which would also forget the owner's own worktrees whose
-folders are missing (on an unmounted disk, say), and it never touches another worktree. <name> is the computer's LocalHostName
-(scutil --get LocalHostName; hostname -s elsewhere) unless given.
+run-costs: it commits <run directory>/usage/machine.jsonl and <run directory>/costs.json, whichever
+exist, as computers/<name>/machine.jsonl and computers/<name>/costs.json on the briefs branch, and pushes
+that branch, never forced. The folder then holds exactly what this send found: a file an earlier send
+left there and this one didn't find (costs that failed this time) is removed, so the branch never pairs
+new samples with old costs; a send that finds neither file removes the folder's earlier files and
+exits 1. A push the remote rejects (someone pushed meanwhile) is made again on the branch's new head, up
+to five times. It works in a temporary worktree of the state repository, a new folder
+<run directory>/share-usage.<random>.worktree for each send, removed afterwards, with this send's
+process ID in it. Before it starts, a send removes the folders an earlier send of this run directory
+left when it was killed: only share-usage.*.worktree folders that exist, whose recorded process is no
+longer running (one with no pid file, only when it is over ten minutes old and no share-usage runs at
+all), and only through `git worktree remove` of their own worktree; it never runs `git worktree prune`,
+which would also forget the owner's own worktrees whose folders are missing (on an unmounted disk, say),
+and it never touches another worktree. <name> is the computer's LocalHostName (scutil --get
+LocalHostName; hostname -s elsewhere) unless given. The commit's author is git's own identity there; a
+name or email it lacks is share-usage or share-usage@<name>.
 
 fetch runs on the orchestrator's computer before the charts: it fetches the briefs branch and writes each
 computers/<name>/ folder it holds into <run directory>/computers/<name>/: usage/machine.jsonl, which
@@ -45,6 +48,13 @@ usage error.
 """
 
 from __future__ import annotations
+
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"share-usage: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
 
 import argparse
 import os
@@ -212,8 +222,10 @@ def send(run_dir: Path, state: Path, name: str, remote: str) -> int:
                 if found:
                     print(f"share-usage: {branch} already holds these files from {name}")
                 return 0 if found else 1
-            named = all(git(tree, "config", key, check=False).stdout.strip() for key in ("user.name", "user.email"))
-            who = [] if named else ["-c", "user.name=share-usage", "-c", f"user.email=share-usage@{name}"]
+            who = []   # only what git's own identity lacks: a name or an email set there is kept
+            for key, stand_in in (("user.name", "share-usage"), ("user.email", f"share-usage@{name}")):
+                if not git(tree, "config", key, check=False).stdout.strip():
+                    who += ["-c", f"{key}={stand_in}"]
             # never signed: a signing key's passphrase would prompt, and nobody is there to answer it
             git(tree, *who, "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", f"usage: {name}'s machine samples and costs for {run}")
             pushed = git(tree, "push", "-q", remote, f"HEAD:refs/heads/{branch}", check=False)

@@ -205,6 +205,7 @@ body { margin: 0; font-family: var(--font-sans, -apple-system, BlinkMacSystemFon
 /* the usage panel: the subscriptions' windows and the Mac, under the timeline on its time axis */
 .us { margin-top: 14px; }
 .us .tl-stats { margin-top: 4px; row-gap: 3px; }
+.us-stats { display: grid; } .us-stats > .tl-stats { grid-area: 1 / 1; } .us-stats > .us-ghost { visibility: hidden; }
 .us-pick { margin-top: 8px; display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border: 1px solid var(--rm-border); border-radius: 9px; background: var(--rm-soft); }
 .us-opt { position: relative; display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 11px; border-radius: 7px; font-size: 12.5px; color: var(--rm-muted); cursor: pointer; }
 .us-opt input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: inherit; }
@@ -1167,7 +1168,10 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
   current = S;
   const head = el("div", "tl-head"); head.append(el("div", "tl-title", "Usage")); S.append(head);
   if (MS.length) {   // whose computer: a radio group, so Tab reaches it and the arrow keys move along it, with no network
-    const group = el("div", "us-pick"); group.setAttribute("role", "radiogroup"); group.setAttribute("aria-label", "Computer whose load the panel shows");
+    // a disabled radio is skipped by Tab and the arrow keys, so the group's own name says which computers sent nothing
+    const missing = MS.filter(c => !c.mac).map(c => c.name);
+    const group = el("div", "us-pick"); group.setAttribute("role", "radiogroup");
+    group.setAttribute("aria-label", "Computer whose load the panel shows" + (missing.length ? `; no machine samples arrived from ${missing.join(", ")}` : ""));
     MS.forEach((c, i) => {
       const opt = el("label", "us-opt" + (c.mac ? "" : " off")), input = document.createElement("input");
       input.type = "radio"; input.name = "rm-us-computer"; input.value = String(i); input.checked = i === pick; input.disabled = !c.mac;
@@ -1206,15 +1210,21 @@ let timeAxis = null;  // the timeline's span in minutes: the usage panel under i
     return [use[0][1], use[use.length - 1][1]];
   };
   const pk = M ? M.peaks || null : U.peaks;
-  if (pk) {
+  const statsOf = peaks => {
     const m = el("div", "tl-stats"), bits = [];
-    if (num(pk.cpu)) bits.push(`CPU peaked at <b>${fmt(pk.cpu, 0)}%</b>`);
-    if (num(pk.gpu)) bits.push(`GPU <b>${fmt(pk.gpu, 0)}%</b>`);
-    if (num(pk.mem)) bits.push(`memory <b>${fmt(pk.mem)}</b>${pk.mem_total ? ` of ${fmt(pk.mem_total)}` : ""} GB`);
-    if (num(pk.disk_first) && num(pk.disk_last)) bits.push(`free disk <b>${fmt(pk.disk_first)}</b> → <b>${fmt(pk.disk_last)}</b> GB`);
+    if (num(peaks.cpu)) bits.push(`CPU peaked at <b>${fmt(peaks.cpu, 0)}%</b>`);
+    if (num(peaks.gpu)) bits.push(`GPU <b>${fmt(peaks.gpu, 0)}%</b>`);
+    if (num(peaks.mem)) bits.push(`memory <b>${fmt(peaks.mem)}</b>${peaks.mem_total ? ` of ${fmt(peaks.mem_total)}` : ""} GB`);
+    if (num(peaks.disk_first) && num(peaks.disk_last)) bits.push(`free disk <b>${fmt(peaks.disk_first)}</b> → <b>${fmt(peaks.disk_last)}</b> GB`);
     m.innerHTML = bits.map(b => `<span>${b}</span>`).join('<span class="sep">·</span>');
-    head.append(m);
-  }
+    return m;
+  };
+  const others = MS.filter(c => c !== M && c.mac && c.peaks);
+  if (pk && others.length) {   // every computer's line in one cell, the others hidden, so a pick never moves what is below
+    const stack = el("div", "us-stats");
+    stack.append(statsOf(pk), ...others.map(c => { const g = statsOf(c.peaks); g.classList.add("us-ghost"); g.setAttribute("aria-hidden", "true"); return g; }));
+    head.append(stack);
+  } else if (pk) head.append(statsOf(pk));
   const body = el("div", "tl-body"), labels = el("div", "us-labels"), plot = el("div", "tl-plot us-plot"); body.append(labels, plot); S.append(body);
   const svg = P("svg", { class: "tl-svg us-svg", role: "img" }); plot.append(svg);
   const tip = el("div", "tl-tip us-tip"); tip.hidden = true; S.append(tip);
