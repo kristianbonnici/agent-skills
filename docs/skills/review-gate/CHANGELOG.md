@@ -1,5 +1,9 @@
 # review-gate changelog
 
+## 8.0.0 (2026-11-18)
+
+- **GPT-6.2 Sol at medium reasoning replaces GPT-6.1 Terra as the Codex reviewer** (owner, 2026-11-18: "let's swap it in for Terra"), in every place Terra had: the cross reviewer of a Claude change at Standard (and at Light when neither Hydrogen nor a free reviewer answers), Deep's logic reviewer beside Opus, and the reviewer the Claude models replace when Codex is short or limited. On the benchmark Sol at medium found 61 of the 144 defects known before its run and 17 of 20 blockers, where Terra found 42 and 9, Opus 51 and 10, with none of its findings false ([evidence.md](evidence.md#gpt-62-sol-at-medium-2026-11-18)). It runs at medium, the one paid reviewer not at high; set the level when launching it, since Codex defaults Sol to low. A Sol review takes about 2.3 minutes to Terra's 0.9 and more of the Codex plan.
+
 ## 7.1.0 (2026-11-18)
 
 - **The reviewer's brief says to start nothing in the background to wait for.** Nothing resumes a reviewer once it stops, so a report it puts off until a background command finishes is never written. On the benchmark's third run GLM-5.3 did that on 4 of 16 changes: it started the project's tests in the background, wrote that it would report when they finished, and ended with no report, and no limit or error to show for it ([evidence.md](evidence.md#the-benchmarks-third-run-2026-11-18)). The brief still allows running the existing tests when that is quick.

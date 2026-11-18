@@ -32,7 +32,7 @@ Launch every reviewer, a single one too, with mode `"async"`. Then, until each h
 
 | Reviewer | target |
 |---|---|
-| Codex GPT-6.1 Terra | `{providerInstanceId: "codex", model: "gpt-6.1-terra", options: [{id: "reasoningEffort", value: "high"}]}` |
+| Codex GPT-6.2 Sol | `{providerInstanceId: "codex", model: "gpt-6.2-sol", options: [{id: "reasoningEffort", value: "medium"}]}` (set the level: Sol defaults to low) |
 | Claude Sonnet 5.5 | `{providerInstanceId: "claudeAgent", model: "claude-sonnet-5-5", options: [{id: "effort", value: "high"}]}` |
 | Claude Opus 5.5 | `{providerInstanceId: "claudeAgent", model: "claude-opus-5-5", options: [{id: "effort", value: "high"}]}` |
 | DeepSeek V4.1 Flash (free) | `{providerInstanceId: "opencode", model: "opencode/deepseek-v4.1-flash-free", options: [{id: "variant", value: "high"}]}` |
@@ -60,10 +60,10 @@ A subagent can't launch agents of its own: there, use the command-line forms for
   ```
 
   `-p` takes the next word as the prompt, so put it last. In the brief, write the diff as `git diff <base>...<head>`, run from the worktree, not `git -C <path> diff`, and add after its time line: "Run one shell command at a time, without &&, ; or pipes, and only these: git diff, git log, git show, git status, grep, ls, cat, sed -n, find. Read files with your file-reading tool. Don't run tests or scripts: any other command ends your session before you can report." A run that ends within seconds with "a tool required the \"command\" permission" on stderr didn't review: count it as limited.
-- **Codex Terra:** a background Bash command from the worktree:
+- **Codex Sol:** a background Bash command from the worktree:
 
   ```sh
-  codex exec --sandbox read-only --ephemeral -m gpt-6.1-terra -c model_reasoning_effort="high" -C <worktree> "<brief>"
+  codex exec --sandbox read-only --ephemeral -m gpt-6.2-sol -c model_reasoning_effort="medium" -C <worktree> "<brief>"
   ```
 
 - **Free reviewers:** a background Bash command from the worktree, with OpenCode's `plan` agent, which doesn't edit:
@@ -76,7 +76,7 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
 ## In Codex without T3
 
-- **Codex Terra:** `spawn_agent` with model `gpt-6.1-terra` at high reasoning, told it is read-only.
+- **Codex Sol:** `spawn_agent` with model `gpt-6.2-sol` at medium reasoning, told it is read-only.
 - **Claude reviewers:** a background command:
 
   ```sh

@@ -544,7 +544,7 @@ confirmed.
 - High reasoning wasn't run, to spare the owner's Codex allowance; nor was Sol tested against a usage limit
   across a real run of gates.
 
-→ *Open (2026-11-18): the evidence favours Sol at medium as the Codex reviewer; the owner decides.*
+→ *Changed in 8.0.0 (owner, 2026-11-18: "let's swap it in for Terra"): GPT-6.2 Sol at medium is the Codex reviewer, in every place Terra had.*
 
 ## Left out
 

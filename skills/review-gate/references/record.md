@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "7.1.0",
+  "gate": "8.0.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -56,6 +56,8 @@ Add each finding as you settle it, and finish the file before you write the Revi
   ]
 }
 ```
+
+The example's Codex reviewer is GPT-6.1 Terra, Codex's reviewer before 8.0.0; from 8.0.0 it is `Codex GPT-6.2 Sol, medium`.
 
 The gate:
 
