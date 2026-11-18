@@ -385,7 +385,7 @@ def is_run_folder(run):
 
 
 def changed_after(run, moment):
-    """A file in the run folder last changed after moment (a task of a new round at work), as its path
+    """A file in the run folder changed or put there after moment (a task of a new round at work), as its path
     in the run, or None. run.json, pruned.txt and --mark-finished's temporary files don't count, nor
     do folders, whose times change when a prune removes what is in them."""
     for top, dirs, files in os.walk(run, followlinks=False):
@@ -394,7 +394,8 @@ def changed_after(run, moment):
             if top == run and (name in {"run.json", "pruned.txt"} or name.startswith(".run.json.")):
                 continue
             try:
-                if os.lstat(os.path.join(top, name)).st_mtime > moment:
+                st = os.lstat(os.path.join(top, name))
+                if max(st.st_mtime, st.st_ctime) > moment:   # ctime too: a file copied in with its old time kept
                     return os.path.relpath(os.path.join(top, name), run)
             except OSError:
                 continue

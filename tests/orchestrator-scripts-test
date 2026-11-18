@@ -3114,12 +3114,20 @@ os.utime(other_file, (t, t))
 done = run("--apply")                                      # its tasks' files are newer than that finish: a new round
 assert f"{other}: skipped, not finished: G/" in done.stdout and "changed after its run.json's finished time" in done.stdout, done.stdout
 assert exists(f"{other}/G/render.mp4")
-old_t = time.time() - 20 * 86400
+old_t = time.time() - 20 * 86400                          # old times, but put there now, as cp -p does
 for top, _, files in os.walk(os.path.join(root, other)):
     for f in files:
-        os.utime(os.path.join(top, f), (old_t, old_t))
-os.utime(other_file, (t, t))
-done = run("--apply")
+        if f != "run.json":
+            os.utime(os.path.join(top, f), (old_t, old_t))
+minute_ago = time.time() - 60
+data["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(minute_ago))
+write_run(f"{other}/run.json", data)
+os.utime(other_file, (minute_ago, minute_ago))
+done = run("--older-than", "0")
+assert f"{other}: skipped, not finished: G/" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
+done = run("--mark-finished", os.path.join(root, other))  # a finish after them
+assert done.returncode == 0, done.stderr
+done = run("--apply", "--older-than", "0")
 assert done.returncode == 0 and any(l.startswith(f"{other}: ") and "removing" in l for l in done.stdout.splitlines()), done.stdout
 assert not exists(f"{other}/G/render.mp4") and exists(f"{other}/G/handoff.md") and exists(f"{other}/run.json")
 # what counts for nothing, and --mark-finished's refusals
