@@ -4,7 +4,8 @@
 # The launch agent runs this checkout's sync once a day with no input and its output appended to a
 # log; installing is idempotent and takes over a hand-made agent with the same label, keeping it as
 # a backup; the status, and doctor, say when it last ran and warn when that run failed; removing
-# leaves nothing behind; elsewhere it prints the line for cron and changes nothing.
+# leaves no agent behind (the backups stay); elsewhere it prints the line for cron and changes
+# nothing.
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -28,7 +29,8 @@ git config --global init.defaultBranch main
 
 # The stand-in launchctl: what is loaded is a list of labels in a file. Its print has launchd's
 # layout (a tab, then "path = "); with $work/print-no-path it names no file, as a changed format
-# would; with $work/bootout-fails a bootout fails and leaves the agent loaded.
+# would; with $work/bootout-fails a bootout fails and leaves the agent loaded; with
+# $work/bootout-slow, launchd still shows it loaded once right after the bootout.
 mkdir -p "$work/bin"
 cat >"$work/bin/launchctl" <<EOF
 #!/bin/sh
@@ -36,10 +38,11 @@ echo "\$*" >>"$work/launchctl.log"
 touch "$work/loaded"
 case "\$1" in
   print)
+    if [ -e "$work/slow-pending" ]; then rm "$work/slow-pending"; printf 'gui/x = {\n\tpath = %s\n}\n' "\$(cat "$work/loaded-path" 2>/dev/null)"; exit 0; fi
     grep -qxF -- "\$2" "$work/loaded" || exit 113
     if [ -e "$work/print-no-path" ]; then printf 'gui/x = {\n\tstate = waiting\n}\n'; exit 0; fi
     printf 'gui/x = {\n\tactive count = 0\n\tpath = %s\n\tstdin path = /dev/null\n}\n' "\$(cat "$work/loaded-path" 2>/dev/null)" ;;
-  bootout) [ ! -e "$work/bootout-fails" ] || exit 5; grep -qxF -- "\$2" "$work/loaded" || exit 3; grep -vxF -- "\$2" "$work/loaded" >"$work/loaded.next" || true; mv "$work/loaded.next" "$work/loaded" ;;
+  bootout) [ ! -e "$work/bootout-fails" ] || exit 5; [ ! -e "$work/bootout-slow" ] || touch "$work/slow-pending"; grep -qxF -- "\$2" "$work/loaded" || exit 3; grep -vxF -- "\$2" "$work/loaded" >"$work/loaded.next" || true; mv "$work/loaded.next" "$work/loaded" ;;
   bootstrap) [ -f "\$3" ] || exit 5; echo "\$2/com.agent-skills.sync" >>"$work/loaded"; echo "\$3" >"$work/loaded-path" ;;
   *) exit 64 ;;
 esac
@@ -153,6 +156,10 @@ expect "^WARN the last daily sync, started 2026-11-17 08:30:00 +0200, has not fi
 printf 'OK agent-skills is up to date\n' >"$log"
 "$sync" --schedule-status >"$work/out" 2>&1
 expect "^INFO the daily sync's log ($log) was last written .*, by a sync that doesn't mark its runs" "$work/out"
+# Trimmed past a run's first line: its last line still says how it ended.
+printf 'FAIL agent-skills-private: git pull --ff-only failed\nagent-skills sync finished 2026-11-17 08:31:09 +0200: failed (exit 1)\n' >"$log"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the last daily sync, finished 2026-11-17 08:31:09 +0200, failed (exit 1)" "$work/out"
 
 # Doctor reports the schedule and its last run, a failed run as a warning, never as a failure.
 printf 'agent-skills sync started 2026-11-16 08:30:00 +0200\nagent-skills sync finished 2026-11-16 08:30:09 +0200: failed (exit 1)\n' >"$log"
@@ -286,7 +293,7 @@ printf '#!/bin/sh\ncase "$*" in *.agent-skills-sync.*com.agent-skills.sync.plist
 : >"$work/launchctl.log"
 if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 06:00 >"$work/out" 2>&1; then fail "--schedule passed when another file took the agent's place"; fi
 test "$(cat "$plist")" = foreign || fail "the file that appeared was replaced"
-expect "^FAIL could not put $backups/com.agent-skills.sync.plist.before-agent-skills-.* back as $plist, since another file is there now" "$work/out"
+expect "^FAIL could not put $backups/com.agent-skills.sync.plist.before-agent-skills-.* back as $plist (another file is there now, or the folder can.t be written)" "$work/out"
 expect "the agents that were there couldn't go back and stay in $backups, as named above: run scripts/sync --schedule again$" "$work/out"
 refuse "were put back" "$work/out"
 refuse "^bootstrap" "$work/launchctl.log"
@@ -354,15 +361,32 @@ expect "^FAIL launchd still has the daily sync (com.agent-skills.sync) loaded af
 expect "^KEPT the launch agent $plist, unchanged since agent-skills wrote it, at $backups/" "$work/out"
 refuse "^UNSCHEDULED" "$work/out"
 test ! -e "$plist" || fail "the agent's file is still where it loads at the next login"
+# The same with its file gone (in the backup folder now): nothing is put in its place.
+test ! -e "$plist" || fail "the agent's file is still there"
+if "$sync" --schedule 04:00 >"$work/out" 2>&1; then fail "--schedule passed though the old agent stayed loaded"; fi
+expect "^FAIL launchd still has the old daily sync loaded after launchctl bootout, so nothing was changed" "$work/out"
+test ! -e "$plist" || fail "a new agent went in though the old one stayed loaded"
 cp "$work/loaded-agent.plist" "$plist"
 : >"$work/launchctl.log"
 if "$sync" --schedule 04:00 >"$work/out" 2>&1; then fail "--schedule passed though the old agent stayed loaded"; fi
-expect "^FAIL launchd still has the old daily sync loaded after launchctl bootout, so it runs until the next login, when $plist replaces it" "$work/out"
+expect "^FAIL launchd still has the old daily sync loaded after launchctl bootout, so nothing was changed" "$work/out"
 refuse "^bootstrap" "$work/launchctl.log"
-python3 -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb"))["StartCalendarInterval"] == {"Hour": 4, "Minute": 0}' "$plist"
+cmp -s "$plist" "$work/loaded-agent.plist" || fail "the agent's file changed though the old one stayed loaded"
+# Trying again sees the difference and tries again, never "already scheduled".
+if "$sync" --schedule 04:00 >"$work/out" 2>&1; then fail "a second --schedule passed though the old agent stayed loaded"; fi
+refuse "^OK" "$work/out"
+expect "^FAIL launchd still has the old daily sync loaded" "$work/out"
 rm "$work/bootout-fails"
-"$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule failed once bootout worked"; }
-expect "^SCHEDULED" "$work/out"
+"$sync" --schedule 04:00 >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule failed once bootout worked"; }
+expect "^SCHEDULED the daily sync at 04:00" "$work/out"
+"$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed"
+
+# launchd lets go of the agent only a moment after the bootout: it is unloaded all the same.
+touch "$work/bootout-slow"
+"$sync" --unschedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--unschedule failed when launchd let go a moment late"; }
+expect "^UNSCHEDULED the daily sync (com.agent-skills.sync); its log stays" "$work/out"
+rm "$work/bootout-slow"
+"$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed"
 
 # Loaded from a file that no longer carries the label (its label edited by hand): said so, not
 # called gone; unloading leaves that file where it is.
@@ -391,19 +415,49 @@ if "$sync" --unschedule >"$work/out" 2>&1; then fail "--unschedule passed though
 expect "^FAIL launchd has the daily sync (com.agent-skills.sync) loaded, but launchctl print names no file it was loaded from, so it was left loaded" "$work/out"
 refuse "^bootout" "$work/launchctl.log"
 refuse "^OK no daily sync" "$work/out"
+# With a file of its own there, --schedule and --unschedule change nothing either.
+cp "$work/loaded-agent.plist" "$plist"
+: >"$work/launchctl.log"
+if "$sync" --schedule 02:30 >"$work/out" 2>&1; then fail "--schedule passed though it couldn't tell where the agent was loaded from"; fi
+expect "^FAIL launchd has the daily sync (com.agent-skills.sync) loaded, but launchctl print names no file it was loaded from, so nothing was changed" "$work/out"
+if "$sync" --unschedule >"$work/out" 2>&1; then fail "--unschedule passed though it couldn't tell where the agent was loaded from"; fi
+expect "so nothing was changed" "$work/out"
+refuse "^bootout\|^bootstrap" "$work/launchctl.log"
+cmp -s "$plist" "$work/loaded-agent.plist" || fail "the agent changed though launchctl print named no file"
+rm "$plist"
 rm "$work/print-no-path"
 unload_label
 "$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed again"
 
-# The old name can't be removed once the backup link is made (a stand-in rm refuses it): the backup
-# stays, a second name of the same file, and is never deleted, since another file could take the
-# old name in that instant and leave the backup the old agent's only name; nothing is unloaded.
+# Loaded from outside this home's LaunchAgents (another home's): --schedule and --unschedule change
+# nothing and unload nothing, and the status says where it is loaded from.
+cp "$plist" "$work/before-elsewhere.plist"
+echo "/Users/someone-else/Library/LaunchAgents/com.agent-skills.sync.plist" >"$work/loaded-path"
+: >"$work/launchctl.log"
+if "$sync" --schedule 02:00 >"$work/out" 2>&1; then fail "--schedule passed with the agent loaded from another home"; fi
+expect "^FAIL launchd has the daily sync (com.agent-skills.sync) loaded from /Users/someone-else/Library/LaunchAgents/com.agent-skills.sync.plist, outside $HOME/Library/LaunchAgents, so nothing was changed" "$work/out"
+if "$sync" --unschedule >"$work/out" 2>&1; then fail "--unschedule passed with the agent loaded from another home"; fi
+expect "^FAIL launchd has the daily sync (com.agent-skills.sync) loaded from /Users/someone-else" "$work/out"
+refuse "^bootout\|^bootstrap" "$work/launchctl.log"
+cmp -s "$plist" "$work/before-elsewhere.plist" || fail "the agent changed though it was loaded from another home"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the daily sync is loaded from /Users/someone-else/Library/LaunchAgents/com.agent-skills.sync.plist, outside $HOME/Library/LaunchAgents, not from $plist$" "$work/out"
+# Loaded from another file of this home that is gone: the same agent at the label's name isn't "already
+# scheduled"; the status warns, and --schedule loads it from its own file.
+echo "$HOME/Library/LaunchAgents/old-name.plist" >"$work/loaded-path"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN the daily sync is loaded from $HOME/Library/LaunchAgents/old-name.plist, which is gone, not from $plist: scripts/sync --schedule replaces it$" "$work/out"
+: >"$work/launchctl.log"
+"$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule failed with the agent loaded from a file that is gone"; }
+expect "^SCHEDULED" "$work/out"
+expect "^bootstrap gui/$uid $plist$" "$work/launchctl.log"
+test "$(cat "$work/loaded-path")" = "$plist" || fail "not loaded from its own file"
+
+# The old name can't be moved off once the backup link is made (a stand-in mv refuses it): the backup
+# stays, a second name of the same file, and is never deleted; nothing is unloaded.
 cp "$plist" "$work/before-rm.plist"
-printf '#!/bin/sh
-case "$*" in "-f %s") exit 1 ;; esac
-exec /bin/rm "$@"
-' "$plist" >"$work/refuse-bin/rm"
-chmod +x "$work/refuse-bin/rm"
+printf '#!/bin/sh\ncase "$*" in "-n %s "*) exit 1 ;; esac\nexec /bin/mv "$@"\n' "$plist" >"$work/refuse-bin/mv"
+chmod +x "$work/refuse-bin/mv"
 : >"$work/launchctl.log"
 if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 03:00 >"$work/out" 2>&1; then fail "--schedule passed though the old agent couldn't be moved"; fi
 expect "^FAIL could not remove the launch agent $plist once it was linked to $backups/.*, which stays as a second name of the same file$" "$work/out"
@@ -412,20 +466,19 @@ second=$(sed -n "s#^FAIL could not remove the launch agent .* once it was linked
 test "$plist" -ef "$second" || fail "the backup link was deleted"
 cmp -s "$plist" "$work/before-rm.plist" || fail "the agent changed"
 refuse "^bootout" "$work/launchctl.log"
-# Another file takes the old name in that instant (the stand-in rm puts one there): the backup keeps
-# the old agent, and the new file is left alone.
-printf '#!/bin/sh
-case "$*" in "-f %s") echo foreign >"$2.new"; /bin/mv "$2.new" "$2"; exit 0 ;; esac
-exec /bin/rm "$@"
-' "$plist" >"$work/refuse-bin/rm"
+# An editor saves a new file at the old name in that instant (the stand-in mv swaps one in just
+# before the old name is moved off): the backup keeps the old agent, and the editor's file is put
+# back at its name, never deleted.
+printf '#!/bin/sh\ncase "$*" in "-n %s "*) echo "an editor saved this" >"%s.new"; /bin/mv "%s.new" "%s" ;; esac\nexec /bin/mv "$@"\n' "$plist" "$plist" "$plist" "$plist" >"$work/refuse-bin/mv"
 : >"$work/launchctl.log"
 if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 03:00 >"$work/out" 2>&1; then fail "--schedule passed though another file took the old agent's name"; fi
-expect "^FAIL another file appeared at $plist while it was being moved to $backups/.*, which keeps the old one$" "$work/out"
-only_name=$(sed -n "s#^FAIL another file appeared at .* while it was being moved to \(.*\), which keeps the old one#\1#p" "$work/out")
+expect "^FAIL another file appeared at $plist while it was being moved to $backups/.*, which keeps the old one; the file that appeared stays at $plist$" "$work/out"
+only_name=$(sed -n "s#^FAIL another file appeared at .* while it was being moved to \(.*\), which keeps the old one.*#\1#p" "$work/out")
 cmp -s "$only_name" "$work/before-rm.plist" || fail "the old agent is not in its backup"
-test "$(cat "$plist")" = foreign || fail "the file that took the name was changed"
+test "$(cat "$plist")" = "an editor saved this" || fail "the editor's file was lost"
+test -z "$(ls -A "$backups" | grep '^\.moving-')" || fail "a file was left half-moved"
 refuse "^bootout" "$work/launchctl.log"
-rm "$work/refuse-bin/rm"
+rm "$work/refuse-bin/mv"
 mv "$only_name" "$plist"
 "$sync" --schedule >/dev/null 2>&1 || fail "--schedule failed again"
 
@@ -445,6 +498,11 @@ copies_of() {
 }
 hand_made_before=$(copies_of "$work/hand-made.plist")
 [ "$hand_made_before" -ge 2 ] || fail "the hand-made agents' backups are missing"
+# By default one changed or linked in the last day stays: a program may still hold it open.
+"$sync" --schedule 01:00 >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule 01:00 failed"; }
+refuse "^REMOVED" "$work/out"
+test "$(intact_backups)" -gt 3 || fail "a backup made in the last day was removed"
+export AGENT_SKILLS_SYNC_PRUNE_MINUTES=0
 for at in 01:01 01:02 01:03 01:04 01:05; do
   "$sync" --schedule "$at" >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule $at failed"; }
 done
@@ -454,6 +512,18 @@ newest=$(sed -n "s#^KEPT the launch agent .*, unchanged since agent-skills wrote
 test -f "$newest" || fail "the newest backup was removed"
 test "$(copies_of "$work/hand-made.plist")" -eq "$hand_made_before" || fail "a hand-made agent's backup was removed"
 test "$(copies_of "$work/edited.plist")" -ge 1 || fail "the changed agent's backup was removed"
+# Order is by the name's time, then its count within that second (-10 after -3, a name without a
+# count first), and a backup this run made is never removed, even when another run's clock made
+# newer names: here four from a later second, copies of an agent of its own.
+future="$backups/com.agent-skills.sync.plist.before-agent-skills-29991231-235959"
+for suffix in "" -2 -3 -10; do cp "$newest" "$future$suffix"; done
+"$sync" --schedule 01:06 >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule 01:06 failed"; }
+this_run=$(sed -n "s#^KEPT the launch agent .*, unchanged since agent-skills wrote it, at ##p" "$work/out")
+test -f "$this_run" || fail "the backup this run made was removed"
+test -f "$future-10" && test -f "$future-3" || fail "the newest backups by time and count were removed"
+test ! -e "$future-2" && test ! -e "$future" || fail "older backups by count were kept"
+rm "$future-10" "$future-3"
+unset AGENT_SKILLS_SYNC_PRUNE_MINUTES
 
 # The status names where backups are kept, the folder used before this one included.
 mkdir -p "$HOME/.local/state/agent-skills-sync"
@@ -554,7 +624,7 @@ exec 8>&-
 python3 - "$work/log.before" "$log" <<'EOF'
 import sys
 before, after = (open(path, "rb").read() for path in sys.argv[1:])
-tail = before[-100:]
+tail = before[-101:]
 expected = tail[tail.index(b"\n") + 1:] + b"written after\n"
 assert after == expected, (after, expected)
 assert b"\r\n" in after and b"\0" not in after, after
@@ -563,6 +633,17 @@ test "$(ls -i "$log" | awk '{ print $1 }')" = "$log_inode" || fail "trim-log rep
 cp "$log" "$work/log.before"
 AGENT_SKILLS_SYNC_LOG_MAX=400 "$schedule" trim-log || fail "trim-log failed"
 cmp -s "$log" "$work/log.before" || fail "trim-log changed a log under its limit"
+# A cut that falls at a line's start keeps that line whole.
+awk 'BEGIN { for (i = 1; i <= 60; i++) printf "line %04d\n", i }' >"$log"
+AGENT_SKILLS_SYNC_LOG_MAX=400 "$schedule" trim-log || fail "trim-log failed"
+test "$(head -n 1 "$log")" = "line 0051" && test "$(wc -l <"$log" | tr -d ' ')" -eq 10 || fail "a cut at a line's start dropped that line: $(head -n 1 "$log")"
+cp "$work/log.before" "$log"
+# A tail that fails leaves the log as it is, never emptied.
+mkdir -p "$work/fail-bin"
+printf '#!/bin/sh\nexit 1\n' >"$work/fail-bin/tail"
+chmod +x "$work/fail-bin/tail"
+PATH="$work/fail-bin:$PATH" AGENT_SKILLS_SYNC_LOG_MAX=10 "$schedule" trim-log || fail "trim-log failed"
+cmp -s "$log" "$work/log.before" || fail "a failed tail changed the log"
 AGENT_SKILLS_SYNC_LOG_MAX=not-a-number "$schedule" trim-log || fail "trim-log failed"
 cmp -s "$log" "$work/log.before" || fail "a limit that isn't a number trimmed the log"
 mv "$log" "$work/real.log"

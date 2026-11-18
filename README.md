@@ -151,20 +151,23 @@ replaces or removes, a hand-made one included, is unloaded and moved into
 `~/Library/LaunchAgents/.agent-skills-sync-backups/`. That folder is beside the agents, on their
 volume, so the backup is the file itself: a program still writing to the old plist writes into the
 backup. The output names each backup. Hand-made and changed ones stay; of the ones it wrote and
-nobody changed, the newest three stay. Backups made before that folder existed stay in
+nobody changed, the newest three stay, and an older one goes only once nothing has touched it for a
+day. Backups made before that folder existed stay in
 `${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/`, and the status names each folder that holds
 any. If the new agent can't be put in place, the old ones go back but stay unloaded until the next
 login; the output names those put back (one that can't go back stays in the backup folder) and says
 to run `--schedule` again. If launchd still has the old agent loaded after `launchctl bootout`,
-`--schedule` and `--unschedule` fail and give the command to unload it.
+`--schedule` puts the old agents back and changes nothing, and `--unschedule` fails with its file
+already in the backup folder; both give the command to unload it. When launchd has the agent loaded
+from outside this home's `~/Library/LaunchAgents`, or `launchctl print` names no file it was loaded
+from, both change nothing and fail with that command.
 `./scripts/sync --schedule-status` says whether it is installed and how its last run went, and
 `--unschedule` removes it (the log stays), as `./scripts/uninstall --all` does. An agent whose file
 was deleted by hand, or no longer carries the label, stays loaded until the next login: the status
 warns about it, and `--unschedule` unloads it, but only when launchd loaded it from this home's
-`~/Library/LaunchAgents`. When `launchctl print` names no file it was loaded from, nothing is
-unloaded: the status warns, and `--unschedule` fails, with the command to run if it is this home's.
-Past 1 MiB, a scheduled run keeps only the log's last quarter, from its first whole line on.
-Elsewhere, `--schedule` prints the line to add to cron and changes nothing.
+`~/Library/LaunchAgents`; the status also warns when the agent is loaded from another file than
+the one carrying the label. Past 1 MiB, a scheduled run keeps only the log's last quarter, from its
+first whole line on. Elsewhere, `--schedule` prints the line to add to cron and changes nothing.
 
 Doctor warns, without using the network, when a repository's default branch is ahead of or behind
 `origin` as of the last fetch, with the count and the command to run. It also reports the daily
