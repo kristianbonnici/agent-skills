@@ -2,7 +2,7 @@
 
 ## 5.9.1 (2026-11-18)
 
-- **The routing reference names GPT-6.2 Sol at medium as the review gate's first Codex reviewer,** as review-gate 8.0.0 does; computer use stays on GPT-6.1 Terra.
+- **The routing reference names GPT-6.2 Sol at medium as the review gate's first Codex reviewer,** as review-gate 8.0.0 does; computer use stays on GPT-6.1 Terra. Its list of models that default to low in T3 adds `gpt-6.2-sol`. Reviewed with review-gate 8.0.0.
 
 ## 5.9.0 (2026-11-16)
 

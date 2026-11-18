@@ -102,6 +102,8 @@ Every gate ends with a Review section that starts with lines like these, printed
 | Claude Sonnet 5.5, high | 1 | **1** | – | 4 | – | 2 | – |
 | Gemini 4 Hydrogen, high | 1 | – | – | 2 | – | 1 | – |
 
+(The example predates 8.0.0, when Terra was the Codex reviewer.)
+
 *Tagged lower than the reviewer's blocker or follow-up: 1 (1 rejected).*
 
 *Replies on the blockers tagged lower: 1 agreed, 0 held, 0 no answer.*

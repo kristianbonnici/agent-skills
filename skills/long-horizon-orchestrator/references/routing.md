@@ -38,7 +38,7 @@ Medium is the normal level for a well-specified, bounded task; high is for deman
 | An advanced helper step: Gemini 4 Hydrogen first, then Gemini 4 Argon | high: `gemini-4-hydrogen-high`, `gemini-4-argon-high` (see "Advanced helpers" below) |
 
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
-- **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.1-sol` and `gpt-6.1-terra` default to low.
+- **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.2-sol`, `gpt-6.1-sol` and `gpt-6.1-terra` default to low.
 - **In T3, the option names differ by provider:**
   - Claude: `{"id": "effort", "value": "medium" | "high" | "xhigh"}`. Ultracode is an option of its own beside it, `{"id": "ultracode", "value": true}`, only on models that list it, such as Opus and Fable, not Sonnet. Claude's models default to medium in T3, so always pass the effort.
   - Codex: `{"id": "reasoningEffort", "value": "medium" | "high" | "xhigh" | "ultra"}`.

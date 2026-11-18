@@ -76,7 +76,7 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
 ## In Codex without T3
 
-- **Codex Sol:** `spawn_agent` with model `gpt-6.2-sol` at medium reasoning, told it is read-only.
+- **Codex Sol:** `spawn_agent` with model `gpt-6.2-sol` at medium reasoning and `fork_turns: "none"` (`fork_context: false` on builds that have that field instead): a forked history refuses a model of its own and would hand the reviewer your transcript, told it is read-only.
 - **Claude reviewers:** a background command:
 
   ```sh
