@@ -18,7 +18,8 @@ already reported is a reminder in the summary ("VMs still running", "leftovers s
 finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
 the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,
 password dialogs, keep-awake and sampler ("den-mac: disk 120 GB free, …, keep-awake up, sampler up"), read
-from run-watch's state file ("unknown" for a value it couldn't read), or "den-mac not reached over SSH",
+from run-watch's state file (keep-awake or sampler "unknown" when that computer's reading of it couldn't be
+read; a number it couldn't read is left out), or "den-mac not reached over SSH",
 which comes with an "unreachable" line, or "den-mac not checked this wake" when this heartbeat's run-watch
 didn't finish (its "run-watch failed" note says why), so no earlier reading passes for this one.
 
