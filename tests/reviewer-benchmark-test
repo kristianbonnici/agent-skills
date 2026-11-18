@@ -225,6 +225,17 @@ assert "The diff: git diff " in brief and "run from that folder" in brief and "g
 args, stdin = called("exec--sandbox")
 assert args[:4] == ["exec", "--sandbox", "read-only", "--ephemeral"] and args[args.index("-C") + 1] == copy and stdin == 0, args
 assert "You have" not in args[-1] and open(os.path.join(data, "runs", "cx", "one.md")).read() == "the last message"
+assert args[args.index("-c") + 1] == 'model_reasoning_effort="high"', args
+# A model's "effort" sets the reasoning level its tool is given; a level for opencode is refused.
+set_models(cxm={"kind": "codex", "model": "gpt-x", "paid": True, "minutes": 30, "effort": "medium"})
+os.remove(next(os.path.join(work, n) for n in os.listdir(work) if n.startswith("tool-log.exec--sandbox")))
+bench("run", "cxm", "one")
+args, stdin = called("exec--sandbox")
+assert args[args.index("-c") + 1] == 'model_reasoning_effort="medium"', args
+set_models(bad={"kind": "opencode", "model": "p/m", "effort": "medium"})
+assert "effort" in bench("run", "bad", "one").stderr
+set_models(oc={"kind": "opencode", "model": "p/m#high"}, cl={"kind": "claude", "model": "claude-x"},
+           cx={"kind": "codex", "model": "gpt-x", "paid": True, "minutes": 30}, ag={"kind": "agy", "model": "gem-x"})
 # Codex without a last message left no report, whatever its session printed.
 put(env["TOOL_LOG"] + ".no-last", "")
 bench("run", "cx", "two")

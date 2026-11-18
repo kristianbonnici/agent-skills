@@ -84,6 +84,7 @@ Add a `history` line saying what changed and why.
 
 - `kind`: `opencode` (its read-only `plan` agent), `claude` (`claude -p`, with only reading tools allowed and a mode that refuses the rest), `codex` (`codex exec` in its read-only sandbox), `agy` (Antigravity's `plan` mode with its list of allowed commands), or `command` with `argv`, a list in which `{work}` is the copy's folder and `{brief}` the brief (`"stdin": true` sends the brief on standard input instead). A command given as a path is read from the copy's folder, where it runs.
 - `model`: the model's name as that tool takes it, with its reasoning level where the tool has one (`#high` on OpenCode). A model with no such level is named bare: asking for one it lacks fails at once.
+- `effort`: the reasoning level for `claude` and `codex`, `high` when left out, as the gate runs paid reviewers. Set it to try a model at another level, as `"sol-medium": {"kind": "codex", "model": "gpt-6.2-sol", "effort": "medium", "minutes": 30, "paid": true}`. OpenCode's level stays in `model`.
 - `minutes`: its time, from 4 to 120, 15 unless given. `paid`: true leaves the time line out of its brief. `commands`: the number of commands its brief allows, 20 unless given.
 
 ## What a copy leaves out

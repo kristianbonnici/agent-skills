@@ -215,6 +215,11 @@ def models(data):
         seconds = spec.get("seconds", 1)
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
             raise Refused(f'model {name}: "seconds" is a number above 0')
+        effort = spec.get("effort", "high")
+        if not (isinstance(effort, str) and effort.isalpha() and effort.islower()):
+            raise Refused(f'model {name}: "effort" is a reasoning level in lowercase letters, as "medium"')
+        if "effort" in spec and spec["kind"] not in ("claude", "codex"):
+            raise Refused(f'model {name}: "effort" is for claude and codex; opencode names its level in "model"')
     return known
 
 
@@ -324,11 +329,11 @@ def command(spec, text, work, last):
         # owner's that the tool may load.
         # Safe mode leaves out the owner's plugins, hooks and MCP servers, and the copy's CLAUDE.md (the
         # brief names the rules file). The denied --output is how git diff, log and show write a file.
-        return ["claude", "-p", "--safe-mode", "--model", model, "--effort", "high", "--permission-mode", "dontAsk",
+        return ["claude", "-p", "--safe-mode", "--model", model, "--effort", spec.get("effort", "high"), "--permission-mode", "dontAsk",
                 "--setting-sources", "", "--allowedTools", CLAUDE_TOOLS, "--disallowedTools", CLAUDE_DENIED], True
     if kind == "codex":
         return ["codex", "exec", "--sandbox", "read-only", "--ephemeral", "-m", model, "-c",
-                'model_reasoning_effort="high"', "-C", work, "--output-last-message", last, text], False
+                f'model_reasoning_effort="{spec.get("effort", "high")}"', "-C", work, "--output-last-message", last, text], False
     if kind == "agy":
         settings = {"trustedWorkspaces": [work], "permissions": {"allow": [f"command({c})" for c in AGY_ALLOW]}}
         return ["agy", "--mode", "plan", "--model", model, "--print-timeout", f"{spec.get('minutes', 15)}m",

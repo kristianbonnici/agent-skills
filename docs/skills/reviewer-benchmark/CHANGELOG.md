@@ -1,5 +1,9 @@
 # reviewer-benchmark changelog
 
+## 1.2.0 (2026-11-18)
+
+- **A model in `models.json` can set its reasoning level with `effort`,** for `claude` and `codex`; left out, it is `high`, as before. Until now both were fixed at high, so a paid model couldn't be tried at another level (owner, 2026-11-18: GPT-6.2 Sol at medium, as a possible Codex reviewer at lower cost). `effort` on another kind is refused: OpenCode's level is part of the model's name.
+
 ## 1.1.0 (2026-11-18)
 
 - **The brief says to start nothing in the background to wait for,** as the review gate's does from 7.1.0: in the third run GLM-5.3 ended 4 of its 16 reviews waiting on its own background test run, with no report. The reports saved before this version were briefed without it.
