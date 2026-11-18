@@ -822,7 +822,8 @@ def remote_result(name: str, cfg: dict, res: dict) -> tuple[dict | None, str]:
 
 
 def one_time(line: str) -> bool:
-    """A line run-watch says once (a hog, a first VM or leftover, a sleep, a commit, a fall of the disk), as
+    """A line run-watch says once (a hog, a blind task, a first VM or leftover, a sleep, a commit or report, a fall
+    of the disk), as
     against one it says on every wake while it holds (a hang, low disk, a stopped keep-awake, a reminder)."""
     if line.startswith(("hog ", "blind ", "commit ", "merged ", "report ", "disk: free disk fell")):
         return True
@@ -928,7 +929,8 @@ def main(argv: list[str]) -> int:
     acks = state.get("acks") if isinstance(state.get("acks"), dict) else {}
     acks = {n: [a for a in v if isinstance(a, str) and ONCE_ID.fullmatch(a)][-ONCE_KEPT:] for n, v in acks.items()
             if isinstance(v, list) and (n in watch["machines"] if isinstance(watch.get("machines"), dict) else True)}
-    # every computer's, kept across a wake that checks none (an unreadable watch.json), dropped once watch.json lists it no more
+    # every computer's, kept across a wake that checks none (an unreadable watch.json); one watch.json lists no more
+    # isn't sent or used (its saved entry goes with the next wake that checks another computer)
     for name, cfg in remote.items():
         if "error" in cfg:
             continue
@@ -1547,10 +1549,10 @@ def main(argv: list[str]) -> int:
                 every.append(line)
         if "ack" in watch:
             if len(once) > ONCE_KEPT:   # unacknowledged that long: the oldest go, said so
-                every.append(f"note: {len(once) - ONCE_KEPT} older one-time lines (hogs, first VM or leftover lines, sleeps, "
-                             f"commits, reports, disk falls) were dropped unread, since nothing acknowledged them for {ONCE_KEPT} "
-                             "lines: check that computer's VMs and leftovers by hand over SSH; its commits, reports and sleeps are "
-                             f"in {os.path.join(run_dir, TIMES_LOG)} there")
+                every.append(f"note: {len(once) - ONCE_KEPT} older one-time lines (hogs, blind tasks, first VM or leftover "
+                             "lines, sleeps, commits, reports, disk falls) were dropped unread, since nothing acknowledged them for "
+                             f"{ONCE_KEPT} lines: check that computer's hogs, VMs and leftovers by hand over SSH, and read its tasks' "
+                             f"threads; its commits, reports and sleeps are in {os.path.join(run_dir, TIMES_LOG)} there")
             once = once[-ONCE_KEPT:]
             state["once"], state["once_seq"] = once, seq
         else:
