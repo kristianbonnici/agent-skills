@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 8.0.0
+  version: 8.1.0
 ---
 
 # Review Gate
@@ -35,14 +35,14 @@ Reviewers come from four families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.2
 
 Claude Fable 5.2 never reviews, by default or as a replacement: it costs about twice Opus 5.5 and has a weekly limit of its own, kept for the demanding tasks the owner chose it for. A change Fable wrote counts as Opus's below: where Opus's change gets Sonnet 5.5, so does Fable's, and "your own model in a fresh context" means Opus 5.5.
 
-- **The cross reviewer** is the paid reviewer of another family: Codex's GPT-6.2 Sol for a change Claude wrote, Claude Sonnet 5.5 for a change any other family wrote.
-- **Codex is short** when your brief says so, or when a Codex reviewer fails on a usage limit. Then a Claude change's cross reviewer is the Claude model you aren't (Sonnet for Opus's change, Opus for Sonnet's), and a free reviewer joins to bring a second family back.
+- **The cross reviewer** is the paid reviewer of another family: Codex's GPT-6.2 Sol for a change any family but Codex wrote (Claude, Gemini or a free model), Claude Sonnet 5.5 for a change Codex wrote.
+- **Codex is short** when your brief says so, or when a Codex reviewer fails on a usage limit. Then a Claude change's cross reviewer is the Claude model you aren't (Sonnet for Opus's change, Opus for Sonnet's), and a free reviewer joins to bring a second family back; any other change's is Sonnet.
 
 | Level | Round 1 |
 |---|---|
 | Light | Gemini 4 Hydrogen, while Antigravity's Gemini 5-hour window is under about 60%, unless a Gemini model wrote the change. Otherwise, or when it is limited, one free reviewer. If none answers, the cross reviewer. |
 | Standard | The cross reviewer and Hydrogen. When Codex is short: its Claude substitute and Hydrogen, plus one free reviewer if one answers. |
-| Deep | Two paid reviewers with different focus, plus Hydrogen and one free reviewer if one answers (focus for both: an open look). For a Claude change: Sol (logic, security, failure paths) and Opus (tests, docs, what the user sees, the project's rules), whichever Claude model wrote it: for Opus's own change, Opus as a new agent that gets the brief and nothing else of yours; when Codex is short, Opus and Sonnet split those. For any other change: Opus (logic, security, failure paths) and Sonnet (tests, docs, what the user sees). |
+| Deep | Two paid reviewers with different focus, plus Hydrogen and one free reviewer if one answers (focus for both: an open look). For a change any family but Codex wrote: Sol (logic, security, failure paths) and Opus (tests, docs, what the user sees, the project's rules), whichever model wrote it: for Opus's own change, Opus as a new agent that gets the brief and nothing else of yours; when Codex is short, Opus and Sonnet split those. For a change Codex wrote: Opus (logic, security, failure paths) and Sonnet (tests, docs, what the user sees). |
 
 Limits:
 
@@ -55,7 +55,7 @@ Limits:
   - A model that is slow or doesn't answer is limited on its own: the next model in the order still gets its turn, since slowness is often one model's, not the tier's.
   - A Go model that "requires Global regions" isn't limited, just unavailable: try the other.
   - Before you launch a Go model, read Go's windows ([references/launching.md](references/launching.md)). Past about 85% of any of them, Go counts as limited.
-- **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Sol by the Claude model you aren't, or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.
+- **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Sol by the Claude model you aren't (Sonnet when no Claude model wrote the change), or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.
 
 ## 3. Brief them
 

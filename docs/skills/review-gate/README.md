@@ -13,8 +13,8 @@ Version and history: [CHANGELOG.md](CHANGELOG.md). Why it works this way: [evide
 flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
   level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
-  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Sol for a Claude change,<br/>Sonnet for any other,<br/>+ Gemini 4 Hydrogen"]
-  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for a Claude change<br/>(Opus and Sonnet when Codex is short),<br/>Opus and Sonnet for any other,<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer if one answers"]
+  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Sol for any change but Codex's,<br/>Sonnet for Codex's,<br/>+ Gemini 4 Hydrogen"]
+  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for any change but Codex's<br/>(Opus and Sonnet when Codex is short),<br/>Opus and Sonnet for Codex's,<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer if one answers"]
   light -->|neither Hydrogen nor a free model answers| standard
   standard -.->|Codex short| sub["Claude substitute<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
@@ -35,7 +35,7 @@ flowchart TD
 |---|---|---|
 | Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
 | Standard | the cross reviewer and Gemini 4 Hydrogen (Codex short: its Claude substitute, Hydrogen and a free reviewer); a free reviewer in Hydrogen's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
-| Deep | two paid reviewers, different focus (Sol and Opus for a Claude change, or Opus and Sonnet when Codex is short; Opus and Sonnet for any other), + Gemini 4 Hydrogen and a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Opus and Sonnet when Codex is short; Opus and Sonnet for Codex's), + Gemini 4 Hydrogen and a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
 - **Paid reviewers:** Codex's GPT-6.2 Sol at medium reasoning, and Claude Sonnet 5.5 and Opus 5.5 at high.
   Sol replaced GPT-6.1 Terra in 8.0.0: on the benchmark it found 61 of the 144 defects known before its run
@@ -45,7 +45,7 @@ flowchart TD
   change, Opus as a new agent with the brief alone. On the benchmark Opus found 10.5 of the 20 blockers
   and Sonnet 5, and Terra with Opus found 69 defects and 14 blockers where Terra with Sonnet found 63 and
   11 ([evidence.md](evidence.md#opus-as-deeps-claude-reviewer-2026-11-18)). Sonnet stays the cross reviewer
-  of a change another family wrote, Opus's partner at Deep there, and the Claude substitute for Opus's
+  of a change Codex wrote, Opus's partner at Deep there, and the Claude substitute for Opus's
   change when Codex is short.
 - **Codex is preferred but never required:** when it is short, a Claude model other than the change's
   author takes its place, and a free reviewer brings back a second family.

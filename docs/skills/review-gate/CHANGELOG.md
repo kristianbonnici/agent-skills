@@ -1,5 +1,10 @@
 # review-gate changelog
 
+## 8.1.0 (2026-11-18)
+
+- **Sol is the cross reviewer of any change Codex didn't write** (owner, 2026-11-18: "yes to this"): a change Gemini or a free model wrote now gets Sol at Standard, and Sol and Opus at Deep, where it had Sonnet, and Opus and Sonnet. On the benchmark Sol at medium found 61 of 144 defects known before its run, Sonnet 45 of them ([evidence.md](evidence.md#gpt-62-sol-at-medium-2026-11-18)); such changes are rare, so it costs little of the Codex plan. A change Codex wrote keeps Sonnet, and Opus and Sonnet at Deep. When Codex is short, such a change's cross reviewer is Sonnet. Light is unchanged.
+- **Not gated** (owner, 2026-11-18: "do not run this change through any gates itself").
+
 ## 8.0.0 (2026-11-18)
 
 - **GPT-6.2 Sol at medium reasoning replaces GPT-6.1 Terra as the Codex reviewer** (owner, 2026-11-18: "let's swap it in for Terra"), in every place Terra had: the cross reviewer of a Claude change at Standard (and at Light when neither Hydrogen nor a free reviewer answers), Deep's logic reviewer beside Opus, and the reviewer the Claude models replace when Codex is short or limited. On the benchmark Sol at medium found 61 of the 144 defects known before its run and 17 of 20 blockers, where Terra found 42 and 9, Opus 51 and 10, with none of its findings false ([evidence.md](evidence.md#gpt-62-sol-at-medium-2026-11-18)). It runs at medium, the one paid reviewer not at high; set the level when launching it, since Codex defaults Sol to low. A Sol review takes about 2.3 minutes to Terra's 0.9 and more of the Codex plan.
