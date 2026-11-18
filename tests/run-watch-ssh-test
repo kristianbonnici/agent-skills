@@ -266,7 +266,8 @@ sys.exit(done.returncode)
     subprocess.run(git + ["commit", "-qm", "a change whose result was lost"], cwd=wt_b, check=True)
     put_json(den_procs, json.load(open(den_procs)) + [{"pid": 783, "start": now - 30, "args": f"sleep 600 {den_run}/D/other"}])
     lost = subprocess.run([sys.executable, "-I", run_watch, den_run, "--as", "den-mac", "--watch", "-"],
-                          input=json.dumps({"started": stamp(started), "tasks": watch["tasks"]}), capture_output=True,
+                          input=json.dumps({"started": stamp(started), "tasks": watch["tasks"],
+                                            "ack": state()["acks"]["den-mac"]}), capture_output=True,
                           text=True, env=dict(env, HOME=den_home, RUN_WATCH_COMPUTER="den-mac", FAKE_PS_FILE=den_procs,
                                               RUN_WATCH_DISK_FREE_GB="15", RUN_WATCH_PMSET=os.path.join(bin_dir, "den-pmset")))
     assert lost.returncode == 0 and "a change whose result was lost" in lost.stdout and "leftover 783" in lost.stdout, lost
@@ -280,6 +281,28 @@ sys.exit(done.returncode)
     assert not [l for l in out if "whose result was lost" in l or l.startswith("leftover 783 on den-mac sleep: task")], out
     assert [l for l in out if l == "leftover 783 on den-mac sleep: still running"], out
     assert open(os.path.join(studio_run, "times.log")).read().splitlines() == times   # once only
+    # a wake that can't read watch.json keeps what each computer last delivered, so nothing comes twice after it
+    write(os.path.join(wt_b, "j.txt"), "v\n")
+    subprocess.run(git + ["add", "j.txt"], cwd=wt_b, check=True)
+    subprocess.run(git + ["commit", "-qm", "a change before a bad watch.json"], cwd=wt_b, check=True)
+    out, _, _ = watch_run()
+    assert [l for l in out if "before a bad watch.json" in l] and state()["acks"]["den-mac"], (out, state())
+    open(watch_json, "w").write("{not json")
+    subprocess.run([sys.executable, "-I", run_watch, studio_run], capture_output=True, text=True, env=env, timeout=120)
+    out, _, _ = watch_run()
+    assert not [l for l in out if "before a bad watch.json" in l], out
+    # a watch.json with no "ack" (an older orchestrator's, or a hand run) gets every line in "lines", as before
+    write(os.path.join(wt_b, "i.txt"), "w\n")
+    subprocess.run(git + ["add", "i.txt"], cwd=wt_b, check=True)
+    subprocess.run(git + ["commit", "-qm", "a change for an older orchestrator"], cwd=wt_b, check=True)
+    old_way = subprocess.run([sys.executable, "-I", run_watch, den_run, "--as", "den-mac", "--watch", "-"],
+                             input=json.dumps({"started": stamp(started), "tasks": watch["tasks"]}), capture_output=True,
+                             text=True, env=dict(env, HOME=den_home, RUN_WATCH_COMPUTER="den-mac", FAKE_PS_FILE=den_procs,
+                                                 RUN_WATCH_DISK_FREE_GB="15", RUN_WATCH_PMSET=os.path.join(bin_dir, "den-pmset")))
+    result = json.loads(old_way.stdout.split("run-watch-remote ", 1)[1])
+    assert result["once"] == [] and [l for l in result["lines"] if "a change for an older orchestrator" in l], result
+    out, _, _ = watch_run()   # and what it said isn't said again here
+    assert not [l for l in out if "for an older orchestrator" in l], out
 
     # 3. Reachable and clean: the call got its result, the keep-awake runs, the dialog, the leftover and C are
     # gone, the disk has room. run-watch prints nothing; the heartbeat says nothing to act on, with den-mac's state.
@@ -384,6 +407,11 @@ sys.exit(done.returncode)
           "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"times\": [\"commit B \\\\ud800\"]}')\n", 0o755)
     out, made, _ = watch_run()
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
+    # a result from 5.10.0, with its one-time lines in "lines" and no "once": printed as they come
+    write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nprint('run-watch-remote {\"protocol\": 1, "
+          "\"computer\": \"den-mac\", \"lines\": [\"hog 5 busy: 90% of a core\"], \"blind\": []}')\n", 0o755)
+    out, made, _ = watch_run()
+    assert out == ["hog 5 on den-mac busy: 90% of a core"], out
     # a summary value it doesn't show (a lone surrogate, a list) is left out, and the heartbeat prints its line
     write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nprint('run-watch-remote {\"protocol\": 1, "
           "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"summary\": {\"keep_awake\": \"\\\\ud800\", "
@@ -436,6 +464,13 @@ sys.exit(done.returncode)
     # (a first wake whose run-watch fails still names each computer watch.json reaches over SSH)
     hb = beat({"HEARTBEAT_RUN_WATCH": os.path.join(bin_dir, "broken-run-watch")})
     assert "den-mac not checked this wake" in hb[0] and "run-watch failed" in "\n".join(hb), hb
+    # and never this computer, when watch.json lists it too but leaves out its own "computer"
+    no_name = dict(watch, machines=dict(watch["machines"], **{"studio-mac": {"reach": "ssh studio"}}))
+    no_name.pop("computer")
+    put_json(watch_json, no_name)
+    hb = subprocess.run([sys.executable, "-I", heartbeat, studio_run, "--no-ledger"], capture_output=True, text=True,
+                        env=dict(env, HEARTBEAT_RUN_WATCH=os.path.join(bin_dir, "broken-run-watch")), timeout=60).stdout.splitlines()
+    assert "den-mac not checked this wake" in hb[0] and "studio-mac" not in hb[0], hb
     watch["machines"]["den-mac"] = {"environmentId": "env-den", "thread": "thread-den", "reach": "thread"}
     out, made, _ = watch_run()
     assert made == [] and sorted(l.split(" (")[0] for l in out) == ["blind B"] and "(claude-code, on den-mac)" in out[0], out

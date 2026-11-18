@@ -28,13 +28,15 @@ processes, files and logs, and keeps its state there as a local run does; it pri
 "run-watch-remote <JSON>" (its lines, its blind tasks, a summary for the heartbeat and the end of
 its times.log, whose lines this times.log lacks are added here, so a time a lost result carried still
 arrives). Its one-time lines (a hog, a first VM or leftover line, a sleep, a commit) stay pending
-there, each with an ID, and come with every result until a later wake's watch.json names them in "ack",
-which this run-watch sends once the result carrying them arrived, so a result lost to a dropped connection
-loses none and none is printed twice. It runs each command there in a session of its own, stops itself
-without saving its state (exit 70) 10 seconds before the ssh call's limit less its 15-second connect,
-killing the process group of the command it waits on (what that started included), and saves its state
-only once its result line has gone out; a reading it can't take there (swap, the load) goes as null. Each of its
-lines is printed here with " on <computer>" after its word (and the task or process it names):
+there, each with an ID, and come with every result until a later wake's watch.json for it (the one
+this run-watch sends there on standard input, never the run's own) names them in "ack", which this
+run-watch does once the result carrying them arrived, so a result lost to a dropped connection loses
+none and none is printed twice (the newest 300 are kept, so only a computer unacknowledged that long
+loses its oldest; a watch.json with no "ack" gets them in "lines", as before). It runs each command
+there in a session of its own, stops itself without saving its state (exit 70) 10 seconds before the
+ssh call's limit less its 15-second connect, killing the process group of the command it waits on
+(what that started included), and saves its state only once its result line has gone out; a reading it
+can't take there (swap, the load) goes as null. Each of its lines is printed here with " on <computer>" after its word (and the task or process it names):
 "hang B on den-mac: …", "disk on den-mac: …", whose process IDs are that computer's. The entry's
 optional keys: "run_watch", the path of run-watch there (default: the first of
 ~/.claude/skills, ~/.agents/skills and ~/.codex/skills/long-horizon-orchestrator/scripts/run-watch
@@ -179,6 +181,8 @@ INSTALLED = (".claude/skills", ".agents/skills", ".codex/skills")   # where the 
 # The words whose line names a task or a process right after the word: another computer's name goes after it.
 NAMED = {"hang", "idle", "approval", "quiet", "blind", "commit", "merged", "report", "hog", "vm", "leftover", "slept"}
 TIMES_SENT_BYTES = 200_000   # the end of times.log there that comes back with each check
+ONCE_KEPT = 300              # one-time lines kept pending there; past that the oldest go (a computer unacknowledged that long)
+ONCE_ID = re.compile(r"\d{1,12}-\d{1,9}")   # "<the run's start>-<its sequence number>"
 
 WAIT_TOOL = re.compile(r"(^|__)(t3_thread_wait|t3_background_wait|delegate_task|task_status|wait_agent|"
                        r"wait|Agent|Task|TaskOutput|Workflow|spawn_agent|resume_agent)$")
@@ -768,7 +772,8 @@ def usable(payload, name: str) -> bool:
     return (isinstance(payload, dict) and payload.get("protocol") == REMOTE_PROTOCOL
             and str(payload.get("computer", "")).casefold() == name.casefold() and strings(payload.get("lines"))
             and strings(payload.get("blind", [])) and strings(payload.get("times", []))
-            and isinstance(payload.get("once", []), list) and all(strings(p) and len(p) == 2 for p in payload.get("once", []))
+            and isinstance(payload.get("once", []), list) and len(payload.get("once", [])) <= ONCE_KEPT
+            and all(strings(p) and len(p) == 2 and ONCE_ID.fullmatch(p[0]) for p in payload.get("once", []))
             and isinstance(payload.get("summary", {}), dict))
 
 
@@ -821,8 +826,8 @@ def one_time(line: str) -> bool:
     against one it says on every wake while it holds (a hang, low disk, a stopped keep-awake, a reminder)."""
     if line.startswith(("hog ", "blind ", "commit ", "merged ", "report ", "disk: free disk fell")):
         return True
-    if line.startswith(("vm ", "leftover ")):
-        return not re.match(r"\S+ \d+ [^:]*: still running", line)
+    if line.startswith(("vm ", "leftover ")):   # its reminder ends ": still running" or ": still running, <memory>"
+        return not re.search(r": still running(, [^:]*)?$", line)
     return bool(re.match(r"slept \S+ (?!- )\S+ \(", line))
 
 
@@ -921,7 +926,8 @@ def main(argv: list[str]) -> int:
     # Each other computer reached over SSH is checked by its own run-watch while this one checks here.
     jobs = {}
     acks = state.get("acks") if isinstance(state.get("acks"), dict) else {}
-    acks = {n: [a for a in v if isinstance(a, str)] for n, v in acks.items() if n in remote and isinstance(v, list)}
+    acks = {n: [a for a in v if isinstance(a, str) and ONCE_ID.fullmatch(a)][-ONCE_KEPT:] for n, v in acks.items()
+            if isinstance(v, list)}   # every computer's, kept across a wake that checks none (an unreadable watch.json)
     for name, cfg in remote.items():
         if "error" in cfg:
             continue
@@ -1484,10 +1490,10 @@ def main(argv: list[str]) -> int:
                 blind_told.add(tid)
     if machines_seen:
         state["machines"] = machines_seen
-        state["acks"] = new_acks
     else:
         state.pop("machines", None)
-        state.pop("acks", None)
+    if new_acks:   # what each other computer last delivered, until it next delivers
+        state["acks"] = new_acks
     if remote_times:   # one that couldn't be added comes again with the next check
         try:
             with open(os.path.join(run_dir, TIMES_LOG), "a", encoding="utf-8") as fh:
@@ -1523,20 +1529,30 @@ def main(argv: list[str]) -> int:
             pass
         # One-time lines stay pending, with an ID, until the orchestrator names them in a later wake's "ack"
         # (it does once the result carrying them arrived); every-wake lines go as they are.
-        ack = {a for a in watch.get("ack") or [] if isinstance(a, str)}
-        once = [p for p in state.get("once", []) if isinstance(p, list) and len(p) == 2 and p[0] not in ack]
-        seq = state.get("once_seq") if isinstance(state.get("once_seq"), int) else 0
-        every = []
-        for line in lines:
+        # A watch.json with no "ack" (an orchestrator's run-watch older than 5.10.1, or a hand run) gets every
+        # line in "lines", as before, and leaves the pending ones as they are.
+        ack = {a for a in watch["ack"] if isinstance(a, str)} if isinstance(watch.get("ack"), list) else set()
+        once = [p for p in (state.get("once") if isinstance(state.get("once"), list) else [])
+                if isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p) and p[0] not in ack]
+        seq = state.get("once_seq") if isinstance(state.get("once_seq"), int) and not isinstance(state.get("once_seq"), bool) else 0
+        every = [] if "ack" in watch else lines
+        for line in lines if "ack" in watch else []:
             if one_time(line):
                 seq += 1
                 once.append([f"{int(t0)}-{seq}", line])
             else:
                 every.append(line)
-        state["once"], state["once_seq"] = once[-300:], seq
+        if "ack" in watch:
+            if len(once) > ONCE_KEPT:   # unacknowledged that long: the oldest go, said so
+                every.append(f"note: {len(once) - ONCE_KEPT} older one-time lines from here were dropped unread (nothing "
+                             f"acknowledged them for {ONCE_KEPT} lines); their times are in {os.path.join(run_dir, TIMES_LOG)} here")
+            once = once[-ONCE_KEPT:]
+            state["once"], state["once_seq"] = once, seq
+        else:
+            once = []
         try:   # out to the orchestrator before the state marks anything told; if it can't be, nothing is saved
             print(REMOTE_MARK + json.dumps({"protocol": REMOTE_PROTOCOL, "computer": as_computer, "lines": every,
-                                            "once": state["once"], "blind": sorted(blind_told), "summary": summary,
+                                            "once": once, "blind": sorted(blind_told), "summary": summary,
                                             "times": times}), flush=True)
         except OSError:
             return 0

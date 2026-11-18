@@ -17,8 +17,9 @@ only its thread shows an approval prompt or a turn that ended; a virtual machine
 already reported is a reminder in the summary ("VMs still running", "leftovers still running"), not a
 finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
 the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,
-password dialogs, keep-awake and sampler ("den-mac: disk 120 GB free, …, keep-awake up, sampler up"), read
-from run-watch's state file (any of them "unknown" when that computer couldn't take or send it), or
+password dialogs (when there are any), keep-awake and sampler ("den-mac: disk 120 GB free, …, keep-awake
+up, sampler up"), read from run-watch's state file (disk, swap, load, keep-awake or sampler "unknown" when
+that computer couldn't take or send it), or
 "den-mac not reached over SSH", which comes with an "unreachable" line, or "den-mac not checked this wake"
 when this heartbeat's run-watch didn't finish (its "run-watch failed" note says why), so no earlier reading
 passes for this one; every computer watch.json's "machines" reaches over SSH is named, a first wake's too.
@@ -49,6 +50,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -224,7 +226,9 @@ def main(argv):
     if reminders["leftover"]:
         bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
     # every computer watch.json reaches over SSH, so one this wake's run-watch never got to is still named
-    here = str(watch.get("computer") or "").casefold()
+    here = str(watch.get("computer") or os.environ.get("RUN_WATCH_COMPUTER")   # this computer, as run-watch names it
+               or run(["scutil", "--get", "LocalHostName"], timeout=10).strip() or socket.gethostname().split(".")[0]
+               ).casefold() if watch.get("machines") else ""
     expected = {str(n) for n, e in (watch.get("machines") or {}).items() if isinstance(e, dict) and isinstance(e.get("reach"), str)
                 and e["reach"].split()[:1] == ["ssh"] and str(n).casefold() != here} if isinstance(watch.get("machines"), dict) else set()
     for name in sorted(expected | set(machines)):
