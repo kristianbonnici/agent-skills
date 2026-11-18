@@ -303,6 +303,22 @@ sys.exit(done.returncode)
     assert result["once"] == [] and [l for l in result["lines"] if "a change for an older orchestrator" in l], result
     out, _, _ = watch_run()   # and what it said isn't said again here
     assert not [l for l in out if "for an older orchestrator" in l], out
+    # there, a damaged pending entry is left out, and past 300 the oldest go, said in a note
+    den_state_path = os.path.join(den_run, "run-watch.state.json")
+    st = json.load(open(den_state_path))
+    st["once"] = [["x", "hog 5 busy: damaged"]] + [[f"1-{n}", f"commit B old {n}"] for n in range(305)]
+    json.dump(st, open(den_state_path, "w"))
+    as_env = dict(env, HOME=den_home, RUN_WATCH_COMPUTER="den-mac", FAKE_PS_FILE=den_procs, RUN_WATCH_DISK_FREE_GB="15",
+                  RUN_WATCH_PMSET=os.path.join(bin_dir, "den-pmset"))
+    capped = subprocess.run([sys.executable, "-I", run_watch, den_run, "--as", "den-mac", "--watch", "-"],
+                            input=json.dumps({"started": stamp(started), "tasks": watch["tasks"], "ack": []}),
+                            capture_output=True, text=True, env=as_env)
+    result = json.loads(capped.stdout.split("run-watch-remote ", 1)[1])
+    assert len(result["once"]) == 300 and result["once"][0][0] != "x" and result["once"][-1][1] == "commit B old 304", result["once"][:2]
+    assert [l for l in result["lines"] if l.startswith("note: 5 older one-time lines") and "by hand over SSH" in l], result["lines"]
+    subprocess.run([sys.executable, "-I", run_watch, den_run, "--as", "den-mac", "--watch", "-"], capture_output=True, env=as_env,
+                   input=json.dumps({"started": stamp(started), "tasks": watch["tasks"], "ack": [i for i, _ in result["once"]]}), text=True)
+    assert json.load(open(den_state_path))["once"] == [], "acknowledged lines stay pending"
 
     # 3. Reachable and clean: the call got its result, the keep-awake runs, the dialog, the leftover and C are
     # gone, the disk has room. run-watch prints nothing; the heartbeat says nothing to act on, with den-mac's state.
@@ -407,6 +423,12 @@ sys.exit(done.returncode)
           "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"times\": [\"commit B \\\\ud800\"]}')\n", 0o755)
     out, made, _ = watch_run()
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
+    # a result whose pending lines it can't take (an ID of another shape, or more than 300) is one plain line
+    for once in ([["x", "hog 5 busy: 90% of a core"]], [[f"1-{n}", "commit B x"] for n in range(301)]):
+        write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nimport json\nprint('run-watch-remote ' + "
+              f"json.dumps({{'protocol': 1, 'computer': 'den-mac', 'lines': [], 'blind': [], 'once': {once!r}}}))\n", 0o755)
+        out, made, _ = watch_run()
+        assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
     # a result from 5.10.0, with its one-time lines in "lines" and no "once": printed as they come
     write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nprint('run-watch-remote {\"protocol\": 1, "
           "\"computer\": \"den-mac\", \"lines\": [\"hog 5 busy: 90% of a core\"], \"blind\": []}')\n", 0o755)

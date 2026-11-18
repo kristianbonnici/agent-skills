@@ -927,7 +927,8 @@ def main(argv: list[str]) -> int:
     jobs = {}
     acks = state.get("acks") if isinstance(state.get("acks"), dict) else {}
     acks = {n: [a for a in v if isinstance(a, str) and ONCE_ID.fullmatch(a)][-ONCE_KEPT:] for n, v in acks.items()
-            if isinstance(v, list)}   # every computer's, kept across a wake that checks none (an unreadable watch.json)
+            if isinstance(v, list) and (n in watch["machines"] if isinstance(watch.get("machines"), dict) else True)}
+    # every computer's, kept across a wake that checks none (an unreadable watch.json), dropped once watch.json lists it no more
     for name, cfg in remote.items():
         if "error" in cfg:
             continue
@@ -1533,8 +1534,10 @@ def main(argv: list[str]) -> int:
         # line in "lines", as before, and leaves the pending ones as they are.
         ack = {a for a in watch["ack"] if isinstance(a, str)} if isinstance(watch.get("ack"), list) else set()
         once = [p for p in (state.get("once") if isinstance(state.get("once"), list) else [])
-                if isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p) and p[0] not in ack]
-        seq = state.get("once_seq") if isinstance(state.get("once_seq"), int) and not isinstance(state.get("once_seq"), bool) else 0
+                if isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p) and ONCE_ID.fullmatch(p[0])
+                and p[0] not in ack]   # only what the orchestrator's run-watch will read (a damaged entry is left out)
+        seq = state.get("once_seq")
+        seq = seq if isinstance(seq, int) and not isinstance(seq, bool) and 0 <= seq < 10 ** 8 else 0   # IDs stay ONCE_ID-shaped
         every = [] if "ack" in watch else lines
         for line in lines if "ack" in watch else []:
             if one_time(line):
@@ -1544,8 +1547,10 @@ def main(argv: list[str]) -> int:
                 every.append(line)
         if "ack" in watch:
             if len(once) > ONCE_KEPT:   # unacknowledged that long: the oldest go, said so
-                every.append(f"note: {len(once) - ONCE_KEPT} older one-time lines from here were dropped unread (nothing "
-                             f"acknowledged them for {ONCE_KEPT} lines); their times are in {os.path.join(run_dir, TIMES_LOG)} here")
+                every.append(f"note: {len(once) - ONCE_KEPT} older one-time lines (hogs, first VM or leftover lines, sleeps, "
+                             f"commits, reports, disk falls) were dropped unread, since nothing acknowledged them for {ONCE_KEPT} "
+                             "lines: check that computer's VMs and leftovers by hand over SSH; its commits, reports and sleeps are "
+                             f"in {os.path.join(run_dir, TIMES_LOG)} there")
             once = once[-ONCE_KEPT:]
             state["once"], state["once_seq"] = once, seq
         else:
