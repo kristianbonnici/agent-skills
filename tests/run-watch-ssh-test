@@ -288,16 +288,24 @@ sys.exit(done.returncode)
     hb = beat()
     assert len(hb) == 1 and "nothing to act on" in hb[0] and "running B" in hb[0], hb
     assert "den-mac: disk 138 GB free, swap 0.0 GB" in hb[0] and "keep-awake up, sampler up" in hb[0], hb
-    # with no task there any more, a process working in the run directory there is still found, by its folder
+    # with no task there any more, a process working in the run directory there is still found, by its folder;
+    # and one working in merged task D's worktree, by that folder, naming neither
+    wt_d = watch["tasks"]["D"]["worktree"]
+    os.makedirs(wt_d)
     sleeper = subprocess.Popen(["sleep", "600"], cwd=den_run)
+    server = subprocess.Popen(["sleep", "601"], cwd=wt_d)
     try:
-        put_json(den_procs, json.load(open(den_procs)) + [{"pid": sleeper.pid, "start": time.time() - 5, "args": "sleep 600"}])
+        put_json(den_procs, json.load(open(den_procs)) + [{"pid": sleeper.pid, "start": time.time() - 5, "args": "sleep 600"},
+                                                          {"pid": server.pid, "start": time.time() - 5, "args": "sleep 601"}])
         out, _, _ = watch_run(data=dict(watch, tasks={}))
         assert [l for l in out if l.startswith(f"leftover {sleeper.pid} on den-mac sleep: it works in or names the run directory")], out
+        out, _, _ = watch_run()
+        assert [l for l in out if l.startswith(f"leftover {server.pid} on den-mac sleep: task D's (merged)")], out
     finally:
-        sleeper.kill()
-        sleeper.wait()
-    put_json(den_procs, [p for p in json.load(open(den_procs)) if p["pid"] != sleeper.pid])
+        for p in (sleeper, server):
+            p.kill()
+            p.wait()
+    put_json(den_procs, [p for p in json.load(open(den_procs)) if p["pid"] not in (sleeper.pid, server.pid)])
 
     # the heartbeat whose run-watch failed doesn't give that computer's last reading as this wake's
     write(os.path.join(bin_dir, "broken-run-watch"), "#!/bin/sh\nexit 3\n", 0o755)
@@ -330,24 +338,29 @@ sys.exit(done.returncode)
 
     # A session that stays open after the result came: the result is used, with a note.
     watch["machines"]["den-mac"]["reach"] = "ssh linger"
-    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "20"})
-    assert [l for l in out if l.startswith("note on den-mac: ssh linger brought run-watch's result but didn't end within 20 s")], out
+    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "35"})
+    assert [l for l in out if l.startswith("note on den-mac: ssh linger brought run-watch's result but didn't end within 35 s")], out
     assert not [l for l in out if l.startswith(("unreachable", "blind"))] and took < 60, (out, took)
     # run-watch there that runs out of its time (a pmset there that hangs) stops itself first, saving nothing
     watch["machines"]["den-mac"]["reach"] = "ssh den"
-    write(os.path.join(bin_dir, "hung-pmset"), "#!/bin/sh\nexec sleep 60\n", 0o755)
+    write(os.path.join(bin_dir, "hung-pmset"), "#!/bin/sh\nexec sleep 15\n", 0o755)   # outlasts the 10 s limit, not the suite
     den_env = json.load(open(os.path.join(den_home, "env.json")))
     put_json(os.path.join(den_home, "env.json"), dict(den_env, RUN_WATCH_PMSET=os.path.join(bin_dir, "hung-pmset")))
     den_state = open(os.path.join(den_run, "run-watch.state.json")).read()
-    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "20"})
+    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "25"})
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "ran out of its time there" in l
-            and "stopped at its 10 s limit" in l], out
+            and "stopped at its 5 s limit" in l], out
     assert open(os.path.join(den_run, "run-watch.state.json")).read() == den_state and took < 30, took
     put_json(os.path.join(den_home, "env.json"), den_env)
     # a result line it can't read whole (a list where it wants names) is one plain line, never a traceback
     write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nimport json\nprint('run-watch-remote ' + json.dumps("
           "{'protocol': 1, 'computer': 'den-mac', 'lines': [], 'blind': 5, 'summary': {}}))\n", 0o755)
     watch["machines"]["den-mac"]["run_watch"] = "bad-run-watch"
+    out, made, _ = watch_run()
+    assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
+    # nor a time it couldn't write (a lone surrogate)
+    write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nprint('run-watch-remote {\"protocol\": 1, "
+          "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"times\": [\"commit B \\\\ud800\"]}')\n", 0o755)
     out, made, _ = watch_run()
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
     del watch["machines"]["den-mac"]["run_watch"]

@@ -27,7 +27,8 @@ watch.json for its tasks on standard input, so every check below runs there on t
 processes, files and logs, and keeps its state there as a local run does; it prints one line,
 "run-watch-remote <JSON>" (its lines, its blind tasks, a summary for the heartbeat and the end of
 its times.log, whose lines this times.log lacks are added here, so a time a lost result carried still
-arrives); it stops itself, saving nothing, 10 seconds before the ssh call's limit. Each of its
+arrives); it stops itself without saving its state (exit 70) 10 seconds before the ssh call's limit
+less its 15-second connect, and saves its state only once its result line has gone out. Each of its
 lines is printed here with " on <computer>" after its word (and the task or process it names):
 "hang B on den-mac: …", "disk on den-mac: …", whose process IDs are that computer's. The entry's
 optional keys: "run_watch", the path of run-watch there (default: the first of
@@ -337,8 +338,9 @@ def inside(path: str, folder: str) -> bool:
 
 
 def names_path(args: str, path: str) -> bool:
-    """Whether a command line names a folder or something in it (/wt/b, not /wt/b2)."""
-    return bool(path) and re.search(re.escape(path.rstrip("/")) + r"(?=[/\s'\"]|$)", args) is not None
+    """Whether a command line names a folder or something in it, from the path's start (/wt/b and /wt/b/x,
+    not /wt/b2, nor /Volumes/Backup/wt/b)."""
+    return bool(path) and re.search(r"(?:^|(?<=[\s'\"=]))" + re.escape(path.rstrip("/")) + r"(?=[/\s'\"]|$)", args) is not None
 
 
 def exe(p) -> str:
@@ -726,8 +728,11 @@ def check_over_ssh(cfg: dict, script: str, out: dict) -> None:
 
 def usable(payload, name: str) -> bool:
     """Whether a run-watch --as result is one this script reads whole: nothing in it can stop this run."""
-    def strings(x) -> bool:
-        return isinstance(x, list) and all(isinstance(i, str) for i in x)
+    def strings(x) -> bool:   # and each one can be printed and written (no lone surrogate)
+        try:
+            return isinstance(x, list) and all(isinstance(i, str) and i.encode("utf-8") is not None for i in x)
+        except UnicodeError:
+            return False
     return (isinstance(payload, dict) and payload.get("protocol") == REMOTE_PROTOCOL
             and str(payload.get("computer", "")).casefold() == name.casefold() and strings(payload.get("lines"))
             and strings(payload.get("blind", [])) and strings(payload.get("times", []))
@@ -758,7 +763,7 @@ def remote_result(name: str, cfg: dict, res: dict) -> tuple[dict | None, str]:
     if code == 0 and usable(payload, name):
         return payload, ""
     if code == 70:
-        return None, f"its run-watch{where} ran out of its time there and stopped before saving anything: {last}"
+        return None, f"its run-watch{where} ran out of its time there and stopped before saving its state: {last}"
     if code == 255:
         return None, f"ssh {cfg['alias']} failed: {last or 'exit 255'}"
     if code == 65:
@@ -832,7 +837,8 @@ def main(argv: list[str]) -> int:
         limit = watch.get("deadline_seconds")
         if isinstance(limit, (int, float)) and limit > 0:   # stop before the orchestrator's ssh does, saving nothing
             def out_of_time(*_):
-                print(f"run-watch: stopped at its {limit:g} s limit, before saving its state", file=sys.stderr)
+                print(f"run-watch: stopped at its {limit:g} s limit, before saving its state (something it runs there "
+                      "hangs: pmset, lsof, git or du; what it started ends at its own time limit)", file=sys.stderr)
                 os._exit(70)
             signal.signal(signal.SIGALRM, out_of_time)
             signal.alarm(max(1, int(limit)))
@@ -875,7 +881,7 @@ def main(argv: list[str]) -> int:
         if "error" in cfg:
             continue
         sub_watch = {"started": iso(started), "computer": name, "tasks": remote_tasks[name],
-                     "deadline_seconds": max(5, int(SSH_S) - 10)}
+                     "deadline_seconds": max(5, int(SSH_S - SSH_CONNECT_S) - 10)}   # after the connect, with room
         res: dict = {}
         job = threading.Thread(target=check_over_ssh, args=(cfg, remote_script(name, cfg, run_dir, sub_watch), res), daemon=True)
         job.start()
@@ -1247,6 +1253,7 @@ def main(argv: list[str]) -> int:
                 continue
             owners = [tid for tid, task in sorted(tasks.items()) if task.get("status", "running") != "running" and
                       (lpid in task_procs.get(tid, set()) or names_path(p["args"], task["worktree"])
+                       or inside(cwd.get(lpid, ""), task["worktree"])
                        or names_path(p["args"], os.path.join(run_dir, tid)))]
             if owners or names_path(p["args"], run_dir) or inside(cwd.get(lpid, ""), run_dir):
                 left[lpid] = owners
@@ -1404,7 +1411,7 @@ def main(argv: list[str]) -> int:
             blind_told -= set(mine)
             blind_told |= {t for t in payload.get("blind") or [] if t in mine}
             got = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-            machines_seen[name] = {"checked": iso(t0), "reached": True,
+            machines_seen[name] = {"checked": iso(t0), "run": t0, "reached": True,
                                    **{k: v for k, v in got.items() if k in ("disk_free_gb", "swap_gb", "load", "dialogs",
                                                                             "keep_awake", "sampler")}}
             continue
@@ -1412,7 +1419,7 @@ def main(argv: list[str]) -> int:
         lines.append(f"unreachable {name}: {why}; " + (f"its running tasks ({', '.join(running_there)}) are blind this wake: read "
                      "their threads (with its environmentId)" if running_there else "no task of the run is running there") +
                      ", and if it lasts, check that computer through its machine thread (computers.md section 10)")
-        machines_seen[name] = {"checked": iso(t0), "reached": False, "why": short(why, 160)}
+        machines_seen[name] = {"checked": iso(t0), "run": t0, "reached": False, "why": short(why, 160)}
         for tid in running_there:
             if tid not in blind_told:
                 lines.append(f"blind {tid} ({mine[tid].get('harness') or 'unknown harness'}, on {mine[tid]['computer']}): it runs on "
@@ -1456,8 +1463,11 @@ def main(argv: list[str]) -> int:
                 times = fh.read().decode(errors="replace").splitlines()[1 if size > TIMES_SENT_BYTES else 0:]
         except OSError:
             pass
-        print(REMOTE_MARK + json.dumps({"protocol": REMOTE_PROTOCOL, "computer": as_computer, "lines": lines,
-                                        "blind": sorted(blind_told), "summary": summary, "times": times}))
+        try:   # out to the orchestrator before the state marks anything told; if it can't be, nothing is saved
+            print(REMOTE_MARK + json.dumps({"protocol": REMOTE_PROTOCOL, "computer": as_computer, "lines": lines,
+                                            "blind": sorted(blind_told), "summary": summary, "times": times}), flush=True)
+        except OSError:
+            return 0
     else:
         for line in lines:
             print(line)

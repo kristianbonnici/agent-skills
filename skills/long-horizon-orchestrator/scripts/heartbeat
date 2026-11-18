@@ -49,7 +49,6 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
@@ -221,10 +220,8 @@ def main(argv):
     if reminders["leftover"]:
         bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
     for name, m in sorted(machines.items()):
-        try:
-            fresh = datetime.fromisoformat(str(m.get("checked"))).timestamp() >= began - 1
-        except (ValueError, AttributeError, TypeError):
-            fresh = False
+        # this wake's: its run-watch started after the heartbeat did ("run" is its start, to the microsecond)
+        fresh = isinstance(m, dict) and isinstance(m.get("run"), (int, float)) and m["run"] >= began
         if not isinstance(m, dict) or not fresh:   # an earlier wake's: this one's run-watch didn't finish
             bits.append(f"{name} not checked this wake")
             continue
