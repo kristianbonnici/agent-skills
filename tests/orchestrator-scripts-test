@@ -3073,8 +3073,9 @@ assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 3.0
 
 # Another computer's run folder: no ledger beside it, a run.json naming it (the pre-flight's shape). --scratch,
 # --harness-temp and --size treat it as a run's; pruning it as an older run waits for --mark-finished and then
-# --older-than days of both that time and the file's last change. A run.json naming another run, a link, or a
-# finished time that isn't one counts for nothing.
+# --older-than days of both that time and the file's last change, and none once a file in it changed after that
+# time (a new round's task). A run.json naming another run or without the pre-flight's role, a link, or a
+# finished time that isn't a date and time with its zone counts for nothing.
 other = "run-on-den"
 other_file = os.path.join(root, other, "run.json")
 def write_run(path, data, age_days=None):
@@ -3087,6 +3088,8 @@ done = run("--scratch", os.path.join(root, other, "G"))
 assert done.returncode == 0 and "removed scratch" in done.stdout, done.stdout + done.stderr
 assert not exists(f"{other}/G/scratch") and exists(f"{other}/G/handoff.md")
 tmp_put(enc(os.path.join(root, other, "G", "scratch", "y")))
+tmp_put(enc(os.path.join(root, other, "usage")))                # the run's own folder, never a task's
+os.makedirs(os.path.join(root, other, "usage"))
 size = trun("--size", os.path.join(root, other))
 assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 1.0 MB in 1 harness temp folders of its tasks"), size.stdout
 done = trun("--harness-temp", os.path.join(root, other, "G"), "--apply")
@@ -3100,13 +3103,21 @@ assert done.returncode == 0 and "finished at " in done.stdout, done.stdout + don
 data = json.load(open(other_file))
 assert data["run"] == other and data["role"] == "other computer" and data["orchestrator"] == "studio-mac", data
 assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", data["finished"]), data
-assert sorted(os.listdir(os.path.join(root, other))) == ["G", "run.json"]   # no temporary file left
+assert sorted(os.listdir(os.path.join(root, other))) == ["G", "run.json", "usage"]   # no temporary file left
 done = run("--apply")
 assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
 data["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 10 * 86400))
 write_run(f"{other}/run.json", data)                     # finished long ago, but the file changed today
 done = run("--apply")
 assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
+os.utime(other_file, (t, t))
+done = run("--apply")                                      # its tasks' files are newer than that finish: a new round
+assert f"{other}: skipped, not finished: G/" in done.stdout and "changed after its run.json's finished time" in done.stdout, done.stdout
+assert exists(f"{other}/G/render.mp4")
+old_t = time.time() - 20 * 86400
+for top, _, files in os.walk(os.path.join(root, other)):
+    for f in files:
+        os.utime(os.path.join(top, f), (old_t, old_t))
 os.utime(other_file, (t, t))
 done = run("--apply")
 assert done.returncode == 0 and any(l.startswith(f"{other}: ") and "removing" in l for l in done.stdout.splitlines()), done.stdout
@@ -3115,26 +3126,39 @@ assert not exists(f"{other}/G/render.mp4") and exists(f"{other}/G/handoff.md") a
 write_run("misnamed/run.json", {"run": "elsewhere", "finished": "2020-01-01T00:00:00Z"}, age_days=30)
 put("misnamed/T/scratch/x.bin", big)
 put("misnamed/T/x.mp4", big)
-write_run("badtime/run.json", {"run": "badtime", "finished": "soon"}, age_days=30)
-put("badtime/T/x.mp4", big)
+pre = {"role": "other computer", "orchestrator": "studio-mac"}
+write_run("badtime/run.json", dict(pre, run="badtime", finished="soon"), age_days=30)
+put("badtime/T/x.mp4", big, age_days=40)
+write_run("dateonly/run.json", dict(pre, run="dateonly", finished="2020-01-01"), age_days=30)
+put("dateonly/T/x.mp4", big, age_days=40)
+write_run("imports/run.json", {"run": "imports", "finished": "2020-01-01T00:00:00Z"}, age_days=30)   # not the pre-flight's
+put("imports/T/scratch/x.bin", big)
+put("imports/T/x.mp4", big, age_days=40)
 put("run-linked/T/scratch/x.bin", big)
 put("run-linked/T/x.mp4", big)
-write_run("run-linked-target.json", {"run": "run-linked", "finished": "2020-01-01T00:00:00Z"})
+write_run("run-linked-target.json", dict(pre, run="run-linked", finished="2020-01-01T00:00:00Z"))
 os.symlink(os.path.join(root, "run-linked-target.json"), os.path.join(root, "run-linked/run.json"))
 done = run("--apply")
 assert "misnamed: skipped, no ledger beside it and no run.json in it" in done.stdout, done.stdout
 assert "run-linked: skipped, no ledger beside it and no run.json in it" in done.stdout, done.stdout
-assert "badtime: skipped, its run.json's finished time isn't a time ('soon')" in done.stdout, done.stdout
-assert exists("misnamed/T/x.mp4") and exists("badtime/T/x.mp4") and exists("run-linked/T/x.mp4")
-for folder in ("misnamed/T", "run-linked/T"):
+assert "imports: skipped, no ledger beside it and no run.json in it" in done.stdout, done.stdout
+assert "badtime: skipped, its run.json's finished time isn't a time with its zone ('soon')" in done.stdout, done.stdout
+assert "dateonly: skipped, its run.json's finished time isn't a time with its zone ('2020-01-01')" in done.stdout, done.stdout
+for gone in ("misnamed", "badtime", "dateonly", "imports", "run-linked"):
+    assert exists(f"{gone}/T/x.mp4"), gone
+for folder in ("misnamed/T", "run-linked/T", "imports/T"):
     assert run("--scratch", os.path.join(root, folder)).returncode == 64, folder
     assert exists(folder + "/scratch/x.bin"), folder
+os.symlink(os.path.join(root, other), os.path.join(root, "alias-run"))   # a link to the run, even as "<link>/."
+before = open(other_file).read()
 for args in (("--mark-finished", os.path.join(root, "recent")), ("--mark-finished", os.path.join(root, "loose")),
              ("--mark-finished", os.path.join(root, "misnamed")), ("--mark-finished", os.path.join(root, other), "--apply"),
-             ("--mark-finished", os.path.join(root, other), "--size", os.path.join(root, other))):
+             ("--mark-finished", os.path.join(root, other), "--size", os.path.join(root, other)),
+             ("--mark-finished", os.path.join(root, "alias-run") + "/.")):
     done = run(*args)
     assert done.returncode == 64 and done.stderr.startswith("prune-runs: "), (args, done.stderr)
 assert json.load(open(os.path.join(root, "misnamed/run.json")))["finished"] == "2020-01-01T00:00:00Z"   # left as it was
+assert open(other_file).read() == before
 EOF
 
 # Every Python script stops with one plain line on a Python older than it needs (run-watch 3.10, the others
@@ -3161,6 +3185,16 @@ for name in heartbeat lease provider-usage prune-runs report-offer run-charts ru
   MADE_UP_PYTHON=$needs.0 PATH="$work/old-python:$PATH" "$scripts/$name" --help >/dev/null 2>&1 || status=$?
   test "$status" -ne 69 || { echo "$name refused Python $needs.0"; exit 1; }
 done
+# and where this computer has a real Python 3.9 (macOS's own /usr/bin/python3), each script runs on it: run-watch
+# stops with its line, the others start (a made-up version can't catch a newer call in a "3.9" script)
+if [ -x /usr/bin/python3 ] && /usr/bin/python3 -c 'import sys; sys.exit(sys.version_info[:2] != (3, 9))' 2>/dev/null; then
+  for name in heartbeat lease provider-usage prune-runs report-offer run-charts run-costs run-watch share-usage usage-sampler; do
+    status=0
+    out=$(/usr/bin/python3 "$scripts/$name" --help 2>&1) || status=$?
+    case "$out" in *Traceback*) echo "$name on the real Python 3.9: $out"; exit 1;; esac
+    if [ "$name" = run-watch ]; then test "$status" -eq 69; else test "$status" -ne 69; fi
+  done
+fi
 
 # run-watch: its own test, with real idle processes and made-up CPU use (no busy loops), at low priority
 nice -n 10 "$script_dir/run-watch-test" >/dev/null
