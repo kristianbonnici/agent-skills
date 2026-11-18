@@ -156,6 +156,13 @@ expect "^WARN the last daily sync, started 2026-11-17 08:30:00 +0200, has not fi
 printf 'OK agent-skills is up to date\n' >"$log"
 "$sync" --schedule-status >"$work/out" 2>&1
 expect "^INFO the daily sync's log ($log) was last written .*, by a sync that doesn't mark its runs" "$work/out"
+# A time written as text with a leading zero (a hand-made agent) is read as a number, not octal.
+cp "$plist" "$work/before-string-time.plist"
+sed -e 's#<integer>7</integer>#<string>07</string>#' -e 's#<integer>5</integer>#<string>09</string>#' "$work/before-string-time.plist" >"$plist"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^INFO the daily sync is scheduled at 07:09 " "$work/out"
+refuse "invalid" "$work/out"
+cp "$work/before-string-time.plist" "$plist"
 # Trimmed past a run's first line: its last line still says how it ended.
 printf 'FAIL agent-skills-private: git pull --ff-only failed\nagent-skills sync finished 2026-11-17 08:31:09 +0200: failed (exit 1)\n' >"$log"
 "$sync" --schedule-status >"$work/out" 2>&1
@@ -550,6 +557,79 @@ for kept in "$backups"/*; do cmp -s "$kept" "$work/before-race.plist" && found_r
 "$sync" --schedule 05:56 >/dev/null 2>&1 && "$sync" --schedule 05:57 >/dev/null 2>&1 || fail "--schedule failed afterwards"
 test "$(cat "$taken")" = "another run" || fail "pruning removed a file another run made"
 
+# A link that leads nowhere at the label's name is moved to the backup folder, named, and replaced.
+rm "$plist"
+ln -s "$work/nowhere.plist" "$plist"
+"$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule failed with a dangling link at the agent's name"; }
+expect "^KEPT the launch agent $plist, which agent-skills didn't write, as $backups/" "$work/out"
+dangling=$(sed -n "s#^KEPT the launch agent $plist, which agent-skills didn't write, as ##p" "$work/out")
+test -L "$dangling" && test "$(readlink "$dangling")" = "$work/nowhere.plist" || fail "the dangling link is not in the backup folder"
+test -f "$plist" && test ! -L "$plist" || fail "the new agent is not in place"
+rm "$dangling"
+
+# A folder that appears at the agent's name before it goes back (a stand-in mv makes one right
+# after the agent is moved off) is never moved into: the agent stays in the backup folder, named.
+cp "$plist" "$work/before-folder.plist"
+printf '#!/bin/sh\ncase "$*" in "-n %s "*) /bin/mv "$@"; s=$?; /bin/mkdir "%s"; exit $s ;; esac\nexec /bin/mv "$@"\n' "$plist" "$plist" >"$work/refuse-bin/mv"
+chmod +x "$work/refuse-bin/mv"
+if PATH="$work/refuse-bin:$PATH" "$sync" --schedule 06:10 >"$work/out" 2>&1; then fail "--schedule passed with a folder at the agent's name"; fi
+expect "^FAIL could not put $backups/.* back as $plist (another file is there now, or the folder can.t be written)" "$work/out"
+expect "couldn't go back and stay in $backups" "$work/out"
+test -d "$plist" && test -z "$(ls -A "$plist")" || fail "something was moved into the folder"
+went=$(sed -n "s#^FAIL could not put \(.*\) back as .*#\1#p" "$work/out")
+cmp -s "$went" "$work/before-folder.plist" || fail "the agent is not in the backup folder"
+rm "$work/refuse-bin/mv"
+rmdir "$plist"
+mv "$went" "$plist"
+
+# A backup that a program holds open is never pruned: it could still write to it.
+export AGENT_SKILLS_SYNC_PRUNE_MINUTES=0
+oldest=$(ls "$backups" | grep '^com.agent-skills.sync.plist.before-agent-skills-' | sort | while IFS= read -r name; do
+  [ "$(sed -n 2p "$backups/$name")" = "<!-- Written by agent-skills scripts/sync-schedule: change it with scripts/sync and its schedule options, not here. Checksum: $(sed 2d "$backups/$name" | cksum | awk '{ print $1 "-" $2 }') -->" ] && { echo "$backups/$name"; break; }
+done)
+[ -n "$oldest" ] || fail "no unchanged backup to hold open"
+exec 7<"$oldest"
+for at in 06:11 06:12 06:13 06:14; do "$sync" --schedule "$at" >/dev/null 2>&1 || { exec 7<&-; fail "--schedule $at failed"; }; done
+exec 7<&-
+test -f "$oldest" || fail "a backup held open was pruned"
+"$sync" --schedule 06:15 >"$work/out" 2>&1 || fail "--schedule 06:15 failed"
+expect "^REMOVED the older backup $oldest," "$work/out"
+unset AGENT_SKILLS_SYNC_PRUNE_MINUTES
+
+# The same home written another way (here with a trailing slash) is still this home: the agent
+# loaded from it is found as installed, not refused as another home's.
+echo "$HOME/Library/LaunchAgents/com.agent-skills.sync.plist" >"$work/loaded-path"
+HOME="$HOME/" "$sync" --schedule-status >"$work/out" 2>&1
+refuse "^WARN.*loaded from" "$work/out"
+HOME="$HOME/" "$sync" --schedule 06:15 >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule with the home written with a trailing slash failed"; }
+refuse "^FAIL" "$work/out"
+"$sync" --schedule 06:15 >/dev/null 2>&1 || fail "--schedule failed"
+
+# launchctl print names no file while the agent's file is there: the status says it can't tell.
+touch "$work/print-no-path"
+"$sync" --schedule-status >"$work/out" 2>&1
+expect "^WARN launchd has the daily sync (com.agent-skills.sync) loaded, but launchctl print names no file it was loaded from, so whether it runs $plist can't be told$" "$work/out"
+rm "$work/print-no-path"
+
+# Where plutil can't extract a value (before macOS 12 it has no raw format), the plist is read as
+# XML on one line, a binary one too: a hand-made binary agent at another name is found, its time
+# read, and taken over.
+mkdir -p "$work/old-plutil"
+printf '#!/bin/sh\n[ "$1" = -extract ] && exit 1\nexec /usr/bin/plutil "$@"\n' >"$work/old-plutil/plutil"
+chmod +x "$work/old-plutil/plutil"
+if command -v plutil >/dev/null 2>&1; then
+  "$sync" --unschedule >/dev/null 2>&1 || fail "--unschedule failed"
+  sed 's#<integer>30</integer>#<integer>5</integer>#' "$work/hand-made.plist" >"$HOME/Library/LaunchAgents/binary.plist"
+  plutil -convert binary1 "$HOME/Library/LaunchAgents/binary.plist"
+  PATH="$work/old-plutil:$PATH" "$sync" --schedule-status >"$work/out" 2>&1
+  expect "^INFO the daily sync is scheduled at 08:05 ($HOME/Library/LaunchAgents/binary.plist, hand-made" "$work/out"
+  PATH="$work/old-plutil:$PATH" "$sync" --schedule >"$work/out" 2>&1 || { cat "$work/out" >&2; fail "--schedule with an old plutil failed"; }
+  expect "^KEPT the launch agent $HOME/Library/LaunchAgents/binary.plist, which agent-skills didn't write" "$work/out"
+  test ! -e "$HOME/Library/LaunchAgents/binary.plist" || fail "the binary agent is still where it loads"
+  PATH="$work/old-plutil:$PATH" "$sync" --schedule-status >"$work/out" 2>&1
+  expect "^INFO the daily sync is scheduled at 08:30 ($plist, scripts/sync --schedule installed it)" "$work/out"
+fi
+
 # One run at a time: while another holds the lock, a run waits, and goes on once it is free.
 mkdir "$HOME/Library/LaunchAgents/.agent-skills-sync.lock"
 (sleep 2; rmdir "$HOME/Library/LaunchAgents/.agent-skills-sync.lock") &
@@ -637,6 +717,27 @@ cmp -s "$log" "$work/log.before" || fail "trim-log changed a log under its limit
 awk 'BEGIN { for (i = 1; i <= 60; i++) printf "line %04d\n", i }' >"$log"
 AGENT_SKILLS_SYNC_LOG_MAX=400 "$schedule" trim-log || fail "trim-log failed"
 test "$(head -n 1 "$log")" = "line 0051" && test "$(wc -l <"$log" | tr -d ' ')" -eq 10 || fail "a cut at a line's start dropped that line: $(head -n 1 "$log")"
+cp "$work/log.before" "$log"
+# A write back that fails says so and keeps the log's end beside it.
+mkdir -p "$work/fail-bin"
+printf '#!/bin/sh\nexit 1\n' >"$work/fail-bin/cat"
+chmod +x "$work/fail-bin/cat"
+awk 'BEGIN { for (i = 1; i <= 60; i++) printf "line %04d\n", i }' >"$log"
+PATH="$work/fail-bin:$PATH" AGENT_SKILLS_SYNC_LOG_MAX=400 "$schedule" trim-log 2>"$work/trim.err" || fail "trim-log failed"
+expect "^WARN could not write the trimmed log back into $log; its last part is kept in $log\." "$work/trim.err"
+kept_end=$(sed -n "s#.*its last part is kept in ##p" "$work/trim.err")
+test -s "$kept_end" || fail "the log's end was not kept"
+rm "$kept_end" "$work/fail-bin/cat"
+cp "$work/log.before" "$log"
+# Something that writes to the log while it is being trimmed: the trim is skipped, and the line kept.
+awk 'BEGIN { for (i = 1; i <= 60; i++) printf "line %04d\n", i }' >"$log"
+cp "$log" "$work/log.grown"
+printf '#!/bin/sh\necho "written meanwhile" >>"%s"\nexec /usr/bin/tail "$@"\n' "$log" >"$work/fail-bin/tail"
+chmod +x "$work/fail-bin/tail"
+PATH="$work/fail-bin:$PATH" AGENT_SKILLS_SYNC_LOG_MAX=400 "$schedule" trim-log || fail "trim-log failed"
+echo "written meanwhile" >>"$work/log.grown"
+cmp -s "$log" "$work/log.grown" || fail "a trim lost what was written meanwhile"
+rm "$work/fail-bin/tail"
 cp "$work/log.before" "$log"
 # A tail that fails leaves the log as it is, never emptied.
 mkdir -p "$work/fail-bin"

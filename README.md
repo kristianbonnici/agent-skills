@@ -152,7 +152,7 @@ replaces or removes, a hand-made one included, is unloaded and moved into
 volume, so the backup is the file itself: a program still writing to the old plist writes into the
 backup. The output names each backup. Hand-made and changed ones stay; of the ones it wrote and
 nobody changed, the newest three stay, and an older one goes only once nothing has touched it for a
-day. Backups made before that folder existed stay in
+day and no program holds it open. Backups made before that folder existed stay in
 `${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/`, and the status names each folder that holds
 any. If the new agent can't be put in place, the old ones go back but stay unloaded until the next
 login; the output names those put back (one that can't go back stays in the backup folder) and says
@@ -160,7 +160,7 @@ to run `--schedule` again. If launchd still has the old agent loaded after `laun
 `--schedule` puts the old agents back and changes nothing, and `--unschedule` fails with its file
 already in the backup folder; both give the command to unload it. When launchd has the agent loaded
 from outside this home's `~/Library/LaunchAgents`, or `launchctl print` names no file it was loaded
-from, both change nothing and fail with that command.
+from, both change nothing and fail with that command, and the status warns.
 `./scripts/sync --schedule-status` says whether it is installed and how its last run went, and
 `--unschedule` removes it (the log stays), as `./scripts/uninstall --all` does. An agent whose file
 was deleted by hand, or no longer carries the label, stays loaded until the next login: the status

@@ -62,7 +62,7 @@ done
 
 if [ "$from_schedule" -eq 1 ]; then
   # The log is appended to every day: past a size, only its end is kept (sync-schedule trim-log).
-  "$script_dir/sync-schedule" trim-log 2>/dev/null || true
+  "$script_dir/sync-schedule" trim-log || true
   echo "agent-skills sync started $(date '+%Y-%m-%d %H:%M:%S %z')"
   # The line doctor reads to say how the last run went, however sync ends.
   trap 'sync_status=$?; if [ "$sync_status" -eq 0 ]; then sync_result=ok; else sync_result="failed (exit $sync_status)"; fi; echo "agent-skills sync finished $(date "+%Y-%m-%d %H:%M:%S %z"): $sync_result"' EXIT
