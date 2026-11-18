@@ -519,6 +519,33 @@ blockers) with the one this run confirmed.
 
 → *No change (2026-11-18): neither model gets a place in the free order.*
 
+## GPT-6.2 Sol at medium (2026-11-18)
+
+The owner asked whether GPT-6.2 Sol, OpenAI's newer and costlier model, should replace GPT-6.1 Terra as the
+Codex reviewer, perhaps at medium reasoning to keep its cost near Terra's at high. On Artificial Analysis's
+index Sol at medium scores about 10 points above Terra at high for roughly 1.5 to 2 times the cost per task.
+It reviewed the same 16 changes once, through `codex exec` as Terra, with a paid reviewer's brief and 30 minutes
+(reviewer-benchmark 1.2.0 added the reasoning level). The key grew to 157 defects (21 blockers) with the 13 it
+confirmed.
+
+| Reviewer | Reports, of 16 | Known defects found, of 144 before this run | Blockers, of 20 | False, of its blockers and follow-ups | Minutes per review |
+|---|---|---|---|---|---|
+| GPT-6.2 Sol, medium | 16 | 61 in full | 17 | 0% | 2.3 |
+| Claude Opus 5.5, high | 16 | 51 in full | 10 | 1% | 5.3 |
+| GPT-6.1 Terra, high | 16 | 42 in full | 9 | 2% | 0.9 |
+
+- **Sol at medium found the most of any model so far, with nothing false,** on the defects known before its
+  run: half as many again as Terra, and nearly twice the blockers. It also found 13 defects no earlier review
+  had, all confirmed against the code; on the grown key it has 74 in full and 18 of 21 blockers.
+- **Pairs:** Sol and Hydrogen found 101 of 157 in full and 19 blockers, more than Terra, Opus and Hydrogen
+  together (92 and 15).
+- **Its scoring differed:** its reports were scored blind but alone, by Opus for both passes, where earlier runs
+  had Sonnet against the key. That may be a little more generous; the gap is far larger.
+- High reasoning wasn't run, to spare the owner's Codex allowance; nor was Sol tested against a usage limit
+  across a real run of gates.
+
+→ *Open (2026-11-18): the evidence favours Sol at medium as the Codex reviewer; the owner decides.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
