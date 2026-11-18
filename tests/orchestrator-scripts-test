@@ -3073,14 +3073,17 @@ assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 3.0
 
 # Another computer's run folder: no ledger beside it, a run.json naming it (the pre-flight's shape). --scratch,
 # --harness-temp and --size treat it as a run's; pruning it as an older run waits for --mark-finished and then
-# --older-than days of both that time and the file's last change, and none once a file in it changed after that
-# time (a new round's task). A run.json naming another run or without the pre-flight's role, a link, or a
-# finished time that isn't a date and time with its zone counts for nothing.
+# --older-than days of that time and the file's own times (a marker put back with cp -p is young again), and
+# none once a file in it changed or was put there after the finished time (a new round's task), and never
+# while the run's lock is held (a round starting or finishing). A run.json naming another run or without the
+# pre-flight's role, a link, or a finished time that isn't a date and time with its zone counts for nothing.
 other = "run-on-den"
 other_file = os.path.join(root, other, "run.json")
 def write_run(path, data, age_days=None):
     put(path, json.dumps(data).encode(), age_days)
-write_run(f"{other}/run.json", {"run": other, "role": "other computer", "orchestrator": "studio-mac"})
+done = run("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")   # the pre-flight
+assert done.returncode == 0 and "running" in done.stdout, done.stdout + done.stderr
+assert json.load(open(other_file)) == {"run": other, "role": "other computer", "orchestrator": "studio-mac"}
 put(f"{other}/G/scratch/build.bin", big)
 put(f"{other}/G/handoff.md", b"h")
 put(f"{other}/G/render.mp4", big)
@@ -3102,7 +3105,7 @@ done = run("--mark-finished", os.path.join(root, other))
 assert done.returncode == 0 and "finished at " in done.stdout, done.stdout + done.stderr
 data = json.load(open(other_file))
 assert data["run"] == other and data["role"] == "other computer" and data["orchestrator"] == "studio-mac", data
-assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", data["finished"]), data
+assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z", data["finished"]), data   # to the microsecond
 assert sorted(os.listdir(os.path.join(root, other))) == ["G", "run.json", "usage"]   # no temporary file left
 done = run("--apply")
 assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
@@ -3110,8 +3113,10 @@ data["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() -
 write_run(f"{other}/run.json", data)                     # finished long ago, but the file changed today
 done = run("--apply")
 assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
-os.utime(other_file, (t, t))
-done = run("--apply")                                      # its tasks' files are newer than that finish: a new round
+os.utime(other_file, (t, t))                               # old times again, as cp -p puts a marker back: its change time is now
+done = run("--apply")
+assert f"{other}: skipped, finished 0.0 days ago" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
+done = run("--apply", "--older-than", "0")                 # its tasks' files are newer than that finish: a new round
 assert f"{other}: skipped, not finished: G/" in done.stdout and "changed after its run.json's finished time" in done.stdout, done.stdout
 assert exists(f"{other}/G/render.mp4")
 old_t = time.time() - 20 * 86400                          # old times, but put there now, as cp -p does
@@ -3127,9 +3132,25 @@ done = run("--older-than", "0")
 assert f"{other}: skipped, not finished: G/" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
 done = run("--mark-finished", os.path.join(root, other))  # a finish after them
 assert done.returncode == 0, done.stderr
+# while a round starts or finishes there (its lock held), the prune passes it by, and the marks wait, then give up
+import fcntl
+held = os.open(os.path.join(root, f".{other}.lock"), os.O_RDWR | os.O_CREAT)
+fcntl.flock(held, fcntl.LOCK_EX)
+done = run("--apply", "--older-than", "0")
+assert f"{other}: skipped, a round is starting or finishing there (its lock is held)" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
+for args in (("--mark-finished", os.path.join(root, other)), ("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")):
+    done = subprocess.run([sys.executable, "-I", script, *args], capture_output=True, text=True, timeout=60,
+                          env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), PRUNE_RUNS_LOCK_WAIT="0.5"))
+    assert done.returncode == 75 and "being pruned" in done.stderr, (args, done.stderr)
+os.close(held)
+assert not os.path.lexists(os.path.join(root, ".loose.lock"))   # no lock for a folder that isn't such a run
 done = run("--apply", "--older-than", "0")
 assert done.returncode == 0 and any(l.startswith(f"{other}: ") and "removing" in l for l in done.stdout.splitlines()), done.stdout
 assert not exists(f"{other}/G/render.mp4") and exists(f"{other}/G/handoff.md") and exists(f"{other}/run.json")
+done = run("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")   # a new round drops the finish
+assert done.returncode == 0 and "finished" not in json.load(open(other_file)), done.stderr
+done = run("--mark-running", os.path.join(root, "fresh-run"), "--orchestrator", "studio-mac")   # its first round there
+assert done.returncode == 0 and json.load(open(os.path.join(root, "fresh-run", "run.json")))["run"] == "fresh-run", done.stderr
 # what counts for nothing, and --mark-finished's refusals
 write_run("misnamed/run.json", {"run": "elsewhere", "finished": "2020-01-01T00:00:00Z"}, age_days=30)
 put("misnamed/T/scratch/x.bin", big)
@@ -3162,11 +3183,16 @@ before = open(other_file).read()
 for args in (("--mark-finished", os.path.join(root, "recent")), ("--mark-finished", os.path.join(root, "loose")),
              ("--mark-finished", os.path.join(root, "misnamed")), ("--mark-finished", os.path.join(root, other), "--apply"),
              ("--mark-finished", os.path.join(root, other), "--size", os.path.join(root, other)),
-             ("--mark-finished", os.path.join(root, "alias-run") + "/.")):
+             ("--mark-finished", os.path.join(root, "alias-run") + "/."),
+             ("--mark-running", os.path.join(root, "alias-run"), "--orchestrator", "studio-mac"),
+             ("--mark-running", os.path.join(root, "recent"), "--orchestrator", "studio-mac"),
+             ("--mark-running", os.path.join(root, "new-run")), ("--mark-running", os.path.join(root, "new-run"), "--orchestrator", "a b"),
+             ("--mark-running", os.path.join(outside, "new-run"), "--orchestrator", "studio-mac"),
+             ("--orchestrator", "studio-mac"), ("--mark-running", os.path.join(root, other), "--orchestrator", "x", "--apply")):
     done = run(*args)
     assert done.returncode == 64 and done.stderr.startswith("prune-runs: "), (args, done.stderr)
 assert json.load(open(os.path.join(root, "misnamed/run.json")))["finished"] == "2020-01-01T00:00:00Z"   # left as it was
-assert open(other_file).read() == before
+assert open(other_file).read() == before and not os.path.lexists(os.path.join(root, "new-run"))
 EOF
 
 # Every Python script stops with one plain line on a Python older than it needs (run-watch 3.10, the others
