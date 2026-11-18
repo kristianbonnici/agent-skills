@@ -81,7 +81,7 @@ sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' "$@"
     # standard input. Each alias is a made-up computer: its home, its name, its processes; "gone" fails as ssh
     # does, "slow" never answers. Every call is logged, with its options and command.
     homes = {"den": (den_home, "den-mac"), "old": (os.path.join(work, "old-home"), "den-mac"),
-             "oldpy": (den_home, "den-mac"), "wrong": (den_home, "attic-mac")}
+             "oldpy": (den_home, "den-mac"), "wrong": (den_home, "attic-mac"), "linger": (den_home, "den-mac")}
     write(os.path.join(bin_dir, "ssh"), f"""#!{sys.executable}
 import json, os, subprocess, sys, time
 args, opts = sys.argv[1:], []
@@ -110,6 +110,8 @@ print("Last login: a login shell's own output, which the result line must surviv
 sys.stdout.flush()
 done = subprocess.run(["sh"], input=script, env=env, text=True, capture_output=True, cwd=home)
 sys.stdout.write(done.stdout); sys.stderr.write(done.stderr)
+if alias == "linger":   # something its login files started holds the session open after the result came
+    sys.stdout.flush(); time.sleep(120)
 sys.exit(done.returncode)
 """, 0o755)
 
@@ -151,6 +153,8 @@ sys.exit(done.returncode)
         {"pid": 780, "start": now - 120, "args": f"sleep 600 {den_run}/D/build.log"},
         {"pid": 781, "ppid": 780, "start": now - 110, "args": "sleep 601"},
         {"pid": 790, "start": now - 7200, "args": f"sleep 600 {den_run}/before-the-run"},   # started before the run
+        {"pid": 791, "start": now - 100, "args": f"git -C {wt_b} status"},          # running B's, from another folder
+        {"pid": 792, "start": now - 100, "args": f"sleep 600 {den_run}/B/notes"},     # running B's folder
     ])
     put_json(os.path.join(den_home, "env.json"), {"FAKE_PS_FILE": den_procs, "RUN_WATCH_DISK_FREE_GB": "15"})
 
@@ -203,7 +207,7 @@ sys.exit(done.returncode)
     assert [l for l in out if l.startswith("disk on den-mac: 15.0 GB free, below 20 GB")], text
     left = [l for l in out if l.startswith("leftover ")]
     assert len(left) == 1 and left[0].startswith("leftover 780 on den-mac sleep: task D's (merged)") and "with 1 it started" in left[0], text
-    assert not [l for l in out if "sampler" in l.split(":")[0] or "Last login" in l or "790" in l.split(":")[0]], text
+    assert not [l for l in out if "sampler" in l.split(":")[0] or "Last login" in l or l.startswith(("leftover 79", "hog"))], text
     assert not [l for l in out if l.startswith(("unreachable", "note"))], text
     # the times are in the orchestrator's times.log too; its state has den-mac's summary for the heartbeat
     times = open(os.path.join(studio_run, "times.log")).read().splitlines()
@@ -235,6 +239,39 @@ sys.exit(done.returncode)
     assert open(os.path.join(studio_run, "times.log")).read().splitlines() == times
     hb = beat()
     assert "leftovers still running: 780 on den-mac sleep" in hb[0], hb
+    # a new commit there and a sleep of that computer: the heartbeat's summary says whose, and times.log keeps both
+    write(os.path.join(wt_b, "g.txt"), "y\n")
+    subprocess.run(git + ["add", "g.txt"], cwd=wt_b, check=True)
+    subprocess.run(git + ["commit", "-qm", "another change on den"], cwd=wt_b, check=True)
+    slept_at = datetime.fromtimestamp(now - 1800).astimezone()
+    woke_at = datetime.fromtimestamp(now - 900).astimezone()
+    write(os.path.join(bin_dir, "den-pmset"), "#!/bin/sh\ncat <<'EOF'\n"
+          f"{slept_at.strftime('%Y-%m-%d %H:%M:%S %z')} Sleep               \tEntering Sleep state due to 'Software Sleep pid=1':\n"
+          f"{woke_at.strftime('%Y-%m-%d %H:%M:%S %z')} Wake                \tWake from Normal Sleep [CDNVA] due to EC.LidOpen:\n"
+          "EOF\n", 0o755)
+    put_json(os.path.join(den_home, "env.json"), {"FAKE_PS_FILE": den_procs, "RUN_WATCH_DISK_FREE_GB": "15",
+                                                  "RUN_WATCH_PMSET": os.path.join(bin_dir, "den-pmset")})
+    hb = beat()
+    assert f"commit B on den-mac" in hb[0] and f"slept {slept_at.strftime('%H:%M')} on den-mac" in hb[0], hb
+    times = open(os.path.join(studio_run, "times.log")).read().splitlines()
+    assert len(times) == 3 and [t for t in times[1:] if t.startswith("commit B on den-mac ") and "another change on den" in t], times
+    assert [t for t in times[1:] if t.startswith("slept ") and " on den-mac " in t and t.endswith("(Software Sleep pid=1)")], times
+
+    # A result that never arrived (here: run-watch there ran on its own, as for a dropped connection): its
+    # commit isn't printed again, but its time still reaches times.log here, from times.log there.
+    write(os.path.join(wt_b, "h.txt"), "z\n")
+    subprocess.run(git + ["add", "h.txt"], cwd=wt_b, check=True)
+    subprocess.run(git + ["commit", "-qm", "a change whose result was lost"], cwd=wt_b, check=True)
+    lost = subprocess.run([sys.executable, "-I", run_watch, den_run, "--as", "den-mac", "--watch", "-"],
+                          input=json.dumps({"started": stamp(started), "tasks": {"B": watch["tasks"]["B"]}}), capture_output=True,
+                          text=True, env=dict(env, HOME=den_home, RUN_WATCH_COMPUTER="den-mac", FAKE_PS_FILE=den_procs))
+    assert lost.returncode == 0 and "a change whose result was lost" in lost.stdout, lost
+    out, _, _ = watch_run()
+    assert not [l for l in out if "whose result was lost" in l], out
+    times = open(os.path.join(studio_run, "times.log")).read().splitlines()
+    assert len(times) == 4 and times[-1].startswith("commit B on den-mac ") and "whose result was lost" in times[-1], times
+    out, _, _ = watch_run()
+    assert open(os.path.join(studio_run, "times.log")).read().splitlines() == times   # once only
 
     # 3. Reachable and clean: the call got its result, the keep-awake runs, the dialog, the leftover and C are
     # gone, the disk has room. run-watch prints nothing; the heartbeat says nothing to act on, with den-mac's state.
@@ -243,13 +280,29 @@ sys.exit(done.returncode)
             {"type": "tool_result", "tool_use_id": "toolu_b1", "content": "done"}]}}) + "\n")
     put_json(den_procs, [{"pid": 777, "start": now - 3500, "args": "caffeinate -i -t 86400"},
                          {"pid": 778, "start": now - 3500, "args": "python3 usage-sampler --machine-only usage"}])
-    put_json(os.path.join(den_home, "env.json"), {"FAKE_PS_FILE": den_procs, "RUN_WATCH_DISK_FREE_GB": "138"})
+    put_json(os.path.join(den_home, "env.json"), {"FAKE_PS_FILE": den_procs, "RUN_WATCH_DISK_FREE_GB": "138",
+                                                  "RUN_WATCH_PMSET": os.path.join(bin_dir, "den-pmset")})
     watch["tasks"]["C"]["status"] = "merged"
     out, made, _ = watch_run()
     assert out == [] and len(made) == 1, out
     hb = beat()
     assert len(hb) == 1 and "nothing to act on" in hb[0] and "running B" in hb[0], hb
     assert "den-mac: disk 138 GB free, swap 0.0 GB" in hb[0] and "keep-awake up, sampler up" in hb[0], hb
+    # with no task there any more, a process working in the run directory there is still found, by its folder
+    sleeper = subprocess.Popen(["sleep", "600"], cwd=den_run)
+    try:
+        put_json(den_procs, json.load(open(den_procs)) + [{"pid": sleeper.pid, "start": time.time() - 5, "args": "sleep 600"}])
+        out, _, _ = watch_run(data=dict(watch, tasks={}))
+        assert [l for l in out if l.startswith(f"leftover {sleeper.pid} on den-mac sleep: it works in or names the run directory")], out
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    put_json(den_procs, [p for p in json.load(open(den_procs)) if p["pid"] != sleeper.pid])
+
+    # the heartbeat whose run-watch failed doesn't give that computer's last reading as this wake's
+    write(os.path.join(bin_dir, "broken-run-watch"), "#!/bin/sh\nexit 3\n", 0o755)
+    hb = beat({"HEARTBEAT_RUN_WATCH": os.path.join(bin_dir, "broken-run-watch")})
+    assert "den-mac not checked this wake" in hb[0] and "den-mac: disk" not in hb[0] and "run-watch failed" in "\n".join(hb), hb
 
     # 4. Unreachable: one plain line, and its running tasks fall back to the blind line (once), which the
     # heartbeat names on every wake; back in reach, they leave the blind list.
@@ -275,6 +328,30 @@ sys.exit(done.returncode)
     assert took < 30, took
     assert subprocess.run(["ps", "-p", str(made[0]["pid"])], capture_output=True).returncode != 0, "the stand-in ssh still runs"
 
+    # A session that stays open after the result came: the result is used, with a note.
+    watch["machines"]["den-mac"]["reach"] = "ssh linger"
+    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "20"})
+    assert [l for l in out if l.startswith("note on den-mac: ssh linger brought run-watch's result but didn't end within 20 s")], out
+    assert not [l for l in out if l.startswith(("unreachable", "blind"))] and took < 60, (out, took)
+    # run-watch there that runs out of its time (a pmset there that hangs) stops itself first, saving nothing
+    watch["machines"]["den-mac"]["reach"] = "ssh den"
+    write(os.path.join(bin_dir, "hung-pmset"), "#!/bin/sh\nexec sleep 60\n", 0o755)
+    den_env = json.load(open(os.path.join(den_home, "env.json")))
+    put_json(os.path.join(den_home, "env.json"), dict(den_env, RUN_WATCH_PMSET=os.path.join(bin_dir, "hung-pmset")))
+    den_state = open(os.path.join(den_run, "run-watch.state.json")).read()
+    out, made, took = watch_run({"RUN_WATCH_SSH_SECONDS": "20"})
+    assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "ran out of its time there" in l
+            and "stopped at its 10 s limit" in l], out
+    assert open(os.path.join(den_run, "run-watch.state.json")).read() == den_state and took < 30, took
+    put_json(os.path.join(den_home, "env.json"), den_env)
+    # a result line it can't read whole (a list where it wants names) is one plain line, never a traceback
+    write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nimport json\nprint('run-watch-remote ' + json.dumps("
+          "{'protocol': 1, 'computer': 'den-mac', 'lines': [], 'blind': 5, 'summary': {}}))\n", 0o755)
+    watch["machines"]["den-mac"]["run_watch"] = "bad-run-watch"
+    out, made, _ = watch_run()
+    assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
+    del watch["machines"]["den-mac"]["run_watch"]
+
     # 6. An old copy there (5.9.2 and before take no --as: a usage error, exit 2), an old Python there, no run
     # directory there, an alias that reaches another computer, and an entry it won't pass to ssh.
     old_home = homes["old"][0]
@@ -294,6 +371,15 @@ sys.exit(done.returncode)
         un = [l for l in out if l.startswith("unreachable den-mac: ")]
         assert len(un) == 1 and why in un[0] and "its running tasks (B)" in un[0], (reach, out)
         assert len(made) == (0 if "evil" in reach else 1), (reach, made)
+    # another login shell, as watch.json's "shell" gives it; one that isn't a plain command isn't run
+    for shell in ("bash -l", "bash --login"):
+        watch["machines"]["den-mac"].update(reach="ssh den", shell=shell)
+        out, made, _ = watch_run()
+        assert made[0]["command"] == shell.split() and not [l for l in out if l.startswith("unreachable")], (made, out)
+    watch["machines"]["den-mac"]["shell"] = "zsh -l; touch x"
+    out, made, _ = watch_run()
+    assert made == [] and [l for l in out if l.startswith("unreachable den-mac: ") and "isn't a plain command" in l], out
+    del watch["machines"]["den-mac"]["shell"]
     watch["machines"]["den-mac"].update(reach="ssh den", run_dir="runs/missing")
     out, _, _ = watch_run()
     assert [l for l in out if l.startswith("unreachable den-mac: no run directory ") and "runs/missing there" in l], out

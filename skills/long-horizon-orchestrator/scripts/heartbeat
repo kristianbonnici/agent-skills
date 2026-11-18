@@ -49,6 +49,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
@@ -150,6 +151,7 @@ def main(argv):
     running = sorted(t for t, v in tasks.items() if isinstance(v, dict) and v.get("status", "running") == "running")
     fable = any(re.search(r"fable", str(tasks[t].get("model", "")), re.I) for t in running)
 
+    began = time.time()
     try:
         done = subprocess.run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir],
                               capture_output=True, text=True, timeout=180)
@@ -176,9 +178,12 @@ def main(argv):
     events = {}
     for l in watch_lines:
         if EVENT.match(l):
-            word, who = l.split()[:2]
+            parts = l.split()
+            word, who = parts[:2]
             if word == "slept":   # a time, not a task: said as its clock time
                 who = (re.search(r"T(\d\d:\d\d)", who) or re.match("(.*)", who)).group(1)
+            if parts[2:3] == ["on"] and len(parts) > 3:   # another computer's, checked over SSH
+                who += f" on {parts[3]}"
             events.setdefault(word, []).append(who)
 
     repo, branch = watch.get("repo"), watch.get("integration_branch")
@@ -216,8 +221,13 @@ def main(argv):
     if reminders["leftover"]:
         bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
     for name, m in sorted(machines.items()):
-        if not isinstance(m, dict) or m.get("checked") != state.get("last_run"):
-            continue    # not from this wake's run-watch
+        try:
+            fresh = datetime.fromisoformat(str(m.get("checked"))).timestamp() >= began - 1
+        except (ValueError, AttributeError, TypeError):
+            fresh = False
+        if not isinstance(m, dict) or not fresh:   # an earlier wake's: this one's run-watch didn't finish
+            bits.append(f"{name} not checked this wake")
+            continue
         if not m.get("reached"):
             bits.append(f"{name} not reached over SSH")
             continue
