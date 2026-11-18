@@ -588,7 +588,7 @@ def mark_finished(root, run, started=None):
         if data.get("started") is not None and started is None:
             usage_error(f"{run}'s run.json is the round started {data['started']}: give --started <its --mark-running's time>")
         if started is not None and data.get("started") != started:
-            usage_error(f"{run}'s run.json is the round started {data.get('started') or 'before 5.10.2'}, not {started}: "
+            usage_error(f"{run}'s run.json is the round started {data.get('started') or 'before 5.10.3'}, not {started}: "
                         "a later round began there, so this finish marks nothing")
         data["finished"] = now_iso()   # a file put in the run even a moment after this keeps it from pruning
         if not write_run_file(real, data, dfd):
