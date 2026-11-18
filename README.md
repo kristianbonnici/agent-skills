@@ -152,7 +152,7 @@ replaces or removes, a hand-made one included, is unloaded and moved into
 volume, so the backup is the file itself: a program still writing to the old plist writes into the
 backup. The output names each backup. Hand-made and changed ones stay; of the ones it wrote and
 nobody changed, the newest three stay, and an older one goes only once nothing has touched it for a
-day and no program holds it open. Backups made before that folder existed stay in
+day and no program holds it open (`lsof`; without it, none goes). Backups made before that folder existed stay in
 `${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/`, and the status names each folder that holds
 any. If the new agent can't be put in place, the old ones go back but stay unloaded until the next
 login; the output names those put back (one that can't go back stays in the backup folder) and says

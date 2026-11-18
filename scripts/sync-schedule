@@ -11,10 +11,11 @@
 # they are set. Installing replaces an agent with the same label, a hand-made one included, and
 # changes nothing when the same agent is already installed and loaded. Every agent it replaces or
 # removes is moved into ~/Library/LaunchAgents/.agent-skills-sync-backups/, on the agents' own
-# volume, so the move keeps the file itself (a program still writing to it writes into the backup). Hand-made
-# and changed ones stay there; of the ones it wrote and nobody changed, the newest three stay (an
-# older one goes once nothing has touched it for a day). Backups from before that folder existed stay
-# in ${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/.
+# volume, so the move keeps the file itself (a program still writing to it writes into the
+# backup). Hand-made and changed ones stay there; of the ones it wrote and nobody changed, the newest
+# three stay (an older one goes once nothing has touched it for a day and lsof finds no program
+# holding it open; without lsof, none goes). Backups from before that folder existed stay in
+# ${XDG_STATE_HOME:-~/.local/state}/agent-skills-sync/.
 #
 # Elsewhere it prints the line to add to cron and changes nothing.
 #
@@ -391,8 +392,8 @@ unload() {
 # name ($1 is loaded_state's answer), nothing is changed: that agent is never unloaded here.
 refuse_elsewhere() {
   case "$1" in
-    2) echo "FAIL launchd has the daily sync ($label) loaded from $loaded_from, outside $agents_dir, so nothing was changed: if it is this home's, launchctl bootout $domain/$label unloads it; then run scripts/sync with the same option again" >&2 ;;
-    3) echo "FAIL launchd has the daily sync ($label) loaded, but launchctl print names no file it was loaded from, so nothing was changed: if it is this home's, launchctl bootout $domain/$label unloads it; then run scripts/sync with the same option again" >&2 ;;
+    2) echo "FAIL launchd has the daily sync ($label) loaded from $loaded_from, outside $agents_dir, so nothing was changed: if it is this home's, launchctl bootout $domain/$label unloads it; then run this again" >&2 ;;
+    3) echo "FAIL launchd has the daily sync ($label) loaded, but launchctl print names no file it was loaded from, so nothing was changed: if it is this home's, launchctl bootout $domain/$label unloads it; then run this again" >&2 ;;
     *) return 0 ;;
   esac
   exit 1
@@ -620,8 +621,9 @@ remove() {
 
 # Keeps the log under AGENT_SKILLS_SYNC_LOG_MAX bytes (1 MiB unless set to a whole number): over it,
 # only its last quarter stays, from its first whole line on (a line longer than that quarter goes
-# whole), byte for byte, line ends of any kind as they were. It is written back into the same file, not replaced: launchd (or cron's >>)
-# holds it open for appending, so what the run writes next goes after it.
+# whole), byte for byte, line ends of any kind as they were. It is written back into the same file,
+# not replaced: launchd (or cron's >>) holds it open for appending, so what the run writes next goes
+# after it.
 trim_log() {
   max=${AGENT_SKILLS_SYNC_LOG_MAX:-1048576}
   case "$max" in ''|*[!0-9]*) max=1048576 ;; esac
