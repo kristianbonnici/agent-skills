@@ -10,8 +10,8 @@ Usage:
   prune-runs --scratch <run folder>/<task ID>
   prune-runs --harness-temp <worktree> [<run folder>/<task ID> ...] [--apply]
   prune-runs --size <run folder>
-  prune-runs --mark-running <run folder> --orchestrator <computer>
-  prune-runs --mark-finished <run folder>
+  prune-runs --mark-running <run folder> --orchestrator <computer> [--adopt]
+  prune-runs --mark-finished <run folder> [--started <time>]
 
 The root is the folder of ledgers and run folders, always
 ${XDG_STATE_HOME:-~/.local/state}/agent-skills/long-horizon-orchestrator, where SKILL.md puts them
@@ -29,7 +29,7 @@ changed or was put there after the finished time (a new round's task at work); w
 never pruned, however old, since only the finish knows its tasks have stopped. Such a run is pruned
 while holding its lock, <root>/.<name>.lock, which --mark-running and --mark-finished take too, so a
 round can't start or finish there between the check and the last removal; a run whose lock is held is
-skipped. A run.json counts only when it is a regular file, not a link, and names
+skipped. A dry run takes no lock. The lock files stay beside the runs; the listing skips them. A run.json counts only when it is a regular file, not a link, and names
 the folder, with "role": "other computer" and the orchestrator's computer, as the pre-flight writes it. A folder holding a file named KEEP, the run's
 own or a task's (the orchestrator puts one in each unmerged task's folder at the finish), is left
 whole. Without
@@ -82,11 +82,17 @@ once the task and everything it started have stopped.
 harness temp folders still left for its tasks (the worktrees and task folders its watch.json names, or,
 in a run folder with a run.json and no watch.json, its folders), when there are any.
 
---mark-running <run folder> --orchestrator <computer> writes the folder's run.json afresh, with no
-finished time, making the folder (right under the root) if it is missing: the pre-flight's step on a
-computer that runs a round's tasks without its ledger, before any of them starts. --mark-finished
-<run folder> writes the current time, to the microsecond, as "finished" into the folder's run.json,
-keeping its other fields: the last of that computer's finish steps, after its cleanup. Both refuse a
+--mark-running <run folder> --orchestrator <computer> writes the folder's run.json afresh, with the
+round's "started" time (it prints it) and no finished time, making the folder (right under the root)
+if it is missing: the pre-flight's first step on a computer that runs a round's tasks without its
+ledger, before anything else is written there. It takes only an empty folder or one already holding
+its run.json; a folder with files but none (a pre-flight that wrote no run.json) needs --adopt.
+--mark-finished <run folder> --started <time> writes the current time, to the microsecond, as
+"finished" into the folder's run.json, keeping its other fields: the last of that computer's finish
+steps, after its cleanup. It refuses when run.json's "started" isn't the time given (a later round
+began there), and when run.json has one and none is given. Both work in the folder through a handle
+opened without following a link once the lock is held, and refuse a folder that changed while they
+waited. Both refuse a
 path through a link and a folder whose ledger is beside it (the ledger says how that run stands), and
 wait up to ten minutes (PRUNE_RUNS_LOCK_WAIT seconds, for a check) while a prune holds the run's lock:
 exit 75 if it is still held.
@@ -115,7 +121,6 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -360,13 +365,14 @@ def ledger_status(ledger):
 RUN_FILE_ROLE = "other computer"
 
 
-def read_run_file(run):
+def read_run_file(run, dir_fd=None):
     """The run's run.json (written by the pre-flight on a computer where the run has tasks but no
     ledger) as a dict, with the file's stat, or (None, None) when the folder holds no regular file of
     that name naming this run as the pre-flight writes it. The file is opened without following a
     link, and its times read from what was opened."""
     try:
-        fd = os.open(os.path.join(run, "run.json"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        fd = os.open("run.json", flags, dir_fd=dir_fd) if dir_fd is not None else os.open(os.path.join(run, "run.json"), flags)
     except OSError:
         return None, None
     try:
@@ -435,14 +441,10 @@ LOCK_WAIT = 600   # seconds --mark-running and --mark-finished wait for a prune 
 
 def run_lock(root, name, wait):
     """The run's lock, <root>/.<name>.lock, held by --mark-running (the pre-flight), --mark-finished and a
-    prune of the run, so a prune never overlaps a round starting or finishing there: its open file, or
-    None when another holds it after wait seconds. It sits beside the run, never in it, so no prune
+    prune of the run, so a prune never overlaps a round starting or finishing there: its open file, None
+    when another holds it after wait seconds, or OSError when it can't be opened. It sits beside the run, never in it, so no prune
     removes it, and the listing of runs skips it."""
-    try:
-        fd = os.open(os.path.join(root, f".{name}.lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    except OSError as error:
-        print(f"prune-runs: couldn't open {name}'s lock: {error}", file=sys.stderr)
-        return None
+    fd = os.open(os.path.join(root, f".{name}.lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)   # OSError: can't open
     deadline = time.time() + wait
     while True:
         try:
@@ -457,36 +459,57 @@ def run_lock(root, name, wait):
 
 def lock_wait():
     try:
-        return max(0.0, float(os.environ.get("PRUNE_RUNS_LOCK_WAIT", LOCK_WAIT)))   # a check sets a short one
+        wait = float(os.environ.get("PRUNE_RUNS_LOCK_WAIT", LOCK_WAIT))   # a check sets a short one
     except ValueError:
         return LOCK_WAIT
+    return max(0.0, wait) if math.isfinite(wait) else LOCK_WAIT
 
 
-def write_run_file(real, data):
-    """Writes run.json in the run folder as a new file put in its place, never through a link."""
-    path = os.path.join(real, "run.json")
+def write_run_file(real, data, dir_fd):
+    """Writes run.json in the run folder open as dir_fd, as a new file put in its place: every step is
+    relative to that folder, so a folder swapped for a link meanwhile is never written through."""
+    temp = f".run.json.{os.getpid()}.{int(time.time() * 1e6)}"
     try:
-        fd, temp = tempfile.mkstemp(prefix=".run.json.", dir=real)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f)
                 f.write("\n")
-            os.replace(temp, path)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp, "run.json", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
         except BaseException:
-            os.unlink(temp)
+            os.unlink(temp, dir_fd=dir_fd)
             raise
     except OSError as error:
-        print(f"prune-runs: couldn't write {path}: {error}", file=sys.stderr)
+        print(f"prune-runs: couldn't write {os.path.join(real, 'run.json')}: {error}", file=sys.stderr)
         return False
     return True
+
+
+def open_run_folder(run, real, seen):
+    """The run folder opened without following a link, once the lock is held, refused when it is no longer
+    the folder checked before the lock (seen: its lstat then)."""
+    try:
+        dfd = os.open(real, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        usage_error(f"{run} isn't a run folder any more (moved or made a link while this waited)")
+    st = os.fstat(dfd)
+    if (st.st_dev, st.st_ino) != (seen.st_dev, seen.st_ino):
+        os.close(dfd)
+        usage_error(f"{run} isn't the folder it was when this began waiting")
+    return dfd
 
 
 def run_folder_given(root, run, create=False):
     """The run folder a --mark-* option names: a folder right under the root, reached through no link."""
     given = os.path.normpath(os.path.abspath(run))   # "<link>/." is the link itself
-    if os.path.realpath(os.path.dirname(given)) != root or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", os.path.basename(given)):
+    name = os.path.basename(given)
+    if os.path.realpath(os.path.dirname(given)) != root or not name or name.startswith(".") or "\0" in name:
         usage_error(f"{run} isn't a run folder under {root}")
-    real = os.path.join(root, os.path.basename(given))
+    real = os.path.join(root, name)
+    if os.path.lexists(real + ".md"):
+        usage_error(f"{run} has its ledger beside it: the ledger says how that run stands")
     if create and not os.path.lexists(real):
         try:
             os.mkdir(real, 0o755)
@@ -494,43 +517,76 @@ def run_folder_given(root, run, create=False):
             pass
     if os.path.islink(real) or not os.path.isdir(real):
         usage_error(f"{run} isn't a run folder under {root}")
-    if os.path.lexists(real + ".md"):
-        usage_error(f"{run} has its ledger beside it: the ledger says how that run stands")
     return real
 
 
-def mark_running(root, run, orchestrator):
+def take_lock(root, real):
+    """The run's lock for a mark, waiting for a prune to end; exits 75 when it doesn't, 1 when it can't be opened."""
+    try:
+        lock = run_lock(root, os.path.basename(real), lock_wait())
+    except OSError as error:
+        print(f"prune-runs: couldn't open {os.path.basename(real)}'s lock: {error}", file=sys.stderr)
+        sys.exit(1)
+    if lock is None:
+        print(f"prune-runs: {os.path.basename(real)} is being pruned; run this again once that ends", file=sys.stderr)
+        sys.exit(75)
+    return lock
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")   # to the microsecond
+
+
+def mark_running(root, run, orchestrator, adopt=False):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", orchestrator or ""):
         usage_error("--mark-running takes --orchestrator <the orchestrator's computer>")
     real = run_folder_given(root, run, create=True)
-    lock = run_lock(root, os.path.basename(real), lock_wait())
-    if lock is None:
-        print(f"prune-runs: {os.path.basename(real)} is being pruned, or its lock can't be opened; try again once that ends", file=sys.stderr)
-        return 75
+    seen = os.lstat(real)
+    lock = take_lock(root, real)
+    dfd = None
     try:
-        if not write_run_file(real, {"run": os.path.basename(real), "role": RUN_FILE_ROLE, "orchestrator": orchestrator}):
+        dfd = open_run_folder(run, real, seen)
+        # only this run's folder: empty (its first round), already holding its run.json, or adopted by name
+        if os.listdir(dfd) and read_run_file(real, dfd)[0] is None and not adopt:
+            usage_error(f"{run} holds files but no run.json naming it; if it is this run's folder from a pre-flight "
+                        "that wrote none, give --adopt")
+        started = now_iso()
+        if not write_run_file(real, {"run": os.path.basename(real), "role": RUN_FILE_ROLE, "orchestrator": orchestrator,
+                                     "started": started}, dfd):
             return 1
     finally:
+        if dfd is not None:
+            os.close(dfd)
         os.close(lock)
-    print(f"{os.path.basename(real)}: running, in its run.json (orchestrator {orchestrator})")
+    print(f"{os.path.basename(real)}: running, in its run.json (orchestrator {orchestrator}); started {started}: "
+          f"give --started {started} to its --mark-finished")
     return 0
 
 
-def mark_finished(root, run):
+def mark_finished(root, run, started=None):
     real = run_folder_given(root, run)
-    lock = run_lock(root, os.path.basename(real), lock_wait())
-    if lock is None:
-        print(f"prune-runs: {os.path.basename(real)} is being pruned, or its lock can't be opened; try again once that ends", file=sys.stderr)
-        return 75
+    if run_file(real) is None:
+        usage_error(f"{run} holds no run.json naming {os.path.basename(real)}")
+    seen = os.lstat(real)
+    lock = take_lock(root, real)
+    dfd = None
     try:
-        data = run_file(real)
+        dfd = open_run_folder(run, real, seen)
+        data = read_run_file(real, dfd)[0]   # read again under the lock
         if data is None:
             usage_error(f"{run} holds no run.json naming {os.path.basename(real)}")
-        # to the microsecond: a file put in the run even a moment after this keeps it from pruning
-        data["finished"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        if not write_run_file(real, data):
+        # the round this finish belongs to: a retry that arrives after a new round began never marks that one
+        if data.get("started") is not None and started is None:
+            usage_error(f"{run}'s run.json is the round started {data['started']}: give --started <its --mark-running's time>")
+        if started is not None and data.get("started") != started:
+            usage_error(f"{run}'s run.json is the round started {data.get('started') or 'before 5.9.3'}, not {started}: "
+                        "a later round began there, so this finish marks nothing")
+        data["finished"] = now_iso()   # a file put in the run even a moment after this keeps it from pruning
+        if not write_run_file(real, data, dfd):
             return 1
     finally:
+        if dfd is not None:
+            os.close(dfd)
         os.close(lock)
     print(f"{os.path.basename(real)}: finished at {data['finished']}, in its run.json")
     return 0
@@ -558,7 +614,7 @@ def prune_old(root, days, apply):
     total_now = total_removable = total_freed = 0
     touched, problems = 0, []
     for name, run, ledger in runs_in(root):
-        lock = None
+        lock = times = None
         try:
             if os.path.isfile(ledger):
                 status = ledger_status(ledger)
@@ -570,10 +626,15 @@ def prune_old(root, days, apply):
                 if run_file(run) is None:
                     print(f"{name}: skipped, no ledger beside it and no run.json in it")
                     continue
-                lock = run_lock(root, name, 0)   # held until its removals end: no round starts or finishes meanwhile
-                if lock is None:
-                    print(f"{name}: skipped, a round is starting or finishing there (its lock is held)")
-                    continue
+                if apply:   # a dry run removes nothing, so it takes no lock and writes no lock file
+                    try:
+                        lock = run_lock(root, name, 0)   # held until its removals end: no round starts or finishes meanwhile
+                    except OSError as error:
+                        print(f"{name}: skipped, can't open its lock ({error})")
+                        continue
+                    if lock is None:
+                        print(f"{name}: skipped, a round is starting or finishing there (its lock is held)")
+                        continue
                 data, st = read_run_file(run)   # read again under the lock
                 if data is None:
                     print(f"{name}: skipped, no ledger beside it and no run.json in it")
@@ -586,7 +647,7 @@ def prune_old(root, days, apply):
             if age < days:
                 print(f"{name}: skipped, finished {age:.1f} days ago")
                 continue
-            if lock is not None:
+            if times is not None:   # a run with only a run.json
                 newer = changed_after(run, times[1])
                 if newer:
                     print(f"{name}: skipped, not finished: {newer} changed after its run.json's finished time (a new round?)")
@@ -996,14 +1057,18 @@ def main():
     parser.add_argument("--mark-finished", metavar="RUN_FOLDER")
     parser.add_argument("--mark-running", metavar="RUN_FOLDER")
     parser.add_argument("--orchestrator", metavar="COMPUTER")
+    parser.add_argument("--adopt", action="store_true")
+    parser.add_argument("--started", metavar="TIME")
     try:
         args = parser.parse_args()
     except SystemExit as exit_:
         sys.exit(0 if exit_.code == 0 else 64)
     if sum(bool(x) for x in (args.scratch, args.size, args.harness_temp, args.mark_finished, args.mark_running)) > 1:
         usage_error("give one of --scratch, --harness-temp, --size, --mark-running and --mark-finished")
-    if args.orchestrator and not args.mark_running:
-        usage_error("--orchestrator goes with --mark-running")
+    if (args.orchestrator or args.adopt) and not args.mark_running:
+        usage_error("--orchestrator and --adopt go with --mark-running")
+    if args.started and not args.mark_finished:
+        usage_error("--started goes with --mark-finished")
     if args.size:
         if not os.path.isdir(args.size):
             usage_error(f"no such folder: {args.size}")
@@ -1022,8 +1087,10 @@ def main():
     if args.mark_running:
         if args.apply:
             usage_error("--mark-running writes at once; leave out --apply")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.orchestrator or ""):
+            usage_error("--mark-running takes --orchestrator <the orchestrator's computer>")
         os.makedirs(default_root(), exist_ok=True)   # the first run on this computer
-        return mark_running(safe_root(default_root()), args.mark_running, args.orchestrator)
+        return mark_running(safe_root(default_root()), args.mark_running, args.orchestrator, args.adopt)
     root = safe_root(default_root())
     if root is None:
         if args.scratch or args.mark_finished:
@@ -1033,7 +1100,7 @@ def main():
     if args.mark_finished:
         if args.apply:
             usage_error("--mark-finished writes at once; leave out --apply")
-        return mark_finished(root, args.mark_finished)
+        return mark_finished(root, args.mark_finished, args.started)
     if args.scratch:
         if args.apply:
             usage_error("--scratch removes at once; leave out --apply")

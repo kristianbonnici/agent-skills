@@ -3077,13 +3077,16 @@ assert size.returncode == 0 and size.stdout.splitlines()[1].startswith("plus 3.0
 # none once a file in it changed or was put there after the finished time (a new round's task), and never
 # while the run's lock is held (a round starting or finishing). A run.json naming another run or without the
 # pre-flight's role, a link, or a finished time that isn't a date and time with its zone counts for nothing.
+import fcntl
 other = "run-on-den"
 other_file = os.path.join(root, other, "run.json")
 def write_run(path, data, age_days=None):
     put(path, json.dumps(data).encode(), age_days)
 done = run("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")   # the pre-flight
 assert done.returncode == 0 and "running" in done.stdout, done.stdout + done.stderr
-assert json.load(open(other_file)) == {"run": other, "role": "other computer", "orchestrator": "studio-mac"}
+started = json.load(open(other_file))["started"]            # the round's time, which its finish gives back
+assert json.load(open(other_file)) == {"run": other, "role": "other computer", "orchestrator": "studio-mac", "started": started}
+assert f"--started {started}" in done.stdout and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z", started), done.stdout
 put(f"{other}/G/scratch/build.bin", big)
 put(f"{other}/G/handoff.md", b"h")
 put(f"{other}/G/render.mp4", big)
@@ -3101,7 +3104,9 @@ t = time.time() - 30 * 86400
 os.utime(other_file, (t, t))
 done = run("--older-than", "0")
 assert f"{other}: skipped, not finished (its run.json has no finished time)" in done.stdout, done.stdout
-done = run("--mark-finished", os.path.join(root, other))
+done = run("--mark-finished", os.path.join(root, other))   # without the round's time: refused
+assert done.returncode == 64 and "give --started" in done.stderr, done.stderr
+done = run("--mark-finished", os.path.join(root, other), "--started", started)
 assert done.returncode == 0 and "finished at " in done.stdout, done.stdout + done.stderr
 data = json.load(open(other_file))
 assert data["run"] == other and data["role"] == "other computer" and data["orchestrator"] == "studio-mac", data
@@ -3130,25 +3135,45 @@ write_run(f"{other}/run.json", data)
 os.utime(other_file, (minute_ago, minute_ago))
 done = run("--older-than", "0")
 assert f"{other}: skipped, not finished: G/" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
-done = run("--mark-finished", os.path.join(root, other))  # a finish after them
+done = run("--mark-finished", os.path.join(root, other), "--started", started)  # a finish after them
 assert done.returncode == 0, done.stderr
 # while a round starts or finishes there (its lock held), the prune passes it by, and the marks wait, then give up
-import fcntl
 held = os.open(os.path.join(root, f".{other}.lock"), os.O_RDWR | os.O_CREAT)
 fcntl.flock(held, fcntl.LOCK_EX)
 done = run("--apply", "--older-than", "0")
 assert f"{other}: skipped, a round is starting or finishing there (its lock is held)" in done.stdout and exists(f"{other}/G/render.mp4"), done.stdout
-for args in (("--mark-finished", os.path.join(root, other)), ("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")):
+for args in (("--mark-finished", os.path.join(root, other), "--started", started), ("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")):
     done = subprocess.run([sys.executable, "-I", script, *args], capture_output=True, text=True, timeout=60,
                           env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), PRUNE_RUNS_LOCK_WAIT="0.5"))
     assert done.returncode == 75 and "being pruned" in done.stderr, (args, done.stderr)
 os.close(held)
-assert not os.path.lexists(os.path.join(root, ".loose.lock"))   # no lock for a folder that isn't such a run
 done = run("--apply", "--older-than", "0")
 assert done.returncode == 0 and any(l.startswith(f"{other}: ") and "removing" in l for l in done.stdout.splitlines()), done.stdout
 assert not exists(f"{other}/G/render.mp4") and exists(f"{other}/G/handoff.md") and exists(f"{other}/run.json")
 done = run("--mark-running", os.path.join(root, other), "--orchestrator", "studio-mac")   # a new round drops the finish
 assert done.returncode == 0 and "finished" not in json.load(open(other_file)), done.stderr
+done = run("--mark-finished", os.path.join(root, other), "--started", started)   # the last round's finish, retried late
+assert done.returncode == 64 and "a later round began there" in done.stderr and "finished" not in json.load(open(other_file)), done.stderr
+# a folder with files but no run.json takes --adopt; one swapped for a link while a mark waits is refused
+put("legacy/T/x.bin", big)
+done = run("--mark-running", os.path.join(root, "legacy"), "--orchestrator", "studio-mac")
+assert done.returncode == 64 and "--adopt" in done.stderr and not exists("legacy/run.json"), done.stderr
+done = run("--mark-running", os.path.join(root, "legacy"), "--orchestrator", "studio-mac", "--adopt")
+assert done.returncode == 0 and exists("legacy/run.json"), done.stderr
+held = os.open(os.path.join(root, ".legacy.lock"), os.O_RDWR | os.O_CREAT)
+fcntl.flock(held, fcntl.LOCK_EX)
+waiting = subprocess.Popen([sys.executable, "-I", script, "--mark-running", os.path.join(root, "legacy"), "--orchestrator", "studio-mac"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                           env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), PRUNE_RUNS_LOCK_WAIT="30"))
+time.sleep(1.5)
+os.rename(os.path.join(root, "legacy"), os.path.join(root, "legacy-moved"))
+os.makedirs(os.path.join(outside, "victim"))
+os.symlink(os.path.join(outside, "victim"), os.path.join(root, "legacy"))
+os.close(held)
+out, err = waiting.communicate(timeout=60)
+assert waiting.returncode == 64 and os.listdir(os.path.join(outside, "victim")) == [], (waiting.returncode, err)
+os.unlink(os.path.join(root, "legacy"))
+os.rename(os.path.join(root, "legacy-moved"), os.path.join(root, "legacy"))
 done = run("--mark-running", os.path.join(root, "fresh-run"), "--orchestrator", "studio-mac")   # its first round there
 assert done.returncode == 0 and json.load(open(os.path.join(root, "fresh-run", "run.json")))["run"] == "fresh-run", done.stderr
 # what counts for nothing, and --mark-finished's refusals
@@ -3188,11 +3213,39 @@ for args in (("--mark-finished", os.path.join(root, "recent")), ("--mark-finishe
              ("--mark-running", os.path.join(root, "recent"), "--orchestrator", "studio-mac"),
              ("--mark-running", os.path.join(root, "new-run")), ("--mark-running", os.path.join(root, "new-run"), "--orchestrator", "a b"),
              ("--mark-running", os.path.join(outside, "new-run"), "--orchestrator", "studio-mac"),
-             ("--orchestrator", "studio-mac"), ("--mark-running", os.path.join(root, other), "--orchestrator", "x", "--apply")):
+             ("--orchestrator", "studio-mac"), ("--mark-running", os.path.join(root, other), "--orchestrator", "x", "--apply"),
+             ("--adopt",), ("--started", "x"), ("--mark-running", os.path.join(root, other), "--orchestrator", "x", "--started", "y")):
     done = run(*args)
     assert done.returncode == 64 and done.stderr.startswith("prune-runs: "), (args, done.stderr)
 assert json.load(open(os.path.join(root, "misnamed/run.json")))["finished"] == "2020-01-01T00:00:00Z"   # left as it was
 assert open(other_file).read() == before and not os.path.lexists(os.path.join(root, "new-run"))
+for name in ("loose", "misnamed", "recent", "new-run"):   # no lock file for a folder that isn't such a run
+    assert not os.path.lexists(os.path.join(root, f".{name}.lock")), name
+# a run named after a checkout with a space or a non-ASCII letter; a lock wait that isn't a number of seconds
+spaced = "My Project-café-20261119-1200"
+done = run("--mark-running", os.path.join(root, spaced), "--orchestrator", "studio-mac")
+assert done.returncode == 0 and json.load(open(os.path.join(root, spaced, "run.json")))["run"] == spaced, done.stderr
+spaced_started = json.load(open(os.path.join(root, spaced, "run.json")))["started"]
+done = run("--mark-finished", os.path.join(root, spaced), "--started", spaced_started)
+assert done.returncode == 0 and "finished" in json.load(open(os.path.join(root, spaced, "run.json"))), done.stderr
+# a mark waits for a lock held a moment and then writes; a dry run of a run.json run takes no lock
+import threading
+held = os.open(os.path.join(root, f".{spaced}.lock"), os.O_RDWR | os.O_CREAT)
+fcntl.flock(held, fcntl.LOCK_EX)
+threading.Timer(1.5, os.close, (held,)).start()
+done = subprocess.run([sys.executable, "-I", script, "--mark-finished", os.path.join(root, spaced), "--started", spaced_started], capture_output=True, text=True, timeout=60,
+                      env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), PRUNE_RUNS_LOCK_WAIT="20"))
+assert done.returncode == 0 and "finished at " in done.stdout, done.stderr
+write_run("handmade/run.json", {"run": "handmade", "role": "other computer", "orchestrator": "studio-mac"})
+done = run("--older-than", "0")
+assert "handmade: skipped, not finished" in done.stdout and not os.path.lexists(os.path.join(root, ".handmade.lock")), done.stdout
+done = run("--mark-finished", os.path.join(root, "handmade"))   # a run.json written by hand, with no round time
+assert done.returncode == 0 and "finished" in json.load(open(os.path.join(root, "handmade", "run.json"))), done.stderr
+for value, wait in (("nan", 600), ("inf", 600), ("-3", 0.0), ("soon", 600), ("2.5", 2.5)):   # never a wait without end
+    os.environ["PRUNE_RUNS_LOCK_WAIT"] = value
+    assert ns["lock_wait"]() == wait, (value, ns["lock_wait"]())
+del os.environ["PRUNE_RUNS_LOCK_WAIT"]
+
 EOF
 
 # Every Python script stops with one plain line on a Python older than it needs (run-watch 3.10, the others
