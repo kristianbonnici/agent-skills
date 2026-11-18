@@ -343,7 +343,8 @@ sys.exit(done.returncode)
     assert not [l for l in out if l.startswith(("unreachable", "blind"))] and took < 60, (out, took)
     # run-watch there that runs out of its time (a pmset there that hangs) stops itself first, saving nothing
     watch["machines"]["den-mac"]["reach"] = "ssh den"
-    write(os.path.join(bin_dir, "hung-pmset"), "#!/bin/sh\nexec sleep 15\n", 0o755)   # outlasts the 10 s limit, not the suite
+    hung_pid = os.path.join(work, "hung-pmset.pid")
+    write(os.path.join(bin_dir, "hung-pmset"), f"#!/bin/sh\necho $$ > {hung_pid}\nexec sleep 60\n", 0o755)
     den_env = json.load(open(os.path.join(den_home, "env.json")))
     put_json(os.path.join(den_home, "env.json"), dict(den_env, RUN_WATCH_PMSET=os.path.join(bin_dir, "hung-pmset")))
     den_state = open(os.path.join(den_run, "run-watch.state.json")).read()
@@ -351,6 +352,8 @@ sys.exit(done.returncode)
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "ran out of its time there" in l
             and "stopped at its 5 s limit" in l], out
     assert open(os.path.join(den_run, "run-watch.state.json")).read() == den_state and took < 30, took
+    hung = int(open(hung_pid).read())   # the command it waited on was stopped and reaped, not left running
+    assert subprocess.run(["ps", "-p", str(hung)], capture_output=True).returncode != 0, f"pmset stand-in {hung} still runs"
     put_json(os.path.join(den_home, "env.json"), den_env)
     # a result line it can't read whole (a list where it wants names) is one plain line, never a traceback
     write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nimport json\nprint('run-watch-remote ' + json.dumps("
@@ -363,6 +366,12 @@ sys.exit(done.returncode)
           "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"times\": [\"commit B \\\\ud800\"]}')\n", 0o755)
     out, made, _ = watch_run()
     assert [l for l in out if l.startswith("unreachable den-mac: its run-watch") and "a result this copy can't read" in l], out
+    # a summary value it doesn't show (a lone surrogate, a list) is left out, and the heartbeat prints its line
+    write(os.path.join(den_home, "bad-run-watch"), "#!/usr/bin/env python3\nprint('run-watch-remote {\"protocol\": 1, "
+          "\"computer\": \"den-mac\", \"lines\": [], \"blind\": [], \"summary\": {\"keep_awake\": \"\\\\ud800\", "
+          "\"disk_free_gb\": [1], \"sampler\": \"up\"}}')\n", 0o755)
+    hb = beat()
+    assert "den-mac: keep-awake none, sampler up" in hb[0], hb
     del watch["machines"]["den-mac"]["run_watch"]
 
     # 6. An old copy there (5.9.2 and before take no --as: a usage error, exit 2), an old Python there, no run

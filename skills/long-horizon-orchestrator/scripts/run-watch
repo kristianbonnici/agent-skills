@@ -653,6 +653,10 @@ def rate_since(samples: list, cpu_now: float, t_now: float, window_s: float):
 
 # ---------------------------------------------------------------- other computers, over SSH
 
+class OutOfTime(BaseException):
+    """Raised by --as mode's alarm: subprocess.run then kills and reaps the command it waits on, and no
+    handler in between can catch it."""
+
 def path_there(path: str, mirror: bool) -> str:
     """A path for the other computer's shell, quoted. mirror: this computer's own path, which under this
     home folder becomes the same path under that computer's home ("$HOME"/…), else stays as it is. A path
@@ -837,9 +841,7 @@ def main(argv: list[str]) -> int:
         limit = watch.get("deadline_seconds")
         if isinstance(limit, (int, float)) and limit > 0:   # stop before the orchestrator's ssh does, saving nothing
             def out_of_time(*_):
-                print(f"run-watch: stopped at its {limit:g} s limit, before saving its state (something it runs there "
-                      "hangs: pmset, lsof, git or du; what it started ends at its own time limit)", file=sys.stderr)
-                os._exit(70)
+                raise OutOfTime(limit)
             signal.signal(signal.SIGALRM, out_of_time)
             signal.alarm(max(1, int(limit)))
         watch["computer"] = as_computer
@@ -1386,6 +1388,7 @@ def main(argv: list[str]) -> int:
     # The other computers' checks: their lines, each naming the computer, their times for times.log, and
     # their tasks' blind state; a computer that gave nothing is one line, and its tasks are blind as before.
     machines_seen, remote_times = {}, []
+    invocation = os.environ.get("RUN_WATCH_INVOCATION") or iso(t0)   # the heartbeat's ID for this run, to know its reading
     try:   # the times already here, so another computer's are added once, however often they come
         with open(os.path.join(run_dir, TIMES_LOG), encoding="utf-8", errors="replace") as fh:
             have = set(fh.read().splitlines())
@@ -1410,16 +1413,17 @@ def main(argv: list[str]) -> int:
                     remote_times.append(tagged)
             blind_told -= set(mine)
             blind_told |= {t for t in payload.get("blind") or [] if t in mine}
-            got = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-            machines_seen[name] = {"checked": iso(t0), "run": t0, "reached": True,
-                                   **{k: v for k, v in got.items() if k in ("disk_free_gb", "swap_gb", "load", "dialogs",
-                                                                            "keep_awake", "sampler")}}
+            got = payload.get("summary") or {}
+            machines_seen[name] = {"checked": iso(t0), "invocation": invocation, "reached": True,   # only the values the heartbeat shows
+                                   **{k: v for k, v in got.items() if (k in ("disk_free_gb", "swap_gb", "load", "dialogs")
+                                      and isinstance(v, (int, float)) and not isinstance(v, bool))
+                                      or (k in ("keep_awake", "sampler") and v in ("up", "DOWN", "none"))}}
             continue
         running_there = sorted(t for t, v in mine.items() if v.get("status", "running") == "running")
         lines.append(f"unreachable {name}: {why}; " + (f"its running tasks ({', '.join(running_there)}) are blind this wake: read "
                      "their threads (with its environmentId)" if running_there else "no task of the run is running there") +
                      ", and if it lasts, check that computer through its machine thread (computers.md section 10)")
-        machines_seen[name] = {"checked": iso(t0), "run": t0, "reached": False, "why": short(why, 160)}
+        machines_seen[name] = {"checked": iso(t0), "invocation": invocation, "reached": False, "why": short(why, 160)}
         for tid in running_there:
             if tid not in blind_told:
                 lines.append(f"blind {tid} ({mine[tid].get('harness') or 'unknown harness'}, on {mine[tid]['computer']}): it runs on "
@@ -1468,6 +1472,7 @@ def main(argv: list[str]) -> int:
                                             "blind": sorted(blind_told), "summary": summary, "times": times}), flush=True)
         except OSError:
             return 0
+        signal.alarm(0)   # it went out: the state is saved whatever the time
     else:
         for line in lines:
             print(line)
@@ -1479,4 +1484,9 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OutOfTime as e:   # --as mode's limit: the command it waited on is stopped, and nothing more is saved
+        print(f"run-watch: stopped at its {e.args[0]:g} s limit, before saving its state (something it runs there hangs, "
+              "such as pmset, lsof, git or du; the command it was waiting on was stopped)", file=sys.stderr)
+        sys.exit(70)

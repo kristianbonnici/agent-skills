@@ -49,6 +49,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
@@ -150,10 +151,10 @@ def main(argv):
     running = sorted(t for t, v in tasks.items() if isinstance(v, dict) and v.get("status", "running") == "running")
     fable = any(re.search(r"fable", str(tasks[t].get("model", "")), re.I) for t in running)
 
-    began = time.time()
+    invocation = uuid.uuid4().hex   # run-watch keeps it with each other computer's reading: this run's, no other's
     try:
         done = subprocess.run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir],
-                              capture_output=True, text=True, timeout=180)
+                              capture_output=True, text=True, timeout=180, env=dict(os.environ, RUN_WATCH_INVOCATION=invocation))
         watch_lines = [l for l in done.stdout.splitlines() if l.strip()]
         if done.returncode != 0:
             watch_lines.append(f"note: run-watch failed (exit {done.returncode}): {done.stderr.strip()[-200:]}; run it yourself")
@@ -220,8 +221,7 @@ def main(argv):
     if reminders["leftover"]:
         bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
     for name, m in sorted(machines.items()):
-        # this wake's: its run-watch started after the heartbeat did ("run" is its start, to the microsecond)
-        fresh = isinstance(m, dict) and isinstance(m.get("run"), (int, float)) and m["run"] >= began
+        fresh = isinstance(m, dict) and m.get("invocation") == invocation   # written by this heartbeat's run-watch
         if not isinstance(m, dict) or not fresh:   # an earlier wake's: this one's run-watch didn't finish
             bits.append(f"{name} not checked this wake")
             continue
