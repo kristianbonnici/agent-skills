@@ -3147,6 +3147,23 @@ for args in (("--mark-finished", os.path.join(root, other), "--started", started
                           env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), PRUNE_RUNS_LOCK_WAIT="0.5"))
     assert done.returncode == 75 and "being pruned" in done.stderr, (args, done.stderr)
 os.close(held)
+# a lock file removed between a taker's open and its flock guards nothing: it takes the file there now instead
+class Removing:
+    LOCK_EX, LOCK_NB, first = fcntl.LOCK_EX, fcntl.LOCK_NB, True
+    def flock(self, fd, op):
+        if Removing.first:
+            Removing.first = False
+            os.unlink(os.path.join(root, f".{other}.lock"))
+        fcntl.flock(fd, op)
+lock_globals = ns["run_lock"].__globals__
+real_fcntl, lock_globals["fcntl"] = lock_globals["fcntl"], Removing()
+try:
+    taken = ns["run_lock"](root, other, 0)
+finally:
+    lock_globals["fcntl"] = real_fcntl
+assert not Removing.first and taken is not None
+assert os.fstat(taken).st_ino == os.stat(os.path.join(root, f".{other}.lock")).st_ino   # the file its path names
+os.close(taken)
 done = run("--apply", "--older-than", "0")
 assert done.returncode == 0 and any(l.startswith(f"{other}: ") and "removing" in l for l in done.stdout.splitlines()), done.stdout
 assert not exists(f"{other}/G/render.mp4") and exists(f"{other}/G/handoff.md") and exists(f"{other}/run.json")
@@ -3165,13 +3182,13 @@ fcntl.flock(held, fcntl.LOCK_EX)
 waiting = subprocess.Popen([sys.executable, "-I", script, "--mark-running", os.path.join(root, "legacy"), "--orchestrator", "studio-mac"],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                            env=dict(os.environ, XDG_STATE_HOME=os.path.dirname(os.path.dirname(root)), PRUNE_RUNS_LOCK_WAIT="30"))
-time.sleep(1.5)
+time.sleep(3)                                              # it has checked the folder and waits for the lock
 os.rename(os.path.join(root, "legacy"), os.path.join(root, "legacy-moved"))
 os.makedirs(os.path.join(outside, "victim"))
 os.symlink(os.path.join(outside, "victim"), os.path.join(root, "legacy"))
 os.close(held)
 out, err = waiting.communicate(timeout=60)
-assert waiting.returncode == 64 and os.listdir(os.path.join(outside, "victim")) == [], (waiting.returncode, err)
+assert waiting.returncode == 64 and "isn't a run folder any more" in err and os.listdir(os.path.join(outside, "victim")) == [], (waiting.returncode, err)
 os.unlink(os.path.join(root, "legacy"))
 os.rename(os.path.join(root, "legacy-moved"), os.path.join(root, "legacy"))
 done = run("--mark-running", os.path.join(root, "fresh-run"), "--orchestrator", "studio-mac")   # its first round there

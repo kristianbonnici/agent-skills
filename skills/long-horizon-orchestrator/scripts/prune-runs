@@ -444,12 +444,21 @@ def run_lock(root, name, wait):
     prune of the run, so a prune never overlaps a round starting or finishing there: its open file, None
     when another holds it after wait seconds, or OSError when it can't be opened. It sits beside the run, never in it, so no prune
     removes it, and the listing of runs skips it."""
-    fd = os.open(os.path.join(root, f".{name}.lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)   # OSError: can't open
+    path = os.path.join(root, f".{name}.lock")
     deadline = time.time() + wait
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)   # OSError: can't open
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fd
+            held, there = os.fstat(fd), os.stat(path, follow_symlinks=False)
+            if (held.st_dev, held.st_ino) == (there.st_dev, there.st_ino):
+                return fd
+            # the file was removed or replaced meanwhile: a lock on it guards nothing, so take the one there now
+            os.close(fd)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        except FileNotFoundError:
+            os.close(fd)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         except BlockingIOError:
             if time.time() >= deadline:
                 os.close(fd)
