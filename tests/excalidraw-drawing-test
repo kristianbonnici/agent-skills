@@ -817,10 +817,12 @@ cat >"$work/graze.json" <<'JSON'
   { "type": "line", "id": "edge", "x": 0, "y": 103, "points": [[0, 0], [200, 0]] },
   { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 160, "width": 700, "height": 500, "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10 },
     "points": [ { "x": 3, "y": 5, "label": "Alpha Beta Gamma Delta\nI", "labelSide": "right" }, { "id": "t1", "x": 5, "y": 4.77 }, { "id": "t2", "x": 8, "y": 4.77 } ],
-    "links": [ { "from": "t1", "to": "t2" } ] }
+    "links": [ { "from": "t1", "to": "t2" } ] },
+  { "type": "chart", "kind": "scatter", "id": "blank", "x": 0, "y": 700, "width": 700, "height": 500, "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10 },
+    "points": [ { "x": 3, "y": 5, "label": "Alpha\n\nBeta", "labelSide": "right" }, { "x": 3.22, "y": 5 } ] }
 ] } ] }
 JSON
-node "$build" "$work/graze.json" >"$work/graze.out" || { cat "$work/graze.out"; fail "a line along a caption's edge or past a label's empty corner should be no warning"; }
+node "$build" "$work/graze.json" >"$work/graze.out" || { cat "$work/graze.out"; fail "a line along a caption's edge, a link past a label's empty corner, or a dot in its blank line should be no warning"; }
 
 # A bar takes a hex color as given, and an arrow's label keeps its arrow's color.
 cat >"$work/colors.json" <<'JSON'

@@ -558,7 +558,8 @@ function scatterChart(el, id, g, common, pid, warnings) {
   // Each line of a label is measured on its own, inset as the checks measure text, so a link may pass
   // a label's empty corner or graze its edge.
   const lh = fs * STYLE.lineHeight;
-  const lines = r => r.widths.map((rw, k) => ({ x: r.x, y: r.y + k * lh, w: rw, h: lh }));
+  // A blank line keeps its place in the label but has no text to collide.
+  const lines = r => r.widths.map((rw, k) => ({ x: r.x, y: r.y + k * lh, w: rw, h: lh })).filter(t => t.w > 0);
   const crossed = r => lines(r).some(t => links.some(l => meets(l, { x: t.x + 2, y: t.y + 3, w: t.w - 4, h: t.h - 6 })));
   const covers = (r, d) => lines(r).some(t => dots.some(o => o !== d && intersects(t, dotBox(o), 0)));
   for (const d of dots) {
