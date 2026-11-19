@@ -809,6 +809,19 @@ for expect in 'point "text" needs number x and y' 'point "far" is outside the ax
   'the label "covering" covers another' 'chart "none" has no points' 'kind "pie" isn'"'"'t line, bar or scatter' 'kind "toString" isn'"'"'t line, bar or scatter'; do
   grep -q -- "$expect" "$work/badscatter.out" || { cat "$work/badscatter.out"; fail "missing warning: $expect"; }
 done
+# Only a line through a text's inside counts: one along a caption's edge, or a link past the empty corner
+# of a two-line label, is no warning.
+cat >"$work/graze.json" <<'JSON'
+{ "title": "", "format": "fit", "frame": false, "panels": [ { "id": "z", "span": 2, "elements": [
+  { "type": "text", "id": "cap", "x": 0, "y": 100, "text": "a caption" },
+  { "type": "line", "id": "edge", "x": 0, "y": 103, "points": [[0, 0], [200, 0]] },
+  { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 160, "width": 700, "height": 500, "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10 },
+    "points": [ { "x": 3, "y": 5, "label": "Alpha Beta Gamma Delta\nI", "labelSide": "right" }, { "id": "t1", "x": 5, "y": 4.77 }, { "id": "t2", "x": 8, "y": 4.77 } ],
+    "links": [ { "from": "t1", "to": "t2" } ] }
+] } ] }
+JSON
+node "$build" "$work/graze.json" >"$work/graze.out" || { cat "$work/graze.out"; fail "a line along a caption's edge or past a label's empty corner should be no warning"; }
+
 # A bar takes a hex color as given, and an arrow's label keeps its arrow's color.
 cat >"$work/colors.json" <<'JSON'
 { "title": "", "format": "fit", "frame": false, "panels": [ { "id": "h", "span": 2, "elements": [

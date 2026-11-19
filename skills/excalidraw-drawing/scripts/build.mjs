@@ -555,27 +555,31 @@ function scatterChart(el, id, g, common, pid, warnings) {
   // the chart and keeps clear of the links, the other dots and the labels already placed.
   const placed = [];
   const dotBox = d => ({ x: d.cx - d.r, y: d.cy - d.r, w: 2 * d.r, h: 2 * d.r });
-  // As the checks measure text: a line may graze a label's empty edge.
-  const crossed = r => links.some(l => meets(l, { x: r.x + 2, y: r.y + 3, w: r.w - 4, h: r.h - 6 }));
+  // Each line of a label is measured on its own, inset as the checks measure text, so a link may pass
+  // a label's empty corner or graze its edge.
+  const lh = fs * STYLE.lineHeight;
+  const lines = r => r.widths.map((rw, k) => ({ x: r.x, y: r.y + k * lh, w: rw, h: lh }));
+  const crossed = r => lines(r).some(t => links.some(l => meets(l, { x: t.x + 2, y: t.y + 3, w: t.w - 4, h: t.h - 6 })));
+  const covers = (r, d) => lines(r).some(t => dots.some(o => o !== d && intersects(t, dotBox(o), 0)));
   for (const d of dots) {
     const { p } = d;
     if (!p.label) continue;
-    const rows = String(p.label).split('\n');
-    const w = Math.max(...rows.map(t => textWidth(t, fs))), h = rows.length * fs * STYLE.lineHeight;
+    const widths = String(p.label).split('\n').map(t => textWidth(t, fs));
+    const w = Math.max(...widths), h = widths.length * lh;
     let side = p.labelSide;
     if (side !== undefined && !SIDES.includes(side)) {
       warnings.push(`${name}: point "${p.label}" has labelSide "${side}", not one of ${SIDES.join(', ')}: placed automatically`);
       side = undefined;
     }
-    const rect = s => ({ w, h, ...{
+    const rect = s => ({ w, h, widths, ...{
       right: { x: d.cx + d.r + 8, y: d.cy - h / 2 }, left: { x: d.cx - d.r - 8 - w, y: d.cy - h / 2 },
       above: { x: d.cx - w / 2, y: d.cy - d.r - 4 - h }, below: { x: d.cx - w / 2, y: d.cy + d.r + 4 } }[s] });
     const fits = r => r.x >= x0 && r.x + r.w <= x0 + W && r.y >= y0 && r.y + r.h <= y0 + H;
-    const clear = r => !crossed(r) && !dots.some(o => o !== d && intersects(r, dotBox(o), 0)) && !placed.some(q => intersects(r, q, 0));
+    const clear = r => !crossed(r) && !covers(r, d) && !placed.some(q => intersects(r, q, 0));
     side ??= SIDES.find(s => fits(rect(s)) && clear(rect(s))) ?? (fits(rect('right')) ? 'right' : 'left');
     const r = rect(side);
     if (crossed(r)) warnings.push(`${name}: a link runs through the label "${p.label}": move the label with labelSide`);
-    if (dots.some(o => o !== d && intersects(r, dotBox(o), 0))) warnings.push(`${name}: the label "${p.label}" covers another point's dot: move it with labelSide`);
+    if (covers(r, d)) warnings.push(`${name}: the label "${p.label}" covers another point's dot: move it with labelSide`);
     placed.push(r);
     text(`pl${d.i}`, r.x, r.y, p.label, fs, d.color);
   }
@@ -979,7 +983,8 @@ function lintPanel(p, warnings) {
   }
 }
 
-// Does any straight segment of a linear element meet rectangle r? Exact
+// Does any straight segment of a linear element pass through the inside of
+// rectangle r (not just along its edge or through a corner)? Exact
 // (Liang-Barsky clipping), so a line far longer than the page, such as a
 // link to a point far off its chart, costs no more to check than a short one.
 function meets(l, r) {
@@ -988,12 +993,12 @@ function meets(l, r) {
     const [x1, y1] = pts[i - 1], [x2, y2] = pts[i], dx = x2 - x1, dy = y2 - y1;
     let t0 = 0, t1 = 1;
     const clip = (p, q) => {
-      if (p === 0) return q >= 0;
+      if (p === 0) return q > 0;
       const t = q / p;
       if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
       return true;
     };
-    if (clip(-dx, x1 - r.x) && clip(dx, r.x + r.w - x1) && clip(-dy, y1 - r.y) && clip(dy, r.y + r.h - y1)) return true;
+    if (clip(-dx, x1 - r.x) && clip(dx, r.x + r.w - x1) && clip(-dy, y1 - r.y) && clip(dy, r.y + r.h - y1) && t0 < t1) return true;
   }
   return false;
 }
