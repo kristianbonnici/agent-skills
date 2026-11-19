@@ -320,8 +320,10 @@ function drawAxes({ el, id, g, common, out, X, Y, xt, yt, x0, y0, px, py, pw, ph
     const t = textEl(`${id}.${sid}`, x, y, s, size, { color, groupIds: g });
     out.push(t); return t;
   };
-  if (el.grid) yt.forEach((t, i) => line(`grid${i}`, px, sy(t.v), [[0, 0], [pw, 0]],
-    { strokeColor: T.grid, strokeWidth: 1, strokeStyle: 'dashed', roughness: 0 }));
+  const guide = { strokeColor: T.grid, strokeWidth: 1, strokeStyle: 'dashed', roughness: 0 };
+  if (el.grid) yt.forEach((t, i) => line(`grid${i}`, px, sy(t.v), [[0, 0], [pw, 0]], guide));
+  // A scatter's points are read on both axes, so its grid has lines at the x ticks too.
+  if (el.grid && el.kind === 'scatter') xt.forEach((t, i) => line(`xgrid${i}`, sx(t.v), py, [[0, 0], [0, ph]], guide));
   line('yaxis', px, py - 6, [[0, 0], [0, ph + 6]]);
   line('xaxis', px, py + ph, [[0, 0], [pw + 6, 0]]);
   if (Y.label) { const w = textWidth(Y.label, fs); text('ylabel', Math.max(x0, px - w / 2), y0, Y.label, fs); }
@@ -554,7 +556,7 @@ function scatterChart(el, id, g, common, pid, warnings) {
   const placed = [];
   const dotBox = d => ({ x: d.cx - d.r, y: d.cy - d.r, w: 2 * d.r, h: 2 * d.r });
   // As the checks measure text: a line may graze a label's empty edge.
-  const crossed = r => links.some(l => crosses(l, { x: r.x + 2, y: r.y + 3, w: r.w - 4, h: r.h - 6 }));
+  const crossed = r => links.some(l => meets(l, { x: r.x + 2, y: r.y + 3, w: r.w - 4, h: r.h - 6 }));
   for (const d of dots) {
     const { p } = d;
     if (!p.label) continue;
@@ -974,6 +976,25 @@ function lintPanel(p, warnings) {
       }
     }
   }
+}
+
+// Does any straight segment of a linear element meet rectangle r? Exact
+// (Liang-Barsky clipping), so a link to a point far off the chart costs no
+// more to check than a short one.
+function meets(l, r) {
+  const pts = l.points.map(([px, py]) => [l.x + px, l.y + py]);
+  for (let i = 1; i < pts.length; i++) {
+    const [x1, y1] = pts[i - 1], [x2, y2] = pts[i], dx = x2 - x1, dy = y2 - y1;
+    let t0 = 0, t1 = 1;
+    const clip = (p, q) => {
+      if (p === 0) return q >= 0;
+      const t = q / p;
+      if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+      return true;
+    };
+    if (clip(-dx, x1 - r.x) && clip(dx, r.x + r.w - x1) && clip(-dy, y1 - r.y) && clip(dy, r.y + r.h - y1)) return true;
+  }
+  return false;
 }
 
 // Does any segment of a linear element pass through rectangle r? Sampled

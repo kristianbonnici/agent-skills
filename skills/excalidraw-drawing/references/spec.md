@@ -122,7 +122,8 @@ A point outside the axis range, a tick outside it, or a plot squeezed under 120Ã
 | `points` | `[{ "x", "y", "label", "color", "id", "labelSide", "size" }]`. Each label goes on the first side of its dot (right, left, above, below) that stays in the chart and clear of the links, the other dots and the labels before it; `labelSide` (`right`, `left`, `above`, `below`) puts it on one side. `size` is the dot's width, default 14 (`pointSize` for every point) |
 | `links` | `[{ "from", "to", "arrow", "color", "strokeStyle", "strokeWidth" }]`: an arrow from one point to another, such as an earlier version to the next, named by `id`, or by a label only one point has. `"arrow": false` draws a plain line. The color defaults to the `from` point's |
 | `xAxis`, `yAxis` | As for a line chart, and both start at 0 unless a value is negative. `"reverse": true` runs an axis from its max down to its min, for a measure where less is better |
-| `grid`, `fontSize` | As for a line chart |
+| `grid` | Faint dashed lines at the ticks of both axes |
+| `fontSize` | As for a line chart |
 
 A point or tick outside the axis range, a link to no point or between points too close for it to show, an id two points share, a link through a label, a label on another dot, labels that overlap, or a plot squeezed under 120Ã—80 px is a warning.
 

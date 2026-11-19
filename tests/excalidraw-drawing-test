@@ -744,7 +744,7 @@ set +e; node "$build" "$work/titlefont/bad.json" >"$work/titlefont-bad.out" 2>&1
 cat >"$work/scatter.json" <<'JSON'
 { "title": "", "format": "fit", "frame": false, "panels": [ { "id": "s", "span": 2, "elements": [
   { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 0, "width": 700, "height": 500,
-    "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10, "reverse": true },
+    "xAxis": { "min": 0, "max": 10, "ticks": [0, 10] }, "yAxis": { "min": 0, "max": 10, "reverse": true }, "grid": true,
     "points": [ { "id": "a", "x": 0, "y": 0, "label": "first" }, { "x": 10, "y": 10, "label": "last", "color": "red" },
                 { "id": "m", "x": 5, "y": 2.5, "labelSide": "below", "label": "mid" },
                 { "id": "v1", "x": 2, "y": 8, "label": "v2" }, { "id": "v2", "x": 8, "y": 8, "label": "new" } ],
@@ -765,6 +765,7 @@ assert close(p0, (left, top)), f"(0, 0) on a reversed y axis should sit at the t
 assert close(p1, (right, bottom)), f"(10, 10) on a reversed y axis should sit at the bottom right, got {p1}"
 assert close(p2, (left + (right - left) / 2, top + (bottom - top) / 4)), f"(5, 2.5) is misplaced: {p2}"
 assert els["s.sc.p1"]["strokeColor"] == "#e03131", "a named color should color the dot"
+assert "s.sc.xgrid1" in els and abs(els["s.sc.xgrid1"]["x"] - right) < 0.5, "a scatter's grid should have a line at each x tick"
 l0, l1, l2, l3 = (els[f"s.sc.pl{i}"] for i in range(4))
 assert l0["x"] > p0[0], "a label should sit right of its dot when nothing is in the way"
 assert l1["x"] + l1["width"] < p1[0], "a label that would run past the chart should sit left of its dot"
@@ -786,14 +787,15 @@ cat >"$work/badscatter.json" <<'JSON'
                 { "id": "d", "x": 1, "y": 8, "label": "twin" }, { "id": "d", "x": 1.1, "y": 8.1, "label": "twin" },
                 { "id": "l", "x": 3, "y": 1, "label": "crossed", "labelSide": "right" }, { "id": "r", "x": 9, "y": 1 },
                 { "id": "c", "x": 6, "y": 8, "label": "covering", "labelSide": "right" }, { "x": 7, "y": 8 },
-                { "id": "s1", "x": 4, "y": 6 }, { "id": "s2", "x": 4.2, "y": 6 } ],
-    "links": [ { "from": "far", "to": "nope" }, { "from": "odd", "to": "twin" }, { "from": "s1", "to": "s2" }, { "from": "l", "to": "r" } ] },
+                { "id": "s1", "x": 4, "y": 6 }, { "id": "s2", "x": 4.2, "y": 6 }, { "id": "huge", "x": 1000000000, "y": 5 } ],
+    "links": [ { "from": "far", "to": "nope" }, { "from": "odd", "to": "twin" }, { "from": "s1", "to": "s2" }, { "from": "l", "to": "r" }, { "from": "odd", "to": "huge" } ] },
   { "type": "chart", "kind": "scatter", "id": "none", "x": 0, "y": 340, "points": [] },
   { "type": "chart", "kind": "pie", "id": "pie", "x": 700, "y": 0 },
   { "type": "chart", "kind": "toString", "id": "proto", "x": 700, "y": 200 }
 ] } ] }
 JSON
-set +e; node "$build" "$work/badscatter.json" --lint-only >"$work/badscatter.out" 2>&1; status=$?; set -e
+# A link to a point far outside the range is checked as fast as any other.
+set +e; perl -e 'alarm 60; exec @ARGV' node "$build" "$work/badscatter.json" --lint-only >"$work/badscatter.out" 2>&1; status=$?; set -e
 [ "$status" -eq 3 ] || { cat "$work/badscatter.out"; fail "a broken scatter chart should exit 3, got $status"; }
 for expect in 'point "text" needs number x and y' 'point "far" is outside the axis range' '"nope" is no point' 'labelSide "middle"' \
   'more than one point is labelled "twin"' 'two points have the id "d"' 'too close for a link to show' 'a link runs through the label "crossed"' \
