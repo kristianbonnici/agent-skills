@@ -29,6 +29,8 @@ The page is 1500 px wide with two columns, and `format` fixes its height:
 | `auto` | grows to fit | drafts only |
 | `fit` | grows to fit, and narrows to the drawing | a single diagram ([diagrams.md](diagrams.md)) |
 
+`"theme": "dark"` draws the whole picture on a dark background, to its edges: the page's own colors (background, text, cards, axes, and the named colors below) become what Excalidraw's dark mode shows for them, such as a `#121212` background and `#d3d3d3` text. A hex color is drawn as given, so pick one that reads on dark. The default is `light`.
+
 Spare height is spread evenly over the rows, and panels keep their drawing at the top. Content taller than the format is a warning that says how many pixels to cut. A 3:4 page holds about four rows of panels, one of them full width. Fill the page: a page with a lot of empty space is missing a panel.
 
 Panels fill rows in order: a `"span": 2` panel takes a whole row; two half panels in a row share one height (the taller one's). To keep a pair together, list them one after the other; a half panel followed by a full one sits alone in its row, so pair half panels up.
@@ -61,6 +63,8 @@ Give any element `"color"` a name: the fill is pastel, the stroke the matching d
 | `cyan` | #99e9f2 | #0c8599 | data, storage |
 | `white` | #ffffff | #1e1e1e | plain boxes |
 
+On a dark page (`"theme": "dark"`), each name's fill and stroke are what Excalidraw's dark mode shows for them: a dark fill and a light stroke.
+
 A hex value as `color` sets only the stroke, for example `"#dee2e6"` for a faint divider line. `backgroundColor` and `strokeColor` override either part with a hex value: a light fill such as `#e7f5ff` (blue) or `#fff4e6` (orange) with the named stroke makes a softer card. On text, `color` is a name or a hex value; `#495057` is the muted gray for captions.
 
 ## Elements
@@ -76,7 +80,7 @@ Every element can take `id` (needed to connect arrows to it), `color`, `strokeCo
 | `rectangle`, `ellipse`, `diamond` | `x, y, width, height, label` | `label` is a string or `{ "text", "fontSize", "align": "left", "valign": "top", "color" }`. Labels wrap to the box; a label that doesn't fit makes the box grow, and the build warns. `"\n"` breaks a line. `"sharp": true` gives square corners. |
 | `text` | `x, y, text, fontSize, width, align, color` | With `width` it wraps; without, it stays on its lines. Default size 17. `"align": "center"` centres it on `x`. |
 | `arrow`, `line` | `start, end` (ids), or `x, y, points` | With `start` and `end` the build routes it side to side or top to bottom and binds it to boxes. `points` are relative to `x, y`, for bends and loops. `"curve": true` draws a smooth curve through the points instead of straight segments. `"elbow": true` makes a routed arrow bend at right angles. `label` puts text on it, with the line drawn through it in the PNG; to name a branch, a `text` beside the arrow reads better. `startArrowhead`, `endArrowhead`: `arrow`, `triangle`, `dot`, `bar` or `null`. |
-| `chart` | `x, y, width, height, series` or `kind: "bar", bars` | A line or bar chart scaled from numbers: see Charts below. |
+| `chart` | `x, y, width, height, series`; `kind: "bar", bars`; or `kind: "scatter", points` | A line, bar or scatter chart scaled from numbers: see Charts below. |
 | `window` | `x, y, width, height, title, lines, dots` | A card with "•••" and a title in its bar, like an app window or a document. `lines` draws that many gray placeholder lines in it. `"dots": false` drops the dots, for a sheet of paper. |
 | `stack` | `x, y, width, height, items, offset, lines, dots` | Overlapping windows, one per item, back to front. `offset: [dx, dy]`, default `[36, 30]`; `[10, -10]` fans a pile of sheets up and to the right. Its `id` connects arrows to the whole stack. |
 | `person` | `x, y, size, label` | A stick figure about 50×90 at size 1, with a caption under it. |
@@ -110,6 +114,19 @@ A point outside the axis range, a tick outside it, or a plot squeezed under 120�
 | `unit` | A caption above the bars, such as "minutes per task" |
 | `max` | Scale to this value instead of the largest bar, to compare charts side by side |
 | `barHeight`, `gap`, `fillStyle`, `fontSize` | Defaults 32, 18, `hachure`, 17 |
+
+**Scatter chart** (`"kind": "scatter"`). `x, y, width, height` are the whole chart, as for a line chart.
+
+| Field | Meaning |
+|---|---|
+| `points` | `[{ "x", "y", "label", "color", "id", "labelSide", "size" }]`. The label sits right of the dot unless it would run past the chart; `labelSide` (`right`, `left`, `above`, `below`) places it. `size` is the dot's width, default 14 (`pointSize` for every point) |
+| `links` | `[{ "from", "to", "arrow", "color", "strokeStyle", "strokeWidth" }]`: an arrow from one point to another, named by `id` or label, such as an earlier version to the next. `"arrow": false` draws a plain line. The color defaults to the `from` point's |
+| `xAxis`, `yAxis` | As for a line chart, and both start at 0 unless a value is negative. `"reverse": true` runs an axis from its max down to its min, for a measure where less is better |
+| `grid`, `fontSize` | As for a line chart |
+
+A point or tick outside the axis range, a link to no point, labels that overlap, or a plot squeezed under 120×80 px is a warning.
+
+**Any other chart** (stacked or grouped bars, an area, slope or dumbbell chart, a pie, a heatmap) is drawn from rectangles, ellipses, lines and text. Work out each position from the numbers in a short script that writes the spec, so nothing is placed by eye. A `chart` with another `kind` is a warning, and isn't drawn.
 
 ## Text sizes
 

@@ -261,13 +261,14 @@ const reText = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Renders a scene to a PNG as the runtime's renderScene does, and draws each text that names a
 // font from FONTS (and that this computer has) in that font. Returns renderScene's result.
-export async function renderPng(elements, files = {}, { scale = 1, padding = 0, systemFonts } = {}) {
+// background: the page's color, the scene's viewBackgroundColor (white when not given).
+export async function renderPng(elements, files = {}, { scale = 1, padding = 0, systemFonts, background = '#ffffff' } = {}) {
   const { renderScene, maxDimension } = await load('dist/core/render/index.js');
   const styled = styledTexts(elements).filter(e => fontFile(e.customData.font));
-  if (!styled.length) return renderScene({ elements, files }, { format: 'png', scale, padding, systemFonts });
+  if (!styled.length) return renderScene({ elements, files }, { format: 'png', scale, padding, systemFonts, viewBackgroundColor: background });
   const { svgToPng } = await load('dist/core/render/png.js');
   const { collectFontEntriesFromSvg, fontFilesFor, needsSystemFonts } = await load('dist/core/render/fonts.js');
-  const out = await renderScene({ elements, files }, { format: 'svg', padding });
+  const out = await renderScene({ elements, files }, { format: 'svg', padding, viewBackgroundColor: background });
   let svg = out.data;
   const used = new Set();
   for (const e of styled) {
@@ -311,7 +312,8 @@ export async function renderDrawing(file, out, { scale = 1 } = {}) {
     const w = measureTextWidth(ch, '1000px Excalifont');
     return w === 600 || w === 1000;
   }));
-  const png = await renderPng(elements, scene.files ?? {}, { scale, padding: 10, systemFonts });
+  const png = await renderPng(elements, scene.files ?? {}, { scale, padding: 10, systemFonts,
+    background: scene.appState?.viewBackgroundColor ?? '#ffffff' });
   fs.writeFileSync(out, Buffer.from(png.data, 'base64'));
   const fontWarnings = missingFonts(elements).map(f => `${FONTS[f].name} isn't on this computer, so text meant ` +
     `for it is drawn in Excalifont (${FONTS[f].files.join(', ')})`);

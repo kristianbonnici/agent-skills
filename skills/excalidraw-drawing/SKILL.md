@@ -1,8 +1,8 @@
 ---
 name: excalidraw-drawing
-description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), a single diagram such as a line or bar chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table, or a slide deck for a talk (one hand-drawn slide per point, speaker notes, click-by-click reveals) - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md), and a deck also as a browser presentation, a PDF and a PowerPoint - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, slides or a presentation in this style, or a change to an .excalidraw or .excalidraw.md drawing they have.
+description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), a single diagram such as a line, bar or scatter chart or any other chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table, or a slide deck for a talk (one hand-drawn slide per point, speaker notes, click-by-click reveals) - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md), and a deck also as a browser presentation, a PDF and a PowerPoint - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, slides or a presentation in this style, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 3.3.0
+  version: 3.4.0
 ---
 
 # Excalidraw Drawing
@@ -38,7 +38,7 @@ For each panel, pick one picture from [references/patterns.md](references/patter
 
 Pick the kind from the table at the top of [references/diagrams.md](references/diagrams.md), by what the reader should see. Then write the kind, its parts (the boxes, actors, series or events) and every word that will be on it. It goes in a page with one full-width panel, `"frame": false` and `"format": "fit"`; a title is optional.
 
-- **From numbers:** use the `chart` element and give it the numbers exactly as the source or the user gave them; it does the scaling.
+- **From numbers:** use the `chart` element (a line, bar or scatter chart) and give it the numbers exactly as the source or the user gave them; it does the scaling. Any other chart is fine too: build it from shapes, with every position worked out from the numbers ([references/spec.md](references/spec.md#charts)). When the user asks for options, or another kind of chart would show the point better, offer different kinds.
 - **From a description of a shape** ("rose, then fell"): a trend sketch without ticks. Say on the page that the shape is illustrative, unless it's the user's own sketch.
 - **From an example image:** list everything it shows (nodes, arrows, labels, legend, the order of messages) and keep all of it. Redraw it in this skill's style and colors unless the user asks to match theirs. What the skill can't draw (logos, icons, a code font) becomes the plainest stand-in, and you say so.
 
@@ -48,7 +48,7 @@ Pick the kind from the table at the top of [references/diagrams.md](references/d
 
 **Stay true to the source.** Every number, name and claim must be in the source. Attribute opinions ("the author argues..."). When you add your own illustration of a point, say so on the page ("a made-up example of how that could happen"). Leave out what you can't draw honestly rather than inventing a figure for it.
 
-Color carries meaning, the same way everywhere: green for good or the default path, orange for risk or what changed, red for failure, blue for the thing being acted on, purple for an agent or model, yellow for the single most important callout, cyan for data and storage. Gray is neutral. See [references/spec.md](references/spec.md) for the names.
+Color carries meaning, the same way everywhere: green for good or the default path, orange for risk or what changed, red for failure, blue for the thing being acted on, purple for an agent or model, yellow for the single most important callout, cyan for data and storage. Gray is neutral. See [references/spec.md](references/spec.md) for the names. A dark picture is `"theme": "dark"`.
 
 ## 2. Write the spec and build
 
@@ -74,8 +74,6 @@ It prints each panel's drawing-area width (draw within it; height grows to fit) 
 ## 4. Deliver
 
 Give the user the PNG and the drawing's path, and the plan's one-line summary; for a deck, the three files `deck.mjs` wrote and what each is for. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits (an `.excalidraw.md` opens in Obsidian), and that after hand edits that file, not `page.json`, is the picture: you can carry on from their edits, and the build won't replace a drawing saved in an editor since.
-
-Recreating someone else's published page or diagram is fine as a private study or test; don't offer one for posting. Their layout, wording and branding are theirs.
 
 ## 5. Change an existing drawing
 

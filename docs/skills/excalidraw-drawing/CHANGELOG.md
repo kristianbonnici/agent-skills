@@ -1,5 +1,14 @@
 # excalidraw-drawing changelog
 
+## 3.4.0 (2026-11-20)
+
+From two benchmark charts made for X posts, which both had to be built around the skill: a scatter of each model's two scores with a line from one model to its successor, and dark versions with the title in the serif font.
+
+- New chart kind `"scatter"`: a dot per point where its two numbers say, named beside it (right of the dot unless that runs past the chart, or where `labelSide` puts it), with `links` drawn as an arrow or a line from one point to another by id or label. Axes start at 0 unless a value is negative, take ticks and a grid as a line chart's do, and `"reverse": true` runs one from its max down to its min, for a measure where less is better. A point or tick outside the range, a link to no point, or a squeezed plot is a warning. The posts' scatters had their dots placed by coordinates worked out by hand.
+- New page option `"theme": "dark"`: the picture on a dark background to its edges, with the page's own colors (background, text, cards, axes and the named colors) as Excalidraw's dark mode shows them, and hex colors drawn as given. The `.excalidraw` file keeps the background, and `drawing.mjs render` draws it. The posts' dark versions painted a dark rectangle over the white page, cropped the white edge off afterwards, and re-rendered the serif title by hand.
+- The skill isn't limited to the chart kinds `chart` draws: any other chart is built from shapes with every position worked out from the numbers, and when the user asks for options, or another kind would show the point better, the agent offers different kinds. A `chart` with an unknown `kind` is a warning instead of silently becoming a line chart.
+- Removed the rule against offering a recreation of someone else's published page or diagram for posting. It read as forbidding a chart of a source's numbers in this skill's style, which the owner wants to post, and the owner prefers the skill lean.
+
 ## 3.3.0 (2026-11-17)
 
 - New page option `"titleFont": "iowan-inked"`: the title in Iowan Old Style Bold with a slightly inked edge, drawn only in the PNG. From a benchmark chart whose hand-drawn title read too casual for the post; after side-by-side tries of serif, slab and mono titles, plain and roughened, the owner chose this one. Excalidraw can't use another font, so the `.excalidraw` file keeps the title in Excalifont and names the font in its `customData`; `drawing.mjs render` draws it too, so a preview after a hand edit keeps it. The edge is an SVG filter (two sizes of noise displacing the outline, then a blur and a sharpened alpha) rendered by the runtime's resvg, so no new dependency. The font comes with macOS and isn't copied into the skill; without it the build warns and draws Excalifont. An unknown `titleFont` stops the build.

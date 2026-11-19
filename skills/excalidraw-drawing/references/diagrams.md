@@ -16,6 +16,7 @@ The same arrays work as a panel of an infographic page; drop `"frame": false` th
 |---|---|
 | how a value changed, or how two things moved against each other | line chart (exact numbers) or trend sketch (a shape) |
 | how much: a few quantities side by side | bar chart |
+| where each item lands on two measures, or how each moved from its earlier version | scatter chart |
 | steps, with a decision or a retry | flowchart |
 | what sits inside what, and which parts talk to which | boundary |
 | who sends what to whom, in what order, and who waits | sequence |
@@ -26,6 +27,8 @@ The same arrays work as a panel of an infographic page; drop `"frame": false` th
 | options compared on several criteria | table |
 
 Several of these on one topic is an infographic page, not one diagram: plan it as a page.
+
+The table isn't a limit. A chart the `chart` element doesn't draw (stacked or grouped bars, an area, slope or dumbbell chart, a pie, a heatmap) is built from rectangles, ellipses, lines and text, with every position worked out from the numbers in a short script rather than placed by eye. When the user asks for options, or another kind would show the point better, offer different kinds of chart.
 
 ## Line chart: "how it changed", with real numbers
 
@@ -54,6 +57,16 @@ The same element without ticks: a shape, not measurements. Curves are on by defa
 ```json
 [
   { "type": "chart", "kind": "bar", "id": "speed", "x": 0, "y": 0, "width": 700, "unit": "minutes per task", "bars": [{ "label": "New way", "value": 12, "color": "blue" }, { "label": "Old way", "value": 27.5, "color": "gray" }] }
+]
+```
+
+## Scatter chart: "where each one lands on two measures"
+
+`"kind": "scatter"` puts a dot per item where its two numbers say, named beside it, right of the dot unless it would run past the chart (`labelSide` moves one: `left`, `above`, `below`). `links` join two points by `id` or label, as an arrow from the earlier to the later, or a line with `"arrow": false`. An axis with `"reverse": true` runs from its max down to its min, for a measure where less is better. Labels that overlap are a warning: move one with `labelSide`.
+
+```json
+[
+  { "type": "chart", "kind": "scatter", "id": "fit", "x": 0, "y": 0, "width": 900, "height": 480, "grid": true, "xAxis": { "label": "cost per task ($)", "min": 0, "max": 4, "ticks": [0, 1, 2, 3, 4]}, "yAxis": { "label": "tasks solved (%)", "min": 0, "max": 100, "ticks": [0, 50, 100]}, "points": [{ "id": "a1", "x": 2.6, "y": 48, "label": "Tool A v1", "color": "gray" }, { "id": "a2", "x": 1.8, "y": 71, "label": "Tool A v2", "color": "blue" }, { "x": 3.1, "y": 62, "label": "Tool B", "color": "orange" }, { "x": 0.6, "y": 30, "label": "Tool C", "color": "green" }], "links": [{ "from": "a1", "to": "a2", "strokeStyle": "dashed" }] }
 ]
 ```
 

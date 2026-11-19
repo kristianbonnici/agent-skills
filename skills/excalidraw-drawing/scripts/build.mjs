@@ -63,6 +63,26 @@ const COLORS = {
   gray: ['#e9ecef', '#868e96'], cyan: ['#99e9f2', '#0c8599'], white: ['#ffffff', '#1e1e1e']
 };
 
+// A color as Excalidraw's dark mode shows it: CSS invert(93%), then hue-rotate(180deg).
+export function darkOf(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [n >> 16 & 255, n >> 8 & 255, n & 255].map(c => 0.07 * c / 255 + 0.93 * (1 - c / 255));
+  const out = [-0.574 * r + 1.43 * g + 0.144 * b, 0.426 * r + 0.43 * g + 0.144 * b, 0.426 * r + 1.43 * g - 0.856 * b];
+  return '#' + out.map(c => Math.round(Math.min(1, Math.max(0, c)) * 255).toString(16).padStart(2, '0')).join('');
+}
+
+// The page's own colors. A dark page shows them as Excalidraw's dark mode
+// would; a hex color the spec gives is drawn as given.
+const LIGHT = { background: '#ffffff', ink: STYLE.ink, muted: STYLE.muted, faint: STYLE.faint,
+  panelStroke: STYLE.panelStroke, panelFill: '#ffffff', grid: '#dee2e6', colors: COLORS };
+export const THEMES = {
+  light: LIGHT,
+  dark: Object.fromEntries(Object.entries(LIGHT).map(([k, v]) => [k, k === 'colors'
+    ? Object.fromEntries(Object.entries(v).map(([name, pair]) => [name, pair.map(darkOf)])) : darkOf(v)]))
+};
+// The theme of the page being built: build() sets it before anything is drawn.
+let T = LIGHT;
+
 // A slide reveals its parts over at most this many clicks: more is a typo, or a slide to split.
 const MAX_STEPS = 12;
 
@@ -96,7 +116,7 @@ function textEl(id, x, y, text, size, opts = {}) {
   const width = opts.width ?? Math.ceil(Math.max(...lines.map(l => textWidth(l, size))));
   const el = {
     id, type: 'text', x, y, text: lines.join('\n'), fontSize: size, fontFamily: STYLE.font,
-    strokeColor: opts.color ?? STYLE.ink, textAlign: opts.align ?? 'left', verticalAlign: 'top',
+    strokeColor: opts.color ?? T.ink, textAlign: opts.align ?? 'left', verticalAlign: 'top',
     width, height: Math.ceil(lines.length * size * STYLE.lineHeight), lineHeight: STYLE.lineHeight
   };
   if (opts.width) { el.autoResize = false; el.originalText = String(text); }
@@ -132,12 +152,12 @@ async function prepare(skeleton) {
 // ---------- element expansion (panel-local coordinates) ----------
 
 // A color name gives a fill and a stroke; a hex color is the stroke.
-const strokeOf = color => !color ? undefined : COLORS[color]?.[1] ?? (color.startsWith('#') ? color : undefined);
+const strokeOf = color => !color ? undefined : T.colors[color]?.[1] ?? (color.startsWith('#') ? color : undefined);
 function colorPair(el) {
-  const c = el.color && COLORS[el.color];
+  const c = el.color && T.colors[el.color];
   return {
     backgroundColor: el.backgroundColor ?? (c ? c[0] : 'transparent'),
-    strokeColor: el.strokeColor ?? strokeOf(el.color) ?? STYLE.ink
+    strokeColor: el.strokeColor ?? strokeOf(el.color) ?? T.ink
   };
 }
 
@@ -168,12 +188,12 @@ function expand(el, pid, boxes, warnings) {
         const size = L.fontSize ?? STYLE.panel.body, left = L.align === 'left';
         const t = textEl(`${id}.label`, left ? s.x + 18 : s.x + s.width / 2, s.y + 12, L.text, size,
           { width: Math.max(1, s.width - 36), align: left ? 'left' : 'center',
-            color: L.color ?? STYLE.ink, groupIds: s.groupIds });
+            color: L.color ?? T.ink, groupIds: s.groupIds });
         if (L.valign !== 'top') t.y = s.y + (s.height - t.height) / 2;
         out.push(t);
       } else {
         if (L) s.label = { text: L.text, fontSize: L.fontSize ?? STYLE.panel.body, fontFamily: STYLE.font,
-          strokeColor: L.color ?? STYLE.ink, textAlign: L.align ?? 'center', verticalAlign: 'middle' };
+          strokeColor: L.color ?? T.ink, textAlign: L.align ?? 'center', verticalAlign: 'middle' };
         out.push(s);
       }
       boxes[id] = { x: s.x, y: s.y, w: s.width, h: s.height, bind: true, shape: el.type };
@@ -190,14 +210,14 @@ function expand(el, pid, boxes, warnings) {
     case 'window': {
       // A rounded window with "•••" and a title in its title bar.
       const w = el.width ?? 240, h = el.height ?? 90;
-      const c = colorPair({ ...el, backgroundColor: el.backgroundColor ?? (el.color ? undefined : '#ffffff') });
+      const c = colorPair({ ...el, backgroundColor: el.backgroundColor ?? (el.color ? undefined : T.panelFill) });
       out.push({ ...common, id, type: 'rectangle', x: el.x, y: el.y, width: w, height: h,
         roundness: { type: 3 }, groupIds: g, ...c });
       const titleText = el.dots === false ? (el.title ?? '') : `•••  ${el.title ?? ''}`;
       // Excalidraw drops empty text elements, so a bare window gets none.
       if (titleText.trim()) out.push(textEl(`${id}.title`, el.x + 14, el.y + 6, titleText, el.fontSize ?? 15, { groupIds: g }));
       out.push({ ...common, id: `${id}.bar`, type: 'line', x: el.x, y: el.y + 30, strokeWidth: 1,
-        strokeColor: STYLE.ink, points: [[0, 0], [w, 0]], groupIds: g });
+        strokeColor: T.ink, points: [[0, 0], [w, 0]], groupIds: g });
       if (el.lines) out.push(...lines({ x: el.x + 14, y: el.y + 46, width: w - 28, count: el.lines }, id, g));
       boxes[id] = { x: el.x, y: el.y, w, h, bind: false };
       break;
@@ -221,14 +241,14 @@ function expand(el, pid, boxes, warnings) {
       // Stick figure, ~50×90 at size 1, with an optional label under it.
       const k = el.size ?? 1, x = el.x, y = el.y, cx = x + 25 * k;
       const ln = (sid, pts) => ({ ...common, id: `${id}.${sid}`, type: 'line', x: cx, y,
-        strokeColor: el.strokeColor ?? STYLE.ink, points: pts.map(([a, b]) => [a * k, b * k]), groupIds: g });
+        strokeColor: el.strokeColor ?? T.ink, points: pts.map(([a, b]) => [a * k, b * k]), groupIds: g });
       out.push({ ...common, id: `${id}.head`, type: 'ellipse', x: cx - 12 * k, y, width: 24 * k, height: 24 * k,
-        strokeColor: el.strokeColor ?? STYLE.ink, backgroundColor: 'transparent', groupIds: g });
+        strokeColor: el.strokeColor ?? T.ink, backgroundColor: 'transparent', groupIds: g });
       out.push(ln('body', [[0, 24], [0, 60]]), ln('arms', [[-20, 36], [0, 42], [20, 36]]),
         ln('legs', [[-16, 90], [0, 60], [16, 90]]));
       let h = 90 * k;
       if (el.label) {
-        const t = textEl(`${id}.label`, cx, y + h + 8, el.label, el.fontSize ?? 16, { align: 'center', groupIds: g, color: STYLE.muted });
+        const t = textEl(`${id}.label`, cx, y + h + 8, el.label, el.fontSize ?? 16, { align: 'center', groupIds: g, color: T.muted });
         out.push(t); h += 8 + t.height;
       }
       boxes[id] = { x, y, w: 50 * k, h, bind: false };
@@ -241,14 +261,20 @@ function expand(el, pid, boxes, warnings) {
     }
     case 'line': case 'arrow': {
       const { group: _g, curve, step: _s, ...rest } = el;
-      const l = { ...common, ...rest, id, _spec: el, strokeColor: el.strokeColor ?? strokeOf(el.color) ?? STYLE.ink };
+      const l = { ...common, ...rest, id, _spec: el, strokeColor: el.strokeColor ?? strokeOf(el.color) ?? T.ink };
       // Excalidraw draws a smooth curve through the points of a "round" line.
       if (curve) l.roundness = { type: 2 };
       out.push(l);
       break;
     }
     case 'chart': {
-      const c = el.kind === 'bar' ? barChart(el, id, g, common, pid, warnings) : lineChart(el, id, g, common, pid, warnings);
+      const draw = { line: lineChart, bar: barChart, scatter: scatterChart }[el.kind ?? 'line'];
+      if (!draw) {
+        warnings.push(`${pid}: chart "${el.id ?? 'no id'}": kind "${el.kind}" isn't line, bar or scatter, so it isn't drawn: ` +
+          'build that chart from shapes, lines and text, placed by its numbers');
+        break;
+      }
+      const c = draw(el, id, g, common, pid, warnings);
       out.push(...c.out);
       boxes[id] = { ...c.box, bind: false };
       break;
@@ -265,7 +291,7 @@ function expand(el, pid, boxes, warnings) {
 function lines(el, id, g) {
   const n = el.count ?? 2, gap = el.gap ?? 14, w = el.width ?? 160;
   return Array.from({ length: n }, (_, i) => ({
-    id: `${id}.l${i}`, type: 'line', x: el.x, y: el.y + i * gap, strokeColor: STYLE.faint, strokeWidth: 1,
+    id: `${id}.l${i}`, type: 'line', x: el.x, y: el.y + i * gap, strokeColor: T.faint, strokeWidth: 1,
     roughness: 1, points: [[0, 0], [i === n - 1 ? w * 0.7 : w, 0]], groupIds: g
   }));
 }
@@ -282,6 +308,37 @@ function unstack(labels, gap = 4) {
     const prev = labels[i - 1];
     if (labels[i].y < prev.y + prev.height + gap) labels[i].y = prev.y + prev.height + gap;
   }
+}
+
+// The axes of a line or scatter chart: the grid, the axis lines and their
+// names, and the ticks with their numbers. Returns the chart's text helper.
+function drawAxes({ el, id, g, common, out, X, Y, xt, yt, x0, y0, px, py, pw, ph, sx, sy, fs, small, range, pid, warnings }) {
+  const line = (sid, x, y, points, extra = {}) => out.push({ ...common, id: `${id}.${sid}`, type: 'line', x, y, points,
+    strokeColor: T.muted, groupIds: g, ...extra });
+  const text = (sid, x, y, s, size, color = T.ink) => {
+    const t = textEl(`${id}.${sid}`, x, y, s, size, { color, groupIds: g });
+    out.push(t); return t;
+  };
+  if (el.grid) yt.forEach((t, i) => line(`grid${i}`, px, sy(t.v), [[0, 0], [pw, 0]],
+    { strokeColor: T.grid, strokeWidth: 1, strokeStyle: 'dashed', roughness: 0 }));
+  line('yaxis', px, py - 6, [[0, 0], [0, ph + 6]]);
+  line('xaxis', px, py + ph, [[0, 0], [pw + 6, 0]]);
+  if (Y.label) { const w = textWidth(Y.label, fs); text('ylabel', Math.max(x0, px - w / 2), y0, Y.label, fs); }
+  if (X.label) text('xlabel', px + pw + 16, py + ph - fs * STYLE.lineHeight / 2, X.label, fs);
+  yt.forEach((t, i) => {
+    line(`ytick${i}`, px - 6, sy(t.v), [[0, 0], [6, 0]]);
+    const tw = textWidth(t.text, small);
+    text(`yt${i}`, px - 12 - tw, sy(t.v) - small * STYLE.lineHeight / 2, t.text, small, T.muted);
+  });
+  xt.forEach((t, i) => {
+    line(`xtick${i}`, sx(t.v), py + ph, [[0, 0], [0, 6]]);
+    const tw = textWidth(t.text, small);
+    text(`xt${i}`, sx(t.v) - tw / 2, py + ph + 10, t.text, small, T.muted);
+  });
+  for (const [axis, ticks, [lo, hi]] of [['x', xt, range.x], ['y', yt, range.y]]) {
+    if (ticks.some(t => t.v < lo || t.v > hi)) warnings.push(`${pid}: chart "${el.id ?? 'no id'}": a ${axis} tick is outside the axis range`);
+  }
+  return { text };
 }
 
 // A line chart: axes, optional ticks and grid, one line per series, each
@@ -326,36 +383,11 @@ function lineChart(el, id, g, common, pid, warnings) {
   const sx = v => px + (v - xmin) / (xmax - xmin) * pw;
   const sy = v => py + ph - (v - ymin) / (ymax - ymin) * ph;
   const out = [];
-  const line = (sid, x, y, points, extra = {}) => out.push({ ...common, id: `${id}.${sid}`, type: 'line', x, y, points,
-    strokeColor: STYLE.muted, groupIds: g, ...extra });
-  const text = (sid, x, y, s, size, color = STYLE.ink) => {
-    const t = textEl(`${id}.${sid}`, x, y, s, size, { color, groupIds: g });
-    out.push(t); return t;
-  };
-
-  if (el.grid) yt.forEach((t, i) => line(`grid${i}`, px, sy(t.v), [[0, 0], [pw, 0]],
-    { strokeColor: '#dee2e6', strokeWidth: 1, strokeStyle: 'dashed', roughness: 0 }));
-  line('yaxis', px, py - 6, [[0, 0], [0, ph + 6]]);
-  line('xaxis', px, py + ph, [[0, 0], [pw + 6, 0]]);
-  if (Y.label) { const w = textWidth(Y.label, fs); text('ylabel', Math.max(x0, px - w / 2), y0, Y.label, fs); }
-  if (X.label) text('xlabel', px + pw + 16, py + ph - fs * STYLE.lineHeight / 2, X.label, fs);
-  yt.forEach((t, i) => {
-    line(`ytick${i}`, px - 6, sy(t.v), [[0, 0], [6, 0]]);
-    const tw = textWidth(t.text, small);
-    text(`yt${i}`, px - 12 - tw, sy(t.v) - small * STYLE.lineHeight / 2, t.text, small, STYLE.muted);
-  });
-  xt.forEach((t, i) => {
-    line(`xtick${i}`, sx(t.v), py + ph, [[0, 0], [0, 6]]);
-    const tw = textWidth(t.text, small);
-    text(`xt${i}`, sx(t.v) - tw / 2, py + ph + 10, t.text, small, STYLE.muted);
-  });
-
-  for (const [axis, ticks, lo, hi] of [['x', xt, xmin, xmax], ['y', yt, ymin, ymax]]) {
-    if (ticks.some(t => t.v < lo || t.v > hi)) warnings.push(`${pid}: chart "${el.id ?? 'no id'}": a ${axis} tick is outside the axis range`);
-  }
+  const { text } = drawAxes({ el, id, g, common, out, X, Y, xt, yt, x0, y0, px, py, pw, ph, sx, sy, fs, small,
+    range: { x: [xmin, xmax], y: [ymin, ymax] }, pid, warnings });
   const labels = { start: [], end: [] };
   series.forEach((s, i) => {
-    const color = strokeOf(s.color) ?? STYLE.ink;
+    const color = strokeOf(s.color) ?? T.ink;
     if (s.points.some(([vx, vy]) => vx < xmin || vx > xmax || vy < ymin || vy > ymax)) {
       warnings.push(`${pid}: chart "${el.id ?? 'no id'}": series "${s.label ?? i + 1}" has a point outside the axis range: widen the range`);
     }
@@ -403,7 +435,7 @@ function barChart(el, id, g, common, pid, warnings) {
   }
   const out = [];
   let y = y0;
-  if (el.unit) { const t = textEl(`${id}.unit`, x0, y0, el.unit, 16, { color: STYLE.muted, groupIds: g }); out.push(t); y += t.height + 14; }
+  if (el.unit) { const t = textEl(`${id}.unit`, x0, y0, el.unit, 16, { color: T.muted, groupIds: g }); out.push(t); y += t.height + 14; }
   const shown = b => b.display ?? String(b.value);
   const labelW = Math.max(...bars.map(b => textWidth(b.label ?? '', fs))) + 24;
   const valueW = Math.max(...bars.map(b => textWidth(shown(b), fs))) + 12;
@@ -416,12 +448,102 @@ function barChart(el, id, g, common, pid, warnings) {
     // A zero gets no bar; a value too small to see at this scale still shows as a sliver.
     const by = y + i * (barH + gap), bw = b.value > 0 ? Math.max(2, b.value * scale) : 0;
     if (b.label) out.push(textEl(`${id}.l${i}`, x0, by + (barH - th) / 2, b.label, fs, { groupIds: g }));
-    const c = COLORS[b.color ?? el.color ?? 'blue'] ?? COLORS.blue;
+    const c = T.colors[b.color ?? el.color ?? 'blue'] ?? T.colors.blue;
     if (bw > 0) out.push({ ...common, id: `${id}.b${i}`, type: 'rectangle', x: x0 + labelW, y: by, width: bw, height: barH,
       backgroundColor: c[0], strokeColor: c[1], fillStyle: el.fillStyle ?? 'hachure', roundness: null, groupIds: g });
     out.push(textEl(`${id}.v${i}`, x0 + labelW + bw + 10, by + (barH - th) / 2, shown(b), fs, { groupIds: g }));
   });
   return { out, box: { x: x0, y: y0, w: W, h: y - y0 + bars.length * (barH + gap) - gap } };
+}
+
+// A scatter chart: axes like a line chart's, a dot per point named beside it,
+// and arrows or lines between points (from an earlier version to the next,
+// say). An axis with "reverse" runs from its max to its min, for a measure
+// where less is better.
+const SIDES = ['right', 'left', 'above', 'below'];
+function scatterChart(el, id, g, common, pid, warnings) {
+  const fs = el.fontSize ?? 18, small = Math.max(14, fs - 2), name = `${pid}: chart "${el.id ?? 'no id'}"`;
+  const x0 = el.x ?? 0, y0 = el.y ?? 0, W = el.width ?? 600, H = el.height ?? 400;
+  const X = el.xAxis ?? {}, Y = el.yAxis ?? {};
+  const box = { x: x0, y: y0, w: W, h: H };
+  const points = (el.points ?? []).filter(p => {
+    const ok = finite(p?.x) && finite(p?.y);
+    if (!ok) warnings.push(`${name}: point "${p?.label ?? p?.id ?? '?'}" needs number x and y: skipped`);
+    return ok;
+  });
+  if (!points.length) { warnings.push(`${name} has no points to draw`); return { out: [], box }; }
+  // Both axes start at 0 unless a value is negative, as a line chart's y axis does.
+  const range = (A, vs) => {
+    const lo = A.min ?? Math.min(0, ...vs);
+    let hi = A.max ?? Math.max(...vs);
+    if (A.max === undefined && hi === lo) hi = lo + 1;
+    return [lo, hi];
+  };
+  const [xmin, xmax] = range(X, points.map(p => p.x)), [ymin, ymax] = range(Y, points.map(p => p.y));
+  if (!(xmax > xmin) || !(ymax > ymin)) {
+    warnings.push(`${name}: an axis has no range (min must be below max)`);
+    return { out: [], box };
+  }
+  const xt = tickList(X.ticks), yt = tickList(Y.ticks);
+  const yTickW = yt.length ? Math.max(...yt.map(t => textWidth(t.text, small))) + 16 : 0;
+  // Room for half the largest dot, so a point at either end of the x axis stays inside the chart.
+  const half = Math.max(...points.map(p => p.size ?? el.pointSize ?? 14)) / 2 + 2;
+  const leftM = Math.max(4, half) + yTickW, rightM = Math.max(X.label ? textWidth(X.label, fs) + 18 : 4, half);
+  const topM = Y.label ? fs * STYLE.lineHeight + 18 : 12;
+  const bottomM = Math.max(xt.length ? small * STYLE.lineHeight + 14 : 0, fs * 0.7);
+  const px = x0 + leftM, py = y0 + topM, pw = W - leftM - rightM, ph = H - topM - bottomM;
+  if (pw < 120 || ph < 80) warnings.push(`${name} leaves a plot of only ${Math.round(pw)}×${Math.round(ph)} px after its labels: make it bigger`);
+  const along = (v, lo, hi, reverse) => (reverse ? hi - v : v - lo) / (hi - lo);
+  const sx = v => px + along(v, xmin, xmax, X.reverse) * pw;
+  const sy = v => py + ph - along(v, ymin, ymax, Y.reverse) * ph;
+  const out = [];
+  const { text } = drawAxes({ el, id, g, common, out, X, Y, xt, yt, x0, y0, px, py, pw, ph, sx, sy, fs, small,
+    range: { x: [xmin, xmax], y: [ymin, ymax] }, pid, warnings });
+
+  const byKey = new Map();
+  points.forEach((p, i) => {
+    if (p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax) {
+      warnings.push(`${name}: point "${p.label ?? p.id ?? i + 1}" is outside the axis range: widen the range`);
+    }
+    const color = strokeOf(p.color ?? el.color) ?? T.ink, size = p.size ?? el.pointSize ?? 14;
+    const cx = sx(p.x), cy = sy(p.y);
+    out.push({ ...common, id: `${id}.p${i}`, type: 'ellipse', x: cx - size / 2, y: cy - size / 2, width: size, height: size,
+      strokeColor: color, backgroundColor: color, fillStyle: 'solid', strokeWidth: 1, groupIds: g });
+    for (const key of [p.id, p.label]) if (key !== undefined && !byKey.has(String(key))) byKey.set(String(key), { cx, cy, r: size / 2, color });
+    if (!p.label) return;
+    const w = textWidth(p.label, fs), h = fs * STYLE.lineHeight;
+    let side = p.labelSide;
+    if (side !== undefined && !SIDES.includes(side)) {
+      warnings.push(`${name}: point "${p.label}" has labelSide "${side}", not one of ${SIDES.join(', ')}: placed automatically`);
+      side = undefined;
+    }
+    // Right of the dot, unless that runs past the chart's right edge.
+    side ??= cx + size / 2 + 8 + w <= x0 + W ? 'right' : 'left';
+    const [lx, ly] = {
+      right: [cx + size / 2 + 8, cy - h / 2], left: [cx - size / 2 - 8 - w, cy - h / 2],
+      above: [cx - w / 2, cy - size / 2 - 4 - h], below: [cx - w / 2, cy + size / 2 + 4]
+    }[side];
+    text(`pl${i}`, lx, ly, p.label, fs, color);
+  });
+
+  (el.links ?? []).forEach((k, i) => {
+    const a = byKey.get(String(k?.from)), b = byKey.get(String(k?.to));
+    if (!a || !b) {
+      warnings.push(`${name}: link ${i + 1} joins "${k?.from}" to "${k?.to}", but ${!a ? `"${k?.from}"` : `"${k?.to}"`} is no point's id or label: skipped`);
+      return;
+    }
+    const dx = b.cx - a.cx, dy = b.cy - a.cy, len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len, s = a.r + 5, e = b.r + 5;
+    if (len <= s + e) { warnings.push(`${name}: link ${i + 1}'s points touch, so it has no room to draw: skipped`); return; }
+    const arrow = k.arrow !== false;
+    out.push({ ...common, id: `${id}.k${i}`, type: arrow ? 'arrow' : 'line', x: a.cx + ux * s, y: a.cy + uy * s,
+      points: [[0, 0], [dx - ux * (s + e), dy - uy * (s + e)]], strokeColor: strokeOf(k.color) ?? a.color,
+      strokeStyle: k.strokeStyle ?? 'solid', strokeWidth: k.strokeWidth ?? 2, groupIds: g,
+      ...(arrow ? { startArrowhead: null, endArrowhead: 'arrow' } : {}) });
+  });
+  // Labels beside the outermost dots may reach past the footprint: the box holds them, for arrows routed to it.
+  const all = union([box, ...out.map(bbox)]);
+  return { out, box: all };
 }
 
 // Route an arrow between two boxes: side to side when they sit apart
@@ -513,7 +635,7 @@ function finishLinear(el, pid, boxes, warnings) {
     el.endArrowhead = spec.endArrowhead === undefined ? 'arrow' : spec.endArrowhead;
     el.startArrowhead = spec.startArrowhead ?? null;
   }
-  if (spec.label) el.label = { text: spec.label, fontSize: 15, fontFamily: STYLE.font };
+  if (spec.label) el.label = { text: spec.label, fontSize: 15, fontFamily: STYLE.font, strokeColor: T.ink };
   return el;
 }
 
@@ -548,6 +670,9 @@ export async function build(spec, opts = {}) {
   // Labels bound to a shape take the shape's step (stepOf below).
   const stepById = new Map();
 
+  const themeName = spec.theme ?? 'light';
+  if (!Object.hasOwn(THEMES, themeName)) throw new Error(`theme must be one of ${Object.keys(THEMES).join(', ')}`);
+  T = THEMES[themeName];
   const formatName = spec.format ?? '3:4';
   if (!(formatName in FORMATS)) throw new Error(`format must be one of ${Object.keys(FORMATS).join(', ')}`);
   const ratio = FORMATS[formatName];
@@ -571,7 +696,7 @@ export async function build(spec, opts = {}) {
     elements.push(title); y += title.height + 6;
   }
   if (spec.subtitle) {
-    const sub = textEl('page.subtitle', P.margin, y, spec.subtitle, STYLE.subtitle.size, { width: innerW, color: STYLE.muted });
+    const sub = textEl('page.subtitle', P.margin, y, spec.subtitle, STYLE.subtitle.size, { width: innerW, color: T.muted });
     if (wordTooWide(sub)) warnings.push('page: the subtitle has a word wider than the page: shorten it');
     elements.push(sub); y += sub.height;
   }
@@ -639,7 +764,7 @@ export async function build(spec, opts = {}) {
   const report = [];
   const heights = rows.map(row => Math.max(...row.map(p => Math.max(natural(p), p.spec.minHeight ?? 0))));
   const footerEl = spec.footer
-    ? textEl('page.footer', P.margin, 0, spec.footer, STYLE.footer.size, { width: innerW, color: STYLE.muted }) : null;
+    ? textEl('page.footer', P.margin, 0, spec.footer, STYLE.footer.size, { width: innerW, color: T.muted }) : null;
   if (wordTooWide(footerEl)) warnings.push('page: the footer has a word wider than the page: shorten it');
   const footerH = footerEl ? 16 + footerEl.height : 0;
   const contentH = y + heights.reduce((a, b) => a + b, 0) + P.gap * Math.max(0, rows.length - 1) + footerH + P.margin;
@@ -658,7 +783,7 @@ export async function build(spec, opts = {}) {
       const px = P.margin + j * (colW + P.gap), py = y;
       const ax = px + p.pad, ay = py + p.pad + headH(p);
       if (p.framed) elements.push({ id: `${p.pid}.card`, type: 'rectangle', x: px, y: py, width: p.w, height: h,
-        strokeColor: p.spec.strokeColor ?? STYLE.panelStroke, backgroundColor: p.spec.backgroundColor ?? '#ffffff',
+        strokeColor: p.spec.strokeColor ?? T.panelStroke, backgroundColor: p.spec.backgroundColor ?? T.panelFill,
         fillStyle: 'solid', strokeWidth: 2, roughness: 1, roundness: { type: 3 } });
       if (p.heading) elements.push({ ...p.heading, x: px + p.pad, y: py + p.pad });
       for (const el of p.prepared) elements.push({ ...el, x: el.x + ax, y: el.y + ay });
@@ -701,7 +826,8 @@ export async function build(spec, opts = {}) {
   }
   if (steps > 1 && footerEl) stepById.set(footerEl.id, steps);
   const stepOf = el => stepById.get(el.id) ?? stepById.get(el.containerId) ?? 1;
-  return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs, steps, stepOf };
+  return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs, steps, stepOf,
+    background: T.background };
 }
 
 // Characters Excalifont lacks (arrows, check marks, emoji, CJK) render in a
@@ -860,7 +986,7 @@ async function main() {
   let built;
   try { built = await build(spec); }
   catch (e) { console.error(`Could not build ${input}: ${e.message}`); process.exit(1); }
-  const { elements, warnings, report, size, missingGlyphs, steps, stepOf } = built;
+  const { elements, warnings, report, size, missingGlyphs, steps, stepOf, background } = built;
   // Inside an Obsidian vault the outputs are the Excalidraw plugin's own: a
   // plain .excalidraw opens there only in compatibility mode, and the plugin's
   // auto-export writes <name>.excalidraw.png, which would leave a second PNG
@@ -903,14 +1029,14 @@ async function main() {
     const frames = [], buildId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
     for (let k = 1; k <= want; k++) {
       const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
-      const shot = await renderPng(frame, {}, { scale, padding: 0, systemFonts: missingGlyphs });
+      const shot = await renderPng(frame, {}, { scale, padding: 0, systemFonts: missingGlyphs, background });
       frames.push([stepFile(k), markStep(Buffer.from(shot.data, 'base64'), k, steps, buildId, base)]);
     }
     const scene = { type: 'excalidraw', version: 2, source: SOURCE,
-      elements, appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} };
+      elements, appState: { viewBackgroundColor: background, gridSize: null }, files: {} };
     // Render first: if it fails, neither file is touched, so the PNG and the
     // .excalidraw on disk never come from different builds.
-    const png = await renderPng(elements, {}, { scale, padding: 0,
+    const png = await renderPng(elements, {}, { scale, padding: 0, background,
       // Every glyph was checked against Excalifont above; system fonts are
       // only needed for the ones it lacks.
       systemFonts: missingGlyphs });

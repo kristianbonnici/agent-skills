@@ -6,8 +6,9 @@
 # charts put every point where its numbers say, wrapped text keeps room to spare, a build into an
 # Obsidian vault writes the Excalidraw plugin's files, a hand-edited drawing is never replaced
 # unasked, drawing.mjs keeps a drawing byte for byte while it edits and previews it, a slide's steps
-# render one picture per click, deck.mjs writes a browser deck, a PDF and a PowerPoint, and a title font
-# other than Excalifont is drawn only in the PNG.
+# render one picture per click, deck.mjs writes a browser deck, a PDF and a PowerPoint, a title font
+# other than Excalifont is drawn only in the PNG, a scatter chart places its dots and links by their numbers,
+# and a dark page is dark to its edges with the page's own colors adapted and hex colors kept.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -736,5 +737,102 @@ node "$skill/scripts/drawing.mjs" render "$work/titlefont/iowan-inked.excalidraw
 echo '{"title": "x", "titleFont": "comic"}' >"$work/titlefont/bad.json"
 set +e; node "$build" "$work/titlefont/bad.json" >"$work/titlefont-bad.out" 2>&1; status=$?; set -e
 [ "$status" -eq 1 ] && grep -q "titleFont must be one of excalifont, iowan-inked" "$work/titlefont-bad.out" || { cat "$work/titlefont-bad.out"; fail "an unknown titleFont should stop the build, got $status"; }
+
+# 24. A scatter chart puts each dot where its numbers say, a reversed axis runs from its max to its min,
+# labels sit beside their dots (left when the right would run past the chart), links join dots by id or
+# label and stop short of them, and it warns about what it can't draw.
+cat >"$work/scatter.json" <<'JSON'
+{ "title": "", "format": "fit", "frame": false, "panels": [ { "id": "s", "span": 2, "elements": [
+  { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 0, "width": 700, "height": 500,
+    "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10, "reverse": true },
+    "points": [ { "id": "a", "x": 0, "y": 0, "label": "first" }, { "x": 10, "y": 10, "label": "last", "color": "red" },
+                { "id": "m", "x": 5, "y": 2.5, "labelSide": "below", "label": "mid" } ],
+    "links": [ { "from": "a", "to": "m" }, { "from": "mid", "to": "last", "arrow": false } ] }
+] } ] }
+JSON
+node "$build" "$work/scatter.json" >"$work/scatter.out" || { cat "$work/scatter.out"; fail "the scatter chart doesn't build cleanly"; }
+python3 -I - "$work/scatter.excalidraw" <<'PY2' || fail "the scatter chart is drawn wrong"
+import json, math, sys
+els = {e["id"]: e for e in json.load(open(sys.argv[1]))["elements"]}
+xa, ya = els["s.sc.xaxis"], els["s.sc.yaxis"]
+left, top = ya["x"], ya["y"] + 6
+right, bottom = xa["x"] + xa["points"][-1][0] - 6, xa["y"]
+centre = lambda e: (e["x"] + e["width"] / 2, e["y"] + e["height"] / 2)
+close = lambda a, b: abs(a[0] - b[0]) < 0.5 and abs(a[1] - b[1]) < 0.5
+p0, p1, p2 = (centre(els[f"s.sc.p{i}"]) for i in range(3))
+assert close(p0, (left, top)), f"(0, 0) on a reversed y axis should sit at the top left, got {p0}"
+assert close(p1, (right, bottom)), f"(10, 10) on a reversed y axis should sit at the bottom right, got {p1}"
+assert close(p2, (left + (right - left) / 2, top + (bottom - top) / 4)), f"(5, 2.5) is misplaced: {p2}"
+assert els["s.sc.p1"]["strokeColor"] == "#e03131", "a named color should color the dot"
+l0, l1, l2 = (els[f"s.sc.pl{i}"] for i in range(3))
+assert l0["x"] > p0[0], "a label should sit right of its dot by default"
+assert l1["x"] + l1["width"] < p1[0], "a label that would run past the chart should sit left of its dot"
+assert l2["y"] > p2[1], "labelSide below should put the label under its dot"
+k0, k1 = els["s.sc.k0"], els["s.sc.k1"]
+assert k0["type"] == "arrow" and k0["endArrowhead"] == "arrow", "a link is an arrow by default"
+assert k1["type"] == "line", '"arrow": false should draw a line'
+start = (k0["x"], k0["y"]); end = (k0["x"] + k0["points"][-1][0], k0["y"] + k0["points"][-1][1])
+for name, (pt, c) in {"start": (start, p0), "end": (end, p2)}.items():
+    d = math.dist(pt, c)
+    assert 11 < d < 13, f"a link's {name} should stop just outside its dot, {d:.1f} px from its centre"
+PY2
+cat >"$work/badscatter.json" <<'JSON'
+{ "title": "Bad scatter", "format": "auto", "panels": [ { "id": "q", "span": 2, "elements": [
+  { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 0, "width": 600, "height": 300, "xAxis": { "max": 10 }, "yAxis": { "max": 10 },
+    "points": [ { "x": "1", "y": 2, "label": "text" }, { "id": "far", "x": 20, "y": 2, "label": "far" }, { "x": 5, "y": 5, "label": "odd", "labelSide": "middle" } ],
+    "links": [ { "from": "far", "to": "nope" } ] },
+  { "type": "chart", "kind": "scatter", "id": "none", "x": 0, "y": 340, "points": [] },
+  { "type": "chart", "kind": "pie", "id": "pie", "x": 700, "y": 0 }
+] } ] }
+JSON
+set +e; node "$build" "$work/badscatter.json" --lint-only >"$work/badscatter.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] || { cat "$work/badscatter.out"; fail "a broken scatter chart should exit 3, got $status"; }
+for expect in 'point "text" needs number x and y' 'point "far" is outside the axis range' 'is no point' 'labelSide "middle"' 'chart "none" has no points' 'kind "pie" isn'"'"'t line, bar or scatter'; do
+  grep -q -- "$expect" "$work/badscatter.out" || { cat "$work/badscatter.out"; fail "missing warning: $expect"; }
+done
+
+# 25. A dark page is dark to its edges, in the PNG and in a preview: its own colors (background, text,
+# cards, named colors) are Excalidraw's dark ones, a hex color is kept, light stays the default, and an
+# unknown theme stops the build.
+cat >"$work/dark.json" <<'JSON'
+{ "title": "Dark", "theme": "dark", "format": "fit", "panels": [ { "id": "k", "span": 2, "elements": [
+  { "type": "rectangle", "id": "box", "x": 0, "y": 0, "width": 200, "height": 80, "color": "blue", "label": "named" },
+  { "type": "text", "id": "hex", "x": 260, "y": 20, "text": "hex", "color": "#d97757" },
+  { "type": "text", "id": "plain", "x": 360, "y": 20, "text": "plain" }
+] } ], "footer": "footer" }
+JSON
+node "$build" "$work/dark.json" >"$work/dark.out" || { cat "$work/dark.out"; fail "a dark page should build cleanly"; }
+node "$skill/scripts/drawing.mjs" render "$work/dark.excalidraw" "$work/dark-preview.png" >/dev/null || fail "a dark drawing should preview"
+python3 -I - "$work" <<'PY2' || fail "a dark page is drawn wrong"
+import json, struct, sys, zlib
+d = sys.argv[1]
+scene = json.load(open(f"{d}/dark.excalidraw"))
+assert scene["appState"]["viewBackgroundColor"] == "#121212", scene["appState"]
+assert json.load(open(f"{d}/chart.excalidraw"))["appState"]["viewBackgroundColor"] == "#ffffff", "light should stay the default"
+els = {e["id"]: e for e in scene["elements"]}
+for i in ("page.title", "k.plain"):
+    assert els[i]["strokeColor"] == "#d3d3d3", f"{i}: text should default to dark mode's ink, got {els[i]['strokeColor']}"
+assert els["k.hex"]["strokeColor"] == "#d97757", "a hex color should be drawn as given"
+assert els["k.card"]["backgroundColor"] == "#121212", "a card should take dark mode's fill"
+rgb = lambda h: [int(h[i:i + 2], 16) for i in (1, 3, 5)]
+light = lambda h: sum(rgb(h)) / 765
+fill, stroke = rgb(els["k.box"]["backgroundColor"]), rgb(els["k.box"]["strokeColor"])
+assert light(els["k.box"]["backgroundColor"]) < 0.35 < 0.5 < light(els["k.box"]["strokeColor"]), "a named color should get a dark fill and a light stroke"
+assert max(fill) == fill[2] and max(stroke) == stroke[2], "blue should stay blue"
+def corner(f):
+    data = open(f, "rb").read()
+    pos, idat = 8, b""
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IDAT": idat += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    # The first pixel is stored as is under every PNG filter: there is nothing left of or above it.
+    return tuple(zlib.decompress(idat)[1:4])
+for f in ("dark.png", "dark-preview.png"):
+    assert corner(f"{d}/{f}") == (18, 18, 18), f"{f}'s corner should be the dark background, got {corner(f'{d}/{f}')}"
+PY2
+echo '{"title": "x", "theme": "blue"}' >"$work/badtheme.json"
+set +e; node "$build" "$work/badtheme.json" >"$work/badtheme.out" 2>&1; status=$?; set -e
+[ "$status" -eq 1 ] && grep -q "theme must be one of light, dark" "$work/badtheme.out" || { cat "$work/badtheme.out"; fail "an unknown theme should stop the build, got $status"; }
 
 echo "excalidraw-drawing: ok"
