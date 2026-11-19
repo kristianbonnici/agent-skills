@@ -560,7 +560,8 @@ function scatterChart(el, id, g, common, pid, warnings) {
   for (const d of dots) {
     const { p } = d;
     if (!p.label) continue;
-    const w = textWidth(p.label, fs), h = fs * STYLE.lineHeight;
+    const rows = String(p.label).split('\n');
+    const w = Math.max(...rows.map(t => textWidth(t, fs))), h = rows.length * fs * STYLE.lineHeight;
     let side = p.labelSide;
     if (side !== undefined && !SIDES.includes(side)) {
       warnings.push(`${name}: point "${p.label}" has labelSide "${side}", not one of ${SIDES.join(', ')}: placed automatically`);
@@ -971,7 +972,7 @@ function lintPanel(p, warnings) {
       const gl = l.groupIds ?? [], gt = tx.groupIds ?? [];
       if (gl.some(g => gt.includes(g))) continue;
       const r = bbox(tx);
-      if (crosses(l, { x: r.x + 2, y: r.y + 3, w: r.w - 4, h: r.h - 6 })) {
+      if (meets(l, { x: r.x + 2, y: r.y + 3, w: r.w - 4, h: r.h - 6 })) {
         warnings.push(`${p.pid}: ${shortId(l, p)} runs through the text ${shortId(tx.containerId ? { id: tx.containerId } : tx, p)}`);
       }
     }
@@ -979,8 +980,8 @@ function lintPanel(p, warnings) {
 }
 
 // Does any straight segment of a linear element meet rectangle r? Exact
-// (Liang-Barsky clipping), so a link to a point far off the chart costs no
-// more to check than a short one.
+// (Liang-Barsky clipping), so a line far longer than the page, such as a
+// link to a point far off its chart, costs no more to check than a short one.
 function meets(l, r) {
   const pts = l.points.map(([px, py]) => [l.x + px, l.y + py]);
   for (let i = 1; i < pts.length; i++) {
@@ -997,20 +998,6 @@ function meets(l, r) {
   return false;
 }
 
-// Does any segment of a linear element pass through rectangle r? Sampled
-// every 2 px, which is finer than any text line.
-function crosses(l, r) {
-  const pts = l.points.map(([px, py]) => [l.x + px, l.y + py]);
-  for (let i = 1; i < pts.length; i++) {
-    const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
-    const n = Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 2));
-    for (let k = 0; k <= n; k++) {
-      const x = x1 + (x2 - x1) * k / n, y = y1 + (y2 - y1) * k / n;
-      if (x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h) return true;
-    }
-  }
-  return false;
-}
 const shortId = (el, p) => `"${String(el.id).replace(`${p.pid}.`, '')}"`;
 
 // ---------- CLI ----------

@@ -747,8 +747,9 @@ cat >"$work/scatter.json" <<'JSON'
     "xAxis": { "min": 0, "max": 10, "ticks": [0, 10] }, "yAxis": { "min": 0, "max": 10, "reverse": true }, "grid": true,
     "points": [ { "id": "a", "x": 0, "y": 0, "label": "first" }, { "x": 10, "y": 10, "label": "last", "color": "red" },
                 { "id": "m", "x": 5, "y": 2.5, "labelSide": "below", "label": "mid" },
-                { "id": "v1", "x": 2, "y": 8, "label": "v2" }, { "id": "v2", "x": 8, "y": 8, "label": "new" } ],
-    "links": [ { "from": "v1", "to": "v2" }, { "from": "mid", "to": "last", "arrow": false } ] }
+                { "id": "v1", "x": 2, "y": 8, "label": "v2" }, { "id": "v2", "x": 8, "y": 8, "label": "new" },
+                { "id": "two", "x": 5, "y": 5.6, "label": "Alpha\nBeta" }, { "id": "t1", "x": 4, "y": 5.9 }, { "id": "t2", "x": 9, "y": 5.9 } ],
+    "links": [ { "from": "v1", "to": "v2" }, { "from": "mid", "to": "last", "arrow": false }, { "from": "t1", "to": "t2" } ] }
 ] } ] }
 JSON
 node "$build" "$work/scatter.json" >"$work/scatter.out" || { cat "$work/scatter.out"; fail "the scatter chart doesn't build cleanly"; }
@@ -771,6 +772,11 @@ assert l0["x"] > p0[0], "a label should sit right of its dot when nothing is in 
 assert l1["x"] + l1["width"] < p1[0], "a label that would run past the chart should sit left of its dot"
 assert l2["y"] > p2[1], "labelSide below should put the label under its dot"
 assert l3["x"] + l3["width"] < p3[0], "a label should leave the side its link goes out of"
+# The link runs about 14 px under the dot: clear of a one-line label beside it, through a two-line one.
+l5, k2 = els["s.sc.pl5"], els["s.sc.k2"]
+ky, kx0, kx1 = k2["y"], k2["x"], k2["x"] + k2["points"][-1][0]
+assert l5["text"] == "Alpha\nBeta"
+assert not (l5["y"] + 3 < ky < l5["y"] + l5["height"] - 3 and l5["x"] < kx1 and kx0 < l5["x"] + l5["width"]), "a two-line label should keep its second line off a link"
 k0, k1 = els["s.sc.k0"], els["s.sc.k1"]
 assert k0["type"] == "arrow" and k0["endArrowhead"] == "arrow", "a link is an arrow by default"
 assert k1["type"] == "line", '"arrow": false should draw a line'
@@ -789,6 +795,7 @@ cat >"$work/badscatter.json" <<'JSON'
                 { "id": "c", "x": 6, "y": 8, "label": "covering", "labelSide": "right" }, { "x": 7, "y": 8 },
                 { "id": "s1", "x": 4, "y": 6 }, { "id": "s2", "x": 4.2, "y": 6 }, { "id": "huge", "x": 1000000000, "y": 5 } ],
     "links": [ { "from": "far", "to": "nope" }, { "from": "odd", "to": "twin" }, { "from": "s1", "to": "s2" }, { "from": "l", "to": "r" }, { "from": "odd", "to": "huge" } ] },
+  { "type": "text", "id": "note", "x": 0, "y": 320, "text": "a note outside the chart" },
   { "type": "chart", "kind": "scatter", "id": "none", "x": 0, "y": 340, "points": [] },
   { "type": "chart", "kind": "pie", "id": "pie", "x": 700, "y": 0 },
   { "type": "chart", "kind": "toString", "id": "proto", "x": 700, "y": 200 }
