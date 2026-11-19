@@ -405,6 +405,7 @@ function card(n) {
   name.append(el("span", null, n.label)); row1.append(name, pill(n.status || "done"));
   const model = el("div", "c-model"); model.append(el("span", null, n.model || n.harness || ""));
   if (n.effort) { const eff = el("span", "effort"), d = el("i"); d.style.background = bandColour(n.band); eff.append(d, el("span", null, n.effort)); model.append(el("span", null, "·"), eff); }
+  if (n.computer) model.append(el("span", null, "·"), el("span", null, `on ${n.computer}`));
   names.append(row1, model); top.append(icon(n), names); c.append(top);
   const sum = el("p", "c-summary", (kind === "helper" ? n.did : n.summary) || ""); c.append(sum);
   n.parts = { name, model, sum };
@@ -779,7 +780,7 @@ function showPeek(n, always) {
   if (!always && view.s >= 0.8 && !cut(name) && !cut(model) && (!sum.textContent || !cut(sum))) return;
   peekBox.replaceChildren();
   const nm = el("div", "p-name"); if (n.kind === "task") nm.append(el("span", "c-id", n.id)); nm.append(el("span", null, n.label)); peekBox.append(nm);
-  peekBox.append(el("div", "p-model", [n.model, n.effort, n.harness].filter(Boolean).join(" · ")));
+  peekBox.append(el("div", "p-model", [n.model, n.effort, n.harness, n.computer && `on ${n.computer}`].filter(Boolean).join(" · ")));
   const text = n.kind === "helper" ? n.did : n.summary; if (text) peekBox.append(el("div", "p-sum", text));
   const bits = [];
   if (n.kind === "helper") { const p = n.parentNode; bits.push(p.kind === "orch" ? "for the orchestrator" : `for ${p.id} · ${p.name}`); if (n.count > 1) bits.push(`${n.count} runs`); }

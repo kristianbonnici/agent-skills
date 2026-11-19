@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Start a command in a session of its own, detached from this shell, and print its process ID.
+
+references/prepare.md and machine.md (sections 4 and 9) start the run's keep-awake and usage sampler with
+it. `nohup … &` only ignores the hang-up signal: a host app that restarts (an update) ends its shells'
+process groups, and a command started that way goes with them, leaving the computer free to sleep
+mid-run. A command started here is in a new session and process group, with standard input, output and
+error on /dev/null, so it outlives the shell, the app and an SSH connection that started it.
+
+Usage:
+  detach <command> [<argument> ...]
+
+Prints the command's process ID and exits 0 at once; it doesn't wait for the command, so confirm it
+runs with `ps -p <pid>`. Exits 64 without a command, and 127 when the command can't be started (not
+found, not executable), with one line saying why.
+"""
+
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"detach: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
+    sys.exit(69)
+
+import subprocess
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    if not argv:
+        print("detach: no command given; usage: detach <command> [<argument> ...]", file=sys.stderr)
+        return 64
+    try:
+        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True, close_fds=True)
+    except OSError as error:
+        print(f"detach: can't start {argv[0]}: {error.strerror or error}", file=sys.stderr)
+        return 127
+    print(child.pid, flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

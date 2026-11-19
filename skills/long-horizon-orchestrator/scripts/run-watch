@@ -1265,14 +1265,14 @@ def main(argv: list[str]) -> int:
     pid = watch.get("keep_awake_pid")
     if isinstance(pid, int) and "caffeinate" not in procs.get(pid, {}).get("args", ""):
         summary["keep_awake"] = "DOWN"
-        lines.append(f"keep-awake: caffeinate pid {pid} isn't running: start it again and record the new pid in watch.json and the ledger"
+        lines.append(f"keep-awake: caffeinate pid {pid} isn't running: start it again with scripts/detach and record the new pid in watch.json and the ledger"
                      if as_computer is None else
-                     f"keep-awake: caffeinate pid {pid} isn't running: start it again there and record the new pid in "
+                     f"keep-awake: caffeinate pid {pid} isn't running: start it again with scripts/detach there and record the new pid in "
                      f"{os.path.join(run_dir, 'keep-awake.pid')} there and the ledger")
     elif isinstance(pid, int):
         summary["keep_awake"] = "up"
     elif as_computer is not None:   # every other computer of a run keeps one (computers.md section 3)
-        lines.append(f"keep-awake: none recorded in {os.path.join(run_dir, 'keep-awake.pid')} there: start one there and record its pid in that file")
+        lines.append(f"keep-awake: none recorded in {os.path.join(run_dir, 'keep-awake.pid')} there: start one there with scripts/detach and record its pid in that file")
     pid = watch.get("sampler_pid")
     if not isinstance(pid, int):
         try:
@@ -1283,11 +1283,11 @@ def main(argv: list[str]) -> int:
         summary["sampler"] = "up"
         if "usage-sampler" not in procs.get(pid, {}).get("args", ""):
             summary["sampler"] = "DOWN"
-            lines.append(f"sampler: the usage sampler (pid {pid}) isn't running: start it again on the same folder and record its pid")
+            lines.append(f"sampler: the usage sampler (pid {pid}) isn't running: start it again with scripts/detach on the same folder and record its pid")
     elif os.path.exists(machine) and t_now - os.path.getmtime(machine) > 180:
         summary["sampler"] = "DOWN"
         lines.append(f"sampler: the usage sampler's last sample is {(t_now - os.path.getmtime(machine)) / 60:.0f} min old: "
-                     "start it again on the same folder and record its pid")
+                     "start it again on the same folder with scripts/detach and record its pid")
 
     # Leftovers, on another computer (where nobody else looks for them during the run): processes started
     # since the run began that name the run directory or work in a task's folders, and aren't a running

@@ -88,7 +88,8 @@ The run map, the charts and the run-time line are all drawn from one facts file 
 
 ### Where the facts come from
 
-- **Harness, model and reasoning level:** the host's record you saved at launch, never an agent's description of itself. Note every level change you made during the run.
+- **Harness, model and reasoning level:** the host's record you saved at launch, never an agent's description of itself. Note every level change you made during the run. A task's `agent` is only that label (`"Claude Code (T3) · Opus 5.5"`): the map reads the card's maker icon from its model, so a label without one gets a letter instead.
+- **Computer:** in a run on several computers, each task's `computer` (`"den-mac"`), from the ledger's tasks table; the map shows it after the model.
 - **Launch time:** the host's creation time for the task's thread or agent. Convert UTC to the user's local time.
 - **Merge time:** the integration branch's reflog, which shows when each task's merge moved it (`git reflog show <branch> --date=format-local:'%H:%M:%S'`). A commit's own date is not its merge time: rebases rewrite it.
 - **Worked time:** the sum of the task's turns, each from its start to its completion, from the host's per-turn records (in T3, see [host-t3.md](host-t3.md)). It counts only the task's own agent, not helpers it waited on. Cap it at the total when a task kept talking after its merge. Keep the turns themselves too (a task's `turns`, and the run's for your own): the map's timeline draws them. If the host has no per-turn times, show only the total and say so once under the chart.

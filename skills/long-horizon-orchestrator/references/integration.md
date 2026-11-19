@@ -52,7 +52,7 @@ Otherwise, or when that look stops it: if the task names a concrete fix for each
 
 ## Follow-up findings
 
-The review gate's follow-ups are real defects that need rare timing or input, or missing hardening, and they don't hold back a merge. A task lists its open ones with their fixes in its handoff (`<run directory>/<task ID>/handoff.md`); read them there once it merges (under "leave on branch", once it is `ready`) and record them in the ledger. Give them to one follow-up task within the contract (from the reserve, or a new task with the same scope) while the run has room; otherwise list them under "Not finished" in the report.
+The review gate's follow-ups are real defects that need rare timing or input, or missing hardening, and they don't hold back a merge. A task lists its open ones with their fixes in its handoff (`<run directory>/<task ID>/handoff.md`); read them there once it merges (under "leave on branch", once it is `ready`) and record them in the ledger. Give them to one follow-up task within the contract (from the reserve, or a new task with the same scope) while the run has room; otherwise list them under "Not finished" in the report. Its review is capped (review-gate, section 5): from round 3 on it lists new non-blockers instead of fixing them. Make a further follow-up task of those only when the owner asks.
 
 ## A reviewer that held on its blocker
 
@@ -115,8 +115,8 @@ Cleanup is for merged work only, and a split's kept branch stays. A blocked, fai
 
 A pause the owner asks for mid-run (to close a lid or move a computer) is not a quota pause, and nothing in it is lost if you go in this order:
 
-1. Switch the heartbeat and any resume wake off (in T3, `schedule_task` with `enabled: false`), so neither wakes tasks you are stopping.
-2. Tell each running task to stop at its next safe point: commit what is ready, start nothing new, cancel its reviewers, no rebase or push. Send it as a steer, or in mode `auto` when the task is between turns (a steer then fails with "no running turn"). Never interrupt a task mid-push.
+1. Switch the heartbeat and any resume wake off (in T3, `schedule_task` with `enabled: false`), so neither wakes tasks you are stopping. A task's review gate deletes its own wake when told to stop; one still listed in `list_scheduled_tasks` on the task's computer (its `environmentId`) once the task is idle (titled `<task> review-gate wake`, bound to the task's thread, its ID in the task's `review*/wake.txt`), delete.
+2. Tell each running task to stop at its next safe point: commit what is ready, start nothing new, cancel its reviewers and delete its review-gate wake, no rebase or push. Send it as a steer, or in mode `auto` when the task is between turns (a steer then fails with "no running turn"). Never interrupt a task mid-push.
 3. Wait until each task is idle, then stop its leftover processes by process ID ([machine.md](machine.md#8-leftover-processes); on another computer, over SSH or through the run's machine thread there, [computers.md](computers.md#10-reaching-it-ssh-first-one-machine-thread-second)).
 4. Set the ledger to `Status: paused until the owner continues`, each task you stopped to `paused (owner)` there and `paused` in `watch.json` (a task already paused by quota stays as it is), and tell the owner it is safe now.
 
@@ -126,7 +126,7 @@ The steps name T3's tools. In Claude Code, the heartbeat and resume wakes are `C
 
 ## A task the user stopped
 
-Nothing of it merges. Mark it `stopped` and park its dependents. Keep its work in case the user wants it later:
+Nothing of it merges. Mark it `stopped` and park its dependents. In T3, delete its review-gate wake if one is listed (`list_scheduled_tasks` on its computer, titled `<task> review-gate wake`, bound to its thread), since a stopped task may never get to delete it. Keep its work in case the user wants it later:
 1. Save everything uncommitted as a patch: `git -C <worktree> add -A && git -C <worktree> diff --cached --binary > <run directory>/stopped/<branch>.patch`. If its branch has commits (`git log <integration branch>..<branch>`), save them as well with `git format-patch -o <run directory>/stopped/<branch>/ <integration branch>..<branch>`.
 2. Keep its worktree and branch: they also hold what the patch can't, such as files git ignores. Name them in the report for the user to delete once they've decided.
 3. Record in the ledger and the report how to pick it up again: in its worktree as it is, or on a new branch from the integration branch with `git am` of the saved commits first, then `git apply` of the patch.

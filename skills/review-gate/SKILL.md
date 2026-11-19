@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 8.2.0
+  version: 8.3.0
 ---
 
 # Review Gate
@@ -90,6 +90,8 @@ Up to five rounds, re-review as above. A blocker that comes back as "not fixed" 
 - round 5 still finds a blocker.
 
 Then report that the review didn't converge, list the open blockers and follow-ups with the fix each needs, and say whether the approach itself looks wrong. In an orchestrated run that is status `ready`, and the orchestrator decides.
+
+**A follow-up patch is capped.** A change that fixes an earlier review's listed follow-ups gets its own level, and in its gate: fix every blocker, in any round, and the follow-ups raised in rounds 1 and 2; from round 3 on, list a new finding that isn't a blocker with the fix it needs, instead of fixing it, so a fix for a narrow race doesn't invite a narrower one round after round. What is listed is fixed later only when the owner asks.
 
 ## 6. Record the result
 

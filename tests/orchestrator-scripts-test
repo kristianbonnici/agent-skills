@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch (also over SSH), heartbeat, run-costs and share-usage. RUN_MAP_CHROME names the browser for the page checks.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch (also over SSH), heartbeat, run-costs, share-usage and detach. RUN_MAP_CHROME names the browser for the page checks.
 set -eu
 # Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
 # under test, which keep caps already set: start without them.
@@ -3908,6 +3908,39 @@ assert cards["D"]["cost"]["lines"][0] == "Ran on den-mac" and cards["A"]["cost"]
 height = lambda name: int(re.search(r"html_render height (\d+)", open(os.path.join(root, name)).read()).group(1))
 assert height("charts-two.out") >= 1500, height("charts-two.out")
 EOF
+# the same run with dated times (as for a run past midnight) draws the same computers: the subscriptions'
+# windows don't take the name of the run's first moment, which places the other computers' samples; a
+# task's computer shows after its model, its agent label keeps the maker's icon
+python3 -I - "$multi" <<'EOF'
+import json, os, sys
+root = sys.argv[1]
+f = json.load(open(os.path.join(root, "studio/facts-two.json")))
+day = lambda hm: "2026-11-16 " + hm
+f["run"].update(start=day(f["run"]["start"]), end=day(f["run"]["end"]))
+for t in f["tasks"]:
+    t.update(launched=day(t["launched"]), ended=day(t["ended"]))
+f["tasks"][1]["computer"] = "den-mac"
+f["tasks"].append(dict(f["tasks"][0], id="E", name="Shared harness", computer=" attic-mac "))   # no agent: the run's harness
+del f["tasks"][-1]["agent"]
+f["harness"] = "Claude Code · Opus 5.5"
+json.dump(f, open(os.path.join(root, "studio/facts-two-dated.json"), "w"))
+EOF
+"$scripts/run-charts" "$multi/studio/facts-two-dated.json" "$multi/charts-two-dated" >/dev/null
+grep -q 'On den-mac<br/>Claude Code · Opus 5.5 · on den-mac' "$multi/charts-two-dated/graph.mmd"
+grep -q 'Shared harness<br/>Claude Code · Opus 5.5 · on attic-mac"' "$multi/charts-two-dated/graph.mmd"
+python3 -I - "$multi" <<'EOF'
+import json, os, re, sys
+root = sys.argv[1]
+def data(name):
+    return json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
+two, dated = data("charts-two"), data("charts-two-dated")
+assert [c["name"] for c in dated["usage"]["computers"]] == ["studio-mac", "den-mac", "attic-mac"], dated["usage"].keys()
+assert dated["usage"]["computers"][1]["sampled"] == two["usage"]["computers"][1]["sampled"], dated["usage"]["computers"][1]["sampled"]
+cards = {t["id"]: t for t in dated["tasks"]}
+assert cards["D"]["computer"] == "den-mac" and cards["A"]["computer"] == "", cards["D"]
+assert cards["D"]["mark"] is not None and cards["D"]["mark"] == cards["A"]["mark"] == cards["E"]["mark"], (cards["D"]["mark"], cards["A"]["mark"])
+assert cards["E"]["computer"] == "attic-mac" and cards["E"]["model"] == "Opus 5.5", cards["E"]
+EOF
 # another computer's time on your clock takes the offset your samples had at that instant: across the end of
 # daylight saving (+03:00 to +02:00), and before your first sample
 python3 -I - "$scripts/run-charts" <<'EOF'
@@ -4119,5 +4152,20 @@ status=0
 "$scripts/heartbeat" "$hb" --bogus >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
 unset HEARTBEAT_PS
+
+# detach: prints the process ID of a command started in a session and process group of its own, its output
+# on /dev/null, and returns at once; no command is a usage error, one that can't start says why
+pid=$("$scripts/detach" sh -c 'echo out; echo err >&2; exec sleep 30')
+background="$background $pid"
+case "$pid" in ''|*[!0-9]*) echo "detach printed: $pid"; exit 1;; esac
+test "$(ps -o pgid= -p "$pid" | tr -d ' ')" = "$pid"
+test "$(ps -o pgid= -p "$pid" | tr -d ' ')" != "$(ps -o pgid= -p $$ | tr -d ' ')"
+kill "$pid"
+status=0
+"$scripts/detach" >/dev/null 2>"$work/detach.err" || status=$?
+test "$status" -eq 64 && grep -q 'no command given' "$work/detach.err"
+status=0
+"$scripts/detach" "$work/no-such-command" >"$work/detach.out" 2>"$work/detach.err" || status=$?
+test "$status" -eq 127 && test ! -s "$work/detach.out" && grep -q "can't start $work/no-such-command" "$work/detach.err"
 
 echo "orchestrator scripts: ok"

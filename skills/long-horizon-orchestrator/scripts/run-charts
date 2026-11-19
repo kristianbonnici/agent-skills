@@ -27,7 +27,10 @@ Facts file (JSON):
         "level": "high",              # "above" (Max, Ultracode…), "xhigh", or "high" (high or lower)
         "level_label": "",            # optional, named in the timeline, e.g. "Ultracode → Extra High";
                                       # Max, Ultracode, Medium and Low are named without it
-        "agent": "",                  # optional second line when tasks ran on different harnesses
+        "agent": "",                  # its harness and model, as "harness" above, when tasks ran on different
+                                      # ones; never where it ran: the card's icon is read from this label
+        "computer": "",               # optional: the computer it ran on, in a run on several ("den-mac"),
+                                      # shown as "on den-mac" after its model
         "note": "",                   # optional line the reader must notice: "1 screen check left for you"
         "first_wave": true,           # launched without waiting for another task
         "needs": [],                  # task IDs whose code it needed
@@ -282,7 +285,12 @@ def graph(facts: dict) -> str:
     classes: dict[str, list[str]] = {}
     for t in tasks:
         status = t.get("status", "merged")
-        text = [f"{t['id']} · {t['name']}"] + [x for x in (t.get("agent"), t.get("note")) if x]
+        where = str(t.get("computer") or "").strip()
+        where = f"on {where}" if where else ""
+        # the computer goes after the task's harness and model; one that names no agent gets the run's
+        # shared harness there, which the graph otherwise says once, in the legend's place
+        agent = t.get("agent") or (facts.get("harness") if where else None)
+        text = [f"{t['id']} · {t['name']}"] + [x for x in (" · ".join(filter(None, (agent, where))), t.get("note")) if x]
         style = "parked" if status in ("parked", "stopped") else level(t)
         lines.append(f'  {node(t["id"])}["{label("<br/>".join(text))}"]:::{style}')
         if status in ("blocked", "failed", "replaced"):
@@ -857,11 +865,11 @@ def usage_data(folder: Path, dated: bool, first, span: tuple[float, float] | Non
         if longs:
             main = next((k for k in longs if k in ("weekly", "monthly")), None) or max(longs, key=lambda k: len(info["windows"][k]))
             more = [slot for slot in (slot_of(k) for k in longs if k != main) if moved(slot) or (slot["segs"] and named(slot["id"]))]
-            first = slot_of(main)
-            if not first["segs"]:   # only stale readings of it: nothing to draw, so the next window leads
-                first, more = (more[0], more[1:]) if more else (None, [])
-            if first and (more or moved(first) or name in used):
-                picked["long"] = first
+            lead = slot_of(main)   # not "first": minute() reads that name, the run's first moment
+            if not lead["segs"]:   # only stale readings of it: nothing to draw, so the next window leads
+                lead, more = (more[0], more[1:]) if more else (None, [])
+            if lead and (more or moved(lead) or name in used):
+                picked["long"] = lead
             if more:
                 picked["more"] = more
         if picked:
@@ -1412,7 +1420,7 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
             "place": t.get("took_place_of") or None, "replaces": t.get("replaces") or None,
             "launched": launched, "ended": ended, "worked": worked, "turns": turns(t), "pictures": pictures,
             "paused": " · ".join(f"{span(p['end'] - p['start'])}" + (f" · {p['reason']}" if p["reason"] else "") for p in paused),
-            "helpers": helpers(t.get("helpers")),
+            "helpers": helpers(t.get("helpers")), "computer": str(t.get("computer") or "").strip(),
             **who(t.get("agent") or facts.get("harness"), t.get("level"), t.get("level_label"), t.get("maker")),
         })
         if rounds:

@@ -551,6 +551,19 @@ confirmed.
 
 → *Changed in 8.0.0 (owner, 2026-11-18: "let's swap it in for Terra"): GPT-6.2 Sol at medium is the Codex reviewer, in every place Terra had.*
 
+## A cap on a follow-up patch's review (2026-11-20)
+
+A follow-up patch fixes the follow-ups an earlier review listed, and those are the narrow cases: races of a
+moment, rare input. Reviewing their fixes without a cap kept finding narrower ones. In one orchestrated run a
+task's change took five Deep rounds and left four follow-ups; their patch took five more rounds and left three
+new narrow follow-ups and seven nits, until the orchestrator told it by hand to list new non-blockers instead
+of fixing them. In the next run three tasks were briefed with that cap from the start (fix blockers in any
+round and follow-ups from rounds 1 and 2; list new non-blockers from round 3), and four capped patches each
+converged in three rounds with no blocker left. The gate's other stops count blockers only, so without the
+cap a stream of follow-ups never ends a review before round five.
+
+→ *Changed in 8.3.0 (owner, 2026-11-20, accepting the proposal): a follow-up patch's review lists new non-blockers from round 3 on instead of fixing them.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:
