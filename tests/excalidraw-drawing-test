@@ -739,15 +739,16 @@ set +e; node "$build" "$work/titlefont/bad.json" >"$work/titlefont-bad.out" 2>&1
 [ "$status" -eq 1 ] && grep -q "titleFont must be one of excalifont, iowan-inked" "$work/titlefont-bad.out" || { cat "$work/titlefont-bad.out"; fail "an unknown titleFont should stop the build, got $status"; }
 
 # 24. A scatter chart puts each dot where its numbers say, a reversed axis runs from its max to its min,
-# labels sit beside their dots (left when the right would run past the chart), links join dots by id or
-# label and stop short of them, and it warns about what it can't draw.
+# labels sit beside their dots on a side clear of the chart's edge and its links, links join dots by id
+# before label and stop short of them, and it warns about what it can't draw.
 cat >"$work/scatter.json" <<'JSON'
 { "title": "", "format": "fit", "frame": false, "panels": [ { "id": "s", "span": 2, "elements": [
   { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 0, "width": 700, "height": 500,
     "xAxis": { "min": 0, "max": 10 }, "yAxis": { "min": 0, "max": 10, "reverse": true },
     "points": [ { "id": "a", "x": 0, "y": 0, "label": "first" }, { "x": 10, "y": 10, "label": "last", "color": "red" },
-                { "id": "m", "x": 5, "y": 2.5, "labelSide": "below", "label": "mid" } ],
-    "links": [ { "from": "a", "to": "m" }, { "from": "mid", "to": "last", "arrow": false } ] }
+                { "id": "m", "x": 5, "y": 2.5, "labelSide": "below", "label": "mid" },
+                { "id": "v1", "x": 2, "y": 8, "label": "v2" }, { "id": "v2", "x": 8, "y": 8, "label": "new" } ],
+    "links": [ { "from": "v1", "to": "v2" }, { "from": "mid", "to": "last", "arrow": false } ] }
 ] } ] }
 JSON
 node "$build" "$work/scatter.json" >"$work/scatter.out" || { cat "$work/scatter.out"; fail "the scatter chart doesn't build cleanly"; }
@@ -759,37 +760,64 @@ left, top = ya["x"], ya["y"] + 6
 right, bottom = xa["x"] + xa["points"][-1][0] - 6, xa["y"]
 centre = lambda e: (e["x"] + e["width"] / 2, e["y"] + e["height"] / 2)
 close = lambda a, b: abs(a[0] - b[0]) < 0.5 and abs(a[1] - b[1]) < 0.5
-p0, p1, p2 = (centre(els[f"s.sc.p{i}"]) for i in range(3))
+p0, p1, p2, p3, p4 = (centre(els[f"s.sc.p{i}"]) for i in range(5))
 assert close(p0, (left, top)), f"(0, 0) on a reversed y axis should sit at the top left, got {p0}"
 assert close(p1, (right, bottom)), f"(10, 10) on a reversed y axis should sit at the bottom right, got {p1}"
 assert close(p2, (left + (right - left) / 2, top + (bottom - top) / 4)), f"(5, 2.5) is misplaced: {p2}"
 assert els["s.sc.p1"]["strokeColor"] == "#e03131", "a named color should color the dot"
-l0, l1, l2 = (els[f"s.sc.pl{i}"] for i in range(3))
-assert l0["x"] > p0[0], "a label should sit right of its dot by default"
+l0, l1, l2, l3 = (els[f"s.sc.pl{i}"] for i in range(4))
+assert l0["x"] > p0[0], "a label should sit right of its dot when nothing is in the way"
 assert l1["x"] + l1["width"] < p1[0], "a label that would run past the chart should sit left of its dot"
 assert l2["y"] > p2[1], "labelSide below should put the label under its dot"
+assert l3["x"] + l3["width"] < p3[0], "a label should leave the side its link goes out of"
 k0, k1 = els["s.sc.k0"], els["s.sc.k1"]
 assert k0["type"] == "arrow" and k0["endArrowhead"] == "arrow", "a link is an arrow by default"
 assert k1["type"] == "line", '"arrow": false should draw a line'
 start = (k0["x"], k0["y"]); end = (k0["x"] + k0["points"][-1][0], k0["y"] + k0["points"][-1][1])
-for name, (pt, c) in {"start": (start, p0), "end": (end, p2)}.items():
+# The link names "v2", the id of the fifth point and the label of the fourth: the id wins.
+for name, (pt, c) in {"start": (start, p3), "end": (end, p4)}.items():
     d = math.dist(pt, c)
     assert 11 < d < 13, f"a link's {name} should stop just outside its dot, {d:.1f} px from its centre"
 PY2
 cat >"$work/badscatter.json" <<'JSON'
 { "title": "Bad scatter", "format": "auto", "panels": [ { "id": "q", "span": 2, "elements": [
   { "type": "chart", "kind": "scatter", "id": "sc", "x": 0, "y": 0, "width": 600, "height": 300, "xAxis": { "max": 10 }, "yAxis": { "max": 10 },
-    "points": [ { "x": "1", "y": 2, "label": "text" }, { "id": "far", "x": 20, "y": 2, "label": "far" }, { "x": 5, "y": 5, "label": "odd", "labelSide": "middle" } ],
-    "links": [ { "from": "far", "to": "nope" } ] },
+    "points": [ { "x": "1", "y": 2, "label": "text" }, { "id": "far", "x": 20, "y": 2, "label": "far" }, { "x": 5, "y": 5, "label": "odd", "labelSide": "middle" },
+                { "id": "d", "x": 1, "y": 8, "label": "twin" }, { "id": "d", "x": 1.1, "y": 8.1, "label": "twin" },
+                { "id": "l", "x": 3, "y": 1, "label": "crossed", "labelSide": "right" }, { "id": "r", "x": 9, "y": 1 },
+                { "id": "c", "x": 6, "y": 8, "label": "covering", "labelSide": "right" }, { "x": 7, "y": 8 },
+                { "id": "s1", "x": 4, "y": 6 }, { "id": "s2", "x": 4.2, "y": 6 } ],
+    "links": [ { "from": "far", "to": "nope" }, { "from": "odd", "to": "twin" }, { "from": "s1", "to": "s2" }, { "from": "l", "to": "r" } ] },
   { "type": "chart", "kind": "scatter", "id": "none", "x": 0, "y": 340, "points": [] },
-  { "type": "chart", "kind": "pie", "id": "pie", "x": 700, "y": 0 }
+  { "type": "chart", "kind": "pie", "id": "pie", "x": 700, "y": 0 },
+  { "type": "chart", "kind": "toString", "id": "proto", "x": 700, "y": 200 }
 ] } ] }
 JSON
 set +e; node "$build" "$work/badscatter.json" --lint-only >"$work/badscatter.out" 2>&1; status=$?; set -e
 [ "$status" -eq 3 ] || { cat "$work/badscatter.out"; fail "a broken scatter chart should exit 3, got $status"; }
-for expect in 'point "text" needs number x and y' 'point "far" is outside the axis range' 'is no point' 'labelSide "middle"' 'chart "none" has no points' 'kind "pie" isn'"'"'t line, bar or scatter'; do
+for expect in 'point "text" needs number x and y' 'point "far" is outside the axis range' '"nope" is no point' 'labelSide "middle"' \
+  'more than one point is labelled "twin"' 'two points have the id "d"' 'too close for a link to show' 'a link runs through the label "crossed"' \
+  'the label "covering" covers another' 'chart "none" has no points' 'kind "pie" isn'"'"'t line, bar or scatter' 'kind "toString" isn'"'"'t line, bar or scatter'; do
   grep -q -- "$expect" "$work/badscatter.out" || { cat "$work/badscatter.out"; fail "missing warning: $expect"; }
 done
+# A bar takes a hex color as given, and an arrow's label keeps its arrow's color.
+cat >"$work/colors.json" <<'JSON'
+{ "title": "", "format": "fit", "frame": false, "panels": [ { "id": "h", "span": 2, "elements": [
+  { "type": "chart", "kind": "bar", "id": "b", "x": 0, "y": 0, "width": 500, "bars": [ { "label": "a", "value": 3, "color": "#d97757" }, { "label": "b", "value": 2 } ] },
+  { "type": "rectangle", "id": "x", "x": 0, "y": 160, "width": 120, "height": 60, "label": "x" },
+  { "type": "rectangle", "id": "y", "x": 360, "y": 160, "width": 120, "height": 60, "label": "y" },
+  { "type": "arrow", "start": "x", "end": "y", "color": "red", "label": "retry" }
+] } ] }
+JSON
+node "$build" "$work/colors.json" >"$work/colors.out" || { cat "$work/colors.out"; fail "the colors page should build cleanly"; }
+python3 -I - "$work/colors.excalidraw" <<'PY2' || fail "a color was lost"
+import json, sys
+els = json.load(open(sys.argv[1]))["elements"]
+by = {e["id"]: e for e in els}
+assert by["h.b.b0"]["strokeColor"] == "#d97757" and by["h.b.b1"]["strokeColor"] == "#1971c2", "a hex bar keeps its color, a plain one is blue"
+label = next(e for e in els if e["type"] == "text" and e.get("text") == "retry")
+assert label["strokeColor"] == "#e03131", f"an arrow's label should keep its arrow's color, got {label['strokeColor']}"
+PY2
 
 # 25. A dark page is dark to its edges, in the PNG and in a preview: its own colors (background, text,
 # cards, named colors) are Excalidraw's dark ones, a hex color is kept, light stays the default, and an
@@ -830,6 +858,23 @@ def corner(f):
     return tuple(zlib.decompress(idat)[1:4])
 for f in ("dark.png", "dark-preview.png"):
     assert corner(f"{d}/{f}") == (18, 18, 18), f"{f}'s corner should be the dark background, got {corner(f'{d}/{f}')}"
+PY2
+# The serif title's way through the renderer, and the step pictures, are dark to their edges too.
+python3 -I -c 'import json, sys; s = json.load(open(sys.argv[1])); s["titleFont"] = "iowan-inked"; s["panels"][0]["elements"][2]["step"] = 2; json.dump(s, open(sys.argv[2], "w"))' "$work/dark.json" "$work/darkserif.json"
+set +e; node "$build" "$work/darkserif.json" --steps >"$work/darkserif.out" 2>&1; status=$?; set -e
+{ [ "$status" -eq 0 ] || { [ "$status" -eq 3 ] && grep -q "isn't on this computer" "$work/darkserif.out"; }; } || { cat "$work/darkserif.out"; fail "a dark page with a serif title and steps should build, got $status"; }
+python3 -I - "$work" <<'PY2' || fail "a dark serif title or step picture has a light edge"
+import struct, sys, zlib
+def corner(f):
+    data = open(f, "rb").read()
+    pos, idat = 8, b""
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"IDAT": idat += data[pos + 8:pos + 8 + n]
+        pos += 12 + n
+    return tuple(zlib.decompress(idat)[1:4])
+for f in ("darkserif.png", "darkserif.step-1.png"):
+    assert corner(f"{sys.argv[1]}/{f}") == (18, 18, 18), f"{f}'s corner should be the dark background, got {corner(f'{sys.argv[1]}/{f}')}"
 PY2
 echo '{"title": "x", "theme": "blue"}' >"$work/badtheme.json"
 set +e; node "$build" "$work/badtheme.json" >"$work/badtheme.out" 2>&1; status=$?; set -e

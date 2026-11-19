@@ -62,7 +62,7 @@ The same element without ticks: a shape, not measurements. Curves are on by defa
 
 ## Scatter chart: "where each one lands on two measures"
 
-`"kind": "scatter"` puts a dot per item where its two numbers say, named beside it, right of the dot unless it would run past the chart (`labelSide` moves one: `left`, `above`, `below`). `links` join two points by `id` or label, as an arrow from the earlier to the later, or a line with `"arrow": false`. An axis with `"reverse": true` runs from its max down to its min, for a measure where less is better. Labels that overlap are a warning: move one with `labelSide`.
+`"kind": "scatter"` puts a dot per item where its two numbers say, named beside it on a side that keeps clear of the links and the other dots (`labelSide` picks one: `right`, `left`, `above`, `below`). `links` join two points by `id`, as an arrow from the earlier to the later, or a line with `"arrow": false`. An axis with `"reverse": true` runs from its max down to its min, for a measure where less is better. A label that still collides is a warning: move it with `labelSide`.
 
 ```json
 [

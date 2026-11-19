@@ -65,7 +65,7 @@ Give any element `"color"` a name: the fill is pastel, the stroke the matching d
 
 On a dark page (`"theme": "dark"`), each name's fill and stroke are what Excalidraw's dark mode shows for them: a dark fill and a light stroke.
 
-A hex value as `color` sets only the stroke, for example `"#dee2e6"` for a faint divider line. `backgroundColor` and `strokeColor` override either part with a hex value: a light fill such as `#e7f5ff` (blue) or `#fff4e6` (orange) with the named stroke makes a softer card. On text, `color` is a name or a hex value; `#495057` is the muted gray for captions.
+A hex value as `color` sets only the stroke, for example `"#dee2e6"` for a faint divider line. `backgroundColor` and `strokeColor` override either part with a hex value: a light fill such as `#e7f5ff` (blue) or `#fff4e6` (orange) with the named stroke makes a softer card. On text, `color` is a name or a hex value; `#495057` is the muted gray for captions on a light page; on a dark one, use `gray` or a light hex.
 
 ## Elements
 
@@ -110,7 +110,7 @@ A point outside the axis range, a tick outside it, or a plot squeezed under 120Ã
 
 | Field | Meaning |
 |---|---|
-| `bars` | `[{ "label", "value", "color", "display" }]`. `value` is 0 or more; `display` replaces the printed value, such as `"27.5 min"` |
+| `bars` | `[{ "label", "value", "color", "display" }]`. `color` is a name or a hex color; `value` is 0 or more; `display` replaces the printed value, such as `"27.5 min"` |
 | `unit` | A caption above the bars, such as "minutes per task" |
 | `max` | Scale to this value instead of the largest bar, to compare charts side by side |
 | `barHeight`, `gap`, `fillStyle`, `fontSize` | Defaults 32, 18, `hachure`, 17 |
@@ -119,12 +119,12 @@ A point outside the axis range, a tick outside it, or a plot squeezed under 120Ã
 
 | Field | Meaning |
 |---|---|
-| `points` | `[{ "x", "y", "label", "color", "id", "labelSide", "size" }]`. The label sits right of the dot unless it would run past the chart; `labelSide` (`right`, `left`, `above`, `below`) places it. `size` is the dot's width, default 14 (`pointSize` for every point) |
-| `links` | `[{ "from", "to", "arrow", "color", "strokeStyle", "strokeWidth" }]`: an arrow from one point to another, named by `id` or label, such as an earlier version to the next. `"arrow": false` draws a plain line. The color defaults to the `from` point's |
+| `points` | `[{ "x", "y", "label", "color", "id", "labelSide", "size" }]`. Each label goes on the first side of its dot (right, left, above, below) that stays in the chart and clear of the links, the other dots and the labels before it; `labelSide` (`right`, `left`, `above`, `below`) puts it on one side. `size` is the dot's width, default 14 (`pointSize` for every point) |
+| `links` | `[{ "from", "to", "arrow", "color", "strokeStyle", "strokeWidth" }]`: an arrow from one point to another, such as an earlier version to the next, named by `id`, or by a label only one point has. `"arrow": false` draws a plain line. The color defaults to the `from` point's |
 | `xAxis`, `yAxis` | As for a line chart, and both start at 0 unless a value is negative. `"reverse": true` runs an axis from its max down to its min, for a measure where less is better |
 | `grid`, `fontSize` | As for a line chart |
 
-A point or tick outside the axis range, a link to no point, labels that overlap, or a plot squeezed under 120Ã—80 px is a warning.
+A point or tick outside the axis range, a link to no point or between points too close for it to show, an id two points share, a link through a label, a label on another dot, labels that overlap, or a plot squeezed under 120Ã—80 px is a warning.
 
 **Any other chart** (stacked or grouped bars, an area, slope or dumbbell chart, a pie, a heatmap) is drawn from rectangles, ellipses, lines and text. Work out each position from the numbers in a short script that writes the spec, so nothing is placed by eye. A `chart` with another `kind` is a warning, and isn't drawn.
 

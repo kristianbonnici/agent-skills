@@ -9,6 +9,7 @@ Rebuild after changing a diagram: `./docs/skills/excalidraw-drawing/gallery/buil
 | ![Line chart](line-chart.png) | **Line chart:** how a value changed, with real numbers |
 | ![Trend sketch](trend-sketch.png) | **Trend sketch:** a shape over time, no measurements |
 | ![Bar chart](bar-chart.png) | **Bar chart:** a few quantities side by side |
+| ![Scatter chart](scatter-chart.png) | **Scatter chart:** where each item lands on two measures, or how it moved from its earlier version |
 | ![Flowchart](flowchart.png) | **Flowchart:** steps, a decision, a retry |
 | ![Boundary](boundary.png) | **Boundary:** what sits inside what, and which parts talk |
 | ![Sequence](sequence.png) | **Sequence:** who sends what to whom, in what order |

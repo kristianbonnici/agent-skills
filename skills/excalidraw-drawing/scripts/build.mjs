@@ -268,7 +268,8 @@ function expand(el, pid, boxes, warnings) {
       break;
     }
     case 'chart': {
-      const draw = { line: lineChart, bar: barChart, scatter: scatterChart }[el.kind ?? 'line'];
+      const kinds = { line: lineChart, bar: barChart, scatter: scatterChart }, kind = el.kind ?? 'line';
+      const draw = Object.hasOwn(kinds, kind) ? kinds[kind] : null;
       if (!draw) {
         warnings.push(`${pid}: chart "${el.id ?? 'no id'}": kind "${el.kind}" isn't line, bar or scatter, so it isn't drawn: ` +
           'build that chart from shapes, lines and text, placed by its numbers');
@@ -448,7 +449,8 @@ function barChart(el, id, g, common, pid, warnings) {
     // A zero gets no bar; a value too small to see at this scale still shows as a sliver.
     const by = y + i * (barH + gap), bw = b.value > 0 ? Math.max(2, b.value * scale) : 0;
     if (b.label) out.push(textEl(`${id}.l${i}`, x0, by + (barH - th) / 2, b.label, fs, { groupIds: g }));
-    const c = T.colors[b.color ?? el.color ?? 'blue'] ?? T.colors.blue;
+    const name = b.color ?? el.color ?? 'blue';
+    const c = Object.hasOwn(T.colors, name) ? T.colors[name] : String(name).startsWith('#') ? [name, name] : T.colors.blue;
     if (bw > 0) out.push({ ...common, id: `${id}.b${i}`, type: 'rectangle', x: x0 + labelW, y: by, width: bw, height: barH,
       backgroundColor: c[0], strokeColor: c[1], fillStyle: el.fillStyle ?? 'hachure', roundness: null, groupIds: g });
     out.push(textEl(`${id}.v${i}`, x0 + labelW + bw + 10, by + (barH - th) / 2, shown(b), fs, { groupIds: g }));
@@ -500,47 +502,80 @@ function scatterChart(el, id, g, common, pid, warnings) {
   const { text } = drawAxes({ el, id, g, common, out, X, Y, xt, yt, x0, y0, px, py, pw, ph, sx, sy, fs, small,
     range: { x: [xmin, xmax], y: [ymin, ymax] }, pid, warnings });
 
-  const byKey = new Map();
-  points.forEach((p, i) => {
+  const dots = points.map((p, i) => {
     if (p.x < xmin || p.x > xmax || p.y < ymin || p.y > ymax) {
       warnings.push(`${name}: point "${p.label ?? p.id ?? i + 1}" is outside the axis range: widen the range`);
     }
     const color = strokeOf(p.color ?? el.color) ?? T.ink, size = p.size ?? el.pointSize ?? 14;
-    const cx = sx(p.x), cy = sy(p.y);
-    out.push({ ...common, id: `${id}.p${i}`, type: 'ellipse', x: cx - size / 2, y: cy - size / 2, width: size, height: size,
+    const d = { i, p, cx: sx(p.x), cy: sy(p.y), r: size / 2, color };
+    out.push({ ...common, id: `${id}.p${i}`, type: 'ellipse', x: d.cx - d.r, y: d.cy - d.r, width: size, height: size,
       strokeColor: color, backgroundColor: color, fillStyle: 'solid', strokeWidth: 1, groupIds: g });
-    for (const key of [p.id, p.label]) if (key !== undefined && !byKey.has(String(key))) byKey.set(String(key), { cx, cy, r: size / 2, color });
-    if (!p.label) return;
+    return d;
+  });
+
+  // A link names a point by its id, or by a label only one point has.
+  const byId = new Map(), byLabel = new Map();
+  for (const d of dots) {
+    if (d.p.id !== undefined) {
+      const k = String(d.p.id);
+      if (byId.has(k)) warnings.push(`${name}: two points have the id "${k}": links go to the first`);
+      else byId.set(k, d);
+    }
+    if (d.p.label !== undefined) byLabel.set(String(d.p.label), byLabel.has(String(d.p.label)) ? null : d);
+  }
+  const find = key => {
+    const k = String(key);
+    if (byId.has(k)) return { d: byId.get(k) };
+    if (byLabel.get(k) === null) return { why: `more than one point is labelled "${k}": name it by id` };
+    return byLabel.has(k) ? { d: byLabel.get(k) } : { why: `"${k}" is no point's id or label` };
+  };
+  const links = [];
+  (el.links ?? []).forEach((k, i) => {
+    const a = find(k?.from), b = find(k?.to);
+    if (!a.d || !b.d) { warnings.push(`${name}: link ${i + 1} from "${k?.from}" to "${k?.to}" skipped: ${(a.d ? b : a).why}`); return; }
+    const A = a.d, B = b.d;
+    const dx = B.cx - A.cx, dy = B.cy - A.cy, len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len, s = A.r + 5, e = B.r + 5;
+    // Under 20 px a link doesn't read as one (the checks say so of any arrow).
+    if (len - s - e < 20) {
+      warnings.push(`${name}: link ${i + 1}'s points are ${Math.round(len)} px apart, too close for a link to show: skipped`);
+      return;
+    }
+    const arrow = k.arrow !== false;
+    const l = { ...common, id: `${id}.k${i}`, type: arrow ? 'arrow' : 'line', x: A.cx + ux * s, y: A.cy + uy * s,
+      points: [[0, 0], [dx - ux * (s + e), dy - uy * (s + e)]], strokeColor: strokeOf(k.color) ?? A.color,
+      strokeStyle: k.strokeStyle ?? 'solid', strokeWidth: k.strokeWidth ?? 2, groupIds: g,
+      ...(arrow ? { startArrowhead: null, endArrowhead: 'arrow' } : {}) };
+    out.push(l); links.push(l);
+  });
+
+  // A label goes where labelSide puts it, else on the first side (right, left, above, below) that stays in
+  // the chart and keeps clear of the links, the other dots and the labels already placed.
+  const placed = [];
+  const dotBox = d => ({ x: d.cx - d.r, y: d.cy - d.r, w: 2 * d.r, h: 2 * d.r });
+  // As the checks measure text: a line may graze a label's empty edge.
+  const crossed = r => links.some(l => crosses(l, { x: r.x + 2, y: r.y + 3, w: r.w - 4, h: r.h - 6 }));
+  for (const d of dots) {
+    const { p } = d;
+    if (!p.label) continue;
     const w = textWidth(p.label, fs), h = fs * STYLE.lineHeight;
     let side = p.labelSide;
     if (side !== undefined && !SIDES.includes(side)) {
       warnings.push(`${name}: point "${p.label}" has labelSide "${side}", not one of ${SIDES.join(', ')}: placed automatically`);
       side = undefined;
     }
-    // Right of the dot, unless that runs past the chart's right edge.
-    side ??= cx + size / 2 + 8 + w <= x0 + W ? 'right' : 'left';
-    const [lx, ly] = {
-      right: [cx + size / 2 + 8, cy - h / 2], left: [cx - size / 2 - 8 - w, cy - h / 2],
-      above: [cx - w / 2, cy - size / 2 - 4 - h], below: [cx - w / 2, cy + size / 2 + 4]
-    }[side];
-    text(`pl${i}`, lx, ly, p.label, fs, color);
-  });
-
-  (el.links ?? []).forEach((k, i) => {
-    const a = byKey.get(String(k?.from)), b = byKey.get(String(k?.to));
-    if (!a || !b) {
-      warnings.push(`${name}: link ${i + 1} joins "${k?.from}" to "${k?.to}", but ${!a ? `"${k?.from}"` : `"${k?.to}"`} is no point's id or label: skipped`);
-      return;
-    }
-    const dx = b.cx - a.cx, dy = b.cy - a.cy, len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len, s = a.r + 5, e = b.r + 5;
-    if (len <= s + e) { warnings.push(`${name}: link ${i + 1}'s points touch, so it has no room to draw: skipped`); return; }
-    const arrow = k.arrow !== false;
-    out.push({ ...common, id: `${id}.k${i}`, type: arrow ? 'arrow' : 'line', x: a.cx + ux * s, y: a.cy + uy * s,
-      points: [[0, 0], [dx - ux * (s + e), dy - uy * (s + e)]], strokeColor: strokeOf(k.color) ?? a.color,
-      strokeStyle: k.strokeStyle ?? 'solid', strokeWidth: k.strokeWidth ?? 2, groupIds: g,
-      ...(arrow ? { startArrowhead: null, endArrowhead: 'arrow' } : {}) });
-  });
+    const rect = s => ({ w, h, ...{
+      right: { x: d.cx + d.r + 8, y: d.cy - h / 2 }, left: { x: d.cx - d.r - 8 - w, y: d.cy - h / 2 },
+      above: { x: d.cx - w / 2, y: d.cy - d.r - 4 - h }, below: { x: d.cx - w / 2, y: d.cy + d.r + 4 } }[s] });
+    const fits = r => r.x >= x0 && r.x + r.w <= x0 + W && r.y >= y0 && r.y + r.h <= y0 + H;
+    const clear = r => !crossed(r) && !dots.some(o => o !== d && intersects(r, dotBox(o), 0)) && !placed.some(q => intersects(r, q, 0));
+    side ??= SIDES.find(s => fits(rect(s)) && clear(rect(s))) ?? (fits(rect('right')) ? 'right' : 'left');
+    const r = rect(side);
+    if (crossed(r)) warnings.push(`${name}: a link runs through the label "${p.label}": move the label with labelSide`);
+    if (dots.some(o => o !== d && intersects(r, dotBox(o), 0))) warnings.push(`${name}: the label "${p.label}" covers another point's dot: move it with labelSide`);
+    placed.push(r);
+    text(`pl${d.i}`, r.x, r.y, p.label, fs, d.color);
+  }
   // Labels beside the outermost dots may reach past the footprint: the box holds them, for arrows routed to it.
   const all = union([box, ...out.map(bbox)]);
   return { out, box: all };
@@ -635,7 +670,7 @@ function finishLinear(el, pid, boxes, warnings) {
     el.endArrowhead = spec.endArrowhead === undefined ? 'arrow' : spec.endArrowhead;
     el.startArrowhead = spec.startArrowhead ?? null;
   }
-  if (spec.label) el.label = { text: spec.label, fontSize: 15, fontFamily: STYLE.font, strokeColor: T.ink };
+  if (spec.label) el.label = { text: spec.label, fontSize: 15, fontFamily: STYLE.font };
   return el;
 }
 
@@ -659,7 +694,16 @@ const intersects = (a, b, t = 2) => a.x + t < b.x + b.w && b.x + t < a.x + a.w &
 
 // ---------- page ----------
 
-export async function build(spec, opts = {}) {
+// Builds run one after another: the page's theme (T) is module state that its
+// helpers read, so two builds at once in one process would mix their colors.
+let building = Promise.resolve();
+export function build(spec, opts = {}) {
+  const run = building.then(() => buildPage(spec, opts));
+  building = run.catch(() => {});
+  return run;
+}
+
+async function buildPage(spec, opts = {}) {
   const warnings = [];
   const P = STYLE.page, PS = STYLE.panel;
   const pageW = spec.width ?? P.width;
