@@ -103,7 +103,7 @@ link_one() {
   elif [ -e "$link_target" ]; then
     echo "Refusing to replace existing path: $link_target" >&2
     if [ -d "$link_target" ] && [ ! -L "$link_target" ]; then
-      echo "  It holds something bootstrap didn't put there: move that out of it, then run bootstrap again." >&2
+      echo "  It holds what this checkout's bootstrap didn't put there (a file, a folder, links into another checkout), or it can't be read: move that out of it, then run bootstrap again." >&2
     fi
     return 1
   fi
@@ -118,7 +118,7 @@ link_one() {
 # (a file, a folder, a link to anywhere else, or a listing that fails) means it is someone's.
 is_adapter_folder() {
   [ -d "$1" ] && [ ! -L "$1" ] || return 1
-  adapter_others=$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets ! -name .DS_Store -print) || return 1
+  adapter_others=$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets ! -name .DS_Store -print 2>/dev/null) || return 1
   [ -z "$adapter_others" ] || return 1
   if [ -e "$1/.DS_Store" ] || [ -L "$1/.DS_Store" ]; then
     [ -f "$1/.DS_Store" ] && [ ! -L "$1/.DS_Store" ] || return 1
