@@ -15,7 +15,7 @@ A 403 or a bot check means the page is there; it isn't gone. Read its archived c
 2. Fetch the page as archived, without the archive's wrapper: `curl -sL --compressed "https://web.archive.org/web/<timestamp>id_/<url>"`. Without `--compressed` the body comes back unreadable.
 3. Say in the entry that it was read from the archived copy of `<the snapshot's date>`.
 
-Give each request a time limit (`--max-time 60`). A snapshot that doesn't replay (an error, an empty or unreadable page), or that is older than the page's own last update, counts as no snapshot for what it can't show. Then read the page through search excerpts or reputable coverage, and say so in the entry, as SKILL.md section 4 says. A cited source you couldn't read any way this run isn't rechecked: add "(not rechecked <date>: <why>)" to its entry and name it in the report, so the next run tries it whatever the file's sources date. Don't ask the archive to take a new snapshot: that publishes a request outside this run.
+Give each request a time limit (`--max-time 60`). A snapshot that doesn't replay (an error, an empty or unreadable page), or that is older than the page's own last update, counts as no snapshot for what it can't show. Then read the page through search excerpts or reputable coverage, and say so in the entry, as SKILL.md section 4 says. A cited source whose cited claims what you could read doesn't verify (no copy, or excerpts that leave a figure or quote unchecked) isn't rechecked: add "(not rechecked <date>: <why>)" to its entry and name it in the report, so the next run tries it whatever the file's sources date. Don't ask the archive to take a new snapshot: that publishes a request outside this run.
 
 ## Dates when an index shows none
 

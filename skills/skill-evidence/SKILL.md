@@ -37,7 +37,7 @@ Keep a candidate only if it passes the bar in [references/bar.md](references/bar
 
 ## 4. Recheck the sources it cites
 
-When a file's sources date is 8 weeks old or more, or the user asks, open each cited source and compare the entry with the source as it reads now:
+When a file's sources date is 8 weeks old or more, or the user asks, open each cited source and compare the entry with the source as it reads now. An entry marked "(not rechecked <date>: <why>)" is rechecked on every run that checks its file, whatever the sources date, and loses the mark once its claims are verified:
 
 - **Revised** (a new version, new figures): update the entry, with the version and its date.
 - **Published or withdrawn:** a preprint now in a venue gets the venue; a withdrawn one is marked withdrawn, and you judge whether its rule still stands on the rest.
