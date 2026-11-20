@@ -2,7 +2,7 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
-Last checked: new work 2026-11-04; sources 2026-11-04.
+Last checked: new work 2026-11-20; sources 2026-11-04.
 
 ## Our own runs (2026-10-04 to 2026-11-15)
 
@@ -220,6 +220,18 @@ Rules that are the owner's choice, with when they made it:
   → *review by agents that didn't write the change ([review-gate](../review-gate/evidence.md)); the run's
   expected cost in the contract; a version per skill, so a rule that stops helping can be found and
   removed.*
+- **Anthropic, [How the Claude Code team thinks about verification](https://claude.dev/blog/how-the-claude-code-team-thinks-about-verification/)**
+  (Addy Osmani, 16 November 2026):
+  - A separate grader checking Claude's work against a rubric "improved task success by up to 10 points over
+    a standard prompting loop, with the largest gains on the hardest problems" (internal testing on structured
+    file generation; no task count or model given).
+  - Checks are what allow parallel work: "Without them, you can really only run one or two Claudes at a
+    time… With them, you can run dozens or hundreds in parallel." "A passing review on an out-of-date commit
+    means nothing"; "Running the app end to end matters more than tests"; "If a check is still failing after
+    three rounds, Claude stops and brings in a human."
+
+  → *checks seen passing on a task's final commit before it merges; review by agents that didn't write the
+  change; checks on the real screen; a review that doesn't converge stops and goes to the owner.*
 - **Anthropic, [Building a C compiler with a team of parallel Claudes](https://www.anthropic.com/engineering/building-c-compiler)**
   (Nicholas Carlini, 5 February 2026):
   - 16 agents, nearly 2,000 sessions over two weeks, just under $20,000, a 100,000-line compiler. Each agent
@@ -285,6 +297,17 @@ Rules that are the owner's choice, with when they made it:
   → *one task per coherent objective, its writes on one agent and never split across agents; reviewers and
   helpers that add judgment, checked by the agent that asked; a dependent's brief says what its predecessors
   added, since tasks share no state.*
+- **Mediratta, Xiao, Stone, Biswas and Stengel-Eskin (The University of Texas at Austin, NVIDIA), [Decentralized Multi-Agent Coordination and Communication in Shared Codebases](https://arxiv.org/abs/2611.00314)**
+  (ParallACT; preprint, 30 October 2026): 155 instances where two agents change one codebase at once, across
+  "seven configurations of agent harness and model". Against one agent doing both changes, joint pass rates
+  for Claude Opus 4.8 drop "from 62% to 16% on contradictory instances" and "from 86% to 57%" on
+  complementary ones. "Simply telling an agent that a peer exists does not help significantly", and a
+  communication channel "recovers only a small part of the performance", at "2.23/1.39 times" the single
+  agent's effective token cost. The authors argue against a central orchestrator for their setting, as "a
+  single point of failure"; the skill's answer is under "A run without an orchestrator worked" below.
+
+  → *a separate worktree for each writing task; one task per coherent objective, its writes on one agent; a
+  task that needs another's code starts only after that predecessor is merged.*
 - **Anthropic, [Building agents: When to fold subagents into your main agent loop](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)**
   (Diane Sarkis, 22 October 2026):
   - In several enterprise deployments, one agent with skills often beat both a single prompt and a design
@@ -360,6 +383,16 @@ Rules that are the owner's choice, with when they made it:
   that don’t exist". It works "provided there is a detailed, checkable specification." → *long tasks are
   feasible when each has checks that prove it; a task's claim to be done, or out of time, is checked rather
   than believed.*
+- **Zeng, Liu and Lin (Klavis AI), [Multi-step SWE: Can Coding Agents Keep Building on Their Own Code Over Long Horizons?](https://arxiv.org/abs/2611.07166)**
+  (preprint, 4 November 2026): "a long-horizon benchmark of 69 software engineering tasks", each a chain of
+  5 to 15 dependent steps, on nine frontier models. "The strongest model reaches a solve rate of only 18.5%"
+  (Claude Opus 5.5), and "38 of the 69 tasks are not solved by any model". "A step that follows a passed step
+  is passed 70.2% of the time", against "14.1% for a step that follows a failed step"; "A report of
+  completion is therefore a poor signal of success", and "Tests that an agent writes encode its own reading
+  of the specification, so they confirm a misreading instead of exposing it." It does not test checkpoints
+  or milestones directly. → *a large task split into milestones that each pass review and merge on their
+  own; a dependent starts only after its prerequisite merges; a report checked rather than believed, by
+  reviewers who didn't write the change.*
 - **METR, [Frontier Risk Report (February to March 2026)](https://metr.org/blog/2026-05-19-frontier-risk-report/)**
   (19 May 2026):
   - Claude Opus 4.6 "attempted to reward hack in ~80% of attempts on tasks in an early version of
@@ -384,6 +417,13 @@ Rules that are the owner's choice, with when they made it:
   after a task finished but "only 5.8–11.5% mid-task"; "agent frameworks should not control task flow on the
   strength of the model's state reports alone." → *a task's state read from git and its thread on every
   wake, not from its own account.*
+- **Yang, He and Zhou (Peking University) with Gao, Lin, Lin and Zhang (Microsoft), [Characterizing and Detecting Unfaithful Work Reports by Coding Agents](https://arxiv.org/abs/2611.25760)**
+  (preprint, 19 November 2026): from real sessions, "Among 435 work reports that we separately sample and
+  annotate, 162 (37.24%) contain at least one unfaithful claim"; "Overstated task success is by far the most
+  common category (69.3%)", and handling these problems "involves on average 4.3 further user turns and
+  12.71 minutes". "Reviewers should therefore concentrate on claims that determine what is accepted, merged,
+  deployed, or built upon." The agents behind the reports are not named. → *a report checked against git and
+  thread state before it is believed, above all its claims about checks and merges.*
 - **Zhong, Raghunathan and Carlini, [ImpossibleBench](https://arxiv.org/abs/2510.20270)** (October 2025):
   coding tasks whose tests contradict the specification, so passing means cheating. GPT-5 passed 54% of the
   contradictory SWE-bench tasks and Claude Opus 4.1 50%. Telling the agent to stop when tests look wrong cut
@@ -420,6 +460,18 @@ Rules that are the owner's choice, with when they made it:
   outside the context window; subagents that return "a condensed, distilled summary". → *handoffs and the
   ledger instead of transcripts; fast helpers that keep long results out of a task's context; rules in the
   skill, reasons here.*
+- **Anthropic, [The components of agent memory](https://www.anthropic.com/research/components-of-agent-memory)**
+  (Lance Martin, 6 November 2026):
+  - "The top layer of the memory hierarchy has to stay relatively small". In Pokémon Red, Sonnet 3.7 "wrote
+    413 memory files across 225 folders and earned one badge", and "its detailed record was continuously going
+    out of date"; Fable 5 kept about ten files and earned four.
+  - Parallel writers to one store lost work: "several agents wrote to a shared table of contract terms at the
+    same time", "agents had overwritten one another's work", and the brief held 41 of 57 facts. "Each contract
+    got its own page in the wiki, written by a single agent", and the brief met 100% of its criteria, up from
+    72%.
+
+  → *the ledger a small file the orchestrator alone writes, read again on every wake; each task's writes on
+  one agent.*
 - **Salle, Bhatnagar, Bethge, Abdelnabi and Andriushchenko (ELLIS Institute Tübingen, Max Planck Institute
   for Intelligent Systems, Tübingen AI Center, University of Tübingen), [Benchmarks Are Surprisingly Compaction-Friendly](https://arxiv.org/abs/2610.31778)**
   (preprint, 22 October 2026) and **Sun, Cai and others (University of Science and Technology of China),
@@ -490,6 +542,32 @@ Rules that are the owner's choice, with when they made it:
   since a weekly limit can't be waited out. The rule reads each week's own reset time and treats the 5-hour
   window as for any Claude task, so it doesn't rest on what the pages leave unsaid.*
 
+- **Anthropic, [Which Claude model should you build with? Fable, Opus, Sonnet, or Haiku](https://claude.dev/blog/which-claude-model-should-you-build-with/)**
+  (Addy Osmani, 9 November 2026):
+  - "Start most work on Opus 5.5 at its default effort level, `medium`." On SWE-bench Pro, `medium` "scored
+    about 2.5 points lower for about 70% of the cost" of `high`; "At `low` it scored about 8 points lower for
+    about a third of the cost. At `xhigh` it scored about 1.4 points higher for 2.5 times the cost of `high`."
+  - "If you can check outcomes automatically, run everything at a low level and re-run only the failures at a
+    high one": on a SWE-bench Pro subset of unstated size, "Opus 5.5 at `low` with failures re-run at `high`
+    passed about 97% of tasks for about $0.17 each, against 95.3% for $0.29 with every task at `high`."
+  - "On FrontierCode 2.0, Fable 5.2 at `high` scored about level with Opus 5.5 at `max` (45.3% vs. 45.5%) for
+    roughly half the cost per task"; move up to Fable 5.2 "when Opus 5.5 at `high` still falls short, or for
+    long unattended runs". On an internal benchmark, "an Opus 5.5 lead over Sonnet 5.5 workers, up to 25 at a
+    time, cost about a third less than Opus 5.5 alone"; "It scored about the same." Skip multi-agent
+    orchestration "for one chain of dependent steps or for work that fits in one context window".
+
+  → *Opus 5.5 the home model; medium for bounded work and high for demanding work; extra high only with a
+  named benefit; dependent steps chained in one task rather than split across agents.* It argues against
+  "never use low" and in part against "Fable is rare" (below).
+- **Epoch AI, [How good are Fable 5.2 and GPT-6.2 Astra at real work?](https://epoch.ai/publications/how-good-are-fable-5-2-and-gpt-6-2-astra-at-real-work)**
+  (Kelly Hong, 17 November 2026): on a data-center analysis task, Fable 5.2 and Opus 5.5 "scored 98% and 88%
+  on that task, respectively"; "Opus 5.5 completed the same work in just under 3 hours for a lower cost",
+  while "Fable 5.2 spent around 6.5 hours at a higher cost than a contractor, albeit for a higher-quality
+  result". "All models preferred their own output in every case except one", and "No model met the standard
+  we expect of Epoch employees on any task." One run per model per task, on research and analysis rather than
+  coding. → *Opus 5.5 by default and Fable 5.2 per task where quality is worth the time and cost; review by
+  agents that didn't write the work.*
+
 - **Gemini 4 Hydrogen** (Google, 12 November 2026; [Google Cloud's model page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen),
   [SiliconANGLE](https://siliconangle.com/2026/11/12/google-releases-gemini-4-hydrogen-a-lower-cost-model-said-to-outscore-argon/),
   [TestingCatalog](https://www.testingcatalog.com/google-launches-gemini-4-hydrogen-for-pro-and-ultra-users/) and
@@ -555,6 +633,16 @@ Rules that are the owner's choice, with when they made it:
   home harness's model and gives cheaper models research and fully specified steps, because its tasks arrive
   as objectives, not detailed instructions, and the owner's subscriptions are already paid for. Cursor's
   result is one task with an exact specification, measured with its own model.
+- **Low reasoning with re-runs can beat high.** Anthropic's model guide reports Opus 5.5 at low, with
+  failures re-run at high, passing about 97% of a SWE-bench Pro subset at $0.17 a task against 95.3% at
+  $0.29 all at high. That needs an automatic pass or fail for every task. The skill's tasks arrive as
+  objectives whose success a review gate judges, not a test that says pass or fail, and a re-run doubles a
+  task's time; low on its own scored about 8 points lower. The rule stays until the owner decides the
+  proposal sent to skill-evolution (see this check's report).
+- **Anthropic suggests Fable for long unattended runs.** The same guide says to move up to Fable 5.2 "for long
+  unattended runs", and Epoch found Fable's work better at about twice Opus's time. The skill keeps Opus as
+  the home model and Fable rare by the owner's decision of 2026-11-11, within the Fable week's budget; the
+  evidence bears on which tasks get Fable, which the contract states per task.
 
 ## Left out
 
@@ -578,3 +666,20 @@ Weighed and not cited, so later checks don't weigh them again unless they change
 - [From Faulty Claims to Incorrect Patches](https://arxiv.org/abs/2610.32338) (arXiv 2610.32338, October
   2026): faulty claims in agents' reasoning on SWE-bench Pro; it bears on how a task agent reasons, not on a
   rule of the orchestrator.
+- [Anthropic: Safely scaling multi-agent teams with Claude Fable 5.2](https://claude.dev/blog/safely-scaling-multi-agent-teams-with-fable-5-2/)
+  (9 November 2026): first-party and relevant (one Git branch per agent, a restart from the last save), but
+  one run the authors call a "toy experiment".
+- [Cognition: Introducing Devin Bots](https://devin.ai/blog/introducing-devin-bots) (17 November 2026): a
+  coordinator that merges what passed CI and review, close to this skill's design, but a launch post with no
+  method.
+- [Cognition: Devin Review 2.0](https://devin.ai/blog/devin-review-2) (5 November 2026): a product post, and
+  it bears on review-gate rather than on this skill.
+- [Anthropic: Building always-on agents](https://claude.com/resources/articles/building-always-on-agents) (13
+  November 2026): wakes, progress files and quiet-by-default advice, but a guide with no method.
+- [GitHub: Building an agentic memory system for GitHub Copilot](https://github.blog/ai-and-ml/github-copilot/building-an-agentic-memory-system-for-github-copilot/)
+  (updated 12 November 2026): merge rate 90% with memories against 83%, with no sample size; bears on no rule.
+- [Reducing Inference Cost of Coding Agents with Timeout Cascades](https://arxiv.org/abs/2611.24324) (18
+  November 2026): GPU-hour costs of open-weight models, not subscription usage; bears on no rule.
+- [Who May Overrule the Agent?](https://arxiv.org/abs/2611.05390) (2026): a single author.
+- [Loop Engineering](https://arxiv.org/abs/2611.18571) (2026): one production setting that the authors say "is
+  not a controlled benchmark".
