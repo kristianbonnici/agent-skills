@@ -11,15 +11,15 @@ Every candidate is read in full before it is judged: the abstract or a search ex
 
 A 403 or a bot check means the page is there; it isn't gone. Read its archived copy:
 
-1. Find the latest snapshot: `curl -s "https://archive.org/wayback/available?url=<url without https://>"` names its `timestamp`.
+1. Find the latest snapshot: `curl -sG --max-time 60 --data-urlencode "url=<url without https://>" https://archive.org/wayback/available` names its `timestamp` (encoded, so a URL with `?` or `&` is looked up whole).
 2. Fetch the page as archived, without the archive's wrapper: `curl -sL --compressed "https://web.archive.org/web/<timestamp>id_/<url>"`. Without `--compressed` the body comes back unreadable.
 3. Say in the entry that it was read from the archived copy of `<the snapshot's date>`.
 
-Give each request a time limit (`--max-time 60`). A snapshot that doesn't replay (an error, an empty or unreadable page), or that is older than the page's own last update, counts as no snapshot for what it can't show. Then read the page through search excerpts or reputable coverage, and say so in the entry, as SKILL.md section 4 says. A cited source whose cited claims what you could read doesn't verify (no copy, or excerpts that leave a figure or quote unchecked) isn't rechecked: add "(not rechecked <date>: <why>)" to its entry and name it in the report, so the next run tries it whatever the file's sources date. Don't ask the archive to take a new snapshot: that publishes a request outside this run.
+Give each request a time limit (`--max-time 60`). A snapshot that doesn't replay (an error, an empty or unreadable page), or that is older than the page's own last update, counts as no snapshot for what it can't show. Then read the page through search excerpts or reputable coverage, and say so in the entry, as SKILL.md section 4 says. A cited source whose claims you couldn't confirm from what you could read (no copy, or excerpts that leave a figure or quote unchecked) isn't rechecked: add "(not rechecked <date>: <why>)" to its entry and name it in the report, so the next run tries it whatever the file's sources date. Don't ask the archive to take a new snapshot: that publishes a request outside this run.
 
 ## Dates when an index shows none
 
-A blog or news index without dates still says when each post appeared in its feed or sitemap: try `<site>/rss.xml`, `<site>/feed`, `<site>/news/rss.xml` and `<site>/sitemap.xml`, and read each item's `pubDate`. A sitemap's `lastmod` only says the page changed, maybe its template: take it as a lead and check the post's own date, or what it says it revised, before it counts for the search window or the bar's "recent". OpenAI's news, for example, is at `https://openai.com/news/rss.xml`.
+A blog or news index without dates still says when each post appeared in its feed or sitemap: try `<site>/rss.xml`, `<site>/feed`, `<site>/news/rss.xml` and `<site>/sitemap.xml`, and read each item's `pubDate`. A sitemap's `lastmod` only says the page changed, maybe its template: take it as a lead and check the post's own date, or what it says it revised, before it counts for the search window or the bar's "recent". A candidate whose date you can't establish goes under "Left out" as "(not yet read: no date found)". OpenAI's news, for example, is at `https://openai.com/news/rss.xml`.
 
 ## A candidate you couldn't finish
 
