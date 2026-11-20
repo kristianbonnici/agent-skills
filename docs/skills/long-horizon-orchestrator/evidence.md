@@ -423,7 +423,7 @@ Rules that are the owner's choice, with when they made it:
   common category (69.3%)", and handling these problems "involves on average 4.3 further user turns and
   12.71 minutes". "Reviewers should therefore concentrate on claims that determine what is accepted, merged,
   deployed, or built upon." The agents behind the reports are not named. → *a report checked against git and
-  thread state before it is believed, above all its claims about checks and merges.*
+  thread state before it is believed.*
 - **Zhong, Raghunathan and Carlini, [ImpossibleBench](https://arxiv.org/abs/2510.20270)** (October 2025):
   coding tasks whose tests contradict the specification, so passing means cheating. GPT-5 passed 54% of the
   contradictory SWE-bench tasks and Claude Opus 4.1 50%. Telling the agent to stop when tests look wrong cut
@@ -557,7 +557,7 @@ Rules that are the owner's choice, with when they made it:
     orchestration "for one chain of dependent steps or for work that fits in one context window".
 
   → *Opus 5.5 the home model; medium for bounded work and high for demanding work; extra high only with a
-  named benefit; dependent steps chained in one task rather than split across agents.* It argues against
+  named benefit; a harness's multi-agent mode used sparingly, only where a task clearly gains from it.* It argues against
   "never use low" and in part against "Fable is rare" (below).
 - **Epoch AI, [How good are Fable 5.2 and GPT-6.2 Astra at real work?](https://epoch.ai/publications/how-good-are-fable-5-2-and-gpt-6-2-astra-at-real-work)**
   (Kelly Hong, 17 November 2026): on a data-center analysis task, Fable 5.2 and Opus 5.5 "scored 98% and 88%
