@@ -70,12 +70,24 @@ checks_host() {
   case " $left_out " in *" $1 "*) return 1 ;; esac
 }
 
+# Does the real folder $1 hold one or more of this checkout's links to $2's parts, as an adapter
+# folder does?
+holds_part_link() {
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  for held_part in SKILL.md agents references scripts assets; do
+    [ -L "$1/$held_part" ] && [ "$(readlink "$1/$held_part")" = "$2/$held_part" ] && return 0
+  done
+  return 1
+}
+
 # One line for the hosts left out, with the links an earlier bootstrap made for them still there.
 if [ -n "$left_out" ] && [ "$host" = all ]; then
   leftover=0
   while IFS=$(printf '\t') read -r row_host mode source target; do
     [ -n "$row_host" ] || continue
     target_path=$(expand_target "$target")
+    # An adapter folder a host left where a link now goes counts by the links in it.
+    if [ "$mode" = link ] && holds_part_link "$target_path" "$source"; then mode=adapter; fi
     case "$mode" in
       link|retired) ! is_retired_link "$target_path" "$source" || leftover=$((leftover + 1)) ;;
       adapter)

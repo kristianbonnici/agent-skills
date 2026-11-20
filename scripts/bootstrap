@@ -90,12 +90,14 @@ link_one() {
     fi
     run rm "$link_target"
   elif is_adapter_folder "$link_target" "$link_source"; then
-    # The host took adapter folders when an earlier bootstrap ran: the folder becomes the link.
+    # The host took adapter folders when an earlier bootstrap ran, or the folder is empty: it
+    # becomes the link.
     for name in SKILL.md agents references scripts assets; do
       [ -L "$link_target/$name" ] || continue
       run rm "$link_target/$name"
     done
-    [ ! -f "$link_target/.DS_Store" ] || run rm "$link_target/.DS_Store"
+    # find doesn't follow $link_target if another run made it the link meanwhile.
+    [ ! -f "$link_target/.DS_Store" ] || run find "$link_target" -mindepth 1 -maxdepth 1 -name .DS_Store -type f -delete
     run rmdir "$link_target"
     [ "$dry_run" -eq 1 ] || echo "REPLACED adapter folder $link_target"
   elif [ -e "$link_target" ]; then
@@ -110,24 +112,31 @@ link_one() {
   echo "LINK $link_target -> $link_source"
 }
 
-# Is $1 an adapter folder of the skill $2: a real folder holding only links named after the skill's
-# parts, each to that part of a folder of the skill's name (this checkout's or another's), and maybe
-# Finder's .DS_Store? An empty folder counts too: it holds nothing to lose, as when a run replacing
-# one stopped before its rmdir. Anything else in it (a file, another link, a folder) is someone's.
+# Is $1 an adapter folder of $2 that a run of this checkout made: a real folder holding only links
+# to $2's parts, each by its own name, and maybe Finder's .DS_Store? An empty folder counts too: it
+# holds nothing to lose, as when a run replacing one stopped before its rmdir. Anything else in it
+# (a file, a folder, a link to anywhere else, or a listing that fails) means it is someone's.
 is_adapter_folder() {
   [ -d "$1" ] && [ ! -L "$1" ] || return 1
-  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets ! -name .DS_Store -print -quit)" ] || return 1
+  adapter_others=$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets ! -name .DS_Store -print) || return 1
+  [ -z "$adapter_others" ] || return 1
   if [ -e "$1/.DS_Store" ] || [ -L "$1/.DS_Store" ]; then
     [ -f "$1/.DS_Store" ] && [ ! -L "$1/.DS_Store" ] || return 1
   fi
-  adapter_skill=$(basename -- "$2")
   for adapter_part in SKILL.md agents references scripts assets; do
     [ -e "$1/$adapter_part" ] || [ -L "$1/$adapter_part" ] || continue
-    [ -L "$1/$adapter_part" ] || return 1
-    # Spelled differently, the same part: repeated slashes, ./ steps and a closing / are dropped.
-    adapter_to=$(readlink "$1/$adapter_part" | sed -e 's://*:/:g' -e 's:/\./:/:g' -e 's:/*$::')
-    case "$adapter_to" in */"$adapter_skill/$adapter_part") ;; *) return 1 ;; esac
+    [ -L "$1/$adapter_part" ] && [ "$(readlink "$1/$adapter_part")" = "$2/$adapter_part" ] || return 1
   done
+}
+
+# Does the real folder $1 hold one or more of this checkout's links to $2's parts, as an adapter
+# folder does? Cleanup removes those links as an adapter folder's and keeps the rest.
+holds_part_link() {
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  for held_part in SKILL.md agents references scripts assets; do
+    [ -L "$1/$held_part" ] && [ "$(readlink "$1/$held_part")" = "$2/$held_part" ] && return 0
+  done
+  return 1
 }
 
 adapter_one() {
@@ -262,7 +271,7 @@ EOF
       target_path=$(expand_target "$target")
       # A host that took adapter folders when bootstrap last ran here may have left one where a
       # link now goes: it goes as an adapter folder does, with only this checkout's links in it.
-      if [ "$mode" = link ] && is_adapter_folder "$target_path" "$source"; then mode=adapter; fi
+      if [ "$mode" = link ] && holds_part_link "$target_path" "$source"; then mode=adapter; fi
       case "$mode" in
         link|retired) leave_one "$source" "$target_path" ;;
         adapter) leave_adapter "$source" "$target_path" ;;

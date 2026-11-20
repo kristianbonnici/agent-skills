@@ -55,23 +55,15 @@ remove_link() {
   removed_count=$((removed_count + 1))
 }
 
-# Is $1 an adapter folder of the skill $2: a real folder holding only links named after the skill's
-# parts, each to that part of a folder of the skill's name, and maybe Finder's .DS_Store (as
-# scripts/bootstrap's is_adapter_folder)? A host that took adapter folders when bootstrap last ran
-# may have left one where a link now goes.
-is_adapter_folder() {
+# Does the real folder $1 hold one or more of this checkout's links to $2's parts, as an adapter
+# folder does? A host that took adapter folders when bootstrap last ran may have left one where a
+# link now goes; it is removed as an adapter folder is, its other contents kept.
+holds_part_link() {
   [ -d "$1" ] && [ ! -L "$1" ] || return 1
-  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets ! -name .DS_Store -print -quit)" ] || return 1
-  if [ -e "$1/.DS_Store" ] || [ -L "$1/.DS_Store" ]; then
-    [ -f "$1/.DS_Store" ] && [ ! -L "$1/.DS_Store" ] || return 1
-  fi
-  adapter_skill=$(basename -- "$2")
-  for adapter_part in SKILL.md agents references scripts assets; do
-    [ -e "$1/$adapter_part" ] || [ -L "$1/$adapter_part" ] || continue
-    [ -L "$1/$adapter_part" ] || return 1
-    adapter_to=$(readlink "$1/$adapter_part" | sed -e 's://*:/:g' -e 's:/\./:/:g' -e 's:/*$::')
-    case "$adapter_to" in */"$adapter_skill/$adapter_part") ;; *) return 1 ;; esac
+  for held_part in SKILL.md agents references scripts assets; do
+    [ -L "$1/$held_part" ] && [ "$(readlink "$1/$held_part")" = "$2/$held_part" ] && return 0
   done
+  return 1
 }
 
 # Is $1 the link this checkout installed for the retired source $2? Only an exact match is: that is
@@ -111,7 +103,7 @@ while IFS=$(printf '\t') read -r row_host mode source target; do
   source_path=$source
   target_path=$(expand_target "$target")
   # An adapter folder where a link now goes is removed as one, with only this checkout's links.
-  if [ "$mode" = link ] && is_adapter_folder "$target_path" "$source_path"; then mode=adapter; fi
+  if [ "$mode" = link ] && holds_part_link "$target_path" "$source_path"; then mode=adapter; fi
   case "$mode" in
     link) remove_link "$source_path" "$target_path" ;;
     retired)
