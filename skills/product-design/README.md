@@ -22,7 +22,7 @@ Google Antigravity, Antigravity IDE, or Antigravity CLI:
 Use product-design to <request>
 ```
 
-OpenCode uses the checked-in command adapter at [`adapters/opencode/commands/product-design.md`](../../adapters/opencode/commands/product-design.md). Factory exposes the canonical skill as a slash command directly. Antigravity and Antigravity IDE discover the skill from `~/.gemini/config/skills/`, and Antigravity CLI from its own `~/.gemini/antigravity-cli/skills/`; each is installed there as an adapter directory of links to this source. All can activate it from an explicit mention or matching request.
+OpenCode uses the checked-in command adapter at [`adapters/opencode/commands/product-design.md`](../../adapters/opencode/commands/product-design.md). Factory exposes the canonical skill as a slash command directly. Antigravity discovers the skill from `~/.gemini/config/skills/`, where this folder is linked whole; the Antigravity CLI also reads its own `~/.gemini/antigravity-cli/skills/`, where the skill is an adapter directory of links to this source's parts. All can activate it from an explicit mention or matching request.
 
 ## Runtime and state
 

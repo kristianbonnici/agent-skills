@@ -1,5 +1,9 @@
 # product-design changelog
 
+## 1.1.1 (2026-11-21)
+
+- The README says how Antigravity installs the skill now: `~/.gemini/config/skills/` links the whole folder; the Antigravity CLI's own folder keeps the adapter directory.
+
 ## 1.1.0 (2026-10-30)
 
 First review (OpenCode DeepSeek V4.1 Flash), fixed by Claude Sonnet 5.5, every finding checked:
