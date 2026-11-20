@@ -2,7 +2,7 @@
 name: skill-evidence
 description: Keep the evidence behind agent skills current, with the owner deciding every change. Search for new top-tier, recent work that bears on each skill's rules, recheck the sources its evidence file already cites (revised, published, contradicted, dated or gone), prepare the evidence edits on a branch for the owner to merge, and turn findings that undercut a rule into skill-evolution proposals. Never changes a skill or pushes. Use on its schedule, and when the user asks to check, update or refresh a skill's evidence or sources, or whether its evidence still holds.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Skill Evidence
@@ -26,14 +26,14 @@ Read the evidence file whole, and the skill it explains (`skills/<skill>/SKILL.m
 
 ## 3. Search for new work
 
-For each file, look for work published or substantially revised since its new-work date. Search by the rules, not by the cited titles: what would support, contradict or refine each one. Use web search at its most thorough setting for recent work, and open every candidate yourself. Where to look:
+For each file, look for work published or substantially revised since its new-work date. Search by the rules, not by the cited titles: what would support, contradict or refine each one. Use web search at its most thorough setting for recent work, and open every candidate yourself and read it in full, not its abstract: [references/reading.md](references/reading.md) says how, for papers, for pages that refuse automated reading, and for indexes without dates. Where to look:
 
 - the engineering and research posts of the AI labs and the makers of coding agents;
 - arXiv (cs.SE, cs.AI, cs.CL, cs.MA) and the accepted papers of the main venues;
 - evaluation organizations such as METR and Epoch AI;
 - forward from each cited source: its newer versions, its authors' follow-ups, and published responses to it.
 
-Keep a candidate only if it passes the bar in [references/bar.md](references/bar.md). Skip what the file already cites or lists under "Left out", unless it changed since (a new version, a venue, a withdrawal).
+Keep a candidate only if it passes the bar in [references/bar.md](references/bar.md). Skip what the file already cites or lists under "Left out", unless it changed since (a new version, a venue, a withdrawal), except a "Left out" line marked "(not yet read)": weigh that one first and replace the line with your decision. A candidate you couldn't read in full this run gets such a line, not a judgment from its abstract.
 
 ## 4. Recheck the sources it cites
 
@@ -44,7 +44,7 @@ When a file's sources date is 8 weeks old or more, or the user asks, open each c
 - **Superseded** by its authors' newer work: cite the newer work, and keep the old entry only if the file still needs it.
 - **Contradicted** by newer work that passes the bar: add that work beside it (section 6 if it undercuts the rule).
 - **Dated:** figures measured on models two or more generations behind the current ones, with nothing newer confirming them. Add "(dated: <why>)" to the entry; never delete an entry for its age alone.
-- **Gone** (a 404 or 410 on two tries, or the site is gone): link its new address or an archived copy. A page that refuses automated reading (a 403, a bot check) isn't gone: read it through search excerpts or reputable coverage, and say in the entry that the figures came from there.
+- **Gone** (a 404 or 410 on two tries, or the site is gone): link its new address or an archived copy. A page that refuses automated reading (a 403, a bot check) isn't gone: read its archived copy ([references/reading.md](references/reading.md)), and say in the entry which snapshot; only when there is none, read it through search excerpts or reputable coverage, and say in the entry that the figures came from there.
 
 ## 5. Write the evidence edits
 
@@ -76,5 +76,5 @@ Call for the owner's attention (the host's notification, or one spoken sentence)
 
 - Change a skill, or apply a proposal, without the owner's yes for it.
 - Push the skills repository, merge into `main`, or touch the owner's checkout. (The `lessons` script's own pushes to the private state repository are how proposals reach the owner, as skill-evolution says.)
-- Cite a source you didn't open, or a figure you didn't find in it. (A page that refuses automated reading is read through excerpts or coverage, named in the entry, as section 4 says.)
+- Cite a source you didn't open, or a figure you didn't find in it. (A page that refuses automated reading is read from its archived copy, or through excerpts or coverage when there is none, named in the entry, as section 4 says.)
 - Delete an entry for its age alone, or weigh again what "Left out" holds unless it changed.
