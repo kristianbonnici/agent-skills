@@ -89,35 +89,45 @@ link_one() {
       return
     fi
     run rm "$link_target"
-  elif is_own_adapter "$link_target" "$link_source"; then
+  elif is_adapter_folder "$link_target" "$link_source"; then
     # The host took adapter folders when an earlier bootstrap ran: the folder becomes the link.
     for name in SKILL.md agents references scripts assets; do
       [ -L "$link_target/$name" ] || continue
       run rm "$link_target/$name"
     done
+    [ ! -f "$link_target/.DS_Store" ] || run rm "$link_target/.DS_Store"
     run rmdir "$link_target"
-    echo "REPLACED adapter folder $link_target"
+    [ "$dry_run" -eq 1 ] || echo "REPLACED adapter folder $link_target"
   elif [ -e "$link_target" ]; then
     echo "Refusing to replace existing path: $link_target" >&2
+    if [ -d "$link_target" ] && [ ! -L "$link_target" ]; then
+      echo "  It holds something bootstrap didn't put there: move that out of it, then run bootstrap again." >&2
+    fi
     return 1
   fi
-  run ln -s "$link_source" "$link_target"
+  # -n: if another run made the link meanwhile, fail instead of linking inside what it points to.
+  run ln -sn "$link_source" "$link_target"
   echo "LINK $link_target -> $link_source"
 }
 
-# Is $1 an adapter folder of $2 that this checkout made: a real folder holding nothing but links to
-# $2's parts, each by its own name? Anything else in it (a file, another link, a hidden file) means
-# someone put it there, so it isn't replaced.
-is_own_adapter() {
+# Is $1 an adapter folder of the skill $2: a real folder holding only links named after the skill's
+# parts, each to that part of a folder of the skill's name (this checkout's or another's), and maybe
+# Finder's .DS_Store? An empty folder counts too: it holds nothing to lose, as when a run replacing
+# one stopped before its rmdir. Anything else in it (a file, another link, a folder) is someone's.
+is_adapter_folder() {
   [ -d "$1" ] && [ ! -L "$1" ] || return 1
-  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets -print -quit)" ] || return 1
-  own_found=0
-  for own_name in SKILL.md agents references scripts assets; do
-    [ -e "$1/$own_name" ] || [ -L "$1/$own_name" ] || continue
-    [ -L "$1/$own_name" ] && [ "$(readlink "$1/$own_name")" = "$2/$own_name" ] || return 1
-    own_found=1
+  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets ! -name .DS_Store -print -quit)" ] || return 1
+  if [ -e "$1/.DS_Store" ] || [ -L "$1/.DS_Store" ]; then
+    [ -f "$1/.DS_Store" ] && [ ! -L "$1/.DS_Store" ] || return 1
+  fi
+  adapter_skill=$(basename -- "$2")
+  for adapter_part in SKILL.md agents references scripts assets; do
+    [ -e "$1/$adapter_part" ] || [ -L "$1/$adapter_part" ] || continue
+    [ -L "$1/$adapter_part" ] || return 1
+    # Spelled differently, the same part: repeated slashes, ./ steps and a closing / are dropped.
+    adapter_to=$(readlink "$1/$adapter_part" | sed -e 's://*:/:g' -e 's:/\./:/:g' -e 's:/*$::')
+    case "$adapter_to" in */"$adapter_skill/$adapter_part") ;; *) return 1 ;; esac
   done
-  [ "$own_found" -eq 1 ]
 }
 
 adapter_one() {
@@ -250,6 +260,9 @@ EOF
     while IFS=$(printf '\t') read -r row_host mode source target; do
       [ -n "$row_host" ] || continue
       target_path=$(expand_target "$target")
+      # A host that took adapter folders when bootstrap last ran here may have left one where a
+      # link now goes: it goes as an adapter folder does, with only this checkout's links in it.
+      if [ "$mode" = link ] && is_adapter_folder "$target_path" "$source"; then mode=adapter; fi
       case "$mode" in
         link|retired) leave_one "$source" "$target_path" ;;
         adapter) leave_adapter "$source" "$target_path" ;;

@@ -66,29 +66,53 @@ test -L "$test_home/.factory/skills/product-design"
 test -L "$test_home/.gemini/config/skills/product-design"
 test -L "$test_home/.gemini/antigravity-cli/skills/product-design/SKILL.md"
 test -f "$test_home/.gemini/antigravity-cli/skills/product-design/scripts/browser"
-# An adapter folder made when a host took them, now that it takes links, becomes the link; one that
-# holds anything else is refused and kept.
+# Antigravity's folder takes every skill Codex and Claude Code get, by links; the CLI's own folder
+# keeps product-design alone.
+test "$(readlink "$test_home/.gemini/config/skills/review-gate")" = "$repo_root/skills/review-gate"
+test ! -e "$test_home/.gemini/antigravity-cli/skills/review-gate"
+# An adapter folder made when a host took them, now that it takes links, becomes the link: one of
+# this checkout's links with Finder's .DS_Store, one of another checkout's, and an empty one, as a
+# run that stopped before its rmdir leaves. One that holds anything else is refused and kept.
 old_adapter="$test_home/.gemini/config/skills/product-design"
 rm "$old_adapter"
 mkdir "$old_adapter"
 ln -s "$repo_root/skills/product-design/SKILL.md" "$old_adapter/SKILL.md"
 ln -s "$repo_root/skills/product-design/scripts" "$old_adapter/scripts"
+echo finder >"$old_adapter/.DS_Store"
 HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies --dry-run >"$test_home/adapter-dry.out" 2>&1
 grep -q "^DRY RUN: rmdir $old_adapter$" "$test_home/adapter-dry.out"
-test -d "$old_adapter" && test ! -L "$old_adapter" && test -L "$old_adapter/SKILL.md"
+if grep -q "^REPLACED" "$test_home/adapter-dry.out"; then echo "a dry run says it replaced a folder" >&2; exit 1; fi
+test -d "$old_adapter" && test ! -L "$old_adapter" && test -L "$old_adapter/SKILL.md" && test -f "$old_adapter/.DS_Store"
 HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter.out" 2>&1
 grep -q "^REPLACED adapter folder $old_adapter$" "$test_home/adapter.out"
 test "$(readlink "$old_adapter")" = "$repo_root/skills/product-design"
 rm "$old_adapter"
 mkdir "$old_adapter"
-ln -s "$repo_root/skills/product-design/SKILL.md" "$old_adapter/SKILL.md"
-echo notes >"$old_adapter/notes.md"
-if HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter-kept.out" 2>&1; then
-  echo "bootstrap replaced an adapter folder holding someone's file" >&2
-  exit 1
-fi
-grep -q "^Refusing to replace existing path: $old_adapter$" "$test_home/adapter-kept.out"
-test -f "$old_adapter/notes.md" && test -L "$old_adapter/SKILL.md"
+ln -s "$test_home/moved-checkout//skills/product-design/SKILL.md" "$old_adapter/SKILL.md"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter.out" 2>&1
+grep -q "^REPLACED adapter folder $old_adapter$" "$test_home/adapter.out"
+test "$(readlink "$old_adapter")" = "$repo_root/skills/product-design"
+rm "$old_adapter"
+mkdir "$old_adapter"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter.out" 2>&1
+test "$(readlink "$old_adapter")" = "$repo_root/skills/product-design"
+for unknown in notes.md other-link; do
+  rm -r "$old_adapter"
+  mkdir "$old_adapter"
+  ln -s "$repo_root/skills/product-design/SKILL.md" "$old_adapter/SKILL.md"
+  case "$unknown" in
+    notes.md) echo notes >"$old_adapter/notes.md" ;;
+    other-link) rm "$old_adapter/SKILL.md"; ln -s "$repo_root/skills/review-gate/SKILL.md" "$old_adapter/SKILL.md" ;;
+  esac
+  if HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter-kept.out" 2>&1; then
+    echo "bootstrap replaced an adapter folder holding someone's $unknown" >&2
+    exit 1
+  fi
+  grep -q "^Refusing to replace existing path: $old_adapter$" "$test_home/adapter-kept.out"
+  grep -q "move that out of it, then run bootstrap again" "$test_home/adapter-kept.out"
+  test -L "$old_adapter/SKILL.md"
+done
+test -f "$old_adapter/notes.md" || test "$(readlink "$old_adapter/SKILL.md")" = "$repo_root/skills/review-gate/SKILL.md"
 rm -r "$old_adapter"
 HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >/dev/null 2>&1
 test -L "$old_adapter"
@@ -379,6 +403,23 @@ on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/nul
 on travel-mac "$repo_root/scripts/uninstall" --all >/dev/null 2>&1
 test -d "$test_home/.gemini/antigravity-cli/skills/product-design"
 rmdir "$test_home/.gemini/antigravity-cli/skills/product-design"
+# An adapter folder where a host that took them now takes a link (factory's here, a host travel-mac
+# leaves out) goes as an adapter folder does, by bootstrap and by uninstall.
+for script in bootstrap uninstall; do
+  mkdir "$test_home/.factory/skills/product-design"
+  ln -s "$repo_root/skills/product-design/SKILL.md" "$test_home/.factory/skills/product-design/SKILL.md"
+  ln -s "$repo_root/skills/product-design/scripts" "$test_home/.factory/skills/product-design/scripts"
+  if [ "$script" = bootstrap ]; then
+    on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies --dry-run >"$test_home/travel-old-adapter.out" 2>&1
+    grep -q "^DRY RUN: rmdir $test_home/.factory/skills/product-design$" "$test_home/travel-old-adapter.out"
+    test -L "$test_home/.factory/skills/product-design/SKILL.md"
+    on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
+  else
+    on travel-mac "$repo_root/scripts/uninstall" --all >/dev/null 2>&1
+  fi
+  test ! -e "$test_home/.factory/skills/product-design"
+done
+on travel-mac "$repo_root/scripts/bootstrap" --all --skip-dependencies >/dev/null 2>&1
 # An adapter folder that is a link is someone else's: neither script reaches through it.
 mkdir "$test_home/foreign-adapter"
 ln -s "$repo_root/skills/product-design/SKILL.md" "$test_home/foreign-adapter/SKILL.md"
@@ -445,9 +486,13 @@ cp "$test_home/private-skills.tsv" "$computers/install/skills.tsv"
 export AGENT_SKILLS_PRIVATE=
 
 # Uninstall removes a retired link that is still there too, and a dry run says an adapter folder it
-# empties goes with its links.
+# empties goes with its links, an old one where a link now goes too.
+rm "$test_home/.gemini/config/skills/product-design"
+mkdir "$test_home/.gemini/config/skills/product-design"
+ln -s "$repo_root/skills/product-design/SKILL.md" "$test_home/.gemini/config/skills/product-design/SKILL.md"
 HOME="$test_home" "$repo_root/scripts/uninstall" --all --dry-run >"$test_home/uninstall-dry.out" 2>&1
 grep -q "^DRY RUN: rmdir $test_home/.gemini/antigravity-cli/skills/product-design$" "$test_home/uninstall-dry.out"
+grep -q "^DRY RUN: rmdir $test_home/.gemini/config/skills/product-design$" "$test_home/uninstall-dry.out"
 test -d "$test_home/.gemini/antigravity-cli/skills/product-design"
 ln -s "$repo_root/skills/sketch-infographic" "$test_home/.claude/skills/sketch-infographic"
 HOME="$test_home" "$repo_root/scripts/uninstall" --all >/dev/null

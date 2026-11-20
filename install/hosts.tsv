@@ -3,7 +3,8 @@
 # mode: link (a skill's folder is linked there whole), adapter (a real folder there holds links to
 #   the skill's parts, for a host that cannot discover a linked folder) or retired (the host no
 #   longer uses that folder, so the links an earlier version installed there are removed). A host
-#   moved from adapter to link has each adapter folder bootstrap made replaced by the link.
+#   moved from adapter to link has each of its adapter folders (a real folder holding only links to
+#   the skill's parts, or nothing) replaced by the link; one holding anything else stops bootstrap.
 # host	label	mode	folder
 opencode	OpenCode	link	~/.config/opencode/skills
 factory	Factory	link	~/.factory/skills
