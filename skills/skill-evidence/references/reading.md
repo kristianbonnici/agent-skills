@@ -13,14 +13,14 @@ A 403 or a bot check means the page is there; it isn't gone. Read its archived c
 
 1. Find the latest snapshot: `curl -s "https://archive.org/wayback/available?url=<url without https://>"` names its `timestamp`.
 2. Fetch the page as archived, without the archive's wrapper: `curl -sL --compressed "https://web.archive.org/web/<timestamp>id_/<url>"`. Without `--compressed` the body comes back unreadable.
-3. Say in the entry that it was read from the archived copy of `<the snapshot's date>`. A snapshot older than the page's own last update doesn't count for that update.
+3. Say in the entry that it was read from the archived copy of `<the snapshot's date>`.
 
-Only when no snapshot exists, read it through search excerpts or reputable coverage, and say so in the entry, as SKILL.md section 4 says. Don't ask the archive to take a new snapshot: that publishes a request outside this run.
+Give each request a time limit (`--max-time 60`). A snapshot that doesn't replay (an error, an empty or unreadable page), or that is older than the page's own last update, counts as no snapshot for what it can't show. Then read the page through search excerpts or reputable coverage, and say so in the entry, as SKILL.md section 4 says. A cited source you couldn't read any way this run isn't rechecked: add "(not rechecked <date>: <why>)" to its entry and name it in the report, so the next run tries it whatever the file's sources date. Don't ask the archive to take a new snapshot: that publishes a request outside this run.
 
 ## Dates when an index shows none
 
-A blog or news index without dates still says when each post appeared in its feed or sitemap: try `<site>/rss.xml`, `<site>/feed`, `<site>/news/rss.xml` and `<site>/sitemap.xml`, and read each item's `pubDate` or `lastmod`. OpenAI's news, for example, is at `https://openai.com/news/rss.xml`.
+A blog or news index without dates still says when each post appeared in its feed or sitemap: try `<site>/rss.xml`, `<site>/feed`, `<site>/news/rss.xml` and `<site>/sitemap.xml`, and read each item's `pubDate`. A sitemap's `lastmod` only says the page changed, maybe its template: take it as a lead and check the post's own date, or what it says it revised, before it counts for the search window or the bar's "recent". OpenAI's news, for example, is at `https://openai.com/news/rss.xml`.
 
 ## A candidate you couldn't finish
 
-A candidate that the run found but couldn't read in full (the time ran out, or no copy could be read) goes under "Left out" with "(not yet read: <why>)" in place of a reason. The next run weighs it again first, whatever "Left out" says of the rest, and replaces that line with its decision.
+A candidate that the run found but couldn't read in full (the time ran out, or no copy could be read) goes under "Left out" with "(not yet read: <why>)" in place of a reason, written exactly so. The next run weighs it first, whatever its date or what "Left out" says of the rest, and replaces the line with its decision; if it still can't read it, the mark stays with that run's reason.

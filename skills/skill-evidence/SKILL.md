@@ -33,7 +33,7 @@ For each file, look for work published or substantially revised since its new-wo
 - evaluation organizations such as METR and Epoch AI;
 - forward from each cited source: its newer versions, its authors' follow-ups, and published responses to it.
 
-Keep a candidate only if it passes the bar in [references/bar.md](references/bar.md). Skip what the file already cites or lists under "Left out", unless it changed since (a new version, a venue, a withdrawal), except a "Left out" line marked "(not yet read)": weigh that one first and replace the line with your decision. A candidate you couldn't read in full this run gets such a line, not a judgment from its abstract.
+Keep a candidate only if it passes the bar in [references/bar.md](references/bar.md). Skip what the file already cites or lists under "Left out", unless it changed since (a new version, a venue, a withdrawal), except a "Left out" line marked "(not yet read: <why>)": weigh that one first, whatever its date or the rest of this section says, and replace the line with your decision, or, if you still can't read it, keep the mark with today's reason. A candidate you couldn't read in full this run gets such a line, not a judgment from its abstract.
 
 ## 4. Recheck the sources it cites
 
@@ -77,4 +77,4 @@ Call for the owner's attention (the host's notification, or one spoken sentence)
 - Change a skill, or apply a proposal, without the owner's yes for it.
 - Push the skills repository, merge into `main`, or touch the owner's checkout. (The `lessons` script's own pushes to the private state repository are how proposals reach the owner, as skill-evolution says.)
 - Cite a source you didn't open, or a figure you didn't find in it. (A page that refuses automated reading is read from its archived copy, or through excerpts or coverage when there is none, named in the entry, as section 4 says.)
-- Delete an entry for its age alone, or weigh again what "Left out" holds unless it changed.
+- Delete an entry for its age alone, or weigh again what "Left out" holds unless it changed or is marked "(not yet read: <why>)".

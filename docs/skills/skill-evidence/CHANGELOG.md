@@ -2,9 +2,9 @@
 
 ## 1.1.0 (2026-11-20)
 
-- **Every candidate is read in full, and one that can't be is carried to the next run** (the 2026-11-20 run: one paper was weighed only from its abstract and another never opened, and neither was recorded, so the next run had no way to know of them). Papers are read from arXiv's HTML or PDF; a candidate not read in full goes under "Left out" marked "(not yet read: <why>)", and the next run weighs it first.
-- **A page that refuses automated reading is read from its archived copy** (same run: two OpenAI pages answered 403, and one entry rested on search excerpts, while the Wayback Machine held the whole article). The latest snapshot is found with the archive's availability API and fetched as archived (`id_`, `--compressed`); the entry names the snapshot. Search excerpts or coverage only when there is no snapshot.
-- **An index without dates is dated from its feed or sitemap** (same run: OpenAI's blog index shows no dates; its news feed dates every post). The how-to is in the new `references/reading.md`.
+- **Every candidate is read in full, and one that can't be is carried to the next run** (the 2026-11-20 run: one paper was weighed only from its abstract and another never opened, and neither was recorded, so the next run had no way to know of them). Papers are read from arXiv's HTML or PDF; a candidate not read in full goes under "Left out" marked "(not yet read: <why>)", and the next run weighs it first, whatever its date, keeping the mark if it still can't be read. A cited source that couldn't be read any way is marked "(not rechecked <date>: <why>)", so the next run tries it whatever the file's sources date (from this release's review).
+- **A page that refuses automated reading is read from its archived copy** (same run: two OpenAI pages answered 403, and one entry rested on search excerpts, while the Wayback Machine held the whole article). The latest snapshot is found with the archive's availability API and fetched as archived (`id_`, `--compressed`); the entry names the snapshot. Search excerpts or coverage only when there is no snapshot, or it doesn't replay, or is older than the page's last update.
+- **An index without dates is dated from its feed or sitemap** (same run: OpenAI's blog index shows no dates; its news feed dates every post). A sitemap's `lastmod` is only a lead, checked against the post's own date. The how-to is in the new `references/reading.md`.
 
 ## 1.0.0 (2026-10-31)
 
