@@ -58,7 +58,7 @@ A subagent can't launch agents of its own: there, use the command-line forms for
 
   ```sh
   cd <worktree> && agy --mode plan --model gemini-4-hydrogen-high --print-timeout 15m \
-    --add-dir=<folder outside the worktree that the brief names> \
+    --add-dir=<a new folder holding copies of the files the brief names outside the worktree> \
     --settings '{"trustedWorkspaces":["<worktree>"],"permissions":{"allow":["command(git diff)","command(git log)","command(git show)","command(git status)","command(grep)","command(ls)","command(cat)","command(sed -n)","command(find)"]}}' \
     -p "<brief>"
   ```
