@@ -89,12 +89,35 @@ link_one() {
       return
     fi
     run rm "$link_target"
+  elif is_own_adapter "$link_target" "$link_source"; then
+    # The host took adapter folders when an earlier bootstrap ran: the folder becomes the link.
+    for name in SKILL.md agents references scripts assets; do
+      [ -L "$link_target/$name" ] || continue
+      run rm "$link_target/$name"
+    done
+    run rmdir "$link_target"
+    echo "REPLACED adapter folder $link_target"
   elif [ -e "$link_target" ]; then
     echo "Refusing to replace existing path: $link_target" >&2
     return 1
   fi
   run ln -s "$link_source" "$link_target"
   echo "LINK $link_target -> $link_source"
+}
+
+# Is $1 an adapter folder of $2 that this checkout made: a real folder holding nothing but links to
+# $2's parts, each by its own name? Anything else in it (a file, another link, a hidden file) means
+# someone put it there, so it isn't replaced.
+is_own_adapter() {
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 ! -name SKILL.md ! -name agents ! -name references ! -name scripts ! -name assets -print -quit)" ] || return 1
+  own_found=0
+  for own_name in SKILL.md agents references scripts assets; do
+    [ -e "$1/$own_name" ] || [ -L "$1/$own_name" ] || continue
+    [ -L "$1/$own_name" ] && [ "$(readlink "$1/$own_name")" = "$2/$own_name" ] || return 1
+    own_found=1
+  done
+  [ "$own_found" -eq 1 ]
 }
 
 adapter_one() {

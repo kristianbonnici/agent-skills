@@ -66,6 +66,32 @@ test -L "$test_home/.factory/skills/product-design"
 test -L "$test_home/.gemini/config/skills/product-design"
 test -L "$test_home/.gemini/antigravity-cli/skills/product-design/SKILL.md"
 test -f "$test_home/.gemini/antigravity-cli/skills/product-design/scripts/browser"
+# An adapter folder made when a host took them, now that it takes links, becomes the link; one that
+# holds anything else is refused and kept.
+old_adapter="$test_home/.gemini/config/skills/product-design"
+rm "$old_adapter"
+mkdir "$old_adapter"
+ln -s "$repo_root/skills/product-design/SKILL.md" "$old_adapter/SKILL.md"
+ln -s "$repo_root/skills/product-design/scripts" "$old_adapter/scripts"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies --dry-run >"$test_home/adapter-dry.out" 2>&1
+grep -q "^DRY RUN: rmdir $old_adapter$" "$test_home/adapter-dry.out"
+test -d "$old_adapter" && test ! -L "$old_adapter" && test -L "$old_adapter/SKILL.md"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter.out" 2>&1
+grep -q "^REPLACED adapter folder $old_adapter$" "$test_home/adapter.out"
+test "$(readlink "$old_adapter")" = "$repo_root/skills/product-design"
+rm "$old_adapter"
+mkdir "$old_adapter"
+ln -s "$repo_root/skills/product-design/SKILL.md" "$old_adapter/SKILL.md"
+echo notes >"$old_adapter/notes.md"
+if HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >"$test_home/adapter-kept.out" 2>&1; then
+  echo "bootstrap replaced an adapter folder holding someone's file" >&2
+  exit 1
+fi
+grep -q "^Refusing to replace existing path: $old_adapter$" "$test_home/adapter-kept.out"
+test -f "$old_adapter/notes.md" && test -L "$old_adapter/SKILL.md"
+rm -r "$old_adapter"
+HOME="$test_home" "$repo_root/scripts/bootstrap" --host antigravity --skip-dependencies >/dev/null 2>&1
+test -L "$old_adapter"
 test ! -e "$test_home/.agents/skills/product-design"
 test ! -e "$test_home/.codex/skills/product-design"
 test -L "$test_home/.agents/skills/long-horizon-task-planner"
