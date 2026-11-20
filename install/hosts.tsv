@@ -6,7 +6,7 @@
 # host	label	mode	folder
 opencode	OpenCode	link	~/.config/opencode/skills
 factory	Factory	link	~/.factory/skills
-antigravity	Google Antigravity	adapter	~/.gemini/config/skills
+antigravity	Google Antigravity	link	~/.gemini/config/skills
 antigravity-cli	Google Antigravity	adapter	~/.gemini/antigravity-cli/skills
 codex	Codex	link	~/.agents/skills
 codex	Codex	link	~/.codex/skills

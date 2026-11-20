@@ -4,14 +4,14 @@
 #   named, so that the links an earlier version installed are removed.
 # mode	skill	hosts
 install	product-design	opencode factory antigravity antigravity-cli
-install	long-horizon-task-planner	codex claude
-install	long-horizon-orchestrator	codex claude
-install	agent-ready-repo	codex
-install	remote-session-reporting	codex claude
-install	review-gate	codex claude
-install	skill-evolution	codex claude
-install	skill-evidence	codex claude
-install	disk-cleanup	codex claude
-install	reviewer-benchmark	codex claude
-install	excalidraw-drawing	codex claude
+install	long-horizon-task-planner	codex claude antigravity
+install	long-horizon-orchestrator	codex claude antigravity
+install	agent-ready-repo	codex antigravity
+install	remote-session-reporting	codex claude antigravity
+install	review-gate	codex claude antigravity
+install	skill-evolution	codex claude antigravity
+install	skill-evidence	codex claude antigravity
+install	disk-cleanup	codex claude antigravity
+install	reviewer-benchmark	codex claude antigravity
+install	excalidraw-drawing	codex claude antigravity
 retired	sketch-infographic	codex claude
