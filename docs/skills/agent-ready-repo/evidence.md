@@ -49,7 +49,7 @@ Revisit a source when a proposed change depends on a newer claim or a host's cha
 
 ## Left out
 
-Weighed and not cited, so later checks don't weigh them again unless they change:
+Weighed and not cited, so later checks don't weigh them again unless they change; a line marked "(not yet read: <why>)" wasn't weighed yet, and the next check weighs it first:
 
 - [Khatri, Do Context Files Help Coding Agents? A Two-Agent Ablation Study on Real Repositories](https://arxiv.org/abs/2607.27250), 2026-07-28: bears on the context-file rules (no measurable correctness effect over 288 runs), but a single-author preprint.
 - [Zarzycki, What Open-Source Projects Tell Their Coding Agents: A Census of AGENTS.md and CLAUDE.md](https://arxiv.org/abs/2610.31715), version 2, 2026-10-26: bears on what instruction files contain (74.0% of directives give no reason), but a single-author preprint without a named affiliation.
@@ -67,4 +67,4 @@ Weighed and not cited, so later checks don't weigh them again unless they change
 - [Anthropic: Building always-on agents](https://claude.com/resources/articles/building-always-on-agents), 2026-11-13: a progress file per task, but a how-to with no method.
 - GitHub: [Beyond code generation](https://github.blog/ai-and-ml/github-copilot/beyond-code-generation-a-developers-guide-to-agentic-engineering/), 2026-11-06, and [Build once, run on any agent](https://github.blog/ai-and-ml/github-copilot/build-once-run-on-any-agent-a-practical-guide-to-agent-skills/), 2026-11-12: product guides with no method or figures.
 - [OpenAI: How OpenAI's Performance Factory keeps ChatGPT fast](https://openai.com/index/how-openai-performance-factory-keeps-chatgpt-fast/), November 2026 (read through search excerpts; the page refuses automated reading): first-party, about performance regressions; bears on no rule of this skill.
-- [Guardrails Beat Guidance](https://arxiv.org/abs/2604.11088), version 2, 2026-05-28 (not yet read: found late in the 2026-11-20 run and not opened).
+- [Guardrails Beat Guidance: A Large-Scale Study of Rules, Skills, and Persistent Configuration for Coding Agents](https://arxiv.org/abs/2604.11088), version 2, 2026-05-28 (not yet read: found late in the 2026-11-20 run and not opened).

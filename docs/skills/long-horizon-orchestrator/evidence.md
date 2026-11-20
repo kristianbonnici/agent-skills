@@ -646,7 +646,7 @@ Rules that are the owner's choice, with when they made it:
 
 ## Left out
 
-Weighed and not cited, so later checks don't weigh them again unless they change:
+Weighed and not cited, so later checks don't weigh them again unless they change; a line marked "(not yet read: <why>)" wasn't weighed yet, and the next check weighs it first:
 
 - [AI Agent Pull Requests on GitHub: Frequency, Structure, and Merge Conflict Rates](https://arxiv.org/abs/2607.04697)
   (arXiv 2607.04697, 2026): a seven-page preprint with no venue and no named affiliations.
@@ -683,5 +683,5 @@ Weighed and not cited, so later checks don't weigh them again unless they change
 - [Who May Overrule the Agent?](https://arxiv.org/abs/2611.05390) (2026): a single author.
 - [Loop Engineering](https://arxiv.org/abs/2611.18571) (2026): one production setting that the authors say "is
   not a controlled benchmark".
-- [When Sub-Agents Work in Parallel](https://arxiv.org/abs/2610.10263) (7 October 2026) (not yet read: only its abstract was read in the
+- [When Sub-Agents Work in Parallel: The Promises and Pitfalls of Dynamic Concurrency in Long-Horizon Coding Tasks](https://arxiv.org/abs/2610.10263) (7 October 2026) (not yet read: only its abstract was read in the
   2026-11-20 run).
