@@ -6,7 +6,7 @@
 install	product-design	opencode factory antigravity antigravity-cli
 install	long-horizon-task-planner	codex claude antigravity
 install	long-horizon-orchestrator	codex claude antigravity
-install	agent-ready-repo	codex antigravity claude
+install	agent-ready-repo	codex claude antigravity
 install	remote-session-reporting	codex claude antigravity
 install	review-gate	codex claude antigravity
 install	skill-evolution	codex claude antigravity
