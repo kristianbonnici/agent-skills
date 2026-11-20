@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "8.3.0",
+  "gate": "8.4.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",

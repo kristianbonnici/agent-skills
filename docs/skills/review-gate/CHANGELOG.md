@@ -1,5 +1,10 @@
 # review-gate changelog
 
+## 8.4.0 (2026-11-20)
+
+- **Hydrogen falls back to the `agy` command line when T3 can't open Antigravity** (seen 2026-11-20 in a skill-evidence run: T3 had withdrawn the Antigravity runtime it installed in October, "agy_acp_server_1.1.1 no longer works with this T3 Code release", and the Light gate went down the free order instead). The gate now launches Hydrogen with `agy` and tells the owner to update Antigravity in T3's settings; Hydrogen isn't counted as limited for it.
+- **`agy` gets `--add-dir=<folder>` for every folder outside the worktree the brief points to** (same run: Hydrogen ended within seconds because headless `agy` auto-denied reading the project's rules in another folder, and a `read_file(...)` allow rule didn't help; `--add-dir=` did, while `--add-dir <folder>` with a space prints the help). A run that ends on a permission it needed is fixed and launched once more before it counts as limited.
+
 ## 8.3.0 (2026-11-20)
 
 - **A follow-up patch's review is capped** (accepted proposal, from four patches across two runs that each converged in three rounds with the cap given by hand, while an uncapped one took five and left more): fix every blocker in any round and the follow-ups from rounds 1 and 2; from round 3 on, list a new non-blocker with its fix instead of fixing it.
