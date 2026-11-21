@@ -75,7 +75,7 @@ It prints each panel's drawing-area width (draw within it; height grows to fit) 
 
 Give the user the PNG and the drawing's path, and the plan's one-line summary; for a deck, the three files `deck.mjs` wrote and what each is for. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits (an `.excalidraw.md` opens in Obsidian), and that after hand edits that file, not `page.json`, is the picture: you can carry on from their edits, and the build won't replace a drawing saved in an editor since.
 
-**When the user asks for a change, change only that.** A request about the look ("simpler", "like this example") keeps the picture's words, marks and theme. Keep each round's PNG beside the spec (`v1.png`, `v2.png`..., the current one still `page.png`) and show the previous and the current one together, so the user can compare.
+**When the user asks for a change, change only that.** A request about the look ("simpler", "like this example") keeps the picture's words, marks and theme. Before you build the change, copy the current PNG to the next numbered name beside it (`v1.png`, `v2.png`...), so every round stays, and show the previous and the current one together, so the user can compare.
 
 ## 5. Change an existing drawing
 
