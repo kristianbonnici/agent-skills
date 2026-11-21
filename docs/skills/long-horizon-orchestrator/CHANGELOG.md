@@ -2,7 +2,7 @@
 
 ## 5.13.0 (2026-11-21)
 
-- **The review gate's Gemini reviewer at standard and deep is Antigravity's Orchestrator (Neon)** (review-gate 8.5.0), and Hydrogen reviews light changes only. The contract counts each standard and deep task's Neon review (about 15 minutes, up to about 0.65 points of the Gemini week, more for each re-review) in the Gemini windows, and the run's Neon helper budget leaves those reviews out of its count.
+- **The review gate's Gemini reviewer at standard and deep is Antigravity's Orchestrator (Neon)** (review-gate 8.5.0), and Hydrogen reviews light changes only. The contract counts each standard and deep task's Neon review (about 15 minutes, up to about 0.65 points of the Gemini week, more for each re-review) in the Gemini windows, and the run's Neon helper budget counts them too, with room sized for them. The "Codex is short" line says the gate uses its stand-in for Codex (Neon for a Claude change at standard and deep), not its Claude substitute.
 
 ## 5.12.0 (2026-11-21)
 

@@ -249,6 +249,10 @@ def places(value, here=()):
 # finding and its reviewer, and the finding counts once among those that differed.
 back = copy.deepcopy(example)
 back["findings"].append(dict(back["findings"][0], round=2, reviewer_tag="follow-up"))
+# Antigravity's Orchestrator keeps the model its brackets name, and loses its host and level like the others.
+assert module.reviewer_key("Antigravity Orchestrator (Neon), extra high") == "Orchestrator Neon", module.reviewer_key("Antigravity Orchestrator (Neon), extra high")
+assert module.reviewer_key("Orchestrator (Carbon)") == "Orchestrator Carbon"
+assert module.reviewer_key("OpenCode DeepSeek V4.1 Flash (free), high") == "DeepSeek V4.1 Flash (free)"
 assert [row["reviewer"] for row in module.gate_from_record(folder)["rows"]] == ["GPT-6.1 Terra", "Claude Sonnet 5.5",
                                                                               "Gemini 4 Hydrogen"]
 assert module.gate_from_record(os.path.join(work, "shared"))["replies"] == {"holds": 1, "agrees": 1}

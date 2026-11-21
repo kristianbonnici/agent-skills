@@ -42,4 +42,4 @@ Do you agree with the author's tag? Start your answer with "agree" or "hold". If
 
 An answer that starts with "agree", in any letter case, is `agrees`; one that starts with "hold" is `holds`; and none in its 10 minutes, or one that says neither, is `no answer`. Save it in the record folder as `reply-<the finding's id>-<reviewer>.md`; if you ask about the finding again in a later round, as `reply-<id>-<reviewer>-round-<n>.md`.
 
-Ask once in a round for a finding and the reviewer that answers. When the questions about one finding go to the same reviewer (its own report of the finding and Hydrogen's, or a free reviewer's and Hydrogen's), send one question with every report of it, and record its one answer on each of those entries, with `reply_from` on every entry that reviewer didn't raise.
+Ask once in a round for a finding and the reviewer that answers. When the questions about one finding go to the same reviewer (its own report of the finding and a free reviewer's or Haiku's, or several of theirs), send one question with every report of it, and record its one answer on each of those entries, with `reply_from` on every entry that reviewer didn't raise.

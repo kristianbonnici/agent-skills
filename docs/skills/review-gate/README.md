@@ -35,7 +35,7 @@ flowchart TD
 |---|---|---|
 | Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
 | Standard | the cross reviewer and Neon (Codex short: Neon as a Claude change's cross reviewer, and a free reviewer); a free reviewer in Neon's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
-| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Opus and Sonnet when Codex is short; Opus and Sonnet for Codex's), + Neon and a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Neon and Opus when Codex is short, Opus and Sonnet while Neon can't review; Opus and Sonnet for Codex's), + Neon and a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
 - **Paid reviewers:** Codex's GPT-6.2 Sol at medium reasoning, and Claude Sonnet 5.5 and Opus 5.5 at high.
   Sol replaced GPT-6.1 Terra in 8.0.0: on the benchmark it found 61 of the 144 defects known before its run
@@ -80,7 +80,7 @@ flowchart TD
 The author decides each finding's tag, and only the author's blockers hold back a merge. That keeps a run
 moving, but it leaves the author judging findings about its own change. So when the author rejects a finding
 its reviewer tagged a blocker, or gives it a lower tag, the gate gives it back to that reviewer with the
-author's reason and asks: agree or hold? (A free reviewer's, Hydrogen's or Haiku's goes to the round's paid reviewer.)
+author's reason and asks: agree or hold? (A free reviewer's, Hydrogen's or Haiku's goes to the round's cross reviewer.)
 
 - **It never blocks.** The author's tag stands whatever the answer. A reply can't turn a finding into a
   blocker, hold back the merge, count toward the stop rule or start a fix or another round in that gate. If
