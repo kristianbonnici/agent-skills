@@ -13,10 +13,10 @@ Version and history: [CHANGELOG.md](CHANGELOG.md). Why it works this way: [evide
 flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
   level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
-  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Sol for any change but Codex's,<br/>Sonnet for Codex's,<br/>+ Gemini 4 Hydrogen"]
-  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for any change but Codex's<br/>(Opus and Sonnet when Codex is short),<br/>Opus and Sonnet for Codex's,<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer if one answers"]
+  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Sol for any change but Codex's,<br/>Sonnet for Codex's,<br/>+ Neon (Antigravity's Orchestrator)"]
+  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for any change but Codex's<br/>(Neon and Opus when Codex is short),<br/>Opus and Sonnet for Codex's,<br/>+ Neon<br/>+ a free reviewer if one answers"]
   light -->|neither Hydrogen nor a free model answers| standard
-  standard -.->|Codex short| sub["Claude substitute<br/>+ Gemini 4 Hydrogen<br/>+ a free reviewer"]
+  standard -.->|Codex short| sub["Neon as a Claude change's<br/>cross reviewer (else a Claude substitute)<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
   sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
   second --> sort
@@ -34,8 +34,8 @@ flowchart TD
 | Level | Round 1 | Later rounds |
 |---|---|---|
 | Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
-| Standard | the cross reviewer and Gemini 4 Hydrogen (Codex short: its Claude substitute, Hydrogen and a free reviewer); a free reviewer in Hydrogen's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
-| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Opus and Sonnet when Codex is short; Opus and Sonnet for Codex's), + Gemini 4 Hydrogen and a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Standard | the cross reviewer and Neon (Codex short: Neon as a Claude change's cross reviewer, and a free reviewer); a free reviewer in Neon's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
+| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Opus and Sonnet when Codex is short; Opus and Sonnet for Codex's), + Neon and a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
 - **Paid reviewers:** Codex's GPT-6.2 Sol at medium reasoning, and Claude Sonnet 5.5 and Opus 5.5 at high.
   Sol replaced GPT-6.1 Terra in 8.0.0: on the benchmark it found 61 of the 144 defects known before its run
@@ -52,21 +52,25 @@ flowchart TD
 - **Free reviewers** (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash) run on OpenCode's free tier,
   which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
-  alone on light changes when Hydrogen can't review, in Hydrogen's place on standard ones, as an extra
+  alone on light changes when Hydrogen can't review, in Neon's place on standard ones, as an extra
   voice on deep ones, and in place of the lost family when Codex is short. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers, Claude Haiku 5.5 comes last at standard and deep (not for a Claude change while
   Codex is short, where it would add no second family); at light
   the cross reviewer takes its place. It is never waited for past its time, and in T3 one with no activity
   5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
-- **Gemini 4 Hydrogen reviews at every level:** alone at Light, and beside the paid reviewers at Standard
-  and Deep. On 16 past changes with 143 known defects it found 32% of them, level with the paid reviewers,
-  and the most that no other model found; with Standard's cross reviewer the two found 71 where the cross
-  reviewer alone found 41 ([evidence.md](evidence.md#the-benchmarks-second-run-2026-11-15)). It found few of
-  the blockers, so it never takes a paid reviewer's place. The 60% and 85% limits keep room in the Gemini
-  window for the run's helpers, which share it. No other Gemini model reviews: their reviews were the
-  weakest in past runs.
+- **Neon reviews beside the paid reviewers at Standard and Deep,** and is a Claude change's cross reviewer
+  while Codex is short. Neon is Antigravity's Orchestrator (Neon): Gemini 4 Neon at extra high, handing
+  routine steps to a faster model. On the benchmark's 16 past changes it found 62% of 194 known defects and
+  23 of 27 blockers, the most of any model, where Sol at medium found 42% and 19; even on the 157 defects
+  known before its run it found more than Sol, and 2.4% of its findings were false. With Sol it found 146
+  defects and 26 blockers, where Sol with Hydrogen found 111 and 21. It is slow (about 15 minutes a review,
+  inside a paid reviewer's 30) and draws on the Gemini windows the run's helpers and the owner share
+  ([evidence.md](evidence.md#orchestrator-neon-as-a-reviewer-2026-11-21)).
+- **Gemini 4 Hydrogen reviews at Light only,** while the Gemini 5-hour window is under about 60%. It found
+  27% of the defects and 6 of 27 blockers; beside Sol, Neon finds far more. No other Gemini model reviews:
+  plain Gemini 4 Neon at high found 50%, between the two, and the older ones were the weakest in past runs.
 - **The trial is over.** Four cheap models each added one extra review in round 1 until 6.0.0. A study of 92
-  gates and the benchmark settled them: Hydrogen got its place, Claude Haiku 5.5 ends the free order at
+  gates and the benchmark settled them: Hydrogen got its place (Light's alone since 8.5.0), Claude Haiku 5.5 ends the free order at
   Standard and Deep, and GPT-6 Luna and Muse Spark 1.3 Contributor got none. A new model is measured with
   the [reviewer-benchmark](../reviewer-benchmark/README.md) skill, on the same past changes as the others,
   before the owner gives it a place.

@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 5.13.0 (2026-11-21)
+
+- **The review gate's Gemini reviewer at standard and deep is Antigravity's Orchestrator (Neon)** (review-gate 8.5.0), and Hydrogen reviews light changes only. The contract counts each standard and deep task's Neon review (about 15 minutes, up to about 0.65 points of the Gemini week, more for each re-review) in the Gemini windows, and the run's Neon helper budget leaves those reviews out of its count.
+
 ## 5.12.0 (2026-11-21)
 
 - **Gemini 4 Neon is the advanced helper, in place of Hydrogen-then-Argon** (owner, 2026-11-21, on moving from Google AI Pro to Ultra). On Ultra every Gemini model draws on one 5-hour and one weekly window, so Argon's separate week, its budget and its order behind Hydrogen are gone. Neon at high takes the bounded harder sub-tasks, within a Neon budget in points of the Gemini week (at most a third of what is left, by default), in `wait` mode only; when the budget is used, Hydrogen at high may take one, and when the windows are used, the agent does it. Hydrogen stays the fast helper. Plain Neon, not Antigravity's Orchestrator (Neon), until the reviewer benchmark compares them. The brief's advanced-helper section, the profile template, the contract and report lines and the usage examples say so ([evidence](evidence.md)). Neon never takes a whole task, not even from the free and low-cost pool, where Argon could. The budget is split between the tasks as each brief's count of calls, and once it or the 5-hour window is reached the running tasks are steered off Neon and new briefs offer Hydrogen in its place.

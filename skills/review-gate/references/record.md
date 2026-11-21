@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "8.4.0",
+  "gate": "8.5.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -57,7 +57,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 }
 ```
 
-The example's Codex reviewer is GPT-6.1 Terra, Codex's reviewer before 8.0.0; from 8.0.0 it is `Codex GPT-6.2 Sol, medium`.
+The example's Codex reviewer is GPT-6.1 Terra, Codex's reviewer before 8.0.0; from 8.0.0 it is `Codex GPT-6.2 Sol, medium`. Its Gemini reviewer at Deep is Hydrogen, before 8.5.0; from 8.5.0 it is `Antigravity Orchestrator (Neon), extra high`.
 
 The gate:
 
@@ -75,7 +75,7 @@ Each finding:
 - **One entry per finding per reviewer who raised it.** Two reviewers raising the same finding are two entries with the same `id`, and the same `tag`. A finding that comes back "not fixed" is another entry with its `id` and the later round.
 - `reviewer_tag`: the tag that reviewer gave it (`blocker`, `follow-up`, `nit`, `pre-existing`), or `none` if it gave none.
 - `tag`: yours (`blocker`, `follow-up`, `nit`, `pre-existing`, `rejected`).
-- `checked`: how you settled whether it is real. `test`: a test that fails on it, or passes where it said one would fail. `run`: you ran the case. `read`: you traced it through the code. `second opinion`: Deep's yes or no from the other paid reviewer.
+- `checked`: how you settled whether it is real. `test`: a test that fails on it, or passes where it said one would fail. `run`: you ran the case. `read`: you traced it through the code. `second opinion`: Deep's yes or no from another paid reviewer.
 - `commit`: the commit that fixed it. Leave it out while the finding is open or needs no change. A finding that came back "not fixed" carries, on its later entry, the commit that settled it then.
 - `title`: the finding in a few words.
 - `why`: one line, needed when you rejected the finding or gave it a lower tag than the reviewer did (a blocker as a follow-up, a follow-up as a nit or pre-existing).

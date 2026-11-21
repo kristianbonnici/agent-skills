@@ -1,5 +1,12 @@
 # review-gate changelog
 
+## 8.5.0 (2026-11-21)
+
+- **Neon, Antigravity's Orchestrator (Neon), reviews beside the paid reviewers at Standard and Deep, in Hydrogen's place** (owner, 2026-11-21, after the reviewer benchmark: it found 62% of 194 known defects and 23 of 27 blockers, where Sol at medium found 42% and 19 and Hydrogen 27% and 6; [evidence](evidence.md#orchestrator-neon-as-a-reviewer-2026-11-21)). It is a paid reviewer: 30 minutes, no time line in its brief, and it re-reviews its findings. It doesn't review a change a Gemini model wrote, or while the Gemini 5-hour window is past about 85%; at Standard a free reviewer takes its place then.
+- **When Codex is short, a Claude change's cross reviewer is Neon,** not the other Claude model, so a second family reviews it; at Deep, Neon takes Sol's focus beside Opus. While Neon can't review, the Claude substitute and a free reviewer stand in, as before.
+- **Hydrogen is Light's reviewer only.** A finding a free reviewer, Hydrogen or Haiku raised, and a fix only one of them asked for, go to the round's cross reviewer; Deep's second opinion goes to another paid reviewer of the round.
+- **Launching:** T3's target is `{providerInstanceId: "antigravity", model: "gemini-pro-orchestrator-neon"}` with no options, and the `agy` command line `--model gemini-pro-orchestrator-neon --print-timeout 30m` with no level, which `agy` refuses for it (a probe on 2026-11-21: T3 opened it without options). No other Gemini model reviews, plain Gemini 4 Neon included, and never `opencode/gemini-4-neon`, which bills per request.
+
 ## 8.4.0 (2026-11-20)
 
 - **When T3 can't open Antigravity, Hydrogen is unavailable and the report says to update it** (seen 2026-11-20 in a skill-evidence run: T3 had withdrawn the Antigravity runtime it installed in October, "agy_acp_server_1.1.1 no longer works with this T3 Code release"). Its level's replacement for a limited Hydrogen takes its place, it is recorded under `skipped` with T3's error, and the report tells the owner to update Antigravity in T3's provider settings. No fall-back to the `agy` command line inside T3: T3's rules forbid switching to a CLI unasked, and its wake can't follow a shell job (from this release's review).

@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 8.4.0
+  version: 8.5.0
 ---
 
 # Review Gate
@@ -26,36 +26,38 @@ Read the whole diff against its base. Judge by what it touches, not by its size.
 
 ## 2. Choose the reviewers
 
-Reviewers come from four families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.2 Sol), Gemini (Gemini 4 Hydrogen, on Antigravity) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, except Sol at medium, free ones at their high variant, Hydrogen at high.
+Reviewers come from four families: Claude (Opus 5.5, Sonnet 5.5), Codex (GPT-6.2 Sol), Gemini (Neon, and Gemini 4 Hydrogen at Light, both on Antigravity) and the free pool (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash, on OpenCode's free tier first, then on the owner's flat-rate OpenCode Go plan). Paid reviewers run at high reasoning, except Sol at medium and Neon at the level Antigravity gives it, free ones at their high variant, Hydrogen at high.
 
-- **A "paid reviewer"** below is Opus, Sonnet or Sol.
+- **A "paid reviewer"** below is Opus, Sonnet, Sol or Neon. "Neon" is Antigravity's Orchestrator (Neon): Gemini 4 Neon, at extra high, handing routine steps to a faster model.
 - **A "free reviewer"** is one of those two OpenCode models on either tier.
-- **Hydrogen is neither.** It reviews beside the paid reviewers at Standard and Deep, and is Light's reviewer; it never takes a paid reviewer's place. It runs only on Antigravity, whose Gemini windows the run's helpers share.
-- **No other model reviews,** apart from Claude Haiku 5.5 as the last of the free order (below): no other Gemini model, and no other OpenCode model (`opencode/` paid models bill per request, `opencode/gemini-4-hydrogen` among them, and Go's larger models use up the plan in a few reviews). A model gets a place only on the owner's word, after the `reviewer-benchmark` skill has measured it.
+- **Hydrogen is neither.** It is Light's reviewer, and reviews nowhere else.
+- **Neon and Hydrogen run only on Antigravity,** whose Gemini windows the run's helpers and the owner share, and neither reviews a change a Gemini model wrote.
+- **No other model reviews,** apart from Claude Haiku 5.5 as the last of the free order (below): no other Gemini model (plain Gemini 4 Neon among them), and no other OpenCode model (`opencode/` paid models bill per request, `opencode/gemini-4-neon` and `opencode/gemini-4-hydrogen` among them, and Go's larger models use up the plan in a few reviews). A model gets a place only on the owner's word, after the `reviewer-benchmark` skill has measured it.
 
 Claude Fable 5.2 never reviews, by default or as a replacement: it costs about twice Opus 5.5 and has a weekly limit of its own, kept for the demanding tasks the owner chose it for. A change Fable wrote counts as Opus's below: where Opus's change gets Sonnet 5.5, so does Fable's, and "your own model in a fresh context" means Opus 5.5.
 
 - **The cross reviewer** is the paid reviewer of another family: Codex's GPT-6.2 Sol for a change any family but Codex wrote (Claude, Gemini or a free model), Claude Sonnet 5.5 for a change Codex wrote.
-- **Codex is short** when your brief says so, or when a Codex reviewer fails on a usage limit. Then a Claude change's cross reviewer is the Claude model you aren't (Sonnet for Opus's change, Opus for Sonnet's), and a free reviewer joins to bring a second family back; any other change's is Sonnet.
+- **Codex is short** when your brief says so, or when a Codex reviewer fails on a usage limit. Then a Claude change's cross reviewer is Neon; while Neon can't review, it is the Claude model you aren't (Sonnet for Opus's change, Opus for Sonnet's), and a free reviewer joins to bring a second family back. Any other change's is Sonnet.
 
 | Level | Round 1 |
 |---|---|
 | Light | Gemini 4 Hydrogen, while Antigravity's Gemini 5-hour window is under about 60%, unless a Gemini model wrote the change. Otherwise, or when it is limited, one free reviewer. If none answers, the cross reviewer. |
-| Standard | The cross reviewer and Hydrogen. When Codex is short: its Claude substitute and Hydrogen, plus one free reviewer if one answers. |
-| Deep | Two paid reviewers with different focus, plus Hydrogen and one free reviewer if one answers (focus for both: an open look). For a change any family but Codex wrote: Sol (logic, security, failure paths) and Opus (tests, docs, what the user sees, the project's rules), whichever model wrote it: for Opus's own change, Opus as a new agent that gets the brief and nothing else of yours; when Codex is short, Opus and Sonnet split those. For a change Codex wrote: Opus (logic, security, failure paths) and Sonnet (tests, docs, what the user sees). |
+| Standard | The cross reviewer and Neon. When Codex is short: the cross reviewer that stands in (above), Neon beside it when that is Sonnet, and one free reviewer if one answers. |
+| Deep | Two paid reviewers with different focus, plus Neon and one free reviewer if one answers (focus for both: an open look). For a change any family but Codex wrote: Sol (logic, security, failure paths) and Opus (tests, docs, what the user sees, the project's rules), whichever model wrote it: for Opus's own change, Opus as a new agent that gets the brief and nothing else of yours; when Codex is short, Neon takes Sol's focus beside Opus (while Neon can't review, Opus and Sonnet split the two). For a change Codex wrote: Opus (logic, security, failure paths) and Sonnet (tests, docs, what the user sees). |
 
 Limits:
 
-- **Hydrogen gets its time and no more** (15 minutes, with the same checkpoints as a free reviewer), and reviews in round 1 only. It doesn't review a change a Gemini model wrote, or while Antigravity's Gemini 5-hour window is past about 85% (at Light, at about 60% or more: there the review is its alone). When it doesn't review, or is limited:
-  - at Light, the free order below takes over, as if Hydrogen hadn't been chosen;
+- **Neon gets a paid reviewer's time** (30 minutes) and re-reviews as one (section 5). It doesn't review while Antigravity's Gemini 5-hour window is past about 85%. When it doesn't review, or is limited:
   - at Standard, one free reviewer takes its place if one answers, unless one is reviewing already;
-  - at Deep, nothing takes its place.
+  - at Deep, nothing takes its place;
+  - as a Claude change's cross reviewer while Codex is short, the Claude model you aren't takes its place, and a free reviewer joins.
+- **Hydrogen gets its time and no more** (15 minutes, with the same checkpoints as a free reviewer), and reviews in round 1 only. It doesn't review while Antigravity's Gemini 5-hour window is at about 60% or more, since there the review is its alone. When it doesn't review, or is limited, the free order below takes over, as if Hydrogen hadn't been chosen.
 - **A free reviewer gets its time and no more** (15 minutes for each model). One that is limited (a quota error, "Free usage limit reached", a 429 that a retry a few minutes later still gets, in T3, no activity yet or turns typically more than a minute apart when you check its pace 5 minutes after launch; or no answer in its time; [references/launching.md](references/launching.md) has the checkpoints) moves on in this order: free DeepSeek, free GLM, Go DeepSeek, Go GLM, and at Standard and Deep, last, Claude Haiku 5.5 at high, with a free reviewer's brief and time. Haiku is left out for a change a Claude model wrote while Codex is short: there the free reviewer is to bring a second family back, and Haiku isn't one. When the order runs out, it is dropped, except at Light, where the cross reviewer takes its place.
   - OpenCode's free limit covers both its free models: after "Free usage limit reached" from one, go straight to Go.
   - A model that is slow or doesn't answer is limited on its own: the next model in the order still gets its turn, since slowness is often one model's, not the tier's.
   - A Go model that "requires Global regions" isn't limited, just unavailable: try the other.
   - Before you launch a Go model, read Go's windows ([references/launching.md](references/launching.md)). Past about 85% of any of them, Go counts as limited.
-- **A paid reviewer that fails on a limit** is replaced once, by a paid model not already reviewing this round: Sol by the Claude model you aren't (Sonnet when no Claude model wrote the change), or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.
+- **A paid reviewer that fails on a limit** (Neon: as its line above says) is replaced once, by a paid model not already reviewing this round: Sol by the Claude model you aren't (Sonnet when no Claude model wrote the change), or, if that one is already reviewing, by your own model in a fresh context (and a free reviewer joins, as when Codex is short); Sonnet by Opus, Opus by Sonnet, under the same rule. If the replacement fails too, the round has no independent reviewer: don't merge. In an orchestrated run, report status `ready` with "no reviewer available" (the orchestrator runs the gate again once a reviewer has room); otherwise review the diff yourself in a fresh pass, say so in the record, and leave the merge to the user. A reviewer that timed out may still be running: stop it before you start its replacement.
 
 ## 3. Brief them
 
@@ -73,13 +75,13 @@ Sort every finding into one of these:
 
 You decide the tag; a reviewer's is a suggestion. Data loss, a security or privacy hole and a build or test that fails are blockers even when they need rare timing or input. A real defect on a common path that neither list names, such as a large slowdown, is a blocker, and so is a real defect you're unsure about.
 
-Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a blocker or follow-up that only one reviewer raised and that you can't show with a test goes to the other paid reviewer for a yes or no with its reason, before you change code.
+Agreement between reviewers doesn't make a finding real, and "no defects" doesn't make the change correct: check the claims either way. At Deep, a blocker or follow-up that only one reviewer raised and that you can't show with a test goes to another paid reviewer of the round for a yes or no with its reason, before you change code.
 
-**Ask the reviewer when you tag its blocker lower.** When you reject a finding a reviewer tagged a blocker, or give it a lower tag, ask that reviewer whether it agrees, with the question in [references/reviewer-brief.md](references/reviewer-brief.md#the-question-about-a-tag): the finding as it reported it, your tag and your reason. A free reviewer's blocker, or Hydrogen's or Haiku's, goes to the round's paid reviewer instead (at Light, the cross reviewer, launched for this). Put the question in that reviewer's next round when it has one; otherwise launch it alone, with 10 minutes and no replacement. Record the answer: `agrees`, `holds` or `no answer`. Your tag stands whatever the answer: a reply never makes a blocker, holds back the merge, counts in section 5, or starts a fix or a round in this gate. If the answer shows you a case you got wrong, the most you do is tag the finding a follow-up and list it open with the fix it needs: it is fixed after the merge, as any open follow-up is.
+**Ask the reviewer when you tag its blocker lower.** When you reject a finding a reviewer tagged a blocker, or give it a lower tag, ask that reviewer whether it agrees, with the question in [references/reviewer-brief.md](references/reviewer-brief.md#the-question-about-a-tag): the finding as it reported it, your tag and your reason. A free reviewer's blocker, or Hydrogen's or Haiku's, goes to the round's cross reviewer instead (at Light, launched for this). Put the question in that reviewer's next round when it has one; otherwise launch it alone, with 10 minutes and no replacement. Record the answer: `agrees`, `holds` or `no answer`. Your tag stands whatever the answer: a reply never makes a blocker, holds back the merge, counts in section 5, or starts a fix or a round in this gate. If the answer shows you a case you got wrong, the most you do is tag the finding a follow-up and list it open with the fix it needs: it is fixed after the merge, as any open follow-up is.
 
 ## 5. Re-review while it converges
 
-Re-review only when a fix changed logic, not for docs, tests or wording. Send the paid reviewers who found blockers or follow-ups the diff since their review and the list of findings already raised, and ask about the fix and what it touches: no earlier finding again, except one a fix didn't settle, reported as "not fixed". Free reviewers, Hydrogen and Haiku don't re-review: a logic fix that only one of them asked for goes to the round's paid reviewer (at Light, the cross reviewer, launched now).
+Re-review only when a fix changed logic, not for docs, tests or wording. Send the paid reviewers who found blockers or follow-ups the diff since their review and the list of findings already raised, and ask about the fix and what it touches: no earlier finding again, except one a fix didn't settle, reported as "not fixed". Free reviewers, Hydrogen and Haiku don't re-review: a logic fix that only one of them asked for goes to the round's cross reviewer (at Light, launched now).
 
 A conflict resolution after the review that changed logic gets one more look by the cross reviewer, outside the count of rounds; if that look finds a blocker, stop as for a review that didn't converge, below.
 

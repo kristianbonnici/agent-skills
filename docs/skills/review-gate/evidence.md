@@ -2,7 +2,7 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
-Last checked: new work 2026-11-13; sources 2026-10-30.
+Last checked: new work 2026-11-21; sources 2026-10-30.
 
 ## Our own runs (study of 2026-10-30)
 
@@ -550,6 +550,41 @@ confirmed.
   follow-ups, Sol at medium found 18 blockers and 43 follow-ups, Opus 11 and 40, Terra 10 and 32.
 
 → *Changed in 8.0.0 (owner, 2026-11-18: "let's swap it in for Terra"): GPT-6.2 Sol at medium is the Codex reviewer, in every place Terra had.*
+
+## Orchestrator (Neon) as a reviewer (2026-11-21)
+
+The owner moved from Google AI Pro to Ultra, and the [reviewer-benchmark](../reviewer-benchmark/README.md)
+ran two more models over its 16 past changes, one review each with a paid reviewer's brief and 30 minutes,
+through Antigravity's CLI in its read-only `plan` mode: Gemini 4 Neon at high, and Antigravity's
+Orchestrator (Neon), which runs Gemini 4 Neon at extra high and hands routine steps to a faster model (the
+CLI takes no level for it). Claude Opus 5.5 scored the reports blind. Their findings outside the key that
+held up against the code (51, merged into 37 defects, 4 of them blockers) were added to the key, and every
+saved report was scored against them: 194 known defects, 27 blockers.
+
+| Model | Found | Blockers | False share | Minutes a review |
+|---|---|---|---|---|
+| Orchestrator (Neon) | 120.5 (62.1%) | 23 of 27 | 2.4% | 15.2 |
+| Gemini 4 Neon, high | 96.5 (49.7%) | 18.5 of 27 | 0% | 9.8 |
+| GPT-6.2 Sol, medium | 82 (42.3%) | 19 of 27 | 0% | 2.3 |
+| Claude Opus 5.5, high | 60.5 (31.2%) | 12.5 of 27 | 1.3% | 5.3 |
+| Gemini 4 Hydrogen, high | 52.5 (27.1%) | 6 of 27 | 3% | 4.4 |
+
+- **Not only its own finds:** on the 157 defects known before this run, the Orchestrator found 88.5 and 19
+  of 23 blockers, Sol 77 and 19, plain Neon 72.5 and 15.5.
+- **Together, found in full:** Sol alone 79 defects and 19 blockers; Sol and Hydrogen 111 and 21; Sol and
+  plain Neon 132 and 24; Sol and the Orchestrator 146 and 26; Sol, Opus and Hydrogen 127 and 22.
+- **Cost:** Antigravity keeps each call's tokens in its local conversation store. At Gemini 4 Neon's API
+  list price ($3 a million input, $0.15 cached, $15 output, thinking as output), a plain Neon review came
+  to about $2.54 (15 reviews, $1.81 to $3.37) and an Orchestrator review about $3.77 (15, $2.36 to $5.71);
+  the store records only the Orchestrator's own Neon calls, not its faster model's. On the subscription the
+  32 reviews and the owner's own use took the Gemini week from 100% to 79% left: about 0.65 points a
+  review at most.
+- **Limits of the sample:** one review per change per model, and the Orchestrator's extra high may account
+  for some of its lead over plain Neon at high; the faster model it hands steps to is Google's choice.
+
+→ *review-gate 8.5.0 (owner, 2026-11-21): the Orchestrator (Neon) takes Hydrogen's place beside the paid
+reviewers at Standard and Deep, and a Claude change's cross reviewer's when Codex is short; Hydrogen keeps
+Light.*
 
 ## A cap on a follow-up patch's review (2026-11-20)
 
