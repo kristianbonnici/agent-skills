@@ -69,7 +69,7 @@ A hex value as `color` sets only the stroke, for example `"#dee2e6"` for a faint
 
 ## Elements
 
-Every element can take `id` (needed to connect arrows to it), `color`, `strokeColor`, `backgroundColor`, `strokeStyle` (`solid`, `dashed`, `dotted`), `strokeWidth`, `fillStyle` (`solid`, `hachure`, `cross-hatch`), `roughness` (0 to 2, default 1) and `opacity`.
+Every element can take `id` (needed to connect arrows to it), `color`, `strokeColor`, `backgroundColor`, `strokeStyle` (`solid`, `dashed`, `dotted`), `strokeWidth`, `fillStyle` (`solid`, `hachure`, `cross-hatch`), `roughness` (0 to 2, default 1) and `opacity`. A long straight line, such as an axis or a level line across a chart, can draw as two strokes that drift apart at the default roughness: give it `roughness` 0.5 to 0.6.
 
 `step` (1 to 12) makes an element appear on that click of a slide; everything without one shows from the first, and the footer comes with the last. A label bound to a shape goes with its shape, and an arrow joined to shapes, without a step of its own, appears with the later of them. A step above 12, or a click on which nothing appears, is a warning. `--steps` writes the pictures ([slides.md](slides.md) on when a click is worth it).
 

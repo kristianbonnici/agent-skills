@@ -1,5 +1,9 @@
 # excalidraw-drawing changelog
 
+## 3.5.1 (2026-11-21)
+
+- The spec reference says that a long straight line at the default roughness can draw as two strokes that drift apart, and to give it `roughness` 0.5 to 0.6. From a chart whose level line across the plot looked doubled to the user, while its other lines read as one.
+
 ## 3.5.0 (2026-11-21)
 
 - When the user asks for a change to a picture, the agent changes only that, copies the current PNG to the next numbered name (`v1.png`, `v2.png`...) before building the change, and shows the previous and current one together. From a chart for a social post: asked to make it look simpler, like two example charts, the agent also changed its theme, labels, markers and margins, which the user had reverted, and each round overwrote the last picture, so the user couldn't compare versions. From its review: the copy is made before the build, which replaces the PNG, and the rule names no file a vault build doesn't write.

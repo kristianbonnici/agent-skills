@@ -2,7 +2,7 @@
 name: excalidraw-drawing
 description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), a single diagram such as a line, bar or scatter chart or any other chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table, or a slide deck for a talk (one hand-drawn slide per point, speaker notes, click-by-click reveals) - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md), and a deck also as a browser presentation, a PDF and a PowerPoint - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, slides or a presentation in this style, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 3.5.0
+  version: 3.5.1
 ---
 
 # Excalidraw Drawing
