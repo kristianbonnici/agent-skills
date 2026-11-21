@@ -2,7 +2,7 @@
 
 ## 5.13.1 (2026-11-21)
 
-- The final report's "Skill changes proposed" lists every proposal `skill-evolution` 1.3.0 makes: the top three in full and the rest one line each, instead of at most three.
+- The final report's "Skill changes proposed" lists every proposal `skill-evolution` 1.3.0 makes: the top three in full and the rest one line each, instead of at most three. The finish step says the same; from the review, which found it still said at most three.
 
 ## 5.13.0 (2026-11-21)
 

@@ -1,5 +1,9 @@
 # skill-evidence changelog
 
+## 1.1.1 (2026-11-21)
+
+- No longer says `skill-evolution` records at most three proposals at once: from `skill-evolution` 1.3.0 it proposes every change worth making, and how many it shows is its own rule.
+
 ## 1.1.0 (2026-11-20)
 
 - **Every candidate is read in full, and one that can't be is carried to the next run** (the 2026-11-20 run: one paper was weighed only from its abstract and another never opened, and neither was recorded, so the next run had no way to know of them). Papers are read from arXiv's HTML or PDF; a candidate not read in full goes under "Left out" marked "(not yet read: <why>)", and the next run weighs it first, whatever its date, keeping the mark if it still can't be read. A cited source whose claims couldn't be confirmed from what could be read is marked "(not rechecked <date>: <why>)", and every run that checks its file rechecks it whatever the sources date, until the mark comes off (from this release's review).

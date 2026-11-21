@@ -2,7 +2,7 @@
 name: skill-evidence
 description: Keep the evidence behind agent skills current, with the owner deciding every change. Search for new top-tier, recent work that bears on each skill's rules, recheck the sources its evidence file already cites (revised, published, contradicted, dated or gone), prepare the evidence edits on a branch for the owner to merge, and turn findings that undercut a rule into skill-evolution proposals. Never changes a skill or pushes. Use on its schedule, and when the user asks to check, update or refresh a skill's evidence or sources, or whether its evidence still holds.
 metadata:
-  version: 1.1.0
+  version: 1.1.1
 ---
 
 # Skill Evidence
@@ -59,7 +59,7 @@ The repository is public: cite public sources and aggregate numbers only, never 
 
 ## 6. Findings that undercut a rule
 
-New work that contradicts a rule, or shows a better one, is a proposal as well as an evidence entry. Hand it to the `skill-evolution` skill as an incident, its line `<date> evidence: <title, linked, date>: <what it found>` (in `lessons note`, without the date, which the script adds): that skill checks the lessons for an earlier decision, writes the change small and records it with `lessons add`, at most three proposals at once. The evidence entry it cites goes on your branch as usual.
+New work that contradicts a rule, or shows a better one, is a proposal as well as an evidence entry. Hand it to the `skill-evolution` skill as an incident, its line `<date> evidence: <title, linked, date>: <what it found>` (in `lessons note`, without the date, which the script adds): that skill checks the lessons for an earlier decision, writes the change small and records it with `lessons add`. The evidence entry it cites goes on your branch as usual.
 
 ## 7. Report
 
