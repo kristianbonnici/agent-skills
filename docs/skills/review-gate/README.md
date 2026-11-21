@@ -14,7 +14,7 @@ flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
   level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
   level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Sol for any change but Codex's,<br/>Sonnet for Codex's,<br/>+ Neon (Antigravity's Orchestrator)"]
-  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for any change but Codex's<br/>(Neon and Opus when Codex is short),<br/>Opus and Sonnet for Codex's,<br/>+ Neon<br/>+ a free reviewer if one answers"]
+  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for any change but Codex's<br/>(Neon and Opus when Codex is short),<br/>Opus and Sonnet for Codex's,<br/>+ Neon unless it holds a focus<br/>+ a free reviewer if one answers"]
   light -->|neither Hydrogen nor a free model answers| standard
   standard -.->|Codex short| sub["Neon as a Claude change's<br/>cross reviewer (else a Claude substitute)<br/>+ a free reviewer"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
