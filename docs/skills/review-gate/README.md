@@ -35,9 +35,9 @@ flowchart TD
 |---|---|---|
 | Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
 | Standard | the cross reviewer and Neon (Codex short: Neon as a Claude change's cross reviewer, and a free reviewer); a free reviewer in Neon's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
-| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Neon and Opus when Codex is short, Opus and Sonnet while Neon can't review; Opus and Sonnet for Codex's), + Neon and a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Neon and Opus when Codex is short, Opus and Sonnet while Neon can't review; Opus and Sonnet for Codex's), + Neon unless it already holds a focus, and a free reviewer if one answers | the paid reviewers who found the fixed findings |
 
-- **Paid reviewers:** Codex's GPT-6.2 Sol at medium reasoning, and Claude Sonnet 5.5 and Opus 5.5 at high.
+- **Paid reviewers:** Codex's GPT-6.2 Sol at medium reasoning, Claude Sonnet 5.5 and Opus 5.5 at high, and Neon (Antigravity's Orchestrator (Neon)) at the level Antigravity gives it.
   Sol replaced GPT-6.1 Terra in 8.0.0: on the benchmark it found 61 of the 144 defects known before its run
   and 17 of 20 blockers, where Terra found 42 and 9, and none of its findings were false
   ([evidence.md](evidence.md#gpt-62-sol-at-medium-2026-11-18)).
@@ -47,8 +47,9 @@ flowchart TD
   11 ([evidence.md](evidence.md#opus-as-deeps-claude-reviewer-2026-11-18)). Sonnet stays the cross reviewer
   of a change Codex wrote, Opus's partner at Deep there, and the Claude substitute for Opus's
   change when Codex is short.
-- **Codex is preferred but never required:** when it is short, a Claude model other than the change's
-  author takes its place, and a free reviewer brings back a second family.
+- **Codex is preferred but never required:** when it is short, Neon takes its place on a Claude change at
+  Standard and Deep; at Light, or while Neon can't review, a Claude model other than the change's author does,
+  and a free reviewer brings back a second family.
 - **Free reviewers** (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash) run on OpenCode's free tier,
   which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
