@@ -1,8 +1,8 @@
 # skill-evolution
 
 Skills evolve from what actually happened to them, never on their own. This skill turns incidents (what cost the owner
-time, work or an interruption because a skill's rules caused it or didn't prevent it) into at most
-three proposed changes, each with its evidence and version bump. The owner decides; nothing changes
+time, work or an interruption because a skill's rules caused it or didn't prevent it) into proposed
+changes, ranked by the cost they prevent, each with its evidence and version bump. The owner decides; nothing changes
 until they name a proposal. The long-horizon orchestrator runs it at every finish, from the incidents
 its ledger records during the run; anyone can also ask for it after a skill misbehaved.
 
@@ -18,7 +18,7 @@ flowchart TD
   help -->|yes| past{Already in the lessons?}
   past -->|"declined, nothing new"| seen
   past -->|"new, a repeat, or an applied<br/>change that recurred"| prop["Write the change small:<br/>the rule as it would read, where, bump"]
-  prop --> top["Propose at most three, with their IDs;<br/>the rest wait in the lessons"]
+  prop --> top["Propose every change worth making:<br/>the top three in full, the rest one line each"]
   top --> owner{The owner}
   owner -->|"apply L-K7QM"| apply["Change, version, changelog,<br/>checks, review gate, tag;<br/>no push"]
   owner -->|"skip L-M3DX"| declined["Recorded as declined"]

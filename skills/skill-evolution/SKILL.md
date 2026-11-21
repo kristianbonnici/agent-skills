@@ -1,8 +1,8 @@
 ---
 name: skill-evolution
-description: Evolve agent skills from what runs teach them, with the owner deciding every change. Turn what went wrong with a skill into proposed changes the owner accepts or declines. Collect incidents (from a long-horizon-orchestrator run's ledger, what the user or you just saw, or outside evidence skill-evidence found), check each against the skill's current text and the record of earlier proposals, and propose at most three concrete rule changes with their evidence and version bump. Never changes a skill without the owner's yes; an accepted proposal is applied with a version bump and the review gate. Use at the finish of an orchestrator run, whenever the user says a skill misbehaved or to "note this for the skill", when the owner moves to a newer model generation or asks whether the skills still fit one, and when they ask to see, apply or decline proposed skill changes.
+description: Evolve agent skills from what runs teach them, with the owner deciding every change. Turn what went wrong with a skill into proposed changes the owner accepts or declines. Collect incidents (from a long-horizon-orchestrator run's ledger, what the user or you just saw, or outside evidence skill-evidence found), check each against the skill's current text and the record of earlier proposals, and propose every concrete rule change worth making, ranked by the cost it prevents, with its evidence and version bump. Never changes a skill without the owner's yes; an accepted proposal is applied with a version bump and the review gate. Use at the finish of an orchestrator run, whenever the user says a skill misbehaved or to "note this for the skill", when the owner moves to a newer model generation or asks whether the skills still fit one, and when they ask to see, apply or decline proposed skill changes.
 metadata:
-  version: 1.2.0
+  version: 1.3.0
 ---
 
 # Skill Evolution
@@ -43,14 +43,14 @@ For each incident:
 ## 4. Record and propose
 
 - **Record every incident:** write each new entry to a file of its own in a temporary folder outside any repository (`mktemp -d`; private details must never land in the skills repository), in the form in [references/entries.md](references/entries.md), its heading `## L?. <skill>: <title>`), a proposal as `proposed`, the rest as `seen` (so a repeat later becomes evidence), and pass them all to one `lessons add <files>`; it prints each one's ID. A repeat of an existing entry is `lessons note <ID> "<run or session>: <what happened>"` instead. The lessons are private: run names, projects and details are fine there. Show the owner only IDs `add` printed.
-- **Propose at most three,** the ones with the highest cost prevented, chosen from this time's and the earlier ones still `proposed` in the file (check each earlier one against the skill's current text first: one the skill now covers becomes `seen`, with why). Each in this form:
+- **Propose every change worth making,** ranked by the cost it prevents, from this time's and the earlier ones still `proposed` in the file (check each earlier one against the skill's current text first: one the skill now covers becomes `seen`, with why). The top three in full, in this form:
 
   ```text
   **<ID>. <skill>: <short title>.** <What happened, with when and what it cost, in one or two sentences.> <The change, as the rule would read.> (<file and section>; <major|minor|patch> by docs/VERSIONING.md.)
   **Recommended:** apply, because <one sentence>. <Or: "skip, because <…>".>
   ```
 
-  The rest stay `proposed` in the lessons; say in one line how many wait there, so they come up again next time. With nothing worth proposing, say so in one line, or, for an orchestrator's report, return nothing.
+  The rest one line each, so the owner can apply any of them now: `**<ID>. <skill>: <short title>.** Recommended: apply|skip, because <one sentence>.` With nothing worth proposing, say so in one line, or, for an orchestrator's report, return nothing.
 
 ## 5. When the owner decides
 
@@ -69,6 +69,6 @@ Only the owner's explicit answer about a proposal counts ("apply L-K7QM", "skip 
 ## Never
 
 - Change a skill without the owner's yes for that proposal.
-- Propose more than three at once, or the same declined change without new evidence.
+- Show more than three proposals in full at once, or propose a declined change again without new evidence.
 - Propose from something you didn't verify: read the ledger, the thread or the file.
 - Put private details in the public skills repository, or push it unasked.
