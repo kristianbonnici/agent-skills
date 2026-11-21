@@ -35,18 +35,18 @@ Medium is the normal level for a well-specified, bounded task; high is for deman
 | Rarely, on Claude: a task where Opus 5.5 would probably fall short and Fable would clearly do better. Name why in the contract | Fable 5.2 at high, not Opus 5.5 ([Fable 5.2](#fable-52-the-demanding-tasks-only)) |
 | Sparingly: large or many-sided work that clearly gains from parallel sub-agents inside the task (several independent lanes, a broad review, a big refactor). Name the gain in the contract, and the brief's lane cap: "at most <n> sub-agents at once, <m> in all", from the contract's budget for it | the harness's multi-agent mode: Ultracode in Claude Code, Ultra in Codex |
 | A fast helper's step or research lane, on Antigravity or OpenCode | high (see "Fast helpers" below) |
-| An advanced helper step: Gemini 4 Hydrogen first, then Gemini 4 Argon | high: `gemini-4-hydrogen-high`, `gemini-4-argon-high` (see "Advanced helpers" below) |
+| An advanced helper step, on Gemini 4 Neon | high: `gemini-4-neon-high` (see "Advanced helpers" below) |
 
 - **Never use low reasoning.** If a task feels too small for medium, it is probably a step to hand off, not a task.
 - **Always set the level explicitly at launch,** and never inherit a model's default. Some defaults are low: in T3, Codex's `gpt-6.2-sol`, `gpt-6.1-sol` and `gpt-6.1-terra` default to low.
 - **In T3, the option names differ by provider:**
   - Claude: `{"id": "effort", "value": "medium" | "high" | "xhigh"}`. Ultracode is an option of its own beside it, `{"id": "ultracode", "value": true}`, only on models that list it, such as Opus and Fable, not Sonnet. Claude's models default to medium in T3, so always pass the effort.
   - Codex: `{"id": "reasoningEffort", "value": "medium" | "high" | "xhigh" | "ultra"}`.
-  - Antigravity: `{"id": "thought_level", "value": "medium" | "high" | "xhigh"}`, on the model's plain name (`gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.8-flash`). The `-high` names in this file are `agy`'s, where the level is part of the name.
+  - Antigravity: `{"id": "thought_level", "value": "medium" | "high" | "xhigh"}`, on the model's plain name (`gemini-4-hydrogen`, `gemini-4-neon`, `gemini-3.8-flash`). The `-high` names in this file are `agy`'s, where the level is part of the name.
 
   Use only values the capability catalog lists for that model.
 - **Capacity still applies.** Higher reasoning uses more of a subscription, and the multi-agent modes use a 5-hour window much faster than a single agent, because every sub-agent draws on the same window. Start a multi-agent task early in a window, not when the window is already well used, and expect it to pause for a reset on a long run. Don't step down to a level below what the work needs to save capacity.
-- **A budget is set before the call, not after.** A wake can't stop a call already running: four multi-agent tasks with 10 to 97 sub-agent lanes each have taken 16 points of Claude's week in about 16 minutes, and one async Argon lane 80 points of Argon's week against a budget of 30. So a multi-agent task's brief names its lane cap, and Argon runs only in `wait` mode with a timeout of a few minutes ([Advanced helpers](#advanced-helpers-gemini-4-hydrogen-then-argon)).
+- **A budget is set before the call, not after.** A wake can't stop a call already running: four multi-agent tasks with 10 to 97 sub-agent lanes each have taken 16 points of Claude's week in about 16 minutes, and one async lane on Gemini 4 Argon 80 points of its week against a budget of 30. So a multi-agent task's brief names its lane cap, and Neon, the advanced helper, runs only in `wait` mode with a timeout of a few minutes ([Advanced helpers](#advanced-helpers-gemini-4-neon)).
 
 ## Fable 5.2: the demanding tasks only
 
@@ -114,8 +114,8 @@ The script asks each provider directly, so the numbers include use from other de
 - **Claude:** Claude Code's own `/usage` command, run without a model call (`claude -p /usage`). It uses no quota and works even when the window is used up. Its windows are `five_hour`, `weekly` (all models) and, on plans that include Fable, `weekly_fable`, Fable's own week inside it ([Fable 5.2](#its-weekly-limit)).
 - **Codex:** Codex's app server (`account/rateLimits/read`), with Codex's own sign-in.
 - **Antigravity:** the Antigravity CLI's own `/usage` command (`agy -p /usage`), which starts no agent turn and uses no quota. Antigravity splits its models into groups, and each group has its own windows:
-  - `gemini_models_five_hour` and `gemini_models_weekly`: Gemini 4 Hydrogen, Flash and Pro, so the Hydrogen helper (Antigravity's group note names only Flash and Pro, but a Hydrogen call moves these windows and not Argon's);
-  - `gemini_4_argon_weekly`: Gemini 4 Argon. On the Pro plan, Argon has its own weekly window and no 5-hour one;
+  - `gemini_models_five_hour` and `gemini_models_weekly`: every Gemini model, so the Hydrogen and Neon helpers and Hydrogen's reviews all draw on this one pair. On the owner's Ultra plan the group holds Gemini 4 Neon, Carbon, Argon and Hydrogen, the Orchestrator models and Gemini 3.8 Flash (the group's note in the snapshot lists them);
+  - `gemini_4_argon_weekly`: on the Pro plan only, Argon's own week. The run no longer uses Argon;
   - `claude_and_gpt_models_*`: the Claude and GPT models Antigravity also offers, which the run doesn't use.
 
   Quota is used in proportion to the cost of the tokens, so a call's size matters more than how many calls there are. If `ai_credits_remaining` appears, the owner has paid credits that Antigravity can spend once a window is used up. Never let a run spend them: an Antigravity helper that reports a quota error stops there, even if credits would let it go on.
@@ -213,7 +213,7 @@ Then:
 A free model's limit isn't a window the run was sized on, and its reset can't be read or scheduled: OpenCode's free limit can stop both its free models together, for the whole computer, minutes into a run and again soon after a reset. So a task given to a free or Go model doesn't pause; it moves:
 
 1. **It starts on Go, not the free tier.** A whole task given to this pool starts on `opencode-go/deepseek-v4.1-flash`, or on `opencode-go/glm-5.3-flash` while DeepSeek "requires Global regions": a stop in the middle of a task costs a handoff, and the free tier can stop at any moment.
-2. **Between OpenCode's free tier, OpenCode Go and Antigravity's Gemini models, always.** They are the run's free and low-cost pool, so a task moves to the next one whenever a limit stops it, in any direction, without a line in the contract and without asking: to Go while either of its two models answers, to Gemini 4 Hydrogen at high while the Gemini windows have room (or Gemini 4 Argon within the run's Argon budget, for work Hydrogen can't do well), and to OpenCode's free models while they answer. OpenCode's free limit covers all its free models at once, so moving to the other free model doesn't get past it.
+2. **Between OpenCode's free tier, OpenCode Go and Antigravity's Gemini models, always.** They are the run's free and low-cost pool, so a task moves to the next one whenever a limit stops it, in any direction, without a line in the contract and without asking: to Go while either of its two models answers, to Gemini 4 Hydrogen at high while the Gemini windows have room (or Gemini 4 Neon within the run's Neon budget, for work Hydrogen can't do well), and to OpenCode's free models while they answer. OpenCode's free limit covers all its free models at once, so moving to the other free model doesn't get past it.
 3. **Then to a paid model, also without asking.** When the whole pool is limited, move the task to Codex's GPT-6.1 Terra or Claude Sonnet at high, whichever has more room in its windows. You choose at the time; nothing about it goes to the user before or during the run.
 4. **When the limit stops it** (its thread fails or stops on "Free usage limit reached", a quota error, or a rate-limit error that a retry a few minutes later still gets), save its uncommitted changes as a patch in the run directory, note in the ledger what it finished, and launch the next model at once on its own thread with the same brief, the same branch and worktree where the host allows (else a new one with the patch applied), and a handoff note: what is done, what is left, where the patch is.
 5. **Don't wait for the limited model,** and don't move the task back when it recovers. If the next one is limited too, take the one after; only when the pool and both paid models are all limited does the task pause, or park at the end of the run.
@@ -259,7 +259,7 @@ The owner may have Claude API credits beside the Claude subscription: in T3, a s
 | Computer use: operating a desktop app or real browser, clicking through a UI, checking what is actually on screen | Codex's GPT-6.1 Terra (`gpt-6.1-terra`, at high) | Codex has room for that piece | Codex's computer use is stronger, and Terra is cheaper than Sol and faster at it |
 | Research and retrieval: web and documentation research, searching a codebase, logs or many files, surveying how others solve a problem, collecting facts and evidence | A fast helper (see "Fast helpers" below), as a sub-task or a research subagent inside the task | the result can be checked against its sources | The owner: use them freely for research and retrieval |
 | A simple, fully specified step: a mechanical edit from an exact rule, renames, boilerplate from a template, extracting facts from named files | A fast helper | the result is cheap to check | The owner's preference |
-| A bounded sub-task too hard for the flash models: deep research and synthesis, a scoped investigation, a well-specified piece of code | Gemini 4 Hydrogen, then Gemini 4 Argon where Hydrogen's answer fell short or Hydrogen was limited (see "Advanced helpers" below) | the Gemini windows have room (Argon: the run's Argon budget has room), and the agent that asked can check the result | The owner's preference, Hydrogen first |
+| A bounded sub-task too hard for the flash models: deep research and synthesis, a scoped investigation, a well-specified piece of code | Gemini 4 Neon at high (see "Advanced helpers" below) | the run's Neon budget and the Gemini windows have room, and the agent that asked can check the result | The owner's preference: Neon for the harder work, Hydrogen for the fast |
 | Everything else | Home harness | always | section 1 |
 
 - **A preference, not a rule.** Claude agents can do computer use too. When Codex is short on room, unavailable, or the computer-use part is trivial, keep the work on the home harness.
@@ -274,7 +274,7 @@ Two providers offer fast models that cost the run little. Handing them research 
 - **Antigravity:** `gemini-4-hydrogen-high`, Gemini 4 Hydrogen at high reasoning (in T3, `gemini-4-hydrogen` with the option `thought_level` `high`, as T3 lists every Antigravity model since 2026-11-20; `agy` keeps the level in the name), which replaced Gemini 3.8 Flash. While Antigravity still lists Gemini 3.8 Flash (`gemini-3.8-flash` in T3, `gemini-3.8-flash-high` for `agy`), it is the fallback for a Hydrogen that Antigravity reports unavailable; never Hydrogen through OpenCode, where `opencode/gemini-4-hydrogen` bills per request.
 - **OpenCode:** only its two free models that are good enough: `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free`, each with `{"id": "variant", "value": "high"}`. When the free tier stops them: `opencode-go/beam-free`, free for a limited time and outside both the free tier's limit and the Go plan's, then the same two models on the owner's flat-rate OpenCode Go plan, `opencode-go/deepseek-v4.1-flash` and `opencode-go/glm-5.3-flash`, all with the same option. Its other free models, Go's Iceman among them, aren't good enough. Its `opencode/` paid models bill the owner per request (`opencode/deepseek-v4.1-flash`, without `-free`, is one). Go's other models count far more heavily against the plan. Use none of these.
 
-These models stay fast at high reasoning, and the extra reasoning is what makes their results dependable. Don't use these providers' other models or levels (Gemini Pro, Hydrogen at extra high, the Claude and GPT models Antigravity also offers, OpenCode's paid models, Go's larger models) to do bigger work through the back door. That work belongs to the home harness. The one exception is the advanced steps below, on Hydrogen and then Gemini 4 Argon.
+These models stay fast at high reasoning, and the extra reasoning is what makes their results dependable. Don't use these providers' other models or levels (Gemini 4 Carbon and Argon, the Orchestrator models, Hydrogen at extra high, the Claude and GPT models Antigravity also offers, OpenCode's paid models, Go's larger models) to do bigger work through the back door. That work belongs to the home harness. The one exception is the advanced steps below, on Gemini 4 Neon.
 
 **What they take,** as often as it genuinely helps, with no fixed count:
 - **Research and retrieval:** web and documentation research, searching a codebase, logs or many files, surveying how other projects solve a problem, collecting facts, API details or evidence, comparing options against named criteria, condensing long material.
@@ -300,7 +300,7 @@ You may use them too, for the run's own chores: collecting thread times for the 
 
   OpenCode's log (`~/.local/share/opencode/log/opencode.log`) records only that last error, not the retries before it. The owner's OpenCode console lists every request.
 - **OpenCode Go has limits of its own:** per 5 hours, per week and per month. The console shows one set of meters for all models, and the owner's own use counts too, so plan as if every Go model shares one limit. Before each wave, read `opencode_go` in the snapshot: while `five_hour`, `weekly` or `monthly` is past about 85%, leave Go's DeepSeek and GLM out of new briefs, and start a whole task on Gemini 4 Hydrogen instead of Go. When it runs out, Go's requests fail with a quota error. A quota error from one Go model still means trying the other: if the limit is shared, that fails at once. Extra Usage stays off, so it can't bill past the plan: never turn it on. A Go model that "requires Global regions" isn't limited, just unavailable: use the other one. Beam Free's offer can end at any time: when it stops answering, move on.
-- **Antigravity has a small plan with its own limits** (the owner's plan is in the profile). Hydrogen draws on the Gemini group's 5-hour and weekly windows, as Flash did: a call with about 28,000 input tokens takes about 0.2 points of the 5-hour window and 0.1 of the week. Before each wave, read them in the usage snapshot: while `gemini_models_five_hour` is past about 85%, put OpenCode first in new briefs and leave Antigravity out until the reset. A helper that hits the limit anyway says so with a quota or rate-limit error.
+- **Antigravity has limits of its own** (the owner's plan is in the profile). Every Gemini model draws on the Gemini group's one 5-hour and one weekly window, and the owner uses them in Antigravity too: on the Pro plan, a Hydrogen call with about 28,000 input tokens took about 0.2 points of the 5-hour window and 0.1 of the week; a Neon call takes more than a Hydrogen call of the same size. Before each wave, read them in the usage snapshot: while `gemini_models_five_hour` is past about 85%, put OpenCode first in new briefs and leave Antigravity out until the reset. A helper that hits the limit anyway says so with a quota or rate-limit error.
 - **When a helper is limited,** cancel it (`task_cancel`) and switch. A task calling a helper in `wait` mode sees nothing while it waits, so it passes a `timeoutMs` of a few minutes; `waitTimedOut` is its sign to look at `task_status`. Then:
   1. **Model:** on OpenCode's free tier, delegate the same prompt again to its other good free model, unless the error was "Free usage limit reached", which covers both.
   2. **Go:** then delegate it to `opencode-go/beam-free`, then to `opencode-go/deepseek-v4.1-flash`, then to `opencode-go/glm-5.3-flash`, as far as you need.
@@ -308,7 +308,7 @@ You may use them too, for the run's own chores: collecting thread times for the 
   4. **Backup:** when both are limited, delegate it to Copilot (see "Backup helper" below), if its budget has room.
   5. **Yourself:** when every helper is limited, do the work yourself.
 
-  Try a limited OpenCode model again only on a later step, and drop it for the rest of the task if it is still slow. After an Antigravity quota error, leave that model group alone until its window resets (`resets_at` in the snapshot). Argon and Hydrogen have separate windows, so one running out doesn't stop the other.
+  Try a limited OpenCode model again only on a later step, and drop it for the rest of the task if it is still slow. After an Antigravity quota error, leave that model group alone until its window resets (`resets_at` in the snapshot). Neon and Hydrogen share the group's windows, so one running out stops the other too.
 - **Switching moves helper work only.** Helpers are free or small, not the subscriptions the user sized for the run, so their work may move between them. The task itself, and you, never move (section 3).
 - **Record it.** The ledger gets each task's helper use (provider, model and level, and for what, with counts) and every limit and switch. Where the limits began goes into the profile's calibration.
 
@@ -321,28 +321,25 @@ Copilot (`acpRegistry_copilot`, model `default`, no options) is a third fast hel
 - **When it is limited** (a quota error, or the budget is used), it drops out of the order like any other helper. Its quota resets only at `resets_at`, so don't try it again this run.
 - **Its usage is recorded locally too.** Each Copilot session writes `~/.copilot/session-state/<id>/events.jsonl`: `session.auto_mode_resolved` names the model Auto chose, and the last `session.usage_checkpoint` holds `totalNanoAiu` (units × 10⁹). Use them to attribute the run's Copilot use per helper.
 
-### Advanced helpers: Gemini 4 Hydrogen, then Argon
+### Advanced helpers: Gemini 4 Neon
 
-Some sub-tasks need more judgment than the flash models give, but are still bounded and checkable:
+Some sub-tasks need more judgment than the fast helpers give, but are still bounded and checkable:
 - **Deep research and synthesis:** comparing designs or libraries against the task's criteria, explaining how an unfamiliar part of the code works, condensing a long specification into the decisions it forces.
 - **A scoped investigation:** tracing where a failure could come from within named files or logs, and ranking the likely causes with evidence. The task's agent decides what the cause is and how to fix it.
 - **A well-specified piece of code:** a self-contained function, module or test suite against a given interface, which the task's agent reads, tests and owns.
 
 What they never take is the same as for the fast helpers: a whole task (unless the user routes one there in the contract), a design decision, the merge gate, or the orchestration.
 
-**Hydrogen first.** Antigravity's `gemini-4-hydrogen-high`, the Antigravity fast helper, takes these sub-tasks before Argon: Google puts it about level with Argon, and it draws on the Gemini group's larger windows instead of Argon's small week. That claim is still to be checked on our own work, so:
-- **Call it as for a fast helper** (section 5), with the files, paths and question up front, and watch it for limits the same way. But a limited Hydrogen doesn't hand advanced work to the next fast helper, which can't do it well: it goes to Argon while the run's Argon budget has room, otherwise back to the agent that asked.
-- **The agent that asked judges its answer.** When it falls short (wrong, shallow, or missing what was asked) and the run's Argon budget has room, the same sub-task goes to Argon; otherwise the agent does it itself.
-- **Record each one** in the handoff, and you in the ledger: the kind of sub-task, Hydrogen's outcome (held, fell short, or stopped by a limit before answering), and what finished it (Hydrogen, Argon, or the agent itself). A later study decides from those whether Argon is still worth its budget.
+**Neon takes them.** Antigravity's `gemini-4-neon-high`, Gemini 4 Neon at high reasoning, the strongest of Antigravity's Gemini models, replaced Gemini 4 Argon in this role on the owner's Ultra plan (owner, 2026-11-21). Hydrogen stays the fast helper. Neon draws on the Gemini group's windows, which Hydrogen's helpers and reviews and the owner's own Antigravity use share, and it costs more of them per token than Hydrogen does, so:
+- **In the contract,** give the run a Neon budget in points of `gemini_models_weekly`. The default is at most a third of what is left, so the owner keeps the rest of the week. Count the window's whole rise during the run against it: Hydrogen moves the same window, though far less. Name the tasks that may use it.
+- **Give it the files, paths and question up front,** so it doesn't spend its quota searching.
+- **Only in `wait` mode, with a timeout of a few minutes,** never as an async lane: a budget can't stop a call already running, and one async lane on Argon once took 80 points of a 30-point budget.
+- **Before each wave,** check `gemini_models_weekly` against the budget and `gemini_models_five_hour` against about 85%, and leave Neon out of new briefs once either is reached.
+- **The agent that asked judges its answer** and records each one in the handoff, and you in the ledger: the kind of sub-task, Neon's outcome (held, fell short, or stopped by a limit before answering), and what finished it (Neon, Hydrogen, or the agent itself). How much of the window each call took goes into the profile's calibration.
+- **When Neon is limited:** with its budget used but the windows open, the sub-task may go to Hydrogen at high, whose answer the agent checks as closely; with the Gemini windows used up, Hydrogen is limited too, and the work goes back to the agent that asked. Don't hand it to OpenCode, which can't do it well.
+- **Not its Orchestrator.** Antigravity's Orchestrator (Neon) hands routine steps to a faster model it chooses. Use plain Neon, so the record says which model did the work, unless the reviewer benchmark shows the Orchestrator equal for less quota.
 
-**Argon when Hydrogen fell short or was limited.** Antigravity's `gemini-4-argon-high` has a small quota, so give it a budget. On the Pro plan, Argon has a weekly window of its own (`gemini_4_argon_weekly`) and no 5-hour one, and quota is used by token cost. A one-word reply to a 22,000-token prompt uses about 0.9% of the week, so a research lane that reads many files can take a large share. So:
-- **In the contract,** give the run an Argon budget in points of its weekly window. The default is at most half of what is left, so the owner keeps the rest of the week. Name the tasks that may use it.
-- **Use it only where Hydrogen's answer fell short, or Hydrogen was limited before it answered.** Give Argon the files, paths and question up front, so it doesn't spend its quota searching, and Hydrogen's answer, if any, with what was missing from it.
-- **Only in `wait` mode, with a timeout of a few minutes,** never as an async lane: a budget can't stop a call already running, and one async lane once took 80 points of a 30-point budget.
-- **Before each wave,** check `gemini_4_argon_weekly` against the budget, and leave Argon out of new briefs once the budget is used.
-- **When Argon is limited** (a quota error, or the budget is used), its work goes back to the agent that asked. Don't hand it back to Hydrogen, or to OpenCode, which can't do it well.
-
-Calls, targets and checks work as for the fast helpers (section 5), with `{providerInstanceId: "antigravity", model: "gemini-4-hydrogen", options: [{id: "thought_level", value: "high"}]}` and then `{providerInstanceId: "antigravity", model: "gemini-4-argon", options: [{id: "thought_level", value: "high"}]}`.
+Calls, targets and checks work as for the fast helpers (section 5), with `{providerInstanceId: "antigravity", model: "gemini-4-neon", options: [{id: "thought_level", value: "high"}]}`. Never `opencode/gemini-4-neon`: OpenCode sells it per request.
 
 ### Reviews: the review gate
 
@@ -395,10 +392,10 @@ A helper is limited when it reports a quota or rate-limit (429) error or "Upstre
 
 Fill in the targets from section 4: Antigravity (`antigravity`, `gemini-4-hydrogen`, options `[{id: "thought_level", value: "high"}]`, with the fallback sentence for Flash while Antigravity lists `gemini-3.8-flash`) and OpenCode's `opencode/deepseek-v4.1-flash-free` and `opencode/glm-5.3-flash-free` (`opencode`, options `[{id: "variant", value: "high"}]`), the two OpenCode models next to each other, so a limited one switches model first, then `opencode-go/beam-free`, `opencode-go/deepseek-v4.1-flash` and `opencode-go/glm-5.3-flash` with the same provider instance (`opencode`, not `opencode-go`) and options. Put Copilot (`acpRegistry_copilot`, model `default`, no options) last when its budget has room, and leave it out otherwise. Spread the load across the two providers: give about half the tasks Antigravity first, and the others OpenCode first. Leave out a helper that is limited now, and put one that was limited earlier last. Five minutes without anything new suits a quick step (timeoutMs 300000); allow a research lane longer.
 
-When a task may use the advanced helpers, add this section too. The parts in angle brackets that name Argon go in only when the run has an Argon budget for this task:
+When a task may use the advanced helpers, add this section too:
 
 ```text
-Help available (advanced helpers): for <the kind of sub-task, for example "comparing the two sync designs against the brief's criteria" or "ranking the likely causes of the failing sync test from the logs in <path>">, you may hand a bounded sub-task to Gemini 4 Hydrogen first: call delegate_task with target {providerInstanceId: "antigravity", model: "gemini-4-hydrogen", options: [{id: "thought_level", value: "high"}]}, role "research" (or "general" for code), and mode "wait" with timeoutMs <a few minutes, in milliseconds>, or mode "async" for a longer research lane. Give it the files, paths and question up front.< If its answer falls short (wrong, shallow, or missing what you asked), you may give the same sub-task to Gemini 4 Argon: target {providerInstanceId: "antigravity", model: "gemini-4-argon", options: [{id: "thought_level", value: "high"}]}, mode "wait" with timeoutMs <a few minutes, in milliseconds>, never mode "async", with Hydrogen's answer and what was missing. Argon has a small weekly quota: use it about <n> times in this task at most.> The same rules as for the fast helpers apply to both: read-only apart from named files, ending each prompt with the fast helpers' read-only line, no commits or merges, no tools that reach the owner's apps or services, never ask the user, and the same check for a pending approval, with one relaunch on the same model before it counts as limited. Never use them to review your diff: reviews go through the review gate, where Hydrogen reviews only where the gate's levels put it. Check what they return: you decide, and you own any code they write. If Hydrogen reports a quota or rate-limit error, or stalls past its wait, cancel it with task_cancel and <give the sub-task to Argon, within its count above, or else >do it yourself<; if Argon is limited too, do it yourself>. Don't hand advanced work to a fast helper. In your handoff, list each such sub-task with Hydrogen's outcome (held, fell short, or stopped by a limit) and what finished it (Hydrogen, <Argon, >or you).
+Help available (advanced helpers): for <the kind of sub-task, for example "comparing the two sync designs against the brief's criteria" or "ranking the likely causes of the failing sync test from the logs in <path>">, you may hand a bounded sub-task to Gemini 4 Neon: call delegate_task with target {providerInstanceId: "antigravity", model: "gemini-4-neon", options: [{id: "thought_level", value: "high"}]}, role "research" (or "general" for code), and mode "wait" with timeoutMs <a few minutes, in milliseconds>, never mode "async". Give it the files, paths and question up front. Neon draws on a weekly quota the owner shares: use it about <n> times in this task at most. The same rules as for the fast helpers apply: read-only apart from named files, ending each prompt with the fast helpers' read-only line, no commits or merges, no tools that reach the owner's apps or services, never ask the user, and the same check for a pending approval, with one relaunch on the same model before it counts as limited. Never use it to review your diff: reviews go through the review gate. Check what it returns: you decide, and you own any code it writes. If Neon reports a quota or rate-limit error, or stalls past its wait, cancel it with task_cancel and do the sub-task yourself; once your count above is used, you may give it to Gemini 4 Hydrogen at high (the fast helpers' Antigravity target) and check its answer as closely. Don't hand advanced work to OpenCode's models. In your handoff, list each such sub-task with Neon's outcome (held, fell short, or stopped by a limit) and what finished it (Neon, Hydrogen or you).
 ```
 
 - **A helper is for its step or lane only.** A task must not hand the rest of its work to a helper. When the home window runs out, the task pauses (section 3); it doesn't keep going by handing its work to helpers.
@@ -432,14 +429,14 @@ The owner may edit it at any time, and their statements win over this reference.
 ## Plans
 - Claude: <plan, e.g. Max 20x> (detected <date>); Fable <included, up to <n>% of the week, in its own week `weekly_fable` | not included: usage credits only> (Anthropic's help pages, <date>)
 - Codex: <plan, e.g. ChatGPT Plus> (detected <date>)
-- Antigravity: <plan> with its own limits (owner, <date>); usage read by `agy -p /usage`, with Gemini 5-hour and weekly windows (Hydrogen, Flash, Pro) and a separate Argon weekly window
+- Antigravity: <plan> with its own limits (owner, <date>); usage read by `agy -p /usage`, with one Gemini 5-hour and one weekly window that every Gemini model draws on (on the Pro plan, Argon had a weekly window of its own)
 - OpenCode: free models (owner, <date>), rate-limited model by model; OpenCode Go <plan and price>, Extra Usage off, as their backup (owner, <date>); the free tier's usage not readable
 - Copilot: <plan, e.g. student (free_educational_quota)>, Auto routing only (<model it routes to>), <n> units a month (detected <date>); usage read by `gh api /copilot_internal/user`
 
 ## Preferences
 - Prefer Codex for computer use when it has room, on <model, e.g. GPT-6.1 Terra> (owner, <date>)
 - Fast helpers inside tasks, for research, retrieval and simple steps: Antigravity's Gemini 4 Hydrogen at high; OpenCode's <models good enough> at high, on the free tier and then on Go; never task agents unless the user asks (owner, <date>)
-- Advanced helpers inside tasks, for bounded harder sub-tasks: Gemini 4 Hydrogen at high first, then Gemini 4 Argon at high where Hydrogen fell short or was limited, within a weekly budget per run (owner, <date>)
+- Advanced helpers inside tasks, for bounded harder sub-tasks: Gemini 4 Neon at high, within a budget of the Gemini week per run (owner, <date>)
 - When a window runs out, pause and resume on the same subscription after the reset; never move work to another subscription (owner, <date>)
 - Claude's home model is Opus 5.5, complex tasks included; Fable 5.2 only where Opus would probably fall short, never the default, never for helpers or reviewers (owner, <date>)
 
@@ -458,7 +455,7 @@ The owner may edit it at any time, and their statements win over this reference.
 - claude/<plan> weekly: ~<n> points per Opus task-hour with its reviews, <m> tasks at once (run <ledger name>)
 - claude/<plan> weekly_fable: ~<n> points per Fable task-hour at <effort>, and ~<m> points of the all-models week (run <ledger name>)
 - antigravity/gemini_models: <n> Hydrogen hand-offs took the 5-hour window from <a>% to <b>% (run <ledger name>)
-- antigravity/gemini_4_argon: <n> Argon hand-offs of <kind> took the week from <a>% to <b>% (run <ledger name>)
+- antigravity/gemini_models: <n> Neon hand-offs of <kind> took the week from <a>% to <b>% (run <ledger name>)
 - copilot/<plan> monthly: <n> hand-offs of <kind>, <tokens> input tokens, took <a> units (run <ledger name>)
 - opencode/<model>: rate-limited after <n> requests in <m> minutes; switched to <model or provider> (run <ledger name>)
 ```
@@ -468,12 +465,12 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
 ## 7. In the contract and the report
 
 - **In the contract:**
-  - Show the usage snapshot in plain words, for example "Claude Max 20x: 9% of the 5-hour window and 23% of the week used, 4% of its Fable week. Codex Plus: 23% and 16%. Antigravity Pro: Gemini 2% and 1%; Argon 1% of its week."
+  - Show the usage snapshot in plain words, for example "Claude Max 20x: 9% of the 5-hour window and 23% of the week used, 4% of its Fable week. Codex Plus: 23% and 16%. Antigravity Ultra: Gemini 2% and 1%."
   - Give the expected consumption of the run, and whether it is likely to pause for a reset (and until when).
   - Name any other active run that shares the subscriptions.
   - Give the reason for each task routed away from the home harness.
   - Say which tasks may use the fast helpers, and for what.
-  - Say which tasks may use the advanced helpers, and give the run's Argon budget, in points of its weekly window.
+  - Say which tasks may use the advanced helpers, and give the run's Neon budget, in points of the Gemini week.
   - Give the run's Claude estimate and budget in points of the all-models week, from its tasks ([The run's Claude estimate and budget](#the-runs-claude-estimate-and-budget)).
   - Name each task on Fable 5.2 with why Opus would probably fall short, and give the run's Fable budget in points of the Fable week, or say that no task runs on Fable. Say how many Fable second opinions you may ask for your own decisions (3 by default), the Fable budget they draw on (stated even when no task runs on Fable), and what the contract's own opinion used if it had one ([A Fable second opinion](#a-fable-second-opinion-for-your-own-decisions)). When your own thread runs on Fable, say what your wakes will cost of the Fable week, and that the owner can switch you to Opus 5.5 before they leave.
   - Say which whole tasks start on OpenCode Go, if any, and that helpers and reviews may draw on the plan too.
@@ -485,5 +482,5 @@ At the start of a run, read the "Granted" line in this computer's "Machine" sect
   - Say how many Fable second opinions you asked for, and which decisions they changed.
   - Name other runs that used the same subscriptions meanwhile, because their use is in the numbers.
   - Mention a helper that was rate-limited or ran out, and what the work switched to.
-  - Give the advanced sub-tasks Hydrogen took: how many held, fell short or were stopped by a limit, and how many Argon or the task's agent then finished.
+  - Give the advanced sub-tasks Neon took: how many held, fell short or were stopped by a limit, and how many Hydrogen or the task's agent then finished, with the Gemini week before and after against the Neon budget.
   - Say what used OpenCode Go (helpers, reviews, whole tasks), with its weekly and monthly windows before and after.

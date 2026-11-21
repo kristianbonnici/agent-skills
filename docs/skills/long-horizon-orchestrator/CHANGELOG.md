@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 5.12.0 (2026-11-21)
+
+- **Gemini 4 Neon is the advanced helper, in place of Hydrogen-then-Argon** (owner, 2026-11-21, on moving from Google AI Pro to Ultra). On Ultra every Gemini model draws on one 5-hour and one weekly window, so Argon's separate week, its budget and its order behind Hydrogen are gone. Neon at high takes the bounded harder sub-tasks, within a Neon budget in points of the Gemini week (at most a third of what is left, by default), in `wait` mode only; when the budget is used, Hydrogen at high may take one, and when the windows are used, the agent does it. Hydrogen stays the fast helper. Plain Neon, not Antigravity's Orchestrator (Neon), until the reviewer benchmark compares them. The brief's advanced-helper section, the profile template, the contract and report lines and the usage examples say so ([evidence](evidence.md)).
+
 ## 5.11.0 (2026-11-20)
 
 - **The keep-awake and the usage sampler start in a session of their own** (accepted proposal: in a run, the host app restarted mid-run and took both with it, since `nohup … &` only ignores the hang-up signal; the computer was free to sleep until the next heartbeat restarted them). The new `scripts/detach <command> …` starts a command in a new session and process group, with its input and output on /dev/null, and prints its process ID; prepare.md, machine.md (sections 4 and 9) and computers.md start both with it, on every computer, and `run-watch`'s line for one that died says to restart it the same way. On another computer whose copy is older, `detach` is copied there from a newer copy (it stands alone); over SSH, `nohup` still does.

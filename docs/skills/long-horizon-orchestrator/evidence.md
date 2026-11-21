@@ -2,7 +2,7 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
-Last checked: new work 2026-11-20; sources 2026-11-04.
+Last checked: new work 2026-11-21; sources 2026-11-04.
 
 ## Our own runs (2026-10-04 to 2026-11-15)
 
@@ -194,6 +194,10 @@ Rules that are the owner's choice, with when they made it:
 - **2026-11-15:** a run may place tasks on another linked computer, to keep the daily one free or spare a
   weak one, and its tasks may push narrow, named run branches; whether runs default to the always-on
   computer is left open.
+- **2026-11-21:** on Google AI Ultra (from Pro), Gemini 4 Neon takes the advanced sub-tasks and Argon is
+  dropped ("Argon is anyways not the good option for the Gemini lineup"); Hydrogen stays for "cheap, fast
+  tasks", and Claude stays the daily driver, since Ultra's usage "is still not there what I have with
+  Claude".
 
 ## Outside sources
 
@@ -587,6 +591,24 @@ Rules that are the owner's choice, with when they made it:
   which keeps its small week for answers Hydrogen got wrong; each such sub-task records whether Hydrogen's
   answer held, since the claim that it matches Argon is Google's own. Flash stays the fallback while it is
   listed, and Hydrogen never runs through OpenCode.*
+
+- **Gemini 4 Neon on Google AI Ultra** (read 2026-11-21):
+  - Our probe (2026-11-21): on Ultra, `agy -p /usage` lists one Gemini group, with one 5-hour and one weekly
+    window, holding Gemini 4 Neon, Carbon, Argon and Hydrogen, the three Orchestrator models and Gemini 3.8
+    Flash: Argon's separate week of the Pro plan is gone. The Claude and GPT models have a group of their
+    own. `agy models` lists `gemini-4-neon-low` to `-xhigh`; T3 lists `gemini-4-neon` and
+    `gemini-pro-orchestrator-neon` on Antigravity, and `opencode/gemini-4-neon`, which OpenCode sells per
+    request.
+  - Paweł Huryn's Bug Hunt Bench ([the thread](https://x.com/PawelHuryn/status/2123650574373605874),
+    20 November 2026): one author's own benchmark, 2 to 5 runs per setting, scoring planted bugs fixed (not
+    reviews), out of 105. Gemini 4 Neon at extra high scored 63, the top of 28 runs, and at high 57, against
+    GPT-6.2 Sol at max 54.7 and Opus 5.5 at max 41.7; at extra high a run took 76 minutes, at high 45. He
+    puts Ultra's month at about 25.8 times its price in API usage of Neon (Claude Max $100: 46.4 on Opus
+    5.5), and says the CLI's token counts read 10 to 38% low. Not yet checked on our work.
+
+  → *Neon replaces Argon as the advanced helper, within a budget of the Gemini week that Hydrogen and the
+  owner share; plain Neon, not its Orchestrator, until the reviewer benchmark compares them on the owner's
+  changes.*
 
 - **Claude Code's advisor** ([Claude Code docs](https://code.claude.com/docs/en/advisor.md),
   [the API's advisor tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool.md),
