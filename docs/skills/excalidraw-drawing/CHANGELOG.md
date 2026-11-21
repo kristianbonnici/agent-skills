@@ -1,5 +1,9 @@
 # excalidraw-drawing changelog
 
+## 3.5.0 (2026-11-21)
+
+- When the user asks for a change to a picture, the agent changes only that, keeps each round's PNG as `v1.png`, `v2.png`... beside `page.png`, and shows the previous and current one together. From a chart for a social post: asked to make it look simpler, like two example charts, the agent also changed its theme, labels, markers and margins, which the user had reverted, and each round overwrote the last picture, so the user couldn't compare versions.
+
 ## 3.4.0 (2026-11-20)
 
 From two benchmark charts made for X posts, which both had to be built around the skill: a scatter of each model's two scores with a line from one model to its successor, and dark versions with the title in the serif font.

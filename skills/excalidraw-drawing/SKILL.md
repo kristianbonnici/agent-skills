@@ -2,7 +2,7 @@
 name: excalidraw-drawing
 description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), a single diagram such as a line, bar or scatter chart or any other chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table, or a slide deck for a talk (one hand-drawn slide per point, speaker notes, click-by-click reveals) - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md), and a deck also as a browser presentation, a PDF and a PowerPoint - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, slides or a presentation in this style, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 3.4.0
+  version: 3.5.0
 ---
 
 # Excalidraw Drawing
@@ -74,6 +74,8 @@ It prints each panel's drawing-area width (draw within it; height grows to fit) 
 ## 4. Deliver
 
 Give the user the PNG and the drawing's path, and the plan's one-line summary; for a deck, the three files `deck.mjs` wrote and what each is for. Say that the `.excalidraw` file opens at excalidraw.com or in the Excalidraw app for hand edits (an `.excalidraw.md` opens in Obsidian), and that after hand edits that file, not `page.json`, is the picture: you can carry on from their edits, and the build won't replace a drawing saved in an editor since.
+
+**When the user asks for a change, change only that.** A request about the look ("simpler", "like this example") keeps the picture's words, marks and theme. Keep each round's PNG beside the spec (`v1.png`, `v2.png`..., the current one still `page.png`) and show the previous and the current one together, so the user can compare.
 
 ## 5. Change an existing drawing
 
