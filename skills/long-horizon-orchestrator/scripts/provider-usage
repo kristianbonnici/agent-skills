@@ -11,8 +11,8 @@ sign-in, so the numbers include use from other devices and apps:
   - Codex: the app server's `account/rateLimits/read` request;
   - Antigravity: `agy -p /usage` and `agy -p /credits`, which answer without an
     agent turn. Each model group gets its own windows, named
-    `<group>_five_hour` and `<group>_weekly` (for example `gemini_models_five_hour`,
-    `gemini_4_argon_weekly`).
+    `<group>_five_hour` and `<group>_weekly` (for example `gemini_models_five_hour`;
+    on the Pro plan, Argon's own `gemini_4_argon_weekly`).
   - Copilot: GitHub's `copilot_internal/user` endpoint through `gh api`, which
     spends no quota. Its premium budget is a monthly window (`monthly`), billed
     by token cost in fractional units.
