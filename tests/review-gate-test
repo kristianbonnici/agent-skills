@@ -698,6 +698,17 @@ assert (parsed860["tagged_by_reviewer"], parsed860["differed"]) == (2, 1), parse
 assert parsed860["replies"] == {"agrees": 1}, parsed860["replies"]
 assert "Gemini 4 Neon" in parsed860["reviewers"] and "Orchestrator Neon" in parsed860["reviewers"], parsed860["reviewers"]
 assert "Antigravity Claude Opus 5.5" not in parsed860["reviewers"], parsed860["reviewers"]
+# Conflicting replies in the same round across two Claude bucket names are refused by shape_problems().
+conflict_failover = copy.deepcopy(g2)
+conflict_failover["findings"] = [
+    {"id": 2, "round": 1, "reviewer": "Antigravity Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
+     "tag": "follow-up", "checked": "read", "title": "Bucket failover lowered", "why": "Corner case only", "reply": "agrees"},
+    {"id": 2, "round": 1, "reviewer": "Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
+     "tag": "follow-up", "checked": "read", "title": "Bucket failover lowered", "why": "Corner case only", "reply": "holds"},
+]
+cf_dir = save(os.path.join(work, "bad", "bucket-reply-conflict"), conflict_failover)
+cf_res = subprocess.run([sys.executable, "-I", script, "table", cf_dir], capture_output=True, text=True, env=env860, timeout=60)
+assert cf_res.returncode == 64 and "has another reply from the same reviewer in round 1" in cf_res.stderr, (cf_res.returncode, cf_res.stderr)
 
 print("review-gate-test: ok")
 EOF
