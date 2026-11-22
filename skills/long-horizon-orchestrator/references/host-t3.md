@@ -126,7 +126,7 @@ A crashed or provider-failed run leaves the thread with status `failed`. A resta
 
 1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what happened, and ask it to continue the brief from where it stopped.
 2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief and a fresh branch name such as `<branch>-r2`. First, on the old thread:
-   - stop its reviewers and helpers still running: its child threads (`t3_thread_list` with `includeSubagents: true`, by `parentThreadId`) that are running or waiting, each with `t3_thread_interrupt`, since you hold no `taskId` for them; see each idle before you go on;
+   - stop its reviewers and helpers still running: its child threads (`t3_thread_list` with `includeSubagents: true`, by `parentThreadId`) that are running or waiting. `task_cancel` takes only the `taskId` the task got when it launched them, which you don't have, so interrupt each with `t3_thread_interrupt` and check that it is idle; one still running on your next wake is noted in the ledger with its thread, and settled at the finish, and you go on without it;
    - delete its review-gate and helper wakes if listed (titled `<task> review-gate wake` or `<task> helper wake`, bound to the old thread), and empty `<task>/helper-wake.txt`;
    - remove anything still queued: `t3_queue` with `action: "list"`, then `action: "cancel"` for each (older T3 builds: `t3_queue_list`, `t3_queue_cancel`).
 
