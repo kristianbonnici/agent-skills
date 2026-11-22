@@ -663,6 +663,18 @@ g2["reviewers"] = [
     {"name": "Claude Opus 5.5, high", "rounds": [1], "reports": ["round-1-opus.md"]},
     {"name": "Antigravity Orchestrator (Neon), extra high", "rounds": [1], "reports": ["round-1-orch.md"]},
 ]
+g2["findings"] = [
+    {"id": 1, "round": 1, "reviewer": "Antigravity Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
+     "tag": "blocker", "checked": "test", "title": "Bucket failover blocker"},
+    {"id": 1, "round": 2, "reviewer": "Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
+     "tag": "blocker", "checked": "test", "commit": "9c4e2aa", "title": "Bucket failover blocker"},
+    {"id": 2, "round": 1, "reviewer": "Antigravity Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
+     "tag": "follow-up", "checked": "read", "title": "Bucket failover lowered",
+     "why": "Corner case only", "reply": "agrees"},
+    {"id": 2, "round": 2, "reviewer": "Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
+     "tag": "follow-up", "checked": "read", "title": "Bucket failover lowered",
+     "why": "Corner case only", "reply": "agrees"},
+]
 g1_dir = save(os.path.join(state860, "agent-skills", "review-gate", "20261122-1900-app"), g1)
 g2_dir = save(os.path.join(state860, "agent-skills", "review-gate", "20261122-1930-app"), g2)
 t1 = subprocess.run([sys.executable, "-I", script, "table", g1_dir], capture_output=True, text=True, env=env860, timeout=60)
@@ -671,12 +683,17 @@ assert "| Antigravity Claude Opus 5.5, high | 1 |" in t1.stdout, t1.stdout
 assert "| Gemini 4 Neon, xhigh | 1 |" in t1.stdout, t1.stdout
 t2 = subprocess.run([sys.executable, "-I", script, "table", g2_dir], capture_output=True, text=True, env=env860, timeout=60)
 assert t2.returncode == 0, t2.stderr
-assert "| Antigravity Claude Sonnet 5.5, high | 1 |" in t2.stdout, t2.stdout
+assert "| Antigravity Claude Sonnet 5.5, high | 1 | **1** | 1 | – | – | – | 2 |" in t2.stdout, t2.stdout
+assert "| Claude Sonnet 5.5, high | 2 | **1** | 1 | – | – | – | 2 |" in t2.stdout, t2.stdout
 tot860 = subprocess.run([sys.executable, "-I", script, "totals", "--json"], capture_output=True, text=True, env=env860, timeout=60)
 assert tot860.returncode == 0, tot860.stderr
 parsed860 = json.loads(tot860.stdout)
 assert parsed860["reviewers"]["Claude Opus 5.5"]["reviews"] == 2, parsed860["reviewers"]
-assert parsed860["reviewers"]["Claude Sonnet 5.5"]["reviews"] == 1, parsed860["reviewers"]
+assert parsed860["reviewers"]["Claude Sonnet 5.5"] == {
+    "reviews": 1, "blockers": 1, "follow_ups": 1, "must_fix": 0,
+    "nits": 0, "pre_existing": 0, "rejected": 0, "unique": 2,
+}, parsed860["reviewers"]["Claude Sonnet 5.5"]
+assert (parsed860["tagged_by_reviewer"], parsed860["differed"]) == (2, 1), parsed860
 assert "Gemini 4 Neon" in parsed860["reviewers"] and "Orchestrator Neon" in parsed860["reviewers"], parsed860["reviewers"]
 assert "Antigravity Claude Opus 5.5" not in parsed860["reviewers"], parsed860["reviewers"]
 

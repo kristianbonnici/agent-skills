@@ -250,25 +250,28 @@ def round_count(record):
     return max(numbers, default=0)
 
 
-def counts(record):
+def counts(record, canonical=False):
     """Each reviewer's findings by the author's tag, and the defects only that reviewer raised. A
-    reviewer launched only to answer about a tag reviewed nothing and has no row."""
+    reviewer launched only to answer about a tag reviewed nothing and has no row. With canonical=True,
+    groups by canonical reviewer_key so same-gate bucket failover neither double-counts nor drops unique credit."""
+    key_fn = reviewer_key if canonical else (lambda name: name)
     raised_by = {}
     for finding in record["findings"]:
-        raised_by.setdefault(finding["id"], set()).add(finding["reviewer"])
-    rows = []
+        raised_by.setdefault(finding["id"], set()).add(reviewer_key(finding["reviewer"]))
+    rows, seen = [], {}
     for reviewer in record["reviewers"]:
         if all(look == "reply" for look in reviewer["rounds"]):
             continue
-        mine = {}
-        for finding in record["findings"]:
-            if finding["reviewer"] == reviewer["name"]:
-                mine[finding["id"]] = finding["tag"]
+        label = key_fn(reviewer["name"])
+        if label in seen:
+            continue
+        mine = {f["id"]: f["tag"] for f in record["findings"] if key_fn(f["reviewer"]) == label}
         row = {tag: sum(1 for t in mine.values() if t == tag) for tag in COLUMNS}
         row["unique"] = sum(1 for i, t in mine.items()
                             if t in ("blocker", "follow-up") and len(raised_by[i]) == 1)
-        row["name"] = reviewer["name"]
+        row["name"] = label
         row["rounds"] = reviewer["rounds"]
+        seen[label] = row
         rows.append(row)
     return rows
 
@@ -407,15 +410,15 @@ def gate_from_record(folder):
     if problems:
         return problems[0] + (f" (and {len(problems) - 1} more)" if len(problems) > 1 else "")
     rows = []
-    for row in counts(record):
-        rows.append({"reviewer": reviewer_key(row["name"]), "blockers": row["blocker"],
+    for row in counts(record, canonical=True):
+        rows.append({"reviewer": row["name"], "blockers": row["blocker"],
                      "follow_ups": row["follow-up"], "must_fix": 0, "nits": row["nit"],
                      "pre_existing": row["pre-existing"], "rejected": row["rejected"], "unique": row["unique"]})
     # A finding that came back may carry another tag of its reviewer's: each pair of tags counts
-    # once for a finding and reviewer, and the finding counts once among those that differed.
+    # once for a finding and canonical reviewer, and the finding counts once among those that differed.
     changes, how, tagged, differed, pairs = {}, {}, set(), set(), set()
     for finding in record["findings"]:
-        key = (finding["id"], finding["reviewer"])
+        key = (finding["id"], reviewer_key(finding["reviewer"]))
         pair = key + (finding["reviewer_tag"], finding["tag"])
         if finding["reviewer_tag"] == "none" or pair in pairs:
             continue

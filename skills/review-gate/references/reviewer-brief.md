@@ -23,6 +23,8 @@ Report each issue as:
 - confirmed (you traced it through the code) or suspected.
 
 Skip style preferences and theoretical cases you can't make concrete. If you find nothing serious, say so plainly and list what you checked.
+
+Run only read-only commands (git diff, git log, git show, reading files). Don't create files or folders, don't run tests or scripts, and don't run any command that might ask for approval: nobody is there to give it. If you'd like a test run, name the test and what it should show in your report instead.
 ```
 
 ## The question about a tag
