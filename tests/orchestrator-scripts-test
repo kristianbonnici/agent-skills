@@ -1770,6 +1770,88 @@ status=0
 "$scripts/provider-usage" --only nobody >/dev/null 2>&1 || status=$?
 [ "$status" -eq 2 ] || { echo "--only took an unknown provider" >&2; exit 1; }
 
+# provider-usage's Antigravity helper (agy_command): strips synthetic loopback SSH_CONNECTION injected by
+# Antigravity-hosted shells (so agy checks Keychain instead of waiting on headless OAuth), preserves real
+# remote SSH_CONNECTION and explicit loopback tunnels, keeps HOME/PATH/GEMINI_HOME intact, and ensures
+# AGY_CLI_DISABLE_AUTO_UPDATE=1.
+mkdir -p "$work/pu/agy-bin" "$work/pu/agy-home" "$work/pu/agy-gemini"
+cat > "$work/pu/agy-bin/agy" <<'EOF'
+#!/usr/bin/env python3
+import json, os, sys
+log = os.environ["FAKE_AGY_LOG"]
+rows = json.load(open(log)) if os.path.exists(log) else []
+rows.append({
+    "argv": sys.argv[1:],
+    "has_ssh": "SSH_CONNECTION" in os.environ,
+    "ssh": os.environ.get("SSH_CONNECTION"),
+    "disable_auto_update": os.environ.get("AGY_CLI_DISABLE_AUTO_UPDATE"),
+    "home": os.environ.get("HOME"),
+    "gemini_home": os.environ.get("GEMINI_HOME"),
+    "path": os.environ.get("PATH"),
+})
+with open(log, "w") as fh:
+    json.dump(rows, fh)
+cmd = sys.argv[sys.argv.index("-p") + 1] if "-p" in sys.argv else ""
+if cmd == "/usage":
+    reply = {"status": "SUCCESS", "command": {"data": {"groups": [
+        {"name": "Gemini Models", "description": "Gemini", "buckets": [
+            {"window": "5h", "remaining_fraction": 0.85, "reset_time": "2099-01-01T00:00:00Z"},
+            {"window": "weekly", "remaining_fraction": 0.90, "reset_time": "2099-01-07T00:00:00Z"},
+        ]}
+    ]}}}
+elif cmd == "/credits":
+    reply = {"status": "SUCCESS", "command": {"data": {"remaining_credits": 42}}}
+else:
+    reply = {"status": "ERROR", "response": f"unexpected command {cmd}"}
+print(json.dumps(reply))
+EOF
+chmod +x "$work/pu/agy-bin/agy"
+AGY_TEST_PATH="$work/pu/agy-bin:$PATH"
+# 1. Synthetic loopback SSH_CONNECTION is stripped (even with AGY_CLI_DISABLE_AUTO_UPDATE unset or 0)
+rm -f "$work/pu/agy-log.json"
+env -u ANTIGRAVITY_AGENT -u T3CODE_THREAD_ID -u AGY_CLI_DISABLE_AUTO_UPDATE \
+  HOME="$work/pu/agy-home" PATH="$AGY_TEST_PATH" GEMINI_HOME="$work/pu/agy-gemini" \
+  SSH_CONNECTION="127.0.0.1 0 127.0.0.1 0" FAKE_AGY_LOG="$work/pu/agy-log.json" \
+  python3 -I "$scripts/provider-usage" --only antigravity > "$work/pu/agy-loopback.json"
+# 2. IPv6 loopback with port 0 is stripped when ANTIGRAVITY_AGENT=1, preserved when neither T3/AGY marker is set
+rm -f "$work/pu/agy-log-v6-on.json" "$work/pu/agy-log-v6-off.json"
+env -u T3CODE_THREAD_ID HOME="$work/pu/agy-home" PATH="$AGY_TEST_PATH" GEMINI_HOME="$work/pu/agy-gemini" \
+  ANTIGRAVITY_AGENT=1 AGY_CLI_DISABLE_AUTO_UPDATE=0 SSH_CONNECTION="::1 0 ::1 0" \
+  FAKE_AGY_LOG="$work/pu/agy-log-v6-on.json" \
+  python3 -I "$scripts/provider-usage" --only antigravity > "$work/pu/agy-v6-on.json"
+env -u ANTIGRAVITY_AGENT -u T3CODE_THREAD_ID HOME="$work/pu/agy-home" PATH="$AGY_TEST_PATH" \
+  SSH_CONNECTION="::1 0 ::1 0" FAKE_AGY_LOG="$work/pu/agy-log-v6-off.json" \
+  python3 -I "$scripts/provider-usage" --only antigravity > "$work/pu/agy-v6-off.json"
+# 3. Real remote SSH_CONNECTION and real loopback tunnel (non-zero ports) are preserved even with ANTIGRAVITY_AGENT=1
+rm -f "$work/pu/agy-log-remote.json" "$work/pu/agy-log-tunnel.json"
+env HOME="$work/pu/agy-home" PATH="$AGY_TEST_PATH" GEMINI_HOME="$work/pu/agy-gemini" \
+  ANTIGRAVITY_AGENT=1 T3CODE_THREAD_ID="thread-1" AGY_CLI_DISABLE_AUTO_UPDATE=1 \
+  SSH_CONNECTION="10.0.0.2 51234 10.0.0.1 22" FAKE_AGY_LOG="$work/pu/agy-log-remote.json" \
+  python3 -I "$scripts/provider-usage" --only antigravity > "$work/pu/agy-remote.json"
+env HOME="$work/pu/agy-home" PATH="$AGY_TEST_PATH" \
+  ANTIGRAVITY_AGENT=1 SSH_CONNECTION="127.0.0.1 54321 127.0.0.1 22" FAKE_AGY_LOG="$work/pu/agy-log-tunnel.json" \
+  python3 -I "$scripts/provider-usage" --only antigravity > "$work/pu/agy-tunnel.json"
+python3 -I - "$work/pu" "$AGY_TEST_PATH" <<'EOF'
+import json, os, sys
+pu, expected_path = sys.argv[1:]
+loop = json.load(open(os.path.join(pu, "agy-loopback.json")))["providers"]["antigravity"]
+assert loop["windows"]["gemini_models_five_hour"]["used_percent"] == 15.0, loop
+assert loop["windows"]["gemini_models_weekly"]["used_percent"] == 10.0, loop
+assert loop["ai_credits_remaining"] == 42, loop
+loop_calls = json.load(open(os.path.join(pu, "agy-log.json")))
+assert len(loop_calls) == 2 and all(not c["has_ssh"] for c in loop_calls), loop_calls
+assert all(c["disable_auto_update"] == "1" for c in loop_calls), loop_calls
+assert all(c["home"] == os.path.join(pu, "agy-home") and c["gemini_home"] == os.path.join(pu, "agy-gemini") and c["path"] == expected_path for c in loop_calls), loop_calls
+v6_on = json.load(open(os.path.join(pu, "agy-log-v6-on.json")))
+assert all(not c["has_ssh"] and c["disable_auto_update"] == "1" for c in v6_on), v6_on
+v6_off = json.load(open(os.path.join(pu, "agy-log-v6-off.json")))
+assert all(c["has_ssh"] and c["ssh"] == "::1 0 ::1 0" for c in v6_off), v6_off
+remote = json.load(open(os.path.join(pu, "agy-log-remote.json")))
+assert all(c["has_ssh"] and c["ssh"] == "10.0.0.2 51234 10.0.0.1 22" and c["disable_auto_update"] == "1" for c in remote), remote
+tunnel = json.load(open(os.path.join(pu, "agy-log-tunnel.json")))
+assert all(c["has_ssh"] and c["ssh"] == "127.0.0.1 54321 127.0.0.1 22" for c in tunnel), tunnel
+EOF
+
 # provider-usage's Claude API credits: only the API instance's spend counts (never the subscription's),
 # the soonest-expiring grant is drawn first and the next takes what it can't cover (also across an
 # expiry), an expired grant has nothing left and spend after its expiry never touches it, only spend after

@@ -13,7 +13,10 @@ It reads <run directory>/watch.json, as run-watch does, and prints:
   <run-watch's lines, each as it printed it>             otherwise
 
 A task run-watch can't read (its "blind" list) is named on every wake and keeps it from being idle, since
-only its thread shows an approval prompt or a turn that ended; a virtual machine or a leftover process
+only its thread shows an approval prompt or a turn that ended; Antigravity tasks whose conversation DB
+run-watch found leave "blind" (their activity and 20-minute `quiet` checks read the DB and its `-wal`,
+while immediate approval detection on Antigravity still relies on T3's `pendingRequestCount` check in
+`references/host-t3.md`). A virtual machine or a leftover process
 already reported is a reminder in the summary ("VMs still running", "leftovers still running"), not a
 finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
 the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,

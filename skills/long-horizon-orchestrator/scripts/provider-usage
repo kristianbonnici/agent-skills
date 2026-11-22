@@ -10,7 +10,10 @@ sign-in, so the numbers include use from other devices and apps:
     first two;
   - Codex: the app server's `account/rateLimits/read` request;
   - Antigravity: `agy -p /usage` and `agy -p /credits`, which answer without an
-    agent turn. Each model group gets its own windows, named
+    agent turn (`agy_command` strips synthetic loopback `SSH_CONNECTION` values
+    injected by Antigravity-hosted shells so `agy` reads Keychain instead of
+    waiting on headless OAuth, preserves real SSH sessions, and sets
+    `AGY_CLI_DISABLE_AUTO_UPDATE=1`). Each model group gets its own windows, named
     `<group>_five_hour` and `<group>_weekly` (for example `gemini_models_five_hour`;
     on the Pro plan, Argon's own `gemini_4_argon_weekly`).
   - Copilot: GitHub's `copilot_internal/user` endpoint through `gh api`, which
@@ -411,12 +414,41 @@ def stamp_seconds(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
+def is_synthetic_ssh_connection(value: str, env: dict[str, str]) -> bool:
+    """Whether SSH_CONNECTION is T3/Antigravity's synthetic loopback placeholder rather than a real SSH session."""
+    parts = value.split()
+    if len(parts) != 4:
+        return False
+    client_ip, client_port, server_ip, server_port = parts
+    if parts == ["127.0.0.1", "0", "127.0.0.1", "0"]:
+        return True
+    if (
+        (env.get("ANTIGRAVITY_AGENT") or env.get("T3CODE_THREAD_ID"))
+        and client_ip in ("127.0.0.1", "::1")
+        and server_ip in ("127.0.0.1", "::1")
+        and (client_port == "0" or server_port == "0")
+    ):
+        return True
+    return False
+
+
+def agy_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Child environment for agy: strip synthetic loopback SSH_CONNECTION and prevent CLI auto-updates."""
+    env = dict(os.environ if base is None else base)
+    ssh = env.get("SSH_CONNECTION")
+    if isinstance(ssh, str) and is_synthetic_ssh_connection(ssh, env):
+        env.pop("SSH_CONNECTION", None)
+    env["AGY_CLI_DISABLE_AUTO_UPDATE"] = "1"
+    return env
+
+
 def agy_command(command: str) -> dict:
     """A read-only slash command of the Antigravity CLI; it starts no agent turn and spends no quota."""
     agy = shutil.which("agy") or str(Path.home() / ".local" / "bin" / "agy")
     proc = subprocess.run(
         [agy, "-p", command, "--output-format", "json"],
         cwd=tempfile.gettempdir(),
+        env=agy_env(),
         capture_output=True,
         text=True,
         timeout=LIVE_TIMEOUT,

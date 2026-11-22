@@ -63,14 +63,16 @@ Each line starts with a word saying what it is:
                    stays idle, and after 20 minutes idle it says so, still without a kill
   approval <task>  a running task's shell call open over 6 minutes with no process for it: an
                    approval prompt, or a hang before the command started
-  quiet <task>     a running task whose session log, worktree and run folder haven't changed for
-                   20 minutes and whose processes are idle
-  blind <task>     (once per task; kept in its state file's "blind" list until its log is found, and for the
-                   whole run for a task on another computer) a running task whose session log this script can't read (a
-                   harness it doesn't know, or a log it didn't find): it sees only that task's
-                   processes and files; or a task whose watch.json "computer" isn't this one (watch.json's
-                   own "computer", else this Mac's LocalHostName) and isn't reached over SSH (or
-                   wasn't this wake): it reads nothing of that task
+  quiet <task>     a running task whose session log (or Antigravity conversation DB and its -wal),
+                   worktree and run folder haven't changed for 20 minutes and whose processes
+                   are idle
+  blind <task>     (once per task; kept in its state file's "blind" list until its log or
+                   conversation DB is found, and for the whole run for a task on another computer)
+                   a running task whose session log this script can't read (a harness it doesn't
+                   know, or a log or conversation DB it didn't find): it sees only that task's
+                   processes and files; or a task whose watch.json "computer" isn't this one
+                   (watch.json's own "computer", else this Mac's LocalHostName) and isn't reached
+                   over SSH (or wasn't this wake): it reads nothing of that task
   hog <pid>        a process started since the run began, not the run's, above 80% of a core for
                    10 minutes
   disk / swap      free disk fell 10 GB within 5 minutes, or is below 20 GB, naming the running
@@ -107,7 +109,14 @@ What it reads (here, nothing of a task on another computer, whose paths name fol
     --session-id or --resume of a `claude` process working in the worktree, which is how T3 starts
     one, else the first log made there after the launch), with its subagents' logs; Codex's
     ~/.codex/sessions rollout whose session_meta names the worktree (not one of `codex exec`,
-    which reviewers use). CLAUDE_CONFIG_DIR and CODEX_HOME move these.
+    which reviewers use); or Antigravity's <T3_USERDATA>/providers/antigravity/*/antigravity-acp/
+    conversations/<nativeId>.db (from watch.json's "session_log", "session", or the active
+    nativeThreadRef.nativeId mapped from watch.json's "thread" in <T3_USERDATA>/statev2.sqlite),
+    tracking max mtime across the .db and its -wal file (never -shm). Antigravity steps are
+    binary protobufs without reliable open-call or approval fields, so run-watch checks quiet,
+    commits, merges and processes/machine state (not hang, idle, approval or report) for
+    Antigravity tasks; approvals rely on T3's pendingRequestCount check and quiet.
+    CLAUDE_CONFIG_DIR, CODEX_HOME and T3_USERDATA move these.
   - processes (ps, lsof for working folders, ioreg for each process's GPU time, sysctl for swap)
   - files' modification times under the worktree (with its git folder), the task's run folder
     and its session folder, never their contents
@@ -131,7 +140,8 @@ usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINU
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
 RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
 inputs, RUN_WATCH_SSH_SECONDS the SSH check's time limit, RUN_WATCH_COMPUTER this computer's name,
-RUN_WATCH_INVOCATION the heartbeat's ID for the run (kept with each other computer's reading), and
+RUN_WATCH_INVOCATION the heartbeat's ID for the run (kept with each other computer's reading),
+T3_USERDATA moves T3's state directory, and
 CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code. In --as mode it exits
 3 when this computer isn't the one named.
 """
@@ -150,11 +160,13 @@ import shlex
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 HANG_MIN = float(os.environ.get("RUN_WATCH_HANG_MINUTES", 6))
 QUIET_MIN = float(os.environ.get("RUN_WATCH_QUIET_MINUTES", 20))
@@ -177,6 +189,7 @@ REMOTE_MARK = "run-watch-remote "    # the one line a run-watch --as prints, bef
 REMOTE_PROTOCOL = 1
 SSH_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@-]*")   # an alias ssh can't take for an option, and the shell needs no quotes for
 SHELL_WORD = re.compile(r"-{0,2}[A-Za-z0-9][A-Za-z0-9._/-]*")
+SAFE_NATIVE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 INSTALLED = (".claude/skills", ".agents/skills", ".codex/skills")   # where the hosts read this skill there (install/hosts.tsv)
 # The words whose line names a task or a process right after the word: another computer's name goes after it.
 NAMED = {"hang", "idle", "approval", "quiet", "blind", "commit", "merged", "report", "hog", "vm", "leftover", "slept"}
@@ -542,6 +555,118 @@ def find_codex_log(task: dict, launched: float, remembered: str | None):
             if started >= launched - 120:
                 found.append((started, path))
     return min(found)[1] if found else None
+
+
+def t3_userdata() -> str:
+    return os.environ.get("T3_USERDATA") or os.path.expanduser("~/.t3/userdata")
+
+
+def antigravity_db_mtime(db_path: str) -> float:
+    """Latest write time across an Antigravity conversation DB and its SQLite WAL (never -shm)."""
+    best = 0.0
+    for path in (db_path, db_path + "-wal"):
+        try:
+            best = max(best, os.path.getmtime(path))
+        except OSError:
+            pass
+    return best
+
+
+def locate_antigravity_db(native_id: str) -> str | None:
+    """Locate <T3_USERDATA>/providers/antigravity/*/antigravity-acp/conversations/<native_id>.db safely."""
+    if not isinstance(native_id, str) or not SAFE_NATIVE_ID.fullmatch(native_id):
+        return None
+    root = os.path.join(t3_userdata(), "providers", "antigravity")
+    try:
+        entries = sorted(os.scandir(root), key=lambda e: e.name)
+    except OSError:
+        return None
+    found = []
+    for entry in entries:
+        try:
+            if not entry.is_dir():
+                continue
+        except OSError:
+            continue
+        conv_dir = os.path.join(entry.path, "antigravity-acp", "conversations")
+        candidate = os.path.join(conv_dir, f"{native_id}.db")
+        try:
+            if os.path.isfile(candidate) and inside(os.path.realpath(candidate), os.path.realpath(conv_dir)):
+                found.append((antigravity_db_mtime(candidate), candidate))
+        except OSError:
+            continue
+    return max(found, key=lambda item: item[0])[1] if found else None
+
+
+def antigravity_native_ids(thread_id: str) -> tuple[list[str], bool]:
+    """Look up Antigravity nativeThreadRef.nativeId values for a T3 thread in statev2.sqlite.
+    Returns (ids, locked_or_unreadable)."""
+    state_db = os.path.join(t3_userdata(), "statev2.sqlite")
+    if not os.path.isfile(state_db):
+        return [], False
+    uri_base = f"file:{quote(os.path.abspath(state_db), safe='/')}?mode=ro"
+    had_error = False
+    for suffix in ("", "&immutable=1"):
+        con = None
+        try:
+            con = sqlite3.connect(uri_base + suffix, uri=True, timeout=0.5)
+            cols = {r[1] for r in con.execute("PRAGMA table_info(orchestration_v2_projection_provider_threads)")}
+            if "thread_id" not in cols or "payload_json" not in cols:
+                return [], False
+            order = []
+            if "status" in cols:
+                order.append("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+            if "updated_at" in cols:
+                order.append("updated_at DESC")
+            order.append("rowid DESC")
+            rows = con.execute(
+                f"SELECT payload_json FROM orchestration_v2_projection_provider_threads "
+                f"WHERE thread_id = ? ORDER BY {', '.join(order)}",
+                (thread_id,),
+            ).fetchall()
+            ids = []
+            for (raw,) in rows:
+                try:
+                    payload = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                ref = payload.get("nativeThreadRef") if isinstance(payload, dict) else None
+                if not isinstance(ref, dict) or str(ref.get("driver", "")).lower() != "antigravity":
+                    continue
+                nid = ref.get("nativeId")
+                if isinstance(nid, str) and SAFE_NATIVE_ID.fullmatch(nid) and nid not in ids:
+                    ids.append(nid)
+            return ids, (had_error and not ids)
+        except sqlite3.OperationalError as exc:
+            had_error = True
+            msg = str(exc).lower()
+            if "locked" in msg or "busy" in msg or suffix:
+                return [], True
+            continue
+        except (sqlite3.Error, OSError):
+            return [], False
+        finally:
+            if con is not None:
+                try:
+                    con.close()
+                except sqlite3.Error:
+                    pass
+    return [], had_error
+
+
+def find_antigravity_db(task: dict, remembered: str | None) -> str | None:
+    """Find an Antigravity task's conversation DB from watch.json session or statev2.sqlite."""
+    if task.get("session"):
+        return locate_antigravity_db(str(task["session"]))
+    if task.get("thread"):
+        ids, locked = antigravity_native_ids(str(task["thread"]))
+        for nid in ids:
+            path = locate_antigravity_db(nid)
+            if path:
+                return path
+        if locked and remembered and os.path.isfile(remembered):
+            return remembered
+    return None
 
 
 def claude_calls(path: str) -> tuple[dict, list, list]:
@@ -985,7 +1110,10 @@ def main(argv: list[str]) -> int:
     for tid, task in tasks.items():
         launched = parse_time(task.get("launched")) or started
         harness = str(task.get("harness", "")).lower()
-        kind = "claude" if "claude" in harness else "codex" if "codex" in harness else None
+        kind = ("claude" if "claude" in harness else
+                "codex" if "codex" in harness else
+                "antigravity" if ("antigravity" in harness
+                                  or (not harness and str(task.get("session_log") or "").endswith(".db"))) else None)
         log = task.get("session_log") if os.path.isfile(str(task.get("session_log") or "")) else None
         if log:
             pass
@@ -993,20 +1121,27 @@ def main(argv: list[str]) -> int:
             log = find_claude_log(task, launched, procs, cwd, sessions.get(tid))
         elif kind == "codex":
             log = find_codex_log(task, launched, sessions.get(tid))
+        elif kind == "antigravity":
+            log = find_antigravity_db(task, sessions.get(tid))
         running = task.get("status", "running") == "running"
         readable = bool(log) and kind is not None and os.access(log, os.R_OK)
         if log:
             sessions[tid] = log
+        elif kind == "antigravity":
+            sessions.pop(tid, None)
         if readable:   # a log it can read: not blind, or no longer (the heartbeat reads this list)
             blind_told.discard(tid)
         elif tid not in blind_told and task.get("status", "running") == "running":
             why = ("no session log this script reads" if kind is None else
-                   "its session log can't be read" if log else "its session log wasn't found (give its session_log in watch.json)")
+                   "its session log can't be read" if log else
+                   "its conversation DB wasn't found yet (give its session_log or thread in watch.json)"
+                   if kind == "antigravity" else
+                   "its session log wasn't found (give its session_log in watch.json)")
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
                          "it sees only the task's processes and files, so read its thread for stuck calls")
             blind_told.add(tid)
         calls, reports, logs, starts = {}, [], [], []
-        if readable:   # only a harness it knows, through its own parser
+        if readable and kind in ("claude", "codex"):   # only a harness it knows, through its own parser
             logs = [log]
             sub = os.path.join(os.path.splitext(log)[0], "subagents")
             if kind == "claude" and os.path.isdir(sub) and "/subagents/" not in log:
@@ -1026,13 +1161,15 @@ def main(argv: list[str]) -> int:
             task_procs[tid] |= descendants(servers, kids)
         if not running:
             continue
-        session_dir = os.path.splitext(log)[0] if log else None
+        session_dir = os.path.splitext(log)[0] if log and kind != "antigravity" else None
         gdir = git_dir(task["worktree"])
         watched = [task["worktree"], os.path.join(run_dir, tid), session_dir, gdir]
         watched += [c.get("output") for c in calls.values() if c.get("output")]
-        log_time = max((os.path.getmtime(p) for p in logs if os.path.exists(p)), default=0.0)
-        wrote = changed_within(watched, HANG_MIN * 60, skip=[log])
-        quiet = not wrote and now() - log_time > QUIET_MIN * 60 and not changed_within(watched, QUIET_MIN * 60, skip=[log])
+        log_time = (antigravity_db_mtime(log) if (readable and kind == "antigravity")
+                    else max((os.path.getmtime(p) for p in logs if os.path.exists(p)), default=0.0))
+        skip_logs = [log, log + "-wal"] if (kind == "antigravity" and log) else ([log] if log else [])
+        wrote = changed_within(watched, HANG_MIN * 60, skip=skip_logs)
+        quiet = not wrote and now() - log_time > QUIET_MIN * 60 and not changed_within(watched, QUIET_MIN * 60, skip=skip_logs)
         findings[tid] = {"calls": calls, "starts": starts, "wrote": wrote, "quiet": quiet, "log": log_time, "kind": kind}
 
     # Calls old enough to judge, and whether a second look at the CPU is needed.

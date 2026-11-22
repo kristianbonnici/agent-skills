@@ -18,6 +18,7 @@ import re
 import os
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -264,6 +265,7 @@ try:
             f.write(json.dumps({"t": datetime.fromtimestamp(now + dt).astimezone().isoformat(), "disk_free_gb": free}) + "\n")
 
     env = dict(os.environ, CLAUDE_CONFIG_DIR=os.path.join(work, "claude"), CODEX_HOME=os.path.join(work, "codex"),
+               T3_USERDATA=os.path.join(work, "t3"),
                RUN_WATCH_HANG_MINUTES="0.05", RUN_WATCH_QUIET_MINUTES="0.5", RUN_WATCH_HOG_MINUTES="0.05",
                RUN_WATCH_SAMPLE_SECONDS="0.5", RUN_WATCH_CALL_START_SECONDS="4", RUN_WATCH_IOREG=ioreg, RUN_WATCH_PS=fake_ps, RUN_WATCH_DISK_FREE_GB="138", RUN_WATCH_SWAP_GB="25",
                CLAUDE_CODE_TMPDIR=os.path.join(work, "tmp"), RUN_WATCH_GROWTH_MB="2", RUN_WATCH_RESIZE_SECONDS="0")
@@ -523,6 +525,137 @@ try:
     json.dump(w, open(watch_json, "w"))
     rc = subprocess.run([sys.executable, "-I", script, vm_run], capture_output=True, text=True, env=vm_env).returncode
     assert rc == 0, rc
+
+    # Antigravity sessions: mapped via statev2.sqlite (nativeThreadRef.nativeId), watch.json session, or
+    # explicit session_log (.db); tracks .db and .db-wal for quiet and leaves blind once found, stays
+    # honest about not emitting hang/approval, and rejects missing DBs, missing statev2, or traversal IDs.
+    ag_run = os.path.join(work, "ag-run")
+    ag_t3 = os.path.join(work, "ag-t3")
+    ag_conv = os.path.join(ag_t3, "providers", "antigravity", "prof-test-hash", "antigravity-acp", "conversations")
+    os.makedirs(ag_run)
+    os.makedirs(ag_conv)
+    ag_env = dict(vm_env, T3_USERDATA=ag_t3, RUN_WATCH_QUIET_MINUTES="0.5", RUN_WATCH_HANG_MINUTES="0.05")
+    old_ag = time.time() - 3600
+
+    def make_ag_db(path, mtime, wal_mtime=None):
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, step_payload BLOB)")
+        con.execute("INSERT INTO steps VALUES (1, 132, 2, ?)", (b"\x08\x01",))
+        con.commit()
+        con.close()
+        os.utime(path, (mtime, mtime))
+        if wal_mtime is not None:
+            wal_path = path + "-wal"
+            open(wal_path, "wb").write(b"WAL-placeholder")
+            os.utime(wal_path, (wal_mtime, wal_mtime))
+
+    make_ag_db(os.path.join(ag_conv, "ag1-old-uuid.db"), old_ag)
+    make_ag_db(os.path.join(ag_conv, "ag1-active-uuid.db"), old_ag, wal_mtime=time.time())
+    make_ag_db(os.path.join(ag_conv, "ag2-stale-uuid.db"), old_ag, wal_mtime=old_ag)
+    make_ag_db(os.path.join(ag_conv, "ag3-busy-uuid.db"), old_ag)
+    make_ag_db(os.path.join(ag_conv, "ag4-direct-uuid.db"), time.time())
+    custom_db = os.path.join(work, "custom-ag5.db")
+    make_ag_db(custom_db, time.time())
+    # Evil target in parent dir + outside symlink target: neither may ever be accepted.
+    make_ag_db(os.path.join(ag_t3, "providers", "antigravity", "prof-test-hash", "antigravity-acp", "evil.db"), time.time())
+    make_ag_db(os.path.join(work, "outside-ag9.db"), time.time())
+    os.symlink(os.path.join(work, "outside-ag9.db"), os.path.join(ag_conv, "ag9-symlink.db"))
+
+    state_db = os.path.join(ag_t3, "statev2.sqlite")
+    con = sqlite3.connect(state_db)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute(
+        "CREATE TABLE orchestration_v2_projection_provider_threads ("
+        "provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, owner_node_id TEXT, provider TEXT NOT NULL, "
+        "provider_session_id TEXT, status TEXT NOT NULL, first_run_ordinal INTEGER, last_run_ordinal INTEGER, "
+        "updated_at TEXT NOT NULL, payload_json TEXT NOT NULL, driver TEXT, provider_instance_id TEXT)"
+    )
+    rows = [
+        ("pt-1-old", "mcp:launch:ag1", "antigravity", "idle", "2026-11-22T10:00:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag1-old-uuid"}}, "antigravity", "antigravity"),
+        ("pt-1-act", "mcp:launch:ag1", "antigravity", "active", "2026-11-22T10:05:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag1-active-uuid"}}, "antigravity", "antigravity"),
+        ("pt-1-other", "mcp:launch:ag1", "claudeAgent", "active", "2026-11-22T10:10:00Z",
+         {"nativeThreadRef": {"driver": "claudeAgent", "nativeId": "ag1-claude-uuid"}}, "claudeAgent", "claudeAgent"),
+        ("pt-2", "mcp:launch:ag2", "antigravity", "active", "2026-11-22T10:05:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag2-stale-uuid"}}, "antigravity", "antigravity"),
+        ("pt-3", "mcp:launch:ag3", "antigravity", "active", "2026-11-22T10:05:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag3-busy-uuid"}}, "antigravity", "antigravity"),
+        ("pt-6", "mcp:launch:ag6", "antigravity", "active", "2026-11-22T10:05:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag6-missing-uuid"}}, "antigravity", "antigravity"),
+        ("pt-7", "mcp:launch:ag7", "antigravity", "active", "2026-11-22T10:05:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "../evil"}}, "antigravity", "antigravity"),
+    ]
+    for ptid, tid, prov, st, upd, payload, drv, inst in rows:
+        con.execute(
+            "INSERT INTO orchestration_v2_projection_provider_threads "
+            "(provider_thread_id, thread_id, provider, status, updated_at, payload_json, driver, provider_instance_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ptid, tid, prov, st, upd, json.dumps(payload), drv, inst),
+        )
+    con.commit()
+    con.close()
+
+    ag_wt = {k: os.path.join(work, "wt-ag", k) for k in ("AG1", "AG2", "AG3", "AG4", "AG5", "AG6", "AG7", "AG8", "AG9")}
+    for k, path in ag_wt.items():
+        os.makedirs(path, exist_ok=True)
+        os.makedirs(os.path.join(ag_run, k), exist_ok=True)
+        for folder in (path, os.path.join(ag_run, k)):
+            os.utime(folder, (old_ag, old_ag))
+    ag3_proc = spawn(["sleep", "600"], ag_wt["AG3"])
+    with open(cpu_shares, "a") as f:
+        f.write(f"{ag3_proc.pid} 0.5\n")
+    ag_tasks = {
+        "AG1": {"worktree": ag_wt["AG1"], "harness": "antigravity", "thread": "mcp:launch:ag1", "status": "running", "launched": stamp(old_ag)},
+        "AG2": {"worktree": ag_wt["AG2"], "harness": "antigravity", "thread": "mcp:launch:ag2", "status": "running", "launched": stamp(old_ag)},
+        "AG3": {"worktree": ag_wt["AG3"], "harness": "antigravity", "thread": "mcp:launch:ag3", "status": "running", "launched": stamp(old_ag)},
+        "AG4": {"worktree": ag_wt["AG4"], "harness": "antigravity", "session": "ag4-direct-uuid", "status": "running", "launched": stamp(old_ag)},
+        "AG5": {"worktree": ag_wt["AG5"], "harness": "", "session_log": custom_db, "status": "running", "launched": stamp(old_ag)},
+        "AG6": {"worktree": ag_wt["AG6"], "harness": "antigravity", "thread": "mcp:launch:ag6", "status": "running", "launched": stamp(old_ag)},
+        "AG7": {"worktree": ag_wt["AG7"], "harness": "antigravity", "thread": "mcp:launch:ag7", "status": "running", "launched": stamp(old_ag)},
+        "AG8": {"worktree": ag_wt["AG8"], "harness": "antigravity", "session": "../evil", "status": "running", "launched": stamp(old_ag)},
+        "AG9": {"worktree": ag_wt["AG9"], "harness": "antigravity", "session": "ag9-symlink", "status": "running", "launched": stamp(old_ag)},
+    }
+    ag_watch = os.path.join(ag_run, "watch.json")
+    json.dump({"started": stamp(old_ag), "tasks": ag_tasks}, open(ag_watch, "w"))
+    ag_out1 = subprocess.run([sys.executable, "-I", script, ag_run], capture_output=True, text=True, env=ag_env, timeout=120)
+    assert ag_out1.returncode == 0 and "Traceback" not in ag_out1.stderr, (ag_out1.returncode, ag_out1.stderr)
+    ag_lines1 = ag_out1.stdout.splitlines()
+    ag_text1 = "\n".join(ag_lines1)
+    ag_state1 = json.load(open(os.path.join(ag_run, "run-watch.state.json")))
+    # Active WAL prevents false quiet on AG1; stale DB+WAL emits quiet on AG2; busy process prevents quiet on AG3
+    assert not lines_for(ag_lines1, "quiet", "AG1") and not lines_for(ag_lines1, "blind", "AG1"), ag_text1
+    assert len(lines_for(ag_lines1, "quiet", "AG2")) == 1 and "log last written" in lines_for(ag_lines1, "quiet", "AG2")[0], ag_text1
+    assert not lines_for(ag_lines1, "quiet", "AG3") and not lines_for(ag_lines1, "blind", "AG3"), ag_text1
+    assert sorted(ag_state1["blind"]) == ["AG6", "AG7", "AG8", "AG9"], ag_state1
+    for t in ("AG1", "AG2", "AG3", "AG4", "AG5"):
+        assert not any(lines_for(ag_lines1, w, t) for w in ("hang", "idle", "approval", "blind")), (t, ag_text1)
+    for t in ("AG6", "AG7", "AG8", "AG9"):
+        assert len(lines_for(ag_lines1, "blind", t)) == 1, (t, ag_text1)
+        assert t not in ag_state1["sessions"], (t, ag_state1["sessions"])
+    assert ag_state1["sessions"]["AG1"].endswith("ag1-active-uuid.db"), ag_state1["sessions"]
+
+    # Once AG6's DB appears on a later wake, AG6 leaves blind cleanly
+    make_ag_db(os.path.join(ag_conv, "ag6-missing-uuid.db"), time.time())
+    ag_out2 = subprocess.run([sys.executable, "-I", script, ag_run], capture_output=True, text=True, env=ag_env, timeout=120)
+    assert ag_out2.returncode == 0, ag_out2.stderr
+    ag_state2 = json.load(open(os.path.join(ag_run, "run-watch.state.json")))
+    assert sorted(ag_state2["blind"]) == ["AG7", "AG8", "AG9"], ag_state2
+
+    # Missing statev2.sqlite falls back cleanly to blind without creating the database
+    for suffix in ("", "-wal", "-shm"):
+        if os.path.exists(state_db + suffix):
+            os.remove(state_db + suffix)
+    os.makedirs(os.path.join(work, "wt-ag", "AG10"), exist_ok=True)
+    os.makedirs(os.path.join(ag_run, "AG10"), exist_ok=True)
+    ag_tasks["AG10"] = {"worktree": os.path.join(work, "wt-ag", "AG10"), "harness": "antigravity",
+                        "thread": "mcp:launch:ag10", "status": "running", "launched": stamp(time.time())}
+    json.dump({"started": stamp(old_ag), "tasks": ag_tasks}, open(ag_watch, "w"))
+    ag_out3 = subprocess.run([sys.executable, "-I", script, ag_run], capture_output=True, text=True, env=ag_env, timeout=120)
+    assert ag_out3.returncode == 0 and "Traceback" not in ag_out3.stderr, (ag_out3.returncode, ag_out3.stderr)
+    assert len(lines_for(ag_out3.stdout.splitlines(), "blind", "AG10")) == 1, ag_out3.stdout
+    assert "AG10" in json.load(open(os.path.join(ag_run, "run-watch.state.json")))["blind"]
+    assert not os.path.exists(state_db), "run-watch created statev2.sqlite"
 finally:
     for p in started:
         try:
