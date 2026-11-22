@@ -3502,7 +3502,12 @@ d = json.load(open(os.path.join(root, "costs.json")))
 mine = [l for l in d["lines"] if l["owner"] == "A" and l["role"] in ("reviewer", "helper")]
 threads = {l["thread"] for l in mine}
 reviews = {l["thread"] for l in mine if l["role"] == "reviewer"}
-terra = {l["thread"] for l in mine if l["role"] == "reviewer" and l["model"] == "gpt-6.1-terra"}
+used = lambda l: sum((l.get("tokens") or {}).values())
+top = {}   # each thread's model: the one it used the most tokens on
+for l in mine:
+    if l["thread"] not in top or used(l) > used(top[l["thread"]]):
+        top[l["thread"]] = l
+terra = {t for t, l in top.items() if l["role"] == "reviewer" and l["model"] == "gpt-6.1-terra"}
 assert len(reviews) >= 2 and len(threads) > len(reviews) and len(mine) > len(threads), mine   # a thread that moved model
 read = lambda name: json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
 drawn = read("charts")["tasks"][0]["helpers"]
@@ -3510,7 +3515,7 @@ assert sum(h["count"] for h in drawn) == len(threads) and all(h["status"] == "do
 assert sum(h["count"] for h in drawn if h["title"].startswith("Reviewer")) == len(reviews), drawn
 assert {h["title"].split(" ×")[0] for h in drawn} == {"Reviewer", "Researcher"}, drawn
 assert [h["did"] for h in drawn if h["harness"] == "Codex" and h["model"] == "gpt-6.1-terra"] == [f"review ×{len(terra)}"], drawn
-assert not any(h["model"] == "gpt-6-luna" for h in drawn), drawn   # the Terra thread's later Luna lines aren't another reviewer
+assert terra and sum(h["count"] for h in drawn if h["model"] == "gpt-6-luna") == sum(1 for l in top.values() if l["model"] == "gpt-6-luna"), drawn
 assert all(re.fullmatch(r"(review|research) ×\d+", h["did"]) for h in drawn), drawn
 assert "gpt-6.1-terra" in open(os.path.join(root, "charts", "graph.mmd")).read()
 facts = json.load(open(os.path.join(root, "facts.json")))
@@ -3520,9 +3525,12 @@ for name, helpers in (("fewer", [{"label": "Codex · gpt-6.1-terra", "did": f"re
     facts["tasks"][0]["helpers"] = helpers
     json.dump(facts, open(os.path.join(root, f"facts-{name}.json"), "w"))
 open(os.path.join(root, "threads.txt"), "w").write(str(len(threads)))
-d["lines"] += [dict(mine[0], thread=[]), dict(mine[0], thread=None),                         # unreadable: left out
+d["lines"] += [dict(mine[0], thread=[]), dict(mine[0], thread=None), dict(mine[0], thread="t-bad", model=[]),   # unreadable
+               dict(mine[0], thread="t-moved", role="reviewer", harness="codex", model="gpt-6.1-terra", usd=0.01, tokens={"input": 1000}),
+               dict(mine[0], thread="t-moved", role="reviewer", harness="codex", model="gpt-6-luna", usd=None, tokens={"input": 100000}),
                dict(mine[0], thread="t-go", role="helper", harness="opencode", model="opencode-go/deepseek-v4.1-flash"),
-               dict(mine[0], thread="t-none", role="reviewer", harness="antigravity", model=None, usd=None)]
+               dict(mine[0], thread="t-none", role="reviewer", harness="antigravity", model=None, usd=None),
+               dict(mine[0], thread="t-beam", role="helper", harness="opencode", model="opencode-go/beam-free")]
 json.dump(d, open(os.path.join(root, "costs-odd.json"), "w"))
 facts["tasks"][0].pop("helpers")
 facts["costs"] = {"file": "costs-odd.json"}
@@ -3537,7 +3545,7 @@ for name in full times; do
   test -z "$(grep "the costs file holds" "$costs/$name.err")"   # a full list: no warning
 done
 "$scripts/run-charts" "$costs/facts-odd.json" "$costs/charts-odd" > /dev/null 2> "$costs/odd.err"
-grep -q "2 reviewer or helper lines in the costs file had no thread" "$costs/odd.err"
+grep -q "3 reviewer or helper lines in the costs file had no thread" "$costs/odd.err"
 python3 -I - "$costs" <<'EOF'
 import json, os, re, sys
 root = sys.argv[1]
@@ -3546,9 +3554,18 @@ read = lambda name: json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.p
 for name, did in (("charts-fewer", f"review ×{n - 1}"), ("charts-full", "review"), ("charts-times", f"review ×{n}")):
     drawn = read(name)["tasks"][0]["helpers"]
     assert len(drawn) == 1 and drawn[0]["did"] == did and drawn[0]["count"] == (n - 1 if name == "charts-fewer" else n), (name, drawn)
+d = json.load(open(os.path.join(root, "costs.json")))
+used = lambda l: sum((l.get("tokens") or {}).values())
+top = {}
+for l in d["lines"]:
+    if l["owner"] == "A" and l["role"] in ("reviewer", "helper") and (l["thread"] not in top or used(l) > used(top[l["thread"]])):
+        top[l["thread"]] = l
 data = read("charts-odd")
 drawn = data["tasks"][0]["helpers"]
-assert sum(h["count"] for h in drawn) == n + 2, drawn
+assert sum(h["count"] for h in drawn) == n + 4, drawn
+assert [h["harness"] for h in drawn if h["model"] == "opencode-go/beam-free"] == ["OpenCode"], drawn   # free there: no Go plan
+luna = sum(1 for l in top.values() if l["model"] == "gpt-6-luna")
+assert [h["did"] for h in drawn if h["model"] == "gpt-6-luna"] == [f"review ×{luna + 1}"], drawn   # the model it used most, priced or not
 go = [h for h in drawn if h["model"] == "opencode-go/deepseek-v4.1-flash"]
 assert len(go) == 1 and go[0]["harness"] == "OpenCode Go", go
 none = [h for h in drawn if h["harness"] == "Antigravity" and h["model"] == "default"]
