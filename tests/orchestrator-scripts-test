@@ -3421,7 +3421,7 @@ json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z"
 with open(os.path.join(t3, "logs/provider/events.task-b.log"), "w") as f:
     f.write(claude_line("2026-11-10T02:30:00.000Z", "thread:task-b", "b1", opus) + "\n")
 EOF
-T3_USERDATA="$costs/t3" OPENCODE_DB="$costs/opencode.db" "$scripts/run-costs" "$costs/run" --json "$costs/costs.json" > "$costs/costs.md"
+T3_USERDATA="$costs/t3" OPENCODE_DB="$costs/opencode.db" env -u ANTIGRAVITY_CONVERSATIONS_DIR "$scripts/run-costs" "$costs/run" --json "$costs/costs.json" > "$costs/costs.md"
 python3 -I - "$costs" <<'EOF'
 import json, os, sys
 root = sys.argv[1]
@@ -3753,13 +3753,75 @@ make_ag_db(
                         primary=pb_usage(mid=1532, inp=50000, out3=5000, f11="req-after"), ts=T_AFTER))],
 )
 
-# 6. Helper DB with no row/traj timestamp -> uses max(db mtime, wal mtime) fallback!
+# 6. Helper DB with no row/traj timestamp -> uses max(db mtime, wal mtime) fallback (and flags approximate time!)
 mtime_db = os.path.join(convs, "ag-mtime.db")
 make_ag_db(mtime_db, gm=[(0, pb_gen_meta(mid=1525, f19="gemini-4-hydrogen", primary=pb_usage(mid=1525, inp=2000, out3=200)))])
 os.utime(mtime_db, (T_BEFORE, T_BEFORE))   # DB mtime is before run,
 with open(mtime_db + "-wal", "wb") as wf:  # but WAL mtime is inside run!
     wf.write(b"")
 os.utime(mtime_db + "-wal", (T_IN2, T_IN2))
+
+# 6b. Reused conversation started before run (traj_ts < start) with untimestamped row -> MUST NOT report clean $0!
+make_ag_db(
+    os.path.join(convs, "ag-reused-before.db"),
+    gm=[(0, pb_gen_meta(mid=1537, f19="gemini-pro-orchestrator-neon",
+                        primary=pb_usage(mid=1537, inp=9000, out3=900, f11="req-reused1")))],
+    traj_ts=T_BEFORE,
+)
+
+# 6c. Display-only rank-1 label ("Orchestrator (Neon)") with mid=1537 (no f19) -> upgrades via ANTIGRAVITY_MODEL_IDS;
+# plus extra-high, stacked parentheticals ("Claude Opus 5.5 (Thinking) (High)"), "Gemini 4 Neon (Orchestrator)",
+# and "gemini-4-carbon-orchestrator".
+make_ag_db(
+    os.path.join(convs, "ag-labels.db"),
+    gm=[
+        (0, pb_gen_meta(mid=1537, f21="Orchestrator (Neon)",
+                        primary=pb_usage(mid=1537, inp=3000, out3=300, f11="req-lbl1"), ts=T_IN1)),
+        (1, pb_gen_meta(f21="Claude Opus 5.5 (Thinking) (High)",
+                        primary=pb_usage(inp=2000, out3=200, f11="req-lbl2"), ts=T_IN1)),
+        (2, pb_gen_meta(f21="Gemini 4 Neon (Extra High)",
+                        primary=pb_usage(inp=1500, out3=150, f11="req-lbl3"), ts=T_IN1)),
+        (3, pb_gen_meta(f19="gemini-4-carbon-orchestrator",
+                        primary=pb_usage(inp=1000, out3=100, f11="req-lbl4"), ts=T_IN1)),
+        (4, pb_gen_meta(f21="Gemini 4 Neon (Orchestrator)",
+                        primary=pb_usage(inp=1200, out3=120, f11="req-lbl5"), ts=T_IN1)),
+    ],
+)
+
+# 6d. Unknown numeric modelId (9999) with no name -> inferred from thread's model selection and flagged!
+make_ag_db(
+    os.path.join(convs, "ag-unknown-mid.db"),
+    st=[(0, pb_step_meta(primary=pb_usage(mid=9999, inp=4000, out3=400, f11="req-unk1"), ts8=T_IN1))],
+)
+
+# 6e. Live WAL-mode DB with committed rows still in -wal (not checkpointed) while read-only query runs!
+wal_db = os.path.join(convs, "ag-live-wal.db")
+wc = sqlite3.connect(wal_db)
+wc.execute("PRAGMA journal_mode=WAL")
+wc.execute("PRAGMA wal_autocheckpoint=0")
+wc.execute("create table gen_metadata (idx integer primary key, data blob)")
+wc.execute("create table steps (idx integer primary key, metadata blob)")
+wc.execute("create table trajectory_metadata_blob (id text primary key, data blob)")
+wc.commit()
+wc.execute("insert into gen_metadata values (0, ?)", (
+    pb_gen_meta(mid=1532, f19="gemini-4-neon", primary=pb_usage(mid=1532, inp=7000, out3=700, f11="req-wal1"), ts=T_IN1),))
+wc.commit()
+# Leave -wal uncheckpointed by closing only after checking -wal is non-empty, or open a reader before close;
+# SQLite WAL persists in -wal when wal_autocheckpoint=0 and we disable checkpoint on close via a second open reader,
+# or simply keep the WAL file present on disk after SQLITE_FCNTL_PERSIST_WAL / uncheckpointed commit.
+assert os.path.exists(wal_db + "-wal") and os.path.getsize(wal_db + "-wal") > 0
+wc.close()
+
+# 6f. DB with symlinked -wal sidecar -> refused!
+side_db = os.path.join(convs, "ag-bad-sidecar.db")
+make_ag_db(side_db, gm=[(0, pb_gen_meta(mid=1532, f19="gemini-4-neon", primary=pb_usage(mid=1532, inp=1000, out3=100, f11="req-side1"), ts=T_IN1))])
+os.symlink(os.path.join(convs, "ag-rev-claude.db"), side_db + "-wal")
+
+# 6g. Antigravity thread acting as orchestrator_thread
+make_ag_db(
+    os.path.join(convs, "ag-orch.db"),
+    gm=[(0, pb_gen_meta(mid=1532, f19="gemini-4-neon", primary=pb_usage(mid=1532, inp=5000, out3=500, f11="req-orch1"), ts=T_IN1))],
+)
 
 # 7. Corrupt DB (not SQLite), symlinked DB, and DB with one malformed blob alongside a good one
 with open(os.path.join(convs, "ag-corrupt.db"), "wb") as f:
@@ -3792,12 +3854,20 @@ def thread(tid, title, instance, model, parent=None, native=None, driver="antigr
         db.execute("insert into orchestration_v2_projection_provider_threads values (?, ?)", (tid, json.dumps({
             "nativeThreadRef": {"driver": driver, "nativeId": native}})))
 
+thread("ag:orch", "Orchestrator", "antigravity", "gemini-4-neon", native="ag-orch")
 thread("ag:task-a", "A", "antigravity", "gemini-pro-orchestrator-neon", native="ag-neon-orch")
 thread("ag:rev-stacked", "A review (Stacked)", "antigravity", "gemini-4-hydrogen-tiered-high", parent="ag:task-a", native="ag-rev-stacked")
 thread("ag:rev-claude", "A review (Claude)", "antigravity", "claude-opus-5-5-high", parent="ag:task-a", native="ag-rev-claude")
 thread("ag:help-traj", "A helper traj", "antigravity", "gemini-pro-orchestrator-argon", parent="ag:task-a", native="ag-help-traj")
 thread("ag:help-outside", "A helper outside", "antigravity", "gemini-4-neon-xhigh", parent="ag:task-a", native="ag-outside")
 thread("ag:help-mtime", "A helper mtime", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-mtime")
+thread("ag:help-reused", "A helper reused", "antigravity", "gemini-pro-orchestrator-neon", parent="ag:task-a", native="ag-reused-before")
+thread("ag:help-labels", "A helper labels", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-labels")
+thread("ag:help-unk-mid", "A helper unknown mid", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-unknown-mid")
+thread("ag:help-wal", "A helper wal", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-live-wal")
+thread("ag:help-sidecar", "A helper sidecar", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-bad-sidecar")
+thread("ag:help-shared", "A helper shared", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-orch")
+thread("ag:help-unhash", "A helper unhash", "antigravity", "gemini-4-neon", parent="ag:task-a", native=["not-a-str"])
 thread("ag:help-missing", "A helper missing", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-does-not-exist")
 thread("ag:help-corrupt", "A helper corrupt", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-corrupt")
 thread("ag:help-symlink", "A helper symlink", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-symlink")
@@ -3811,24 +3881,30 @@ prices = {"fetchedAtMs": 1794345905354, "document": {
     "gemini/gemini-4-neon": {"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05, "cache_read_input_token_cost": 1.5e-07},
     "gemini/gemini-4-hydrogen": {"input_cost_per_token": 1.5e-06, "output_cost_per_token": 7.5e-06, "cache_read_input_token_cost": 7.5e-08},
     "gemini/gemini-4-argon": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07},
+    "gemini/gemini-4-argon-high": {"input_cost_per_token": 9e-06, "output_cost_per_token": 9e-05},   # base rate must still win on gemini-4-argon-high
     "gemini/gemini-4-carbon": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07},
     "claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05, "cache_read_input_token_cost": 2e-07,
                         "cache_creation_input_token_cost": 5e-06},
+    "claude-opus-5-5-thinking": {"input_cost_per_token": 5e-06, "output_cost_per_token": 2.5e-05},   # intermediate rate must win for thinking-high
     "claude-sonnet-5-5": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07,
                           "cache_creation_input_token_cost": 2.5e-06},
 }}
 json.dump(prices, open(os.path.join(t3, "usage-model-rates.json"), "w"))
-json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z",
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "orchestrator_thread": "ag:orch",
            "tasks": {"A": {"thread": "ag:task-a", "status": "merged"}}},
           open(os.path.join(root, "run/watch.json"), "w"))
 EOF
-T3_USERDATA="$ag_costs/t3" "$scripts/run-costs" "$ag_costs/run" --json "$ag_costs/costs.json" > "$ag_costs/costs.md"
+env -u ANTIGRAVITY_CONVERSATIONS_DIR T3_USERDATA="$ag_costs/t3" "$scripts/run-costs" "$ag_costs/run" --json "$ag_costs/costs.json" > "$ag_costs/costs.md"
 python3 -I - "$ag_costs" <<'EOF'
 import json, os, sys
 root = sys.argv[1]
 d = json.load(open(os.path.join(root, "costs.json")))
 by_tm = {(l["thread"], l["model"]): l for l in d["lines"]}
 by_t = {l["thread"]: [x for x in d["lines"] if x["thread"] == l["thread"]] for l in d["lines"]}
+
+# Antigravity as orchestrator_thread
+orch = by_tm[("ag:orch", "gemini-4-neon")]
+assert orch["role"] == "orchestrator" and orch["tokens"]["input"] == 5000 and orch["usd"] > 0, orch
 
 # Task A: Neon orchestrator (1537) + Hydrogen worker (1669), deduplicated across gm/steps/retries
 neon = by_tm[("ag:task-a", "gemini-pro-orchestrator-neon")]
@@ -3856,26 +3932,56 @@ assert abs(c_opus["usd"] - round(10000 * 4e-06 + 100000 * 2e-07 + 2000 * 5e-06 +
 c_son = by_tm[("ag:rev-claude", "claude-sonnet-5-5-high")]
 assert c_son["tokens"]["input"] == 8000 and c_son["tokens"]["output"] == 800 and "claude-sonnet-5-5" in c_son["basis"], c_son
 
-# Trajectory timestamp fallback + argon/carbon orchestrator aliases
+# Trajectory timestamp fallback + argon/carbon orchestrator aliases -> counted AND flagged approximate!
 h_arg = by_tm[("ag:help-traj", "gemini-pro-orchestrator-argon")]
 assert h_arg["tokens"]["input"] == 10000 and "gemini/gemini-4-argon" in h_arg["basis"], h_arg
+assert "conversation's start or file time" in (h_arg.get("missing") or ""), h_arg
 h_carb = by_tm[("ag:help-traj", "gemini-pro-orchestrator")]
 assert h_carb["tokens"]["input"] == 5000 and "gemini/gemini-4-carbon" in h_carb["basis"], h_carb
 
-# Out-of-span DB -> $0.00 ("no tokens used in the run"), NOT missing!
+# Out-of-span DB with real row timestamps -> $0.00 ("no tokens used in the run"), NOT missing!
 h_out = by_t["ag:help-outside"][0]
 assert h_out["usd"] == 0.0 and h_out["basis"] == "no tokens used in the run" and not h_out.get("missing"), h_out
 
-# WAL mtime fallback -> counted!
+# WAL mtime fallback inside span -> counted AND flagged approximate!
 h_mt = by_tm[("ag:help-mtime", "gemini-4-hydrogen")]
-assert h_mt["tokens"]["input"] == 2000 and h_mt["usd"] > 0, h_mt
+assert h_mt["tokens"]["input"] == 2000 and h_mt["usd"] > 0 and "conversation's start or file time" in (h_mt.get("missing") or ""), h_mt
 
-# Missing, corrupt, symlinked, traversal -> uncounted with missing reason, no crash
-for tid in ("ag:help-missing", "ag:help-corrupt", "ag:help-symlink", "ag:help-traversal"):
+# Reused conversation (traj_ts < start, untimestamped row) -> MUST NOT emit clean $0.00!
+h_reused = by_t["ag:help-reused"][0]
+assert h_reused["usd"] is None and "fell outside the run" in (h_reused.get("missing") or ""), h_reused
+
+# Display-only rank-1 label ("Orchestrator (Neon)" with mid=1537), stacked parens, intermediate price entry,
+# extra-high, carbon-orchestrator, and neon-orchestrator
+lbl_n = by_tm[("ag:help-labels", "gemini-pro-orchestrator-neon")]
+assert lbl_n["tokens"]["input"] == 3000 and "gemini/gemini-4-neon" in lbl_n["basis"], lbl_n
+lbl_ct = by_tm[("ag:help-labels", "claude-opus-5-5-thinking-high")]
+assert lbl_ct["tokens"]["input"] == 2000 and "claude-opus-5-5-thinking" in lbl_ct["basis"], lbl_ct
+lbl_xh = by_tm[("ag:help-labels", "gemini-4-neon-extra-high")]
+assert lbl_xh["tokens"]["input"] == 1500 and "gemini/gemini-4-neon" in lbl_xh["basis"], lbl_xh
+lbl_co = by_tm[("ag:help-labels", "gemini-4-carbon-orchestrator")]
+assert lbl_co["tokens"]["input"] == 1000 and "gemini/gemini-4-carbon" in lbl_co["basis"], lbl_co
+lbl_no = by_tm[("ag:help-labels", "gemini-4-neon-orchestrator")]
+assert lbl_no["tokens"]["input"] == 1200 and "gemini/gemini-4-neon" in lbl_no["basis"], lbl_no
+
+# Unknown modelId falls back to thread's selected model AND is flagged
+h_unk = by_tm[("ag:help-unk-mid", "gemini-4-neon")]
+assert h_unk["tokens"]["input"] == 4000 and "inferred from the thread's selection" in (h_unk.get("missing") or ""), h_unk
+
+# Live WAL-mode DB counted cleanly
+h_wal = by_tm[("ag:help-wal", "gemini-4-neon")]
+assert h_wal["tokens"]["input"] == 7000 and h_wal["usd"] > 0 and not h_wal.get("missing"), h_wal
+
+# Shared DB between two threads -> second thread flagged as counted under first, NOT clean $0.00!
+h_sh = by_t["ag:help-shared"][0]
+assert h_sh["usd"] is None and "counted under ag:orch" in (h_sh.get("missing") or ""), h_sh
+
+# Missing, corrupt, symlinked, symlinked sidecar, traversal, unhashable -> uncounted with missing reason, no crash
+for tid in ("ag:help-missing", "ag:help-corrupt", "ag:help-symlink", "ag:help-sidecar", "ag:help-traversal", "ag:help-unhash"):
     row = by_t[tid][0]
     assert row["usd"] is None and row.get("missing"), (tid, row)
 assert "not found" in by_t["ag:help-missing"][0]["missing"]
-for tid in ("ag:help-corrupt", "ag:help-symlink", "ag:help-traversal"):
+for tid in ("ag:help-corrupt", "ag:help-symlink", "ag:help-sidecar", "ag:help-traversal", "ag:help-unhash"):
     assert "couldn't be read" in by_t[tid][0]["missing"], (tid, by_t[tid][0])
 
 # Malformed blob alongside valid record -> valid record counted, flagged incomplete, malformed >= 1
@@ -3902,14 +4008,77 @@ grep -q '^Cost at API prices (estimate): \$' "$ag_costs/charts/summary.txt"
 python3 -I - "$ag_costs/charts/run-map.html" <<'EOF'
 import json, re, sys
 data = json.loads(re.search(r"const DATA = (\{.*?\});\n", open(sys.argv[1]).read()).group(1))
-assert data["cost"]["total"] > 0 and data["tasks"][0]["cost"]["total"] > 0, data.get("cost")
+assert data["cost"]["total"] > 0 and data["tasks"][0]["cost"]["total"] > 0 and data["orch"]["cost"]["total"] > 0, data.get("cost")
 helpers = data["tasks"][0]["helpers"]
 # Two Antigravity reviewers (ag:rev-stacked and ag:rev-claude), each counted once despite multi-model lines
 rev_count = sum(h["count"] for h in helpers if h["title"].startswith("Reviewer"))
 assert rev_count == 2, helpers
 EOF
 
-# ANTIGRAVITY_CONVERSATIONS_DIR override: finds ag-alt.db without touching providers/antigravity
+# Existing Gemini effort-suffix precedence preserved (base rate wins over suffixed entry in price table),
+# plus multi-computer merge with Antigravity lines & model-less OpenCode zero line, and live WAL open concurrently,
+# plus unreadable Antigravity folder never breaks a Claude-only report.
+python3 -I - "$scripts/run-costs" "$ag_costs" <<'EOF'
+import json, os, runpy, sqlite3, subprocess, sys
+script, root = sys.argv[1:]
+ns = runpy.run_path(script, run_name="run_costs")
+doc = json.load(open(os.path.join(root, "t3/usage-model-rates.json")))["document"]
+entry, key = ns["price_of"]("gemini-4-argon-high", doc)
+assert key == "gemini/gemini-4-argon", (entry, key)   # base rate wins over gemini/gemini-4-argon-high
+entry2, key2 = ns["price_of"]("claude-opus-5-5-thinking-high", doc)
+assert key2 == "claude-opus-5-5-thinking", (entry2, key2)   # intermediate rate wins over claude-opus-5-5
+
+# Multi-computer merge accepts Antigravity lines + zero-token line with model="unknown"
+ag_data = json.load(open(os.path.join(root, "costs.json")))
+assert all(ns["costs_line"](l) for l in ag_data["lines"]), "Antigravity lines must satisfy costs_line"
+zero_oc = {"owner": "B", "thread": "oc:zero", "role": "helper", "harness": "opencode", "model": "unknown", "usd": 0.0}
+assert ns["costs_line"](zero_oc)
+
+# Live WAL-mode DB held open by another writer connection while run-costs reads it
+wal_path = os.path.join(root, "t3/providers/antigravity/profile-1/antigravity-acp/conversations/ag-live-wal.db")
+writer = sqlite3.connect(wal_path)
+writer.execute("PRAGMA journal_mode=WAL")
+writer.execute("PRAGMA wal_autocheckpoint=0")
+try:
+    env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
+    env["T3_USERDATA"] = os.path.join(root, "t3")
+    res = subprocess.run([script, os.path.join(root, "run"), "--json", os.path.join(root, "costs-live.json")],
+                         env=env, capture_output=True, text=True, check=True)
+    live = json.load(open(os.path.join(root, "costs-live.json")))
+    wal_lines = [l for l in live["lines"] if l["thread"] == "ag:help-wal"]
+    assert len(wal_lines) == 1 and wal_lines[0]["tokens"]["input"] == 7000, wal_lines
+finally:
+    writer.close()
+
+# Unreadable Antigravity profile directory does not abort a Claude-only run
+claude_only = os.path.join(root, "claude-only")
+os.makedirs(os.path.join(claude_only, "t3/providers/antigravity/locked"), exist_ok=True)
+os.makedirs(os.path.join(claude_only, "t3/logs/provider"), exist_ok=True)
+os.makedirs(os.path.join(claude_only, "run"), exist_ok=True)
+cdb = sqlite3.connect(os.path.join(claude_only, "t3/statev2.sqlite"))
+cdb.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+cdb.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+cdb.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+cdb.execute("insert into orchestration_v2_projection_threads values ('cl:a', ?)", (json.dumps({
+    "title": "A", "providerInstanceId": "claudeAgent", "modelSelection": {"model": "claude-opus-5-5"},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
+cdb.commit(); cdb.close()
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "tasks": {"A": {"thread": "cl:a"}}},
+          open(os.path.join(claude_only, "run/watch.json"), "w"))
+json.dump({"fetchedAtMs": 1794345905354, "document": doc}, open(os.path.join(claude_only, "t3/usage-model-rates.json"), "w"))
+locked = os.path.join(claude_only, "t3/providers/antigravity/locked")
+os.chmod(locked, 0o000)
+try:
+    env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
+    env["T3_USERDATA"] = os.path.join(claude_only, "t3")
+    subprocess.run([script, os.path.join(claude_only, "run"), "--json", os.path.join(claude_only, "out.json")],
+                   env=env, capture_output=True, text=True, check=True)
+finally:
+    os.chmod(locked, 0o755)
+EOF
+
+# ANTIGRAVITY_CONVERSATIONS_DIR override: finds ag-alt.db without touching providers/antigravity;
+# a missing override warns on stderr without crashing.
 python3 -I - "$ag_costs/t3/statev2.sqlite" "$ag_costs/run/watch-alt.json" <<'EOF'
 import json, sqlite3, sys
 db = sqlite3.connect(sys.argv[1])
@@ -3931,6 +4100,8 @@ d = json.load(open(sys.argv[1]))
 assert len(d["lines"]) == 1 and d["lines"][0]["model"] == "gemini-flash-worker-agy", d["lines"]
 assert "gemini/gemini-4-hydrogen" in d["lines"][0]["basis"] and d["lines"][0]["usd"] > 0, d["lines"]
 EOF
+T3_USERDATA="$ag_costs/t3" ANTIGRAVITY_CONVERSATIONS_DIR="$ag_costs/no-such-dir" "$scripts/run-costs" "$ag_costs/run-alt" --json "$ag_costs/costs-alt-miss.json" > /dev/null 2> "$ag_costs/alt-miss.err"
+grep -q "ANTIGRAVITY_CONVERSATIONS_DIR" "$ag_costs/alt-miss.err"
 
 # A run on several computers, with made-up computers: studio-mac (the orchestrator's, with GPU readings),
 # den-mac (an Intel Mac: no GPU readings, its clock an hour behind) and attic-mac (whose samples and costs never

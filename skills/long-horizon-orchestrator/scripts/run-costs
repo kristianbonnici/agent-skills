@@ -82,12 +82,16 @@ from urllib.parse import quote, unquote
 REVIEW = re.compile(r"review|critique|re-look", re.I)
 MAKERS = ("deepseek/", "zai/", "gemini/", "openai/", "anthropic/", "azure_ai/")
 FREE = re.compile(r"(^|/)opencode/.*-free$|-free$")
-EFFORT_SUFFIX = re.compile(r"-(?:extra-low|low|medium|high|xhigh|max|tiered|control|thinking|agent)$")
+# Antigravity schema, aliases and model IDs confirmed against Antigravity 1.5.14 on 2026-11-22;
+# see docs/skills/long-horizon-orchestrator/evidence.md.
+GEMINI_EFFORT_SUFFIX = re.compile(r"-(?:extra-low|extra-high|low|medium|high|xhigh|max)$")
+EFFORT_SUFFIX = re.compile(r"-(?:extra-low|extra-high|low|medium|high|xhigh|max|tiered|control|thinking|agent|orchestrator)$")
 ANTIGRAVITY_MODEL_ALIASES = {
     "gemini-pro-orchestrator-neon": "gemini-4-neon",
     "gemini-4-hydrogen-orchestrator": "gemini-4-hydrogen",
     "gemini-flash-worker-agy": "gemini-4-hydrogen",
     "gemini-pro-orchestrator-argon": "gemini-4-argon",
+    "gemini-pro-orchestrator-carbon": "gemini-4-carbon",
     "gemini-pro-orchestrator": "gemini-4-carbon",
     "gemini-3.8-flash-n": "gemini-3.8-flash",
 }
@@ -196,20 +200,33 @@ def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
     stacked Gemini/Claude effort/routing suffixes and Antigravity orchestrator aliases resolved."""
     name = re.sub(r"^(opencode-go|opencode)/", "", model or "")
     name = re.sub(r"-free$", "", name)
+    if name.startswith("gemini-"):
+        name = GEMINI_EFFORT_SUFFIX.sub("", name)
     entry, key = _lookup_price(name, doc)
     if entry is not None:
         return entry, key
     if name.startswith(("gemini-", "claude-")):
         stripped = name
+        seen = {stripped}
         while True:
-            stripped = ANTIGRAVITY_MODEL_ALIASES.get(stripped, stripped)
+            aliased = ANTIGRAVITY_MODEL_ALIASES.get(stripped, stripped)
+            if aliased != stripped:
+                stripped = aliased
+                entry, key = _lookup_price(stripped, doc)
+                if entry is not None:
+                    return entry, key
+                if stripped in seen:
+                    break
+                seen.add(stripped)
+                continue
             nxt = EFFORT_SUFFIX.sub("", stripped)
-            if nxt == stripped:
+            if nxt == stripped or nxt in seen:
                 break
             stripped = nxt
-        stripped = ANTIGRAVITY_MODEL_ALIASES.get(stripped, stripped)
-        if stripped != name:
-            return _lookup_price(stripped, doc)
+            seen.add(stripped)
+            entry, key = _lookup_price(stripped, doc)
+            if entry is not None:
+                return entry, key
     return None, ""
 
 
@@ -639,7 +656,10 @@ def _normalize_ag_model(raw: str) -> str:
     s = raw.strip().lower()
     if not s:
         return ""
-    s = re.sub(r"\s*\(([^()]+)\)\s*$", lambda m: "-" + m.group(1).strip(), s)
+    m = re.search(r"(?:\s*\([^()]+\))+\s*$", s)
+    if m:
+        tail = re.findall(r"\(([^()]+)\)", m.group(0))
+        s = s[:m.start()] + "".join("-" + t.strip() for t in tail if t.strip())
     s = re.sub(r"\s+", "-", s)
     s = re.sub(r"-{2,}", "-", s).strip("-")
     s = re.sub(
@@ -695,46 +715,60 @@ def _parse_ag_usage(blob: bytes) -> tuple[dict | None, bool]:
             "output": max(out3, reasoning + completion), "keys": keys}, True
 
 
+def _is_plain_dir(path: Path) -> tuple[bool, bool]:
+    """(is_non_symlink_dir, saw_error_or_symlink) without propagating OSError."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False, False
+    except OSError:
+        return False, True
+    if stat.S_ISLNK(st.st_mode):
+        return False, True
+    return stat.S_ISDIR(st.st_mode), False
+
+
 def _ag_conv_dirs() -> tuple[list[Path], bool]:
-    """Conversation folders to search, and whether a symlink was skipped."""
+    """Conversation folders to search, and whether a symlink or unreadable folder was seen."""
     override = os.environ.get("ANTIGRAVITY_CONVERSATIONS_DIR")
     if override:
         folder = Path(override)
-        if folder.is_symlink():
+        ok, bad = _is_plain_dir(folder)
+        if not ok:
+            print(f"run-costs: ANTIGRAVITY_CONVERSATIONS_DIR ({override}) isn't a usable folder", file=sys.stderr)
             return [], True
-        return ([folder] if folder.is_dir() else []), False
+        return [folder], False
     root = userdata() / "providers" / "antigravity"
-    if root.is_symlink():
-        return [], True
-    if not root.is_dir():
-        return [], False
-    dirs, saw_symlink = [], False
+    ok, bad = _is_plain_dir(root)
+    if not ok:
+        return [], bad
+    dirs, saw_bad = [], False
     try:
         entries = sorted(root.iterdir())
     except OSError:
-        return [], False
+        return [], True
     for entry in entries:
-        if entry.is_symlink():
-            saw_symlink = True
-            continue
-        if not entry.is_dir():
+        ok, err = _is_plain_dir(entry)
+        if err:
+            saw_bad = True
+        if not ok:
             continue
         acp = entry / "antigravity-acp"
-        if acp.is_symlink():
-            saw_symlink = True
-            continue
-        if not acp.is_dir():
+        ok, err = _is_plain_dir(acp)
+        if err:
+            saw_bad = True
+        if not ok:
             continue
         conv = acp / "conversations"
-        if conv.is_symlink():
-            saw_symlink = True
-            continue
-        if conv.is_dir():
+        ok, err = _is_plain_dir(conv)
+        if err:
+            saw_bad = True
+        if ok:
             dirs.append(conv)
-    return dirs, saw_symlink
+    return dirs, saw_bad
 
 
-def _find_ag_db(native_id: str, dirs: list[Path], saw_symlink: bool) -> tuple[Path | None, str | None]:
+def _find_ag_db(native_id: str, dirs: list[Path], saw_bad_dir: bool) -> tuple[Path | None, str | None]:
     if not isinstance(native_id, str) or not ANTIGRAVITY_ID.fullmatch(native_id):
         return None, "Antigravity conversation database couldn't be read"
     saw_bad = False
@@ -747,13 +781,31 @@ def _find_ag_db(native_id: str, dirs: list[Path], saw_symlink: bool) -> tuple[Pa
         except OSError:
             saw_bad = True
             continue
-        if not stat.S_ISREG(st.st_mode) or cand.parent != folder:
+        if not stat.S_ISREG(st.st_mode):
             saw_bad = True
             continue
         return cand, None
-    if saw_bad or (saw_symlink and not dirs):
+    if saw_bad or (saw_bad_dir and not dirs):
         return None, "Antigravity conversation database couldn't be read"
     return None, "Antigravity conversation database not found"
+
+
+def _sidecars_ok(path: Path) -> tuple[bool, float]:
+    """Verify any SQLite sidecar files (-wal, -shm, -journal) are plain regular files; return (ok, wal_mtime)."""
+    wal_mtime = 0.0
+    for suffix in ("-wal", "-shm", "-journal"):
+        side = Path(f"{path}{suffix}")
+        try:
+            st = os.lstat(side)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False, 0.0
+        if not stat.S_ISREG(st.st_mode):
+            return False, 0.0
+        if suffix == "-wal":
+            wal_mtime = st.st_mtime
+    return True, wal_mtime
 
 
 def _open_ag_db(path: Path) -> tuple[sqlite3.Connection | None, float | None]:
@@ -766,19 +818,27 @@ def _open_ag_db(path: Path) -> tuple[sqlite3.Connection | None, float | None]:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             return None, None
+        dev_ino = (st.st_dev, st.st_ino)
         mtime = st.st_mtime
     finally:
         os.close(fd)
-    wal = Path(f"{path}-wal")
-    try:
-        wst = os.lstat(wal)
-        if stat.S_ISREG(wst.st_mode):
-            mtime = max(mtime, wst.st_mtime)
-    except OSError:
-        pass
+    ok_side, wal_mtime = _sidecars_ok(path)
+    if not ok_side:
+        return None, None
+    mtime = max(mtime, wal_mtime)
     try:
         con = sqlite3.connect(f"file:{quote(str(path), safe='/')}?mode=ro", uri=True, timeout=10)
     except sqlite3.Error:
+        return None, None
+    # Re-verify path identity and sidecars after open to narrow any swap window.
+    try:
+        st2 = os.lstat(path)
+        ok_side2, _ = _sidecars_ok(path)
+        if not stat.S_ISREG(st2.st_mode) or (st2.st_dev, st2.st_ino) != dev_ino or not ok_side2:
+            con.close()
+            return None, None
+    except OSError:
+        con.close()
         return None, None
     return con, mtime
 
@@ -945,62 +1005,97 @@ def _read_ag_db(path: Path, db_key: str) -> dict:
         mid = rec["model_id"]
         if mid:
             rec["model"] = _better_model(rec["model"], learned.get(mid, ""))
-            if _ag_model_rank(rec["model"]) <= 0:
+            if _ag_model_rank(rec["model"]) <= 1:
                 rec["model"] = _better_model(rec["model"], ANTIGRAVITY_MODEL_IDS.get(mid, ""))
     return {"ok": True, "records": records, "malformed": malformed, "error": None}
 
 
-def antigravity_usage(rows: list[dict], natives: dict, start: float, end: float) -> tuple[dict, set, dict, set, int]:
+def antigravity_usage(rows: list[dict], natives: dict, start: float, end: float) -> dict:
     """Read Antigravity conversation DBs for the run's threads, deduplicate by merge IDs across tables
-    and threads in deterministic order, and return (thread -> {model: tokens}, ok_threads,
-    thread -> [error reasons], malformed_threads, total_malformed)."""
-    dirs, saw_symlink = _ag_conv_dirs()
+    and threads in deterministic order, and return usage plus completeness flags."""
     out: dict = defaultdict(lambda: defaultdict(zero))
     ok_threads: set[str] = set()
     errors: dict[str, list[str]] = defaultdict(list)
     malformed_threads: set[str] = set()
+    approx_in: set[str] = set()
+    approx_out: set[str] = set()
+    shared: dict[str, str] = {}
     total_malformed = 0
-    observations: list[dict] = []
-    cached: dict[Path, dict] = {}
-    seq = 0
 
+    per_row: list[tuple[int, str, list[str]]] = []
     for order, r in enumerate(rows):
         tid = r["thread"]
-        seen_nids: set = set()
-        ag_nids = []
+        seen_nids: set[str] = set()
+        ag_nids: list[str] = []
         for driver, nid in natives.get(tid, []):
-            if driver == "antigravity" and nid not in seen_nids:
+            if driver != "antigravity":
+                continue
+            if not isinstance(nid, str):
+                msg = "Antigravity conversation database couldn't be read"
+                if msg not in errors[tid]:
+                    errors[tid].append(msg)
+                continue
+            if nid not in seen_nids:
                 seen_nids.add(nid)
                 ag_nids.append(nid)
+        if ag_nids:
+            per_row.append((order, tid, ag_nids))
+
+    if not per_row:
+        return {"usage": out, "ok": ok_threads, "errors": errors, "malformed_threads": malformed_threads,
+                "malformed_total": total_malformed, "approx_in": approx_in, "approx_out": approx_out, "shared": shared}
+
+    dirs, saw_bad_dir = _ag_conv_dirs()
+    observations: list[dict] = []
+    cached: dict[Path, dict] = {}
+    db_owner: dict[Path, str] = {}
+    seq = 0
+
+    for order, tid, ag_nids in per_row:
         for nid in ag_nids:
-            path, err = _find_ag_db(nid, dirs, saw_symlink)
+            path, err = _find_ag_db(nid, dirs, saw_bad_dir)
             if err or path is None:
                 msg = err or "Antigravity conversation database not found"
                 if msg not in errors[tid]:
                     errors[tid].append(msg)
                 continue
-            key = path.resolve()
+            try:
+                key = path.resolve()
+            except OSError:
+                msg = "Antigravity conversation database couldn't be read"
+                if msg not in errors[tid]:
+                    errors[tid].append(msg)
+                continue
             if key in cached:
                 res = cached[key]
-            else:
-                res = _read_ag_db(path, str(key))
-                cached[key] = res
-                total_malformed += res["malformed"]
-                if res["ok"]:
-                    for rec in res["records"]:
-                        observations.append(dict(rec, owner_order=order, owner_thread=tid, seq=seq))
-                        seq += 1
+                if not res["ok"]:
+                    msg = res["error"] or "Antigravity conversation database couldn't be read"
+                    if msg not in errors[tid]:
+                        errors[tid].append(msg)
+                elif db_owner[key] != tid:
+                    shared.setdefault(tid, db_owner[key])
+                else:
+                    ok_threads.add(tid)
+                continue
+            res = _read_ag_db(path, str(key))
+            cached[key] = res
+            db_owner[key] = tid
+            total_malformed += res["malformed"]
             if not res["ok"]:
                 msg = res["error"] or "Antigravity conversation database couldn't be read"
                 if msg not in errors[tid]:
                     errors[tid].append(msg)
                 continue
+            for rec in res["records"]:
+                observations.append(dict(rec, owner_order=order, owner_thread=tid, seq=seq))
+                seq += 1
             ok_threads.add(tid)
             if res["malformed"]:
                 malformed_threads.add(tid)
 
     if not observations:
-        return out, ok_threads, errors, malformed_threads, total_malformed
+        return {"usage": out, "ok": ok_threads, "errors": errors, "malformed_threads": malformed_threads,
+                "malformed_total": total_malformed, "approx_in": approx_in, "approx_out": approx_out, "shared": shared}
 
     parent = list(range(len(observations)))
 
@@ -1044,17 +1139,25 @@ def antigravity_usage(rows: list[dict], natives: dict, start: float, end: float)
             cache_read = max(cache_read, o["cache_read"])
             cache_write = max(cache_write, o["cache_write"])
             output = max(output, o["output"])
-        if not (start <= best_ts <= end):
-            continue
         if inp + cache_read + cache_write + output == 0:
             continue
-        slot = out[owner_tid][model or "unknown"]
+        in_span = start <= best_ts <= end
+        if best_ts_pri < 3:
+            if in_span:
+                approx_in.add(owner_tid)
+            else:
+                approx_out.add(owner_tid)
+                continue
+        elif not in_span:
+            continue
+        slot = out[owner_tid][model]
         slot["input"] += inp
         slot["cache_read"] += cache_read
         slot["cache_write"] += cache_write
         slot["output"] += output
 
-    return out, ok_threads, errors, malformed_threads, total_malformed
+    return {"usage": out, "ok": ok_threads, "errors": errors, "malformed_threads": malformed_threads,
+            "malformed_total": total_malformed, "approx_in": approx_in, "approx_out": approx_out, "shared": shared}
 
 
 # ------------------------------------------------------------------------------------------ the run
@@ -1082,7 +1185,7 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
         t = threads.get(tid, {"title": "", "model": None, "instance": None, "created": None})
         rows.append({"thread": tid, "owner": owner, "role": role, "title": t["title"], "harness": harness_of(t["instance"]),
                      "model": t["model"]})
-        for child in children.get(tid, []):
+        for child in sorted(children.get(tid, []), key=lambda c: (threads[c]["created"] or 0, c)):
             if child in task_threads:
                 continue   # a task launched with delegate_task: counted as its own task, not as a helper
             created = threads[child]["created"]
@@ -1102,8 +1205,8 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
     malformed += scan["malformed"]
     oc_sessions = {n: r["thread"] for r in rows for d, n in natives.get(r["thread"], []) if d == "opencode"}
     opencode, whole, outside, unreadable = opencode_usage(set(oc_sessions), start, end)
-    ag_usage, ag_ok, ag_errors, ag_malformed, ag_malformed_total = antigravity_usage(rows, natives, start, end)
-    malformed += ag_malformed_total
+    ag = antigravity_usage(rows, natives, start, end)
+    malformed += ag["malformed_total"]
 
     def flag(l: dict, why: str) -> None:
         """Add a reason the line's figure is partial, keeping the ones it has."""
@@ -1152,15 +1255,28 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
                         flag(mine[-1], "OpenCode kept only the session's totals (the session lies inside the run)")
                     if sid in unreadable:
                         flag(mine[-1], "some of OpenCode's records for it couldn't be read")
-        if ag_usage.get(r["thread"]):
-            for model, tokens in ag_usage[r["thread"]].items():
-                mine.append(line(r, (r["model"] or "unknown") if model == "unknown" else model, dict(tokens)))
-            for err in ag_errors.get(r["thread"], []):
+        for model, tokens in ag["usage"].get(r["thread"], {}).items():
+            inferred = not model
+            chosen = (r["model"] or "unknown") if inferred else model
+            mine.append(line(r, chosen, dict(tokens)))
+            if inferred and r["model"]:
+                flag(mine[-1], "model inferred from the thread's selection")
+        if mine:
+            for err in ag["errors"].get(r["thread"], []):
                 for l in mine:
                     flag(l, err)
-            if r["thread"] in ag_malformed:
+            if r["thread"] in ag["malformed_threads"]:
                 for l in mine:
                     flag(l, "some of Antigravity's records for it couldn't be read")
+            if r["thread"] in ag["approx_in"]:
+                for l in mine:
+                    flag(l, "Antigravity kept no time for some records: placed by the conversation's start or file time")
+            if r["thread"] in ag["approx_out"]:
+                for l in mine:
+                    flag(l, "some Antigravity records had no time of their own and fell outside the run by conversation or file time")
+            if r["thread"] in ag["shared"]:
+                for l in mine:
+                    flag(l, f"some Antigravity records were already counted under {ag['shared'][r['thread']]}")
         first = scan["file_first"].get(r["thread"])
         created = threads.get(r["thread"], {}).get("created")
         if mine and first is not None and first > max(start, created or start) + 60:
@@ -1169,7 +1285,9 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
         if not mine and any(app == r["thread"] and sid in opencode and not opencode[sid] and sid not in unreadable for sid, app in oc_sessions.items()):
             lines.append(dict(r, model=r["model"] or "unknown", tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
             continue
-        if not mine and r["thread"] in ag_ok and not ag_errors.get(r["thread"]) and r["thread"] not in ag_malformed:
+        if (not mine and r["thread"] in ag["ok"] and not ag["errors"].get(r["thread"])
+                and r["thread"] not in ag["malformed_threads"] and r["thread"] not in ag["approx_out"]
+                and r["thread"] not in ag["shared"]):
             lines.append(dict(r, model=r["model"] or "unknown", tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
             continue
         if not mine and any(app == r["thread"] and sid in outside for sid, app in oc_sessions.items()):
@@ -1184,8 +1302,10 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
             lines.append(dict(r, tokens=None, usd=None, included=True, basis="in its parent's Claude figures (a Claude Code subagent)", billed=False))
         else:
             why = ("its harness keeps no token counts that can be read" if r["harness"] == "copilot"
-                   else "; ".join(ag_errors[r["thread"]]) if ag_errors.get(r["thread"])
-                   else "Antigravity's records for it couldn't be read" if r["thread"] in ag_malformed
+                   else "; ".join(ag["errors"][r["thread"]]) if ag["errors"].get(r["thread"])
+                   else "Antigravity's records for it couldn't be read" if r["thread"] in ag["malformed_threads"]
+                   else f"its conversation's records are counted under {ag['shared'][r['thread']]}" if r["thread"] in ag["shared"]
+                   else "Antigravity kept no timestamp for its records and the conversation's start or file time fell outside the run" if r["thread"] in ag["approx_out"]
                    else "Antigravity conversation database not found" if r["harness"] == "antigravity"
                    else "OpenCode's records for it couldn't be read" if any(app == r["thread"] and sid in unreadable for sid, app in oc_sessions.items())
                    else "no usage logged in the span")
