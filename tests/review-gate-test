@@ -685,6 +685,7 @@ t2 = subprocess.run([sys.executable, "-I", script, "table", g2_dir], capture_out
 assert t2.returncode == 0, t2.stderr
 assert "| Antigravity Claude Sonnet 5.5, high | 1 | **1** | 1 | – | – | – | 2 |" in t2.stdout, t2.stdout
 assert "| Claude Sonnet 5.5, high | 2 | **1** | 1 | – | – | – | 2 |" in t2.stdout, t2.stdout
+assert "*Replies on the blockers tagged lower: 1 agreed, 0 held, 0 no answer.*" in t2.stdout, t2.stdout
 tot860 = subprocess.run([sys.executable, "-I", script, "totals", "--json"], capture_output=True, text=True, env=env860, timeout=60)
 assert tot860.returncode == 0, tot860.stderr
 parsed860 = json.loads(tot860.stdout)
@@ -694,6 +695,7 @@ assert parsed860["reviewers"]["Claude Sonnet 5.5"] == {
     "nits": 0, "pre_existing": 0, "rejected": 0, "unique": 2,
 }, parsed860["reviewers"]["Claude Sonnet 5.5"]
 assert (parsed860["tagged_by_reviewer"], parsed860["differed"]) == (2, 1), parsed860
+assert parsed860["replies"] == {"agrees": 1}, parsed860["replies"]
 assert "Gemini 4 Neon" in parsed860["reviewers"] and "Orchestrator Neon" in parsed860["reviewers"], parsed860["reviewers"]
 assert "Antigravity Claude Opus 5.5" not in parsed860["reviewers"], parsed860["reviewers"]
 

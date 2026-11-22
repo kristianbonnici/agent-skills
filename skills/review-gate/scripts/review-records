@@ -204,7 +204,7 @@ def shape_problems(record):
             problems.append(f'{where}: "reply_from" isn\'t one of the reviewers\' names')
         elif finding.get("reply") in REPLIES:
             # One question and one answer for a finding, a round and the reviewer that answers.
-            asked_of = (finding["id"], finding["round"], finding.get("reply_from", finding["reviewer"]))
+            asked_of = (finding["id"], finding["round"], reviewer_key(finding.get("reply_from", finding["reviewer"])))
             if answers.setdefault(asked_of, finding["reply"]) != finding["reply"]:
                 problems.append(f"{where}: finding {finding['id']} has another reply from the same reviewer in "
                                 f"round {finding['round']}: ask once, and record that one answer")
@@ -285,11 +285,11 @@ def lowered_defects(record):
 
 def replies(record):
     """What reviewers replied on blockers the author tagged lower: for each finding and each
-    reviewer that answered about it, the latest reply. One answer given for two reviewers' entries
-    of a finding counts once."""
+    canonical reviewer that answered about it, the latest reply. One answer given for two reviewers'
+    entries of a finding, or repeated across same-gate bucket failover, counts once."""
     latest = {}
     for finding in record["findings"]:
-        key = (finding["id"], finding.get("reply_from", finding["reviewer"]))
+        key = (finding["id"], reviewer_key(finding.get("reply_from", finding["reviewer"])))
         asked = "reply" in finding and finding["reviewer_tag"] == "blocker" and lowered(finding)
         if asked and finding["round"] >= latest.get(key, (0, None))[0]:
             latest[key] = (finding["round"], finding["reply"])
