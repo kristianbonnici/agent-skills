@@ -33,6 +33,16 @@ Launch every reviewer, a single one too, with mode `"async"`. Before a round's f
 - **At a pace check:** `t3_thread_read` the reviewer's thread with `view: "activity"`; each item has its time (`updatedAt`). Judge its pace as above.
 - **At a deadline, or a limited pace:** stop the reviewer with `task_cancel` (a wait that times out doesn't stop it), then launch what replaces it, if anything does.
 
+**Tracking and settling reviewer threads:**
+
+- **Record every launched thread ID in `threads.txt`:** each time you launch a thread for this gate via `delegate_task` — a reviewer, a relaunch after an approval prompt, a replacement or supplemental pass, a question about a tag, Deep's second opinion, or a look after a rebase — append its returned `childThreadId`, one ID per line, to `threads.txt` in the gate's record folder. Keep every launched ID there, including threads later cancelled on approval prompts, slow pace, or deadlines, so a context summary never loses track of earlier rounds. A gate paused and resumed (for example on a quota pause) keeps appending to the same record folder's `threads.txt`; a later gate (`review-2/`, etc.) keeps its own `threads.txt` in its own record folder.
+- **Settle idle threads when the gate ends:** once the gate finishes (`passed`, `stopped`, `no reviewer`, or `reported`), after every reviewer has reported or been cancelled/stopped and the gate's wake has been deleted (and `wake.txt` emptied), settle every idle thread ID in `threads.txt` with `t3_thread_organize({action: "settle", threadId: "<id>"})`:
+  - Call it **one thread per call and always pass `threadId` explicitly** — never omit `threadId` (omitting it, or passing a list in another field, settles your own thread).
+  - Deduplicate IDs before settling so each thread is settled once.
+  - Skip any thread that is still running (cancel it first with `task_cancel` if the gate timed it out or stopped it, and skip it if it still isn't idle).
+  - Retry a failed settlement once.
+  - List any thread ID that could not be settled in your handoff (or reply to the user) so an orchestrator or user can follow up.
+
 | Reviewer | target |
 |---|---|
 | Codex GPT-6.2 Sol | `{providerInstanceId: "codex", model: "gpt-6.2-sol", options: [{id: "reasoningEffort", value: "medium"}]}` (set the level: Sol defaults to low) |

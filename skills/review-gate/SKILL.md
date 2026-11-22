@@ -2,7 +2,7 @@
 name: review-gate
 description: Review a finished code change with independent reviewer agents before it merges. Pick a level (light, standard or deep) from what the diff touches, choose reviewers from other model families with fallbacks when a subscription is short, give them a neutral brief, verify and tag every finding, fix what is real, and re-review only fixes that changed logic, for as long as the review keeps converging (five rounds at most). Use before an agent merges its own change, whenever a brief says to run the review gate, and when the user asks for an independent review of a change by other models.
 metadata:
-  version: 8.6.0
+  version: 8.7.0
 ---
 
 # Review Gate
@@ -33,7 +33,7 @@ Reviewers come from four families: Claude (`Opus 5.5`, `Sonnet 5.5`), Codex (`GP
 - **A "free reviewer"** is one of the two OpenCode flash models on either tier, plus `Claude Haiku 5.5` at `high` last in the free order at Standard and Deep — except Haiku is excluded whenever **`claudeAgent` is short** (including when **Claude is short**, since Haiku runs on `claudeAgent` only), and for a Claude-authored change while **Codex is short** (where the free reviewer brings back a second family).
 - **Hydrogen is neither.** It is Light's reviewer for non-Gemini changes while `gemini_models_five_hour` is under about 85%, and reviews nowhere else.
 - **Neon and Hydrogen run only on Antigravity,** whose Gemini windows the run's helpers and the owner share. Neither reviews while `gemini_models_five_hour` is at or past about 85% or Antigravity can't open. Hydrogen never reviews a Gemini-authored change; Neon reviews a Gemini-authored change **only** in round 1 at Deep as a fresh agent (open look ONLY) — never at Light or Standard, never as the cross reviewer, never holding a focused Deep role, never for Deep's second opinion, and never in later-round re-reviews or tag questions (which route to the round's cross reviewer).
-- **No other model reviews,** apart from Haiku in the free order above: plain Gemini 4 Neon at `high`, Orchestrator (Neon), all other unbenchmarked Gemini models, and all other OpenCode models (`opencode/` paid models that bill per request — `opencode/gemini-4-neon` and `opencode/gemini-4-hydrogen` among them — and Go's larger models) stay excluded. A model gets a place only on the owner's word, after `reviewer-benchmark` has measured it (plain Gemini 4 Neon at `xhigh` is authorized on Orchestrator (Neon) review-database evidence while its formal benchmark run is pending).
+- **No other model reviews,** apart from Haiku in the free order above: plain Gemini 4 Neon at `high`, Orchestrator (Neon), all other unbenchmarked Gemini models, and all other OpenCode models (`opencode/` paid models that bill per request — `opencode/gemini-4-neon` and `opencode/gemini-4-hydrogen` among them — and Go's larger models) stay excluded. A model gets a place only on the owner's word, after `reviewer-benchmark` has measured it (plain Gemini 4 Neon at `xhigh` is covered by the Orchestrator (Neon) benchmark results plus review-database proof that Orchestrator (Neon) made zero worker calls during read-only reviews, so no separate re-run is needed).
 
 Claude Fable 5.2 never reviews, by default or as a replacement: it costs about twice Opus 5.5 and has a weekly limit of its own, kept for the demanding tasks the owner chose it for. A change Fable wrote counts as Opus's below: where Opus's change gets Sonnet 5.5, so does Fable's, and "fresh if Opus/Fable wrote it" means Opus 5.5 as a new agent with the brief alone.
 
@@ -162,6 +162,8 @@ Then run `scripts/review-records table <folder>`: it checks the record and print
 - The record line says where the record is. Keep it: a later count takes a table without it for a gate that has no record.
 
 Then list each blocker with its commit, each follow-up with its commit or, if open, the fix it needs, the open nits and pre-existing findings, and the rejected findings with their reasons. Under its own heading, "A reviewer held", list each blocker you rejected or tagged lower whose reviewer held: what it says goes wrong and when, and your reason for your tag.
+
+In T3, once the gate ends (after every reviewer has reported or been stopped and the wake is deleted), settle every idle reviewer thread you started — passing `threadId` explicitly on every call — and list any you couldn't settle in your handoff or reply ([references/launching.md](references/launching.md#in-t3)).
 
 ## When the user asks for a review
 
