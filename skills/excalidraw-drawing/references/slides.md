@@ -19,6 +19,7 @@ Write the plan in your reply and get the user's go-ahead before drawing; a deck 
 - **Say it in your own words.** Build pictures and wording from what the source shows, not by copying its slides, phrases or layout; credit an idea you took ("the framing follows ...").
 - **One visual language for the whole deck.** Pick three to five recurring symbols before drawing (for example: a person, a work item, a check passed, a check failed, a document) and draw each the same way on every slide, in the same colors (SKILL.md's color meanings). Write the deck's specs from one script with a helper per symbol, so a change of style is one edit; see "A generator" below.
 - **Type a room can read:** on a 1500-wide slide, labels of 18 px or more and nothing under 16 px except the footer. A dense slide on a projector is unreadable from the back.
+- **Title font:** `"titleFont": "iowan-inked"` ([spec.md](spec.md#title-font)) works well for a talk deck's slide titles when you want them crisper than hand lettering, keeping subtitles and body text in Excalifont.
 - **Examples must be real and familiar.** An example the audience knows, with a source for each step, beats a clever made-up one. If you invent an illustration, say so on the slide ("an illustration", "a made-up example").
 
 ## Numbers and charts

@@ -426,7 +426,17 @@ if (newId().length !== 8) fail('newId should give 8 characters');
 JS
 node "$work/edit.mjs" || fail "drawing.mjs didn't keep the file or the edit"
 node "$drawing" render "$work/edit.excalidraw.md" "$work/preview.png" >"$work/render.out" || { cat "$work/render.out"; fail "a preview doesn't render"; }
-python3 -I -c 'import sys; sys.exit(open(sys.argv[1], "rb").read(8) != b"\x89PNG\r\n\x1a\n")' "$work/preview.png" || fail "the preview isn't a PNG"
+node "$drawing" render "$work/edit.excalidraw.md" "$work/preview-1x.png" --scale 1 >/dev/null || fail "a --scale 1 preview doesn't render"
+python3 -I - "$work/preview.png" "$work/preview-1x.png" <<'PY' || fail "the preview isn't a 2x PNG by default"
+import struct, sys
+def info(p):
+    b = open(p, "rb").read()
+    assert b[:8] == b"\x89PNG\r\n\x1a\n"
+    return struct.unpack(">II", b[16:24])
+w2, h2 = info(sys.argv[1])
+w1, h1 = info(sys.argv[2])
+assert (w2, h2) == (w1 * 2, h1 * 2), ((w2, h2), (w1, h1))
+PY
 printf -- '---\n\nexcalidraw-plugin: parsed\n\n---\n%%%%\n## Drawing\n```compressed-json\nN4Ig\n```\n%%%%' >"$work/packed.excalidraw.md"
 set +e; node "$drawing" render "$work/packed.excalidraw.md" "$work/packed.png" >"$work/packed.out" 2>&1; status=$?; set -e
 [ "$status" -eq 1 ] && grep -q "Compress Excalidraw JSON in Markdown" "$work/packed.out" || { cat "$work/packed.out"; fail "a compressed drawing should be refused with the setting to change, got $status"; }

@@ -247,7 +247,7 @@ export const missingFonts = elements =>
 
 // The inked edge: the letters' outlines nudged by two sizes of noise (fine nicks, a slow wobble),
 // then softened and sharpened again, like ink that spread a little into the paper. In the
-// drawing's units, so it looks the same at every scale.
+// drawing's units; render at scale 2 so the filter stays crisp (scale 1 blurs the inked edge).
 const INKED_FILTER = `<filter id="excalidraw-drawing-inked" x="-2%" y="-20%" width="104%" height="140%" color-interpolation-filters="sRGB">` +
   `<feTurbulence type="fractalNoise" baseFrequency="0.29" numOctaves="1" seed="7" result="fine"/>` +
   `<feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="1" seed="11" result="coarse"/>` +
@@ -299,7 +299,7 @@ export async function renderPng(elements, files = {}, { scale = 1, padding = 0, 
   return { format: 'png', data: png.data.toString('base64'), width: png.width, height: png.height, warnings };
 }
 
-export async function renderDrawing(file, out, { scale = 1 } = {}) {
+export async function renderDrawing(file, out, { scale = 2 } = {}) {
   if (!fs.existsSync(runtimePackage)) {
     throw new Error(`the Excalidraw runtime is not installed at ${runtimeRoot}: run npm ci --ignore-scripts --prefix ${runtimeRoot}`);
   }
@@ -324,7 +324,7 @@ export async function renderDrawing(file, out, { scale = 1 } = {}) {
 async function main() {
   const usage = 'usage: drawing.mjs render <drawing> <out.png> [--scale 1-4]';
   const args = process.argv.slice(2);
-  let scale = 1;
+  let scale = 2;
   const i = args.indexOf('--scale');
   if (i >= 0) {
     scale = Number(args.splice(i, 2)[1]);

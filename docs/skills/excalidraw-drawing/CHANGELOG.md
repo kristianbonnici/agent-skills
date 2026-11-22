@@ -1,5 +1,10 @@
 # excalidraw-drawing changelog
 
+## 3.7.0 (2026-11-23)
+
+- `drawing.mjs render` now defaults to `--scale 2` (matching `build.mjs` and `deck.mjs`), `references/spec.md` notes to render `iowan-inked` titles at `--scale 2` because `--scale 1` makes the inked edge filter look blurry, and `references/editing.md` updates its preview note for embedded images added in 3.6.0. From previewing a slide deck with `iowan-inked` titles at `--scale 1`, where the inked edge looked visibly softer than `--scale 2` builds.
+- `references/slides.md` notes that `"titleFont": "iowan-inked"` works well for a talk deck's slide titles while keeping subtitles and body text in Excalifont. From adopting `iowan-inked` titles across a full talk deck.
+
 ## 3.6.0 (2026-11-22)
 
 - New `image` element (`src` path to a local `.svg`, `.png`, `.jpg` or `.webp` file relative to the spec, or inline `svg` markup, with optional `color`): embeds logos and icons directly in the scene's `files` (deduplicated by content) so both the PNG and the editable `.excalidraw` file carry them self-contained. For SVGs, `currentColor` resolves to `color` or the active theme's ink (adapting to `"theme": "dark"`), and relative root dimensions such as `1em` are normalized from `viewBox` so offline PNG rendering scales cleanly. Checked for panel bounds and overlaps like shapes; missing files or unsupported types warn and skip. `drawing.mjs render` previews embedded images without falsely noting them as undrawn. From building a model-similarity heatmap for a social post where lab icons next to model names made the chart much easier to scan.

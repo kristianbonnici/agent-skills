@@ -41,6 +41,6 @@ writeDrawing(d);
 node scripts/drawing.mjs render <drawing> <preview.png>
 ```
 
-Write the preview outside the vault, open it and check it as in step 3 of the skill. Images embedded in the drawing aren't drawn in the preview. Then tell the user what changed. In Obsidian, ask them to reopen the drawing and save it once: auto-export then brings its PNG up to date.
+Write the preview outside the vault, open it and check it as in step 3 of the skill. Images whose data isn't embedded in the drawing aren't drawn in the preview. Then tell the user what changed. In Obsidian, ask them to reopen the drawing and save it once: auto-export then brings its PNG up to date.
 
 When the plugin next saves the drawing it may give texts new ids, rewrite arrow bindings in its own form, wrap fixed-width texts again and measure auto-sized ones again. That's expected; carry on from the file as it saved it.
