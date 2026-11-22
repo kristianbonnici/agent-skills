@@ -4966,6 +4966,18 @@ case "$out" in *"act on the lines below"*"1 password dialog"*) ;; *) echo "heart
 printf '%s\n' '{"usage_marks": {"claude.weekly": 22}, "tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"usage: claude weekly at 22%, at or past the run's mark of 22%"*) ;; *) echo "heartbeat mark: $out"; exit 1;; esac
+# Antigravity 5h thresholds (85% gemini_models_five_hour, 80% claude_and_gpt_models_five_hour) only break idle via usage_marks (not built-in five_hour 85%), and Codex soft-reserve marks fire as documented.
+printf '%s\n' '{"t": "2026-11-11T01:46:00+02:00", "providers": {"claude": {"windows": {"weekly": {"used": 22.0}, "five_hour": {"used": 5.0}}}, "antigravity": {"windows": {"gemini_models_five_hour": {"used": 90.0}, "claude_and_gpt_models_five_hour": {"used": 82.0}, "gemini_models_weekly": {"used": 10.0}}}, "codex": {"windows": {"five_hour": {"used": 62.0}, "weekly": {"used": 71.0}}}}}' > "$hb/usage/providers.jsonl"
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"nothing to act on"*) ;; *) echo "heartbeat antigravity unmarked: $out"; exit 1;; esac
+printf '%s\n' '{"usage_marks": {"antigravity.gemini_models_five_hour": 85, "antigravity.claude_and_gpt_models_five_hour": 80, "codex.five_hour": 60, "codex.weekly": 70}, "tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*) ;; *) echo "heartbeat antigravity/codex act: $out"; exit 1;; esac
+case "$out" in *"usage: antigravity claude_and_gpt_models_five_hour at 82%, at or past the run's mark of 80%"*) ;; *) echo "heartbeat antigravity claude 5h: $out"; exit 1;; esac
+case "$out" in *"usage: antigravity gemini_models_five_hour at 90%, at or past the run's mark of 85%"*) ;; *) echo "heartbeat antigravity gemini 5h: $out"; exit 1;; esac
+case "$out" in *"usage: codex five_hour at 62%, at or past the run's mark of 60%"*) ;; *) echo "heartbeat codex 5h: $out"; exit 1;; esac
+case "$out" in *"usage: codex weekly at 71%, at or past the run's mark of 70%"*) ;; *) echo "heartbeat codex weekly: $out"; exit 1;; esac
 status=0
 "$scripts/heartbeat" "$hb" --bogus >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
