@@ -63,9 +63,9 @@ Name the execution target, then provide launch-time metadata for the user to sel
 - Project or working directory
 - Environment: current checkout, read-only, or new worktree
 - Model, using the selectable label and model ID or alias when known
-- Reasoning or effort level, if exposed
+- Reasoning, effort, or thought level, if exposed
 - Execution/delegation choice using the host's supported terminology
-- Persistent execution: native `/goal` for Codex and Claude Code; verified equivalent or an explicit persistence limitation for another host
+- Persistent execution: native `/goal` for Codex and Claude Code; plain task prompt with outer-host persistence (e.g., `long-horizon-orchestrator` in T3) for Antigravity; verified equivalent or an explicit persistence limitation for another host
 - Permission or approval mode using the host's actual labels
 - Useful installed skills or tools
 - Parallel compatibility and likely merge-conflict surfaces
@@ -76,7 +76,7 @@ Keep this entire configuration outside the ready-to-paste prompt. The user may o
 
 ### Ready-to-paste prompt
 
-Write one self-contained prompt in a fenced text block. For Codex and Claude Code, begin with `/goal` and a measurable completion condition; use a verified equivalent or a plain task prompt for another host. Preserve the execution contract below while adapting its length and structure to the host.
+Write one self-contained prompt in a fenced text block. For Codex and Claude Code, begin with `/goal` and a measurable completion condition; for Antigravity, omit `/goal` and write a plain task prompt with an explicit stopping condition and validation commands; use a verified equivalent or a plain task prompt for another host. Preserve the execution contract below while adapting its length and structure to the host.
 
 For Claude Code, the entire condition after `/goal` must be at most 4,000 characters, including subsequent lines. Use the compact form below instead of copying every heading from the expanded template. Include project-specific scope, readiness boundaries, required work, validation, authorization, stop conditions, and handoff evidence; keep detailed rationale and calibration in the surrounding task packet. If essential instructions cannot fit, provide a separate instruction prompt for the user to send first, followed by a short `/goal` condition that refers to that brief. Label the two messages and their order explicitly; do not write a planning file into the project.
 
@@ -86,7 +86,7 @@ For Claude Code, the entire condition after `/goal` must be at most 4,000 charac
 Read <instruction and evidence paths>. Work only in <allowed scope> toward <one objective>. Preserve <readiness and decision boundaries> and unrelated changes. Complete <intrinsically required work>. Validate with <confirmed commands or artifact checks> and surface results in the conversation. Retry safe in-scope approaches when they fail. Stop if <specific missing prerequisite or decision blocker>; report the evidence and required next step. Do not <unauthorized external actions or protected changes>. The <range> workload estimate is not a timer; do not wait or add scope to fill it. Hand off <artifacts, required-work evidence, checks, unresolved decisions, and available runtime usage>.
 ```
 
-For hosts that accept a longer goal directive, expand the same contract as needed:
+For hosts that accept a longer goal directive or plain task prompt, expand the same contract as needed (omit the `/goal` prefix on Antigravity and other hosts without native `/goal`):
 
 #### Launch-configuration boundary
 
@@ -95,10 +95,10 @@ The fenced prompt is an execution contract, not a second configuration panel. It
 Do not put any of the following inside the prompt:
 
 - Model labels, model slugs, or instructions to use a particular model
-- Reasoning-effort labels
+- Reasoning, effort, or thought-level labels
 - Agent or delegation mode selections
 - Permission-mode names
-- Goal-mode selection language beyond the opening command
+- Goal-mode selection language beyond the opening command (when the host supports one)
 - Instructions to select a project, create or select a worktree, or switch execution environments
 - A `Recommended configuration`, `Project and environment`, or equivalent launch-settings block
 
@@ -185,7 +185,7 @@ List only worthwhile candidates that failed readiness because a concrete prerequ
 - Unmet prerequisite or maturity boundary
 - Observable reevaluation trigger
 
-Do not score deferred candidates as selected work, place them in execution waves, estimate them as ready, or provide `/goal` prompts.
+Do not score deferred candidates as selected work, place them in execution waves, estimate them as ready, or provide runnable or `/goal` prompts.
 
 ## 5. Portfolio Caveats
 

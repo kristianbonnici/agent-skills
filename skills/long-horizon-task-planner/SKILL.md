@@ -2,7 +2,7 @@
 name: long-horizon-task-planner
 description: Propose a maturity-aware, evidence-backed portfolio of project-specific, genuinely multi-hour or overnight agent tasks with calibrated workload ranges, ready-to-paste prompts, model recommendations, and safe parallel groups. Use when the user wants autonomous long-running work ideas or asks what several agents could do in parallel. Do not use to launch or execute the proposed tasks; long-horizon-orchestrator does that.
 metadata:
-  version: 1.0.1
+  version: 1.1.0
 ---
 
 # Long-Horizon Task Planner
@@ -13,7 +13,7 @@ Produce a reviewable task portfolio. Inspect the current project, but do not cha
 
 Use the current agent host as the execution target unless the user names another. State the target and use its available models, effort controls, permissions, delegation, and installed skills. Read the host guidance in [references/discovery-and-ranking.md](references/discovery-and-ranking.md#configuration-selection) before recommending launch settings.
 
-Both Codex and Claude Code support native `/goal`; do not treat it as Codex-only or substitute `/loop` merely because the target is Claude Code. For Claude Code, use a compact, verifiable completion condition within its 4,000-character limit. Honor explicit runtime restrictions without starting a goal to probe support. For another host, verify its persistent-execution command or provide a plain task prompt and disclose that persistence is unverified.
+Both Codex and Claude Code support native `/goal`; do not treat it as Codex-only or substitute `/loop` merely because the target is Claude Code. For Claude Code, use a compact, verifiable completion condition within its 4,000-character limit. Antigravity has no native `/goal` persistent execution command: provide a plain task prompt with an explicit stopping condition and validation commands, and disclose that unattended persistence is handled by the outer host (such as `long-horizon-orchestrator` in T3) rather than a built-in `/goal` loop. Honor explicit runtime restrictions without starting a goal to probe support. For another host, verify its persistent-execution command or provide a plain task prompt and disclose that persistence is unverified.
 
 ## Inputs
 
@@ -48,7 +48,7 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
    - Recommend settings from the models, effort controls, modes, permissions, tools, and installed skills actually available in the target agent environment. Omit unsupported controls and mark unknown availability instead of inventing exact values.
    - Keep launch-time configuration outside the ready-to-paste prompt. Treat recommendations as advisory unless a setting is explicitly marked required for safety or correctness.
    - Make every prompt configuration-independent: it must remain coherent if the user chooses a different model, reasoning level, delegation mode, permission mode, project selector, or environment than recommended.
-   - Write a complete ready-to-paste prompt for each ready-now task using the target host's goal command and limits, including its workload and readiness boundaries. Replace every placeholder with project-specific content.
+   - Write a complete ready-to-paste prompt for each ready-now task using the target host's goal command (when supported) and limits, including its workload and readiness boundaries. Replace every placeholder with project-specific content.
 
 4. Stop after presenting the portfolio.
    - Never create a goal, task, thread, worktree, branch, commit, or external record.
@@ -72,5 +72,5 @@ Honor requested categories, exclusions, horizons, risk tolerance, and read-only 
 - Put concurrent write-heavy tasks in separate Git worktrees and disclose shared lockfiles, root configuration, generated assets, external systems, and other likely collision surfaces.
 - Mention another skill only when it is installed and materially improves the task.
 - Broader permissions can reduce tool approval friction; they do not authorize deployment, publishing, deletion, messaging, purchases, or other externally consequential actions. A goal command does not change permissions.
-- Never copy launch recommendations into the runnable prompt. Model names or slugs, effort levels, delegation choices, permission-mode labels, and project or worktree selection belong only in the configuration section. The host's goal command is the only launch control included in the prompt.
+- Never copy launch recommendations into the runnable prompt. Model names or slugs, effort levels, delegation choices, permission-mode labels, and project or worktree selection belong only in the configuration section. The host's goal command, when supported, is the only launch control included in the prompt.
 - Express actual task authorization and safety boundaries behaviorally inside the prompt. For example, state which files may change and which external actions are forbidden; do not claim that the prompt grants permissions.
