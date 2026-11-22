@@ -561,6 +561,7 @@ try:
     make_ag_db(os.path.join(work, "outside-ag9.db"), time.time())
     os.symlink(os.path.join(work, "outside-ag9.db"), os.path.join(ag_conv, "ag9-symlink.db"))
     make_ag_db(os.path.join(ag_conv, "ag11-old-uuid.db"), old_ag)
+    make_ag_db(os.path.join(ag_conv, "ag15-old-uuid.db"), old_ag)
     outside_prof = os.path.join(work, "outside-prof")
     os.makedirs(os.path.join(outside_prof, "antigravity-acp", "conversations"))
     make_ag_db(os.path.join(outside_prof, "antigravity-acp", "conversations", "ag12-uuid.db"), time.time())
@@ -598,6 +599,10 @@ try:
          {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag11-old-uuid"}}, "antigravity", "antigravity"),
         ("pt-11-act", "mcp:launch:ag11", "antigravity", "active", "2026-11-22T10:05:00Z",
          {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag11-new-uuid"}}, "antigravity", "antigravity"),
+        ("pt-15-old", "mcp:launch:ag15", "antigravity", "idle", "2026-11-22T10:00:00Z",
+         {"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag15-old-uuid"}}, "antigravity", "antigravity"),
+        ("pt-15-act", "mcp:launch:ag15", "antigravity", "active", "2026-11-22T10:05:00Z",
+         {"driver": None, "nativeThreadRef": None}, None, "antigravity"),
     ]
     for ptid, tid, prov, st, upd, payload, drv, inst in rows:
         con.execute(
@@ -609,7 +614,7 @@ try:
     con.commit()
     con.close()
 
-    ag_wt = {k: os.path.join(work, "wt-ag", k) for k in ("AG1", "AG2", "AG3", "AG4", "AG5", "AG6", "AG7", "AG8", "AG9", "AG11", "AG12", "AG13")}
+    ag_wt = {k: os.path.join(work, "wt-ag", k) for k in ("AG1", "AG2", "AG3", "AG4", "AG5", "AG6", "AG7", "AG8", "AG9", "AG11", "AG12", "AG13", "AG15")}
     for k, path in ag_wt.items():
         os.makedirs(path, exist_ok=True)
         os.makedirs(os.path.join(ag_run, k), exist_ok=True)
@@ -631,6 +636,7 @@ try:
         "AG11": {"worktree": ag_wt["AG11"], "harness": "antigravity", "thread": "mcp:launch:ag11", "status": "running", "launched": stamp(old_ag)},
         "AG12": {"worktree": ag_wt["AG12"], "harness": "antigravity", "session": "ag12-uuid", "status": "running", "launched": stamp(old_ag)},
         "AG13": {"worktree": ag_wt["AG13"], "harness": "antigravity", "session": "ag13-uuid", "status": "running", "launched": stamp(old_ag)},
+        "AG15": {"worktree": ag_wt["AG15"], "harness": "antigravity", "thread": "mcp:launch:ag15", "status": "running", "launched": stamp(old_ag)},
     }
     ag_watch = os.path.join(ag_run, "watch.json")
     json.dump({"started": stamp(old_ag), "tasks": ag_tasks}, open(ag_watch, "w"))
@@ -640,16 +646,18 @@ try:
     ag_text1 = "\n".join(ag_lines1)
     ag_state1 = json.load(open(os.path.join(ag_run, "run-watch.state.json")))
     # Active WAL prevents false quiet on AG1; stale DB+WAL emits quiet on AG2; busy process prevents quiet on AG3;
-    # missing active DB (AG11) stays blind rather than attaching to old idle DB; symlinked -wal (AG13) does not suppress quiet.
+    # missing active DB (AG11) and driver-null/provider-only active row (AG15) stay blind rather than attaching to old idle DB;
+    # symlinked -wal (AG13) does not suppress quiet.
     assert not lines_for(ag_lines1, "quiet", "AG1") and not lines_for(ag_lines1, "blind", "AG1"), ag_text1
     assert len(lines_for(ag_lines1, "quiet", "AG2")) == 1 and "log last written" in lines_for(ag_lines1, "quiet", "AG2")[0], ag_text1
     assert not lines_for(ag_lines1, "quiet", "AG3") and not lines_for(ag_lines1, "blind", "AG3"), ag_text1
     assert len(lines_for(ag_lines1, "quiet", "AG11")) == 1 and "log last written" not in lines_for(ag_lines1, "quiet", "AG11")[0], ag_text1
+    assert len(lines_for(ag_lines1, "quiet", "AG15")) == 1 and "log last written" not in lines_for(ag_lines1, "quiet", "AG15")[0], ag_text1
     assert len(lines_for(ag_lines1, "quiet", "AG13")) == 1 and "log last written" in lines_for(ag_lines1, "quiet", "AG13")[0], ag_text1
-    assert sorted(ag_state1["blind"]) == ["AG11", "AG12", "AG6", "AG7", "AG8", "AG9"], ag_state1
+    assert sorted(ag_state1["blind"]) == ["AG11", "AG12", "AG15", "AG6", "AG7", "AG8", "AG9"], ag_state1
     for t in ("AG1", "AG2", "AG3", "AG4", "AG5", "AG13"):
         assert not any(lines_for(ag_lines1, w, t) for w in ("hang", "idle", "approval", "blind")), (t, ag_text1)
-    for t in ("AG6", "AG7", "AG8", "AG9", "AG11", "AG12"):
+    for t in ("AG6", "AG7", "AG8", "AG9", "AG11", "AG12", "AG15"):
         assert len(lines_for(ag_lines1, "blind", t)) == 1, (t, ag_text1)
         assert t not in ag_state1["sessions"], (t, ag_state1["sessions"])
     assert ag_state1["sessions"]["AG1"].endswith("ag1-active-uuid.db"), ag_state1["sessions"]
@@ -660,20 +668,116 @@ try:
     ag_out2 = subprocess.run([sys.executable, "-I", script, ag_run], capture_output=True, text=True, env=ag_env, timeout=120)
     assert ag_out2.returncode == 0, ag_out2.stderr
     ag_state2 = json.load(open(os.path.join(ag_run, "run-watch.state.json")))
-    assert sorted(ag_state2["blind"]) == ["AG11", "AG12", "AG7", "AG8", "AG9"], ag_state2
+    assert sorted(ag_state2["blind"]) == ["AG11", "AG12", "AG15", "AG7", "AG8", "AG9"], ag_state2
 
-    # Locked statev2.sqlite preserves remembered DBs instead of flapping tracked tasks into blind
-    lock_con = sqlite3.connect(state_db)
+    # Truly locked statev2.sqlite (rollback journal + BEGIN EXCLUSIVE blocking readers):
+    # - un-remembered AG14 (with existing DB committed in statev2) fails read and goes blind;
+    # - valid remembered AG1 stays tracked via fallback;
+    # - poisoned symlink path in remembered AG2 is rejected by valid_antigravity_discovered_db.
+    make_ag_db(os.path.join(ag_conv, "ag14-uuid.db"), time.time())
+    con = sqlite3.connect(state_db)
+    con.execute(
+        "INSERT INTO orchestration_v2_projection_provider_threads "
+        "(provider_thread_id, thread_id, provider, status, updated_at, payload_json, driver, provider_instance_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("pt-14", "mcp:launch:ag14", "antigravity", "active", "2026-11-22T10:05:00Z",
+         json.dumps({"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag14-uuid"}}), "antigravity", "antigravity"),
+    )
+    con.commit()
+    con.close()
+    os.makedirs(os.path.join(work, "wt-ag", "AG14"), exist_ok=True)
+    os.makedirs(os.path.join(ag_run, "AG14"), exist_ok=True)
+    ag_tasks["AG14"] = {"worktree": os.path.join(work, "wt-ag", "AG14"), "harness": "antigravity",
+                        "thread": "mcp:launch:ag14", "status": "running", "launched": stamp(time.time())}
+    json.dump({"started": stamp(old_ag), "tasks": ag_tasks}, open(ag_watch, "w"))
+    ag_state_path = os.path.join(ag_run, "run-watch.state.json")
+    poison = json.load(open(ag_state_path))
+    poison["sessions"]["AG2"] = os.path.join(ag_conv, "ag9-symlink.db")
+    json.dump(poison, open(ag_state_path, "w"))
+
+    lock_con = sqlite3.connect(state_db, isolation_level=None)
+    lock_con.execute("PRAGMA journal_mode=DELETE")
     lock_con.execute("BEGIN EXCLUSIVE")
     try:
+        probe = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=0.05)
+        try:
+            try:
+                probe.execute("SELECT 1 FROM orchestration_v2_projection_provider_threads LIMIT 1").fetchall()
+                raise AssertionError("read-only probe succeeded under EXCLUSIVE rollback lock")
+            except sqlite3.OperationalError:
+                pass
+        finally:
+            probe.close()
         ag_locked = subprocess.run([sys.executable, "-I", script, ag_run], capture_output=True, text=True, env=ag_env, timeout=120)
         assert ag_locked.returncode == 0 and "Traceback" not in ag_locked.stderr, (ag_locked.returncode, ag_locked.stderr)
-        ag_locked_state = json.load(open(os.path.join(ag_run, "run-watch.state.json")))
-        assert sorted(ag_locked_state["blind"]) == ["AG11", "AG12", "AG7", "AG8", "AG9"], ag_locked_state
-        assert ag_locked_state["sessions"]["AG1"].endswith("ag1-active-uuid.db"), ag_locked_state["sessions"]
+        ag_locked_state = json.load(open(ag_state_path))
+        assert "AG1" not in ag_locked_state["blind"] and ag_locked_state["sessions"]["AG1"].endswith("ag1-active-uuid.db"), ag_locked_state
+        assert "AG14" in ag_locked_state["blind"] and "AG14" not in ag_locked_state["sessions"], ag_locked_state
+        assert "AG2" in ag_locked_state["blind"] and "AG2" not in ag_locked_state["sessions"], ag_locked_state
     finally:
         lock_con.rollback()
         lock_con.close()
+    del ag_tasks["AG14"]
+
+    # Read-only T3_USERDATA &immutable=1 fallback: when mode=ro fails without -shm in a 0o555 dir and the
+    # checkpointed main DB only has an active row lacking nativeThreadRef, a valid remembered DB is preserved.
+    ro_t3 = os.path.join(work, "ro-t3")
+    ro_run = os.path.join(work, "ro-run")
+    ro_conv = os.path.join(ro_t3, "providers", "antigravity", "prof-ro", "antigravity-acp", "conversations")
+    ro_wt = os.path.join(work, "wt-ag", "RO1")
+    os.makedirs(ro_conv)
+    os.makedirs(os.path.join(ro_run, "RO1"))
+    os.makedirs(ro_wt, exist_ok=True)
+    make_ag_db(os.path.join(ro_conv, "ro1-remembered-uuid.db"), time.time())
+    ro_db = os.path.join(ro_t3, "statev2.sqlite")
+    ro_con = sqlite3.connect(ro_db)
+    ro_con.execute("PRAGMA journal_mode=WAL")
+    ro_con.execute(
+        "CREATE TABLE orchestration_v2_projection_provider_threads ("
+        "provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, provider TEXT NOT NULL, "
+        "status TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL, driver TEXT)"
+    )
+    ro_con.execute(
+        "INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("pt-ro1", "mcp:launch:ro1", "antigravity", "active", "2026-11-22T10:05:00Z",
+         json.dumps({"nativeThreadRef": {"driver": "antigravity", "nativeId": "ro1-remembered-uuid"}}), "antigravity"),
+    )
+    ro_con.commit()
+    ro_con.close()
+    ro_env = dict(ag_env, T3_USERDATA=ro_t3)
+    json.dump({"started": stamp(old_ag), "tasks": {
+        "RO1": {"worktree": ro_wt, "harness": "antigravity", "thread": "mcp:launch:ro1", "status": "running", "launched": stamp(old_ag)},
+    }}, open(os.path.join(ro_run, "watch.json"), "w"))
+    ro_seed = subprocess.run([sys.executable, "-I", script, ro_run], capture_output=True, text=True, env=ro_env, timeout=120)
+    assert ro_seed.returncode == 0 and "RO1" not in json.load(open(os.path.join(ro_run, "run-watch.state.json")))["blind"], ro_seed.stderr
+    ro_con = sqlite3.connect(ro_db)
+    ro_con.execute(
+        "UPDATE orchestration_v2_projection_provider_threads SET payload_json = ? WHERE provider_thread_id = ?",
+        (json.dumps({"nativeThreadRef": None}), "pt-ro1"),
+    )
+    ro_con.commit()
+    ro_con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    ro_con.close()
+    for sfx in ("-shm", "-wal"):
+        if os.path.exists(ro_db + sfx):
+            os.remove(ro_db + sfx)
+    os.chmod(ro_t3, 0o555)
+    try:
+        ro_probe = sqlite3.connect(f"file:{ro_db}?mode=ro", uri=True, timeout=0.05)
+        try:
+            try:
+                ro_probe.execute("SELECT 1 FROM orchestration_v2_projection_provider_threads LIMIT 1").fetchall()
+                raise AssertionError("mode=ro succeeded without -shm in 0o555 dir")
+            except sqlite3.OperationalError:
+                pass
+        finally:
+            ro_probe.close()
+        ro_res = subprocess.run([sys.executable, "-I", script, ro_run], capture_output=True, text=True, env=ro_env, timeout=120)
+        assert ro_res.returncode == 0 and "Traceback" not in ro_res.stderr, (ro_res.returncode, ro_res.stderr)
+        ro_state = json.load(open(os.path.join(ro_run, "run-watch.state.json")))
+        assert "RO1" not in ro_state["blind"] and ro_state["sessions"]["RO1"].endswith("ro1-remembered-uuid.db"), ro_state
+    finally:
+        os.chmod(ro_t3, 0o755)
 
     # Missing statev2.sqlite falls back cleanly to blind for thread-mapped tasks without creating the database
     for suffix in ("", "-wal", "-shm"):

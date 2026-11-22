@@ -642,10 +642,9 @@ def antigravity_native_ids(thread_id: str) -> tuple[list[str], bool]:
                 order.append("updated_at DESC")
             order.append("rowid DESC")
             select_cols = ["payload_json"]
-            if "status" in cols:
-                select_cols.append("status")
-            if "driver" in cols:
-                select_cols.append("driver")
+            for col in ("status", "driver", "provider"):
+                if col in cols:
+                    select_cols.append(col)
             rows = con.execute(
                 f"SELECT {', '.join(select_cols)} FROM orchestration_v2_projection_provider_threads "
                 f"WHERE thread_id = ? ORDER BY {', '.join(order)}",
@@ -653,27 +652,26 @@ def antigravity_native_ids(thread_id: str) -> tuple[list[str], bool]:
             ).fetchall()
             agy_rows = []
             for row in rows:
-                raw = row[0]
-                idx = 1
-                sql_status = row[idx] if "status" in cols else None
-                if "status" in cols:
-                    idx += 1
-                sql_driver = row[idx] if "driver" in cols else None
+                row_map = dict(zip(select_cols, row))
                 try:
-                    payload = json.loads(raw)
+                    payload = json.loads(row_map["payload_json"])
                 except (TypeError, ValueError):
                     continue
                 if not isinstance(payload, dict):
                     continue
                 ref = payload.get("nativeThreadRef")
-                ref_driver = str(ref.get("driver", "")).lower() if isinstance(ref, dict) else ""
-                payload_driver = str(payload.get("driver", "")).lower()
-                row_driver = str(sql_driver or "").lower()
+                ref_driver = str(ref.get("driver") or "").lower() if isinstance(ref, dict) else ""
+                payload_driver = str(payload.get("driver") or "").lower()
+                row_driver = str(row_map.get("driver") or "").lower()
+                row_provider = str(
+                    row_map.get("provider") if row_map.get("provider") is not None else (payload.get("provider") or "")
+                ).lower()
                 is_agy = (ref_driver == "antigravity"
-                          or (not ref_driver and (payload_driver == "antigravity" or row_driver == "antigravity")))
+                          or (not ref_driver and "antigravity" in (payload_driver, row_driver, row_provider)))
                 if not is_agy:
                     continue
-                row_status = str(sql_status if "status" in cols else payload.get("status") or "").lower()
+                sql_status = row_map.get("status")
+                row_status = str((sql_status if sql_status is not None else payload.get("status")) or "").lower()
                 nid = ref.get("nativeId") if (isinstance(ref, dict) and ref_driver == "antigravity") else None
                 valid_nid = nid if (isinstance(nid, str) and SAFE_NATIVE_ID.fullmatch(nid)) else None
                 agy_rows.append((row_status, valid_nid))
@@ -681,7 +679,7 @@ def antigravity_native_ids(thread_id: str) -> tuple[list[str], bool]:
                 ids = list(dict.fromkeys(nid for st, nid in agy_rows if st == "active" and nid))
             else:
                 ids = [agy_rows[0][1]] if agy_rows and agy_rows[0][1] else []
-            return ids, (had_error and not agy_rows)
+            return ids, had_error
         except sqlite3.OperationalError as exc:
             had_error = True
             msg = str(exc).lower()
@@ -705,11 +703,11 @@ def find_antigravity_db(task: dict, remembered: str | None) -> str | None:
         return locate_antigravity_db(str(task["session"]))
     if task.get("thread"):
         ids, unreadable = antigravity_native_ids(str(task["thread"]))
+        if unreadable and remembered and valid_antigravity_discovered_db(remembered):
+            return remembered
         paths = [p for nid in ids if (p := locate_antigravity_db(nid))]
         if paths:
             return max(paths, key=antigravity_db_mtime)
-        if unreadable and remembered and valid_antigravity_discovered_db(remembered):
-            return remembered
     return None
 
 
@@ -1178,7 +1176,8 @@ def main(argv: list[str]) -> int:
         elif tid not in blind_told and task.get("status", "running") == "running":
             why = ("no session log this script reads" if kind is None else
                    "its session log can't be read" if log else
-                   "its conversation DB wasn't found yet (give its session_log or thread in watch.json)"
+                   ("its conversation DB wasn't found yet" if task.get("thread")
+                    else "its conversation DB wasn't found yet (give its session_log or thread in watch.json)")
                    if kind == "antigravity" else
                    "its session log wasn't found (give its session_log in watch.json)")
             lines.append(f"blind {tid} ({task.get('harness') or 'unknown harness'}): {why}; "
