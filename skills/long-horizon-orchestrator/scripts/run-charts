@@ -1534,31 +1534,34 @@ def helpers_from_costs(facts: dict, costs: dict | None) -> None:
     lines = (costs or {}).get("lines")
     if not isinstance(lines, list):
         return
-    def weight(l: dict) -> tuple:
+    def used(l: dict) -> float:
         tokens = l.get("tokens") if isinstance(l.get("tokens"), dict) else {}
-        return (sum(v for v in tokens.values() if is_number(v)), l["usd"] if is_number(l.get("usd")) else -1)
+        return sum(v for v in tokens.values() if is_number(v))
 
     skipped = 0
     for t in facts["tasks"]:
         # a thread that moved model, or whose harness logged a helper model beside its own, counts once,
-        # under the model it used the most tokens on (one line per thread and model)
-        main: dict[str, dict] = {}
+        # under the model it used the most tokens on, its lines for that model (one per session) added up
+        usage: dict[str, dict[tuple, list]] = {}
         for l in lines:
             if not (isinstance(l, dict) and l.get("owner") == t["id"] and l.get("role") in ("reviewer", "helper")):
                 continue
             if not (isinstance(l.get("thread"), str) and l["thread"] and all(l.get(k) is None or isinstance(l[k], str) for k in ("harness", "model"))):
                 skipped += 1
                 continue
-            if l["thread"] not in main or weight(l) > weight(main[l["thread"]]):
-                main[l["thread"]] = l
+            key = (l.get("harness") or "", l.get("model") or "", l["role"])
+            total = usage.setdefault(l["thread"], {}).setdefault(key, [0.0, 0.0])
+            total[0] += used(l)
+            total[1] += l["usd"] if is_number(l.get("usd")) else 0
         threads: dict[tuple, set] = {}
-        for thread, l in main.items():
-            model = l.get("model") or "default"   # no model named: the harness's own mark, as for "default"
-            harness = HARNESS_NAMES.get(l.get("harness") or "", (l.get("harness") or "").capitalize())
-            if l.get("harness") == "opencode" and model.startswith("opencode-go/") and not model.endswith("-free"):
+        for thread, per in usage.items():
+            raw_harness, model, role = max(per, key=lambda k: tuple(per[k]))
+            model = model or "default"   # no model named: the harness's own mark, as for "default"
+            harness = HARNESS_NAMES.get(raw_harness, raw_harness.capitalize())
+            if raw_harness == "opencode" and model.startswith("opencode-go/") and not model.endswith("-free"):
                 harness = "OpenCode Go"   # a Go model, but a free one there, as run-costs reads it
-            threads.setdefault((harness, model, l["role"]), set()).add(thread)
-        held = len(main)
+            threads.setdefault((harness, model, role), set()).add(thread)
+        held = len(usage)
         if not held:
             continue
         given = t.get("helpers") or []
