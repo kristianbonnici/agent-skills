@@ -1,5 +1,8 @@
 # long-horizon-orchestrator changelog
 
+## 5.14.0 (2026-11-22)
+
+- **Helpers, second opinions and Neon run in mode `async`; a wait is only for a step of seconds** (accepted lesson, owner 2026-11-22; [evidence](evidence.md)). T3's `delegate_task` wait now returns after at most about 45 seconds, and a wait that times out doesn't stop the child. The Fable second opinion asked for a 15-minute wait and said a timed-out wait meant cancel it, so it would have been cancelled after 45 seconds; it now starts async, its completion wakes the orchestrator, and it gets about 15 minutes judged from its thread's `createdAt`. The fast-helper template uses `timeoutMs` 45000 at most, and async for anything longer; Codex's hand-off runs async. A helper's time is judged from its thread's `createdAt`, never from how many waits returned, and a thread with nothing new is the sign of a limit, not a timed-out wait. Neon's rule, "only in wait mode with a timeout of a few minutes", becomes one call at a time in async, within the brief's count of calls, cancelled after 10 minutes with nothing new: the reason holds (a budget can't stop a call already running), so the count and one call at a time bound it now.
 ## 5.13.1 (2026-11-21)
 
 - The final report's "Skill changes proposed" lists every proposal `skill-evolution` 1.3.0 makes: the top three in full and the rest one line each, instead of at most three. The finish step says the same; from the review, which found it still said at most three.

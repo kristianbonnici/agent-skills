@@ -169,6 +169,13 @@ private records.
   the orchestrator's computer. Briefs travelled on a throwaway branch of the private state repository,
   commits on a run branch on the remote. → *[computers.md](../../../skills/long-horizon-orchestrator/references/computers.md):
   targets read per computer, a pre-flight there, the run branch, tasks elsewhere named `blind` on purpose.*
+- **`delegate_task`'s wait is capped** (2026-11-20): T3's tool now says a wait lasts at most 45 seconds
+  and a timeout does not cancel the child. Followed as written, the Fable second opinion's 15-minute wait
+  would have been cancelled after 45 seconds; the orchestrator started it async instead, and its completion
+  woke it. The same day a task read a wait that returned in seconds as elapsed time and stopped a free
+  reviewer after 3 of its 15 minutes. → *second opinions, longer helper work and Neon run async; a wait only
+  for a step of seconds; a helper's time judged from its thread's `createdAt`; Neon bounded by its count of
+  calls, one at a time.*
 
 ### The owner's decisions
 
@@ -198,6 +205,8 @@ Rules that are the owner's choice, with when they made it:
   dropped ("Argon is anyways not the good option for the Gemini lineup"); Hydrogen stays for "cheap, fast
   tasks", and Claude stays the daily driver, since Ultra's usage "is still not there what I have with
   Claude".
+- **2026-11-22:** helpers and second opinions follow `delegate_task`'s 45-second wait ("Apply this also on
+  the next run").
 
 ## Outside sources
 
