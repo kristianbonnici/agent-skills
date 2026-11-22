@@ -562,14 +562,40 @@ def t3_userdata() -> str:
 
 
 def antigravity_db_mtime(db_path: str) -> float:
-    """Latest write time across an Antigravity conversation DB and its SQLite WAL (never -shm)."""
+    """Latest write time across an Antigravity conversation DB and its same-folder SQLite WAL (never -shm)."""
     best = 0.0
-    for path in (db_path, db_path + "-wal"):
-        try:
-            best = max(best, os.path.getmtime(path))
-        except OSError:
-            pass
+    try:
+        best = os.path.getmtime(db_path)
+    except OSError:
+        pass
+    wal = db_path + "-wal"
+    try:
+        conv_real = os.path.realpath(os.path.dirname(db_path))
+        if os.path.isfile(wal) and not os.path.islink(wal) and inside(os.path.realpath(wal), conv_real):
+            best = max(best, os.path.getmtime(wal))
+    except OSError:
+        pass
     return best
+
+
+def valid_antigravity_discovered_db(path: str) -> bool:
+    """Verify an automatically discovered Antigravity DB stays within <T3_USERDATA>/providers/antigravity without symlinks."""
+    try:
+        if not path or os.path.islink(path) or not os.path.isfile(path):
+            return False
+        conv_dir = os.path.dirname(path)
+        acp_dir = os.path.dirname(conv_dir)
+        prof_dir = os.path.dirname(acp_dir)
+        root = os.path.join(t3_userdata(), "providers", "antigravity")
+        if (os.path.basename(conv_dir) != "conversations" or os.path.basename(acp_dir) != "antigravity-acp"
+                or os.path.islink(conv_dir) or os.path.islink(acp_dir) or os.path.islink(prof_dir)):
+            return False
+        root_real = os.path.realpath(root)
+        conv_real = os.path.realpath(conv_dir)
+        cand_real = os.path.realpath(path)
+        return inside(conv_real, root_real) and inside(cand_real, conv_real)
+    except OSError:
+        return False
 
 
 def locate_antigravity_db(native_id: str) -> str | None:
@@ -584,17 +610,13 @@ def locate_antigravity_db(native_id: str) -> str | None:
     found = []
     for entry in entries:
         try:
-            if not entry.is_dir():
+            if not entry.is_dir(follow_symlinks=False):
                 continue
         except OSError:
             continue
-        conv_dir = os.path.join(entry.path, "antigravity-acp", "conversations")
-        candidate = os.path.join(conv_dir, f"{native_id}.db")
-        try:
-            if os.path.isfile(candidate) and inside(os.path.realpath(candidate), os.path.realpath(conv_dir)):
-                found.append((antigravity_db_mtime(candidate), candidate))
-        except OSError:
-            continue
+        candidate = os.path.join(entry.path, "antigravity-acp", "conversations", f"{native_id}.db")
+        if valid_antigravity_discovered_db(candidate):
+            found.append((antigravity_db_mtime(candidate), candidate))
     return max(found, key=lambda item: item[0])[1] if found else None
 
 
@@ -612,31 +634,54 @@ def antigravity_native_ids(thread_id: str) -> tuple[list[str], bool]:
             con = sqlite3.connect(uri_base + suffix, uri=True, timeout=0.5)
             cols = {r[1] for r in con.execute("PRAGMA table_info(orchestration_v2_projection_provider_threads)")}
             if "thread_id" not in cols or "payload_json" not in cols:
-                return [], False
+                return [], had_error
             order = []
             if "status" in cols:
                 order.append("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
             if "updated_at" in cols:
                 order.append("updated_at DESC")
             order.append("rowid DESC")
+            select_cols = ["payload_json"]
+            if "status" in cols:
+                select_cols.append("status")
+            if "driver" in cols:
+                select_cols.append("driver")
             rows = con.execute(
-                f"SELECT payload_json FROM orchestration_v2_projection_provider_threads "
+                f"SELECT {', '.join(select_cols)} FROM orchestration_v2_projection_provider_threads "
                 f"WHERE thread_id = ? ORDER BY {', '.join(order)}",
                 (thread_id,),
             ).fetchall()
-            ids = []
-            for (raw,) in rows:
+            agy_rows = []
+            for row in rows:
+                raw = row[0]
+                idx = 1
+                sql_status = row[idx] if "status" in cols else None
+                if "status" in cols:
+                    idx += 1
+                sql_driver = row[idx] if "driver" in cols else None
                 try:
                     payload = json.loads(raw)
                 except (TypeError, ValueError):
                     continue
-                ref = payload.get("nativeThreadRef") if isinstance(payload, dict) else None
-                if not isinstance(ref, dict) or str(ref.get("driver", "")).lower() != "antigravity":
+                if not isinstance(payload, dict):
                     continue
-                nid = ref.get("nativeId")
-                if isinstance(nid, str) and SAFE_NATIVE_ID.fullmatch(nid) and nid not in ids:
-                    ids.append(nid)
-            return ids, (had_error and not ids)
+                ref = payload.get("nativeThreadRef")
+                ref_driver = str(ref.get("driver", "")).lower() if isinstance(ref, dict) else ""
+                payload_driver = str(payload.get("driver", "")).lower()
+                row_driver = str(sql_driver or "").lower()
+                is_agy = (ref_driver == "antigravity"
+                          or (not ref_driver and (payload_driver == "antigravity" or row_driver == "antigravity")))
+                if not is_agy:
+                    continue
+                row_status = str(sql_status if "status" in cols else payload.get("status") or "").lower()
+                nid = ref.get("nativeId") if (isinstance(ref, dict) and ref_driver == "antigravity") else None
+                valid_nid = nid if (isinstance(nid, str) and SAFE_NATIVE_ID.fullmatch(nid)) else None
+                agy_rows.append((row_status, valid_nid))
+            if any(st == "active" for st, _ in agy_rows):
+                ids = list(dict.fromkeys(nid for st, nid in agy_rows if st == "active" and nid))
+            else:
+                ids = [agy_rows[0][1]] if agy_rows and agy_rows[0][1] else []
+            return ids, (had_error and not agy_rows)
         except sqlite3.OperationalError as exc:
             had_error = True
             msg = str(exc).lower()
@@ -644,7 +689,7 @@ def antigravity_native_ids(thread_id: str) -> tuple[list[str], bool]:
                 return [], True
             continue
         except (sqlite3.Error, OSError):
-            return [], False
+            return [], True
         finally:
             if con is not None:
                 try:
@@ -659,12 +704,11 @@ def find_antigravity_db(task: dict, remembered: str | None) -> str | None:
     if task.get("session"):
         return locate_antigravity_db(str(task["session"]))
     if task.get("thread"):
-        ids, locked = antigravity_native_ids(str(task["thread"]))
-        for nid in ids:
-            path = locate_antigravity_db(nid)
-            if path:
-                return path
-        if locked and remembered and os.path.isfile(remembered):
+        ids, unreadable = antigravity_native_ids(str(task["thread"]))
+        paths = [p for nid in ids if (p := locate_antigravity_db(nid))]
+        if paths:
+            return max(paths, key=antigravity_db_mtime)
+        if unreadable and remembered and valid_antigravity_discovered_db(remembered):
             return remembered
     return None
 
@@ -1109,7 +1153,7 @@ def main(argv: list[str]) -> int:
     reports_by_task = {}
     for tid, task in tasks.items():
         launched = parse_time(task.get("launched")) or started
-        harness = str(task.get("harness", "")).lower()
+        harness = str(task.get("harness") or "").lower()
         kind = ("claude" if "claude" in harness else
                 "codex" if "codex" in harness else
                 "antigravity" if ("antigravity" in harness
@@ -1165,7 +1209,7 @@ def main(argv: list[str]) -> int:
         gdir = git_dir(task["worktree"])
         watched = [task["worktree"], os.path.join(run_dir, tid), session_dir, gdir]
         watched += [c.get("output") for c in calls.values() if c.get("output")]
-        log_time = (antigravity_db_mtime(log) if (readable and kind == "antigravity")
+        log_time = (antigravity_db_mtime(log) if (log and kind == "antigravity")
                     else max((os.path.getmtime(p) for p in logs if os.path.exists(p)), default=0.0))
         skip_logs = [log, log + "-wal"] if (kind == "antigravity" and log) else ([log] if log else [])
         wrote = changed_within(watched, HANG_MIN * 60, skip=skip_logs)
