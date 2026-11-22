@@ -3532,7 +3532,9 @@ d["lines"] += [dict(mine[0], thread=[]), dict(mine[0], thread=None), dict(mine[0
                dict(mine[0], thread="t-none", role="reviewer", harness="antigravity", model=None, usd=None),
                dict(mine[0], thread="t-beam", role="helper", harness="opencode", model="opencode-go/beam-free"),
                *[dict(mine[0], thread="t-sessions", role="reviewer", harness="codex", model=m, usd=None, tokens={"input": k})
-                 for m, k in (("gpt-6.1-terra", 60000), ("gpt-6.1-terra", 60000), ("gpt-6-luna", 100000))]]   # two Terra sessions
+                 for m, k in (("gpt-6.1-terra", 60000), ("gpt-6.1-terra", 60000), ("gpt-6-luna", 100000))],   # two Terra sessions
+               dict(mine[0], thread="t-huge", role="helper", harness="codex", model="gpt-6.1-terra", usd=None,
+                    tokens={"input": 10 ** 400, "output": 10 ** 400})]   # counts no float holds: no crash
 json.dump(d, open(os.path.join(root, "costs-odd.json"), "w"))
 facts["tasks"][0].pop("helpers")
 facts["costs"] = {"file": "costs-odd.json"}
@@ -3564,7 +3566,7 @@ for l in d["lines"]:
         top[l["thread"]] = l
 data = read("charts-odd")
 drawn = data["tasks"][0]["helpers"]
-assert sum(h["count"] for h in drawn) == n + 5, drawn
+assert sum(h["count"] for h in drawn) == n + 6, drawn
 assert [h["harness"] for h in drawn if h["model"] == "opencode-go/beam-free"] == ["OpenCode"], drawn   # free there: no Go plan
 luna = sum(1 for l in top.values() if l["model"] == "gpt-6-luna")
 assert [h["did"] for h in drawn if h["model"] == "gpt-6-luna"] == [f"review ×{luna + 1}"], drawn   # the model it used most, priced or not

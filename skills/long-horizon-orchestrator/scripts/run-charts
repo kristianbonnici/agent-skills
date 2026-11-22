@@ -1536,7 +1536,7 @@ def helpers_from_costs(facts: dict, costs: dict | None) -> None:
         return
     def used(l: dict) -> float:
         tokens = l.get("tokens") if isinstance(l.get("tokens"), dict) else {}
-        return sum(v for v in tokens.values() if is_number(v))
+        return sum(min(v, 1e15) for v in tokens.values() if is_number(v))   # a count past any real one can't overflow the sum
 
     skipped = 0
     for t in facts["tasks"]:
