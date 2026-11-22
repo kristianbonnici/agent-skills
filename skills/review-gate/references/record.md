@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "8.5.0",
+  "gate": "8.6.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -57,7 +57,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 }
 ```
 
-The example's Codex reviewer is GPT-6.1 Terra, Codex's reviewer before 8.0.0; from 8.0.0 it is `Codex GPT-6.2 Sol, medium`. Its Gemini reviewer at Deep is Hydrogen, before 8.5.0; from 8.5.0 it is `Antigravity Orchestrator (Neon), extra high`.
+The example's Codex reviewer is GPT-6.1 Terra, Codex's reviewer before 8.0.0; from 8.0.0 it is `Codex GPT-6.2 Sol, medium`. Its Gemini reviewer at Deep is Hydrogen, before 8.5.0; in 8.5.0 it was `Antigravity Orchestrator (Neon), extra high`, and from 8.6.0 it is `Gemini 4 Neon, xhigh` (keeping Neon distinct from Orchestrator (Neon) and `Gemini 4 Neon, high`). When a Claude reviewer runs through Antigravity's `claude_and_gpt_models` bucket, name it `"Antigravity Claude Opus 5.5, high"` or `"Antigravity Claude Sonnet 5.5, high"` in `review.json` (and the Review table) so subscription attribution stays visible; `review-records totals` strips the host prefix and reasoning level and groups them under `Claude Opus 5.5` and `Claude Sonnet 5.5`.
 
 The gate:
 

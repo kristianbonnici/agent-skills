@@ -2,7 +2,7 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
-Last checked: new work 2026-11-21; sources 2026-10-30.
+Last checked: new work 2026-11-22; sources 2026-10-30.
 
 ## Our own runs (study of 2026-10-30)
 
@@ -598,6 +598,19 @@ converged in three rounds with no blocker left. The gate's other stops count blo
 cap a stream of follow-ups never ends a review before round five.
 
 → *Changed in 8.3.0 (owner, 2026-11-20, accepting the proposal): a follow-up patch's review lists new non-blockers from round 3 on instead of fixing them.*
+
+## Plain Gemini 4 Neon at xhigh, Gemini-authored changes, and bucket balance (2026-11-22)
+
+- **Plain `gemini-4-neon` at `xhigh` replaces Orchestrator (Neon):** inspecting 53 read-only Orchestrator (Neon) code-review conversation databases directly showed **0 calls** to its faster worker model — meaning Orchestrator (Neon) did all review work on Gemini 4 Neon at `xhigh` itself and was functionally identical to plain Gemini 4 Neon at `xhigh` during read-only code reviews, without orchestrator harness overhead. Formal `reviewer-benchmark` confirmation of `gemini-4-neon-xhigh` on the 16-change benchmark set is pending (authorized in advance by the owner on 2026-11-22). Plain Gemini 4 Neon at `high` (which scored 49.7% against Orchestrator (Neon)'s 62.1% above) and all other unbenchmarked Gemini models stay excluded.
+- **Gemini-authored changes:** Antigravity became a first-class coding provider on Google AI Ultra, requiring complete non-circular rules for changes written by Gemini models:
+  - **Light:** Claude Sonnet 5.5 (`high`) matches Hydrogen's benchmark tier (31% / 45 of 143 in run 2, 2.5 min per review, ~3% false share) while adding Anthropic review for a Gemini-authored change; falls back to the free pool, then Codex Sol (`medium`). Hydrogen never reviews a Gemini change.
+  - **Standard:** Codex Sol (`medium`) + Claude Sonnet 5.5 (`high`), strictly cross-family with no Neon; when Codex is short, Claude Opus 5.5 (`high`) + Claude Sonnet 5.5 (`high`) + one free reviewer.
+  - **Deep:** Codex Sol (`medium`, logic/security/failure paths) + Claude Opus 5.5 (`high`, tests/docs/UX/project rules) + **fresh Gemini 4 Neon (`xhigh`, open look ONLY)** + one free reviewer (mirroring 7.0.0's fresh Opus on Opus changes at Deep while keeping cross review and Deep's second opinion strictly cross-family between Sol and Opus, or between Opus and Sonnet when Codex is short).
+- **Antigravity's separate `claude_and_gpt_models` bucket:** Antigravity exposes `Claude Opus 5.5` and `Claude Sonnet 5.5` under `claude_and_gpt_models`, metered independently from `gemini_models` and from Claude Max (`claudeAgent`). Routing Opus/Sonnet reviews there while `claude_and_gpt_models_five_hour` and `claude_and_gpt_models_weekly` are under 80%, with bidirectional failover to and from `claudeAgent`, spreads review load across subscriptions; **Claude is short** triggers only when both buckets are limited or unavailable, and complete fallbacks now cover every author family and level without dead-ends (excluding Claude Haiku 5.5 from the free order when Claude is short).
+- **Codex soft-reserve ("Codex is reserved for Deep"):** reserving Codex Plus for Deep reviews, Gemini-authored changes, and computer use by dropping Sol on Claude-authored Standard reviews (in favor of Neon + free, keeping Sol if Neon can't review and on Sol re-reviews) preserves Codex capacity ahead of the hard 85%/80% cutoff. Setting the soft-reserve flag from the brief / orchestrator common file rather than self-detecting per task prevents parallel gates from racing on changing meters.
+- **Hydrogen's Light 5-hour cutoff raised to 85%:** on Google AI Ultra, the 60% cutoff set on Pro is unnecessarily conservative when helpers and reviews share Ultra's larger `gemini_models_five_hour` window; raising Light's cutoff to 85% matches Neon's cutoff.
+
+→ *review-gate 8.6.0 (owner, 2026-11-22): plain `gemini-4-neon` at `xhigh` replaces Orchestrator (Neon), Antigravity's Claude bucket integrates with `claudeAgent`, full Gemini-authored and Claude-short rules close every edge case, Codex soft-reserve protects Codex Plus on Claude Standard reviews, and Hydrogen's Light 5-hour cutoff rises to 85%.*
 
 ## Left out
 

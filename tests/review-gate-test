@@ -249,9 +249,17 @@ def places(value, here=()):
 # finding and its reviewer, and the finding counts once among those that differed.
 back = copy.deepcopy(example)
 back["findings"].append(dict(back["findings"][0], round=2, reviewer_tag="follow-up"))
-# Antigravity's Orchestrator keeps the model its brackets name, and loses its host and level like the others.
+# Antigravity's Orchestrator keeps the model its brackets name, and loses its host and level like the others;
+# plain Gemini 4 Neon stays distinct from Orchestrator Neon, and Antigravity Claude groups under Claude.
 assert module.reviewer_key("Antigravity Orchestrator (Neon), extra high") == "Orchestrator Neon", module.reviewer_key("Antigravity Orchestrator (Neon), extra high")
 assert module.reviewer_key("Orchestrator (Carbon)") == "Orchestrator Carbon"
+assert module.reviewer_key("Gemini 4 Neon, xhigh") == "Gemini 4 Neon"
+assert module.reviewer_key("Antigravity Gemini 4 Neon, xhigh") == "Gemini 4 Neon"
+assert module.reviewer_key("Gemini 4 Neon, xhigh (fresh look)") == "Gemini 4 Neon"
+assert module.reviewer_key("Gemini 4 Neon, xhigh") != module.reviewer_key("Antigravity Orchestrator (Neon), extra high")
+assert module.reviewer_key("Antigravity Claude Opus 5.5, high") == "Claude Opus 5.5"
+assert module.reviewer_key("Antigravity Claude Sonnet 5.5, high") == "Claude Sonnet 5.5"
+assert module.reviewer_key("Antigravity Claude Opus 5.5, high (fresh look)") == "Claude Opus 5.5"
 assert module.reviewer_key("OpenCode DeepSeek V4.1 Flash (free), high") == "DeepSeek V4.1 Flash (free)"
 assert [row["reviewer"] for row in module.gate_from_record(folder)["rows"]] == ["GPT-6.1 Terra", "Claude Sonnet 5.5",
                                                                               "Gemini 4 Hydrogen"]
@@ -636,5 +644,41 @@ def snapshot():
 before = snapshot()
 run("totals"); run("totals", "--json"); run("table", os.path.join(runs, "run-1", "A", "review"))
 assert before == snapshot()
+# Dedicated 8.6.0 state check: table keeps subscription attribution ("Antigravity Claude ...",
+# "Gemini 4 Neon, xhigh") while totals groups Antigravity Claude under Claude Opus/Sonnet 5.5,
+# deduplicates same-gate Claude bucket failover, and keeps Gemini 4 Neon distinct from Orchestrator Neon.
+state860 = os.path.join(work, "state-860")
+env860 = dict(os.environ, XDG_STATE_HOME=state860)
+g1 = copy.deepcopy(example)
+g1["gate"], g1["date"], g1["findings"], g1["skipped"] = "8.6.0", "2026-11-22", [], []
+g1["reviewers"] = [
+    {"name": "Codex GPT-6.2 Sol, medium", "rounds": [1], "reports": ["round-1-sol.md"]},
+    {"name": "Antigravity Claude Opus 5.5, high", "rounds": [1], "reports": ["round-1-ag-opus.md"]},
+    {"name": "Gemini 4 Neon, xhigh", "rounds": [1], "reports": ["round-1-neon.md"]},
+]
+g2 = copy.deepcopy(g1)
+g2["reviewers"] = [
+    {"name": "Antigravity Claude Sonnet 5.5, high", "rounds": [1], "reports": ["round-1-ag-sonnet.md"]},
+    {"name": "Claude Sonnet 5.5, high", "rounds": [2], "reports": ["round-2-sonnet.md"]},
+    {"name": "Claude Opus 5.5, high", "rounds": [1], "reports": ["round-1-opus.md"]},
+    {"name": "Antigravity Orchestrator (Neon), extra high", "rounds": [1], "reports": ["round-1-orch.md"]},
+]
+g1_dir = save(os.path.join(state860, "agent-skills", "review-gate", "20261122-1900-app"), g1)
+g2_dir = save(os.path.join(state860, "agent-skills", "review-gate", "20261122-1930-app"), g2)
+t1 = subprocess.run([sys.executable, "-I", script, "table", g1_dir], capture_output=True, text=True, env=env860, timeout=60)
+assert t1.returncode == 0, t1.stderr
+assert "| Antigravity Claude Opus 5.5, high | 1 |" in t1.stdout, t1.stdout
+assert "| Gemini 4 Neon, xhigh | 1 |" in t1.stdout, t1.stdout
+t2 = subprocess.run([sys.executable, "-I", script, "table", g2_dir], capture_output=True, text=True, env=env860, timeout=60)
+assert t2.returncode == 0, t2.stderr
+assert "| Antigravity Claude Sonnet 5.5, high | 1 |" in t2.stdout, t2.stdout
+tot860 = subprocess.run([sys.executable, "-I", script, "totals", "--json"], capture_output=True, text=True, env=env860, timeout=60)
+assert tot860.returncode == 0, tot860.stderr
+parsed860 = json.loads(tot860.stdout)
+assert parsed860["reviewers"]["Claude Opus 5.5"]["reviews"] == 2, parsed860["reviewers"]
+assert parsed860["reviewers"]["Claude Sonnet 5.5"]["reviews"] == 1, parsed860["reviewers"]
+assert "Gemini 4 Neon" in parsed860["reviewers"] and "Orchestrator Neon" in parsed860["reviewers"], parsed860["reviewers"]
+assert "Antigravity Claude Opus 5.5" not in parsed860["reviewers"], parsed860["reviewers"]
+
 print("review-gate-test: ok")
 EOF

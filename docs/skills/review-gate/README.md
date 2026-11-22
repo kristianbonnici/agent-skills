@@ -12,13 +12,12 @@ Version and history: [CHANGELOG.md](CHANGELOG.md). Why it works this way: [evide
 ```mermaid
 flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
-  level -->|"only docs, wording, styling"| light["Light<br/>Gemini 4 Hydrogen while the Gemini<br/>5-hour window is under ~60%,<br/>else one free reviewer (DeepSeek, else GLM)"]
-  level -->|ordinary code| standard["Standard<br/>the cross reviewer:<br/>Sol for any change but Codex's,<br/>Sonnet for Codex's,<br/>+ Neon (Antigravity's Orchestrator)"]
-  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>two paid reviewers, different focus:<br/>Sol and Opus for any change but Codex's<br/>(Neon and Opus when Codex is short),<br/>Opus and Sonnet for Codex's,<br/>+ Neon unless it holds a focus<br/>+ a free reviewer if one answers"]
-  light -->|neither Hydrogen nor a free model answers| standard
-  standard -.->|Codex short| sub["Neon as a Claude change's<br/>cross reviewer (else a Claude substitute)<br/>+ a free reviewer"]
+  level -->|"only docs, wording, styling"| light["Light<br/>Gemini: Sonnet (high) while Claude has room,<br/>else one free reviewer, else Sol<br/>Others: Hydrogen while Gemini 5h &lt; ~85%,<br/>else one free reviewer, else cross reviewer"]
+  level -->|ordinary code| standard["Standard<br/>Claude/free: Sol + Neon (xhigh)<br/>(Codex reserved for Deep on Claude: Neon + free)<br/>Codex: Sonnet + Neon (xhigh)<br/>Gemini: Sol + Sonnet (no Neon)"]
+  level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>Claude/free: Sol + Opus + Neon + free<br/>Codex: Opus + Sonnet + Neon + free<br/>Gemini: Sol + Opus + fresh Neon (open look) + free"]
+  standard -.->|Codex or Claude short| sub["Fallback cross-family pair + free<br/>(no Neon for Gemini Standard;<br/>no independent reviewer left -&gt; stop)"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
-  sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other paid reviewer:<br/>yes or no"]
+  sort -->|"deep: a blocker or follow-up only one raised,<br/>not shown by a test"| second["Other eligible paid reviewer:<br/>yes or no (never Neon on Gemini)"]
   second --> sort
   sort -->|"the author rejects a reviewer's blocker,<br/>or tags it lower"| reply["That reviewer:<br/>agree or hold?"]
   reply -->|"recorded; the author's tag stands"| sort
@@ -33,43 +32,33 @@ flowchart TD
 
 | Level | Round 1 | Later rounds |
 |---|---|---|
-| Light | Gemini 4 Hydrogen while the Gemini 5-hour window is under about 60%, else one free reviewer; if none answers, the cross reviewer | the cross reviewer, only after a logic fix |
-| Standard | the cross reviewer and Neon (Codex short: Neon as a Claude change's cross reviewer, and a free reviewer); a free reviewer in Neon's place when it can't review | the paid reviewer who found the fixed finding, or the cross reviewer for a fix only Hydrogen or a free reviewer asked for |
-| Deep | two paid reviewers, different focus (Sol and Opus for any change but Codex's, or Neon and Opus when Codex is short, Opus and Sonnet while Neon can't review; Opus and Sonnet for Codex's), + Neon unless it already holds a focus, and a free reviewer if one answers | the paid reviewers who found the fixed findings |
+| Light | Gemini changes: Sonnet (`high`) while a Claude bucket has room, else one free reviewer, else Sol (`no reviewer available` if Codex is also short). Others: Gemini 4 Hydrogen while `gemini_models_five_hour` is under ~85%, else one free reviewer, else the cross reviewer (`Sonnet` for Codex; `Sol` for Claude/free, or other Claude model / Neon under Codex short). | the cross reviewer, only after a logic fix |
+| Standard | Claude/free: Sol + Neon (`xhigh`); under Codex reserved-for-Deep, Claude drops Sol to Neon + one free (or Sol + free if Neon can't review). Codex: Sonnet + Neon. Gemini: Sol + Sonnet (strictly cross-family, no Neon). Fallbacks cover Codex short, Claude short, and Neon unavailable (stopping if no independent paid reviewer remains). | the paid reviewer who found the fixed finding (Sol stays on its findings even when reserved for Deep), or the cross reviewer for a fix only Hydrogen, a free reviewer or Haiku asked for |
+| Deep | Claude/free: Sol (logic/security/failure paths) + Opus (tests/docs/UX/project rules; fresh if Opus/Fable) + Neon (open look) + free. Codex: Opus + Sonnet + Neon + free. Gemini: Sol + Opus + fresh Neon (`xhigh`, open look ONLY) + free. Codex-short and Claude-short fallbacks split focuses across remaining paid families and free (never Neon on Gemini's focused roles or second opinions; stopping if no independent cross-family reviewer remains). | the eligible paid reviewers who found the fixed findings |
 
-- **Paid reviewers:** Codex's GPT-6.2 Sol at medium reasoning, Claude Sonnet 5.5 and Opus 5.5 at high, and Neon (Antigravity's Orchestrator (Neon)) at the level Antigravity gives it.
+- **Paid reviewers:** Codex's GPT-6.2 Sol at `medium` reasoning, Claude Sonnet 5.5 and Opus 5.5 at `high` (on `claudeAgent`, or on Antigravity's separate `claude_and_gpt_models` bucket while its 5-hour and weekly windows are under ~80%), and Neon (`Gemini 4 Neon` at `xhigh`).
   Sol replaced GPT-6.1 Terra in 8.0.0: on the benchmark it found 61 of the 144 defects known before its run
   and 17 of 20 blockers, where Terra found 42 and 9, and none of its findings were false
   ([evidence.md](evidence.md#gpt-62-sol-at-medium-2026-11-18)).
+- **Antigravity's Claude bucket and "Claude is short":** Opus and Sonnet seamlessly fail over between `claudeAgent` and Antigravity's `claude_and_gpt_models` bucket (`interactionMode: "plan"`, `thought_level: "high"` in T3). Claude counts as short only when both buckets are limited or unavailable; explicit fallbacks then cover every author family and level, excluding Claude Haiku 5.5 from the free order ([evidence.md](evidence.md#plain-gemini-4-neon-at-xhigh-gemini-authored-changes-and-bucket-balance-2026-11-22)).
 - **At Deep, a Claude change's Claude reviewer is Opus,** whichever Claude model wrote it: for Opus's own
   change, Opus as a new agent with the brief alone. On the benchmark Opus found 10.5 of the 20 blockers
   and Sonnet 5, and Terra with Opus found 69 defects and 14 blockers where Terra with Sonnet found 63 and
   11 ([evidence.md](evidence.md#opus-as-deeps-claude-reviewer-2026-11-18)). Sonnet stays the cross reviewer
-  of a change Codex wrote, Opus's partner at Deep there, and the Claude substitute for Opus's
-  change when Codex is short.
-- **Codex is preferred but never required:** when it is short, Neon takes its place on a Claude change at
-  Standard and Deep; at Light, or while Neon can't review, a Claude model other than the change's author does,
-  and a free reviewer brings back a second family.
+  of a change Codex wrote (and Light's reviewer on Gemini changes), Opus's partner at Deep on Codex/Gemini-short changes, and the Claude substitute for Opus's
+  change when Codex is short and Neon can't review.
+- **Codex soft-reserve ("Codex is reserved for Deep") and "Codex is short":** an orchestrator or brief can reserve Codex for Deep reviews (before the hard "Codex is short" cutoff, never self-detected per task so parallel gates don't race). Standard reviews of Claude changes then drop Sol for Neon + one free (keeping Sol if Neon can't review), while Deep reviews, Gemini/Codex/free changes, Light fallbacks, and Sol re-reviews keep Sol until Codex is short. When Codex is short, Neon takes Sol's place on Claude changes at Standard and Deep (while Gemini changes run Opus + Sonnet + free, plus fresh Neon open look at Deep).
 - **Free reviewers** (OpenCode's DeepSeek V4.1 Flash and GLM-5.3 Flash) run on OpenCode's free tier,
   which shares one limit for the whole computer with the tasks' research helpers, and then on the owner's
   flat-rate OpenCode Go plan. So they review first rounds only, and only where they help most for least:
-  alone on light changes when Hydrogen can't review, in Neon's place on standard ones, as an extra
-  voice on deep ones, and in place of the lost family when Codex is short. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers, Claude Haiku 5.5 comes last at standard and deep (not for a Claude change while
-  Codex is short, where it would add no second family); at light
+  alone on light changes when Hydrogen or Sonnet can't review, in Neon's or Sol's place on standard ones, as an extra
+  voice on deep ones, and in place of a short paid family. A limited one moves from the free tier to Go (unless Go's windows are past about 85%), and when neither answers, Claude Haiku 5.5 comes last at standard and deep (excluded when Claude is short, or for a Claude change while Codex is short); at light
   the cross reviewer takes its place. It is never waited for past its time, and in T3 one with no activity
   5 minutes after launch, or whose turns come more than a minute apart, is replaced then. Its brief gives it 12 minutes
   and about 20 commands, so it reports before its time runs out.
-- **Neon reviews beside the paid reviewers at Standard and Deep,** and is a Claude change's cross reviewer
-  while Codex is short. Neon is Antigravity's Orchestrator (Neon): Gemini 4 Neon at extra high, handing
-  routine steps to a faster model. On the benchmark's 16 past changes it found 62% of 194 known defects and
-  23 of 27 blockers, the most of any model, where Sol at medium found 42% and 19; even on the 157 defects
-  known before its run it found more than Sol, and 2.4% of its findings were false. With Sol it found 146
-  defects and 26 blockers, where Sol with Hydrogen found 111 and 21. It is slow (about 15 minutes a review,
-  inside a paid reviewer's 30) and draws on the Gemini windows the run's helpers and the owner share
-  ([evidence.md](evidence.md#orchestrator-neon-as-a-reviewer-2026-11-21)).
-- **Gemini 4 Hydrogen reviews at Light only,** while the Gemini 5-hour window is under about 60%. It found
-  27% of the defects and 6 of 27 blockers; beside Sol, Neon finds far more. No other Gemini model reviews:
-  plain Gemini 4 Neon at high found 50%, between the two, and the older ones were the weakest in past runs.
+- **Neon (`Gemini 4 Neon`, `xhigh`) replaced Orchestrator (Neon) in 8.6.0:** direct inspection of 53 read-only Orchestrator (Neon) review databases showed 0 calls to its faster worker model, making it identical to plain `gemini-4-neon` at `xhigh` during code reviews (formal `reviewer-benchmark` confirmation of `gemini-4-neon-xhigh` is pending; [evidence.md](evidence.md#plain-gemini-4-neon-at-xhigh-gemini-authored-changes-and-bucket-balance-2026-11-22)). In 8.5.0 Orchestrator (Neon) found 62% of 194 known defects and 23 of 27 blockers on the benchmark's 16 past changes, the most of any model, with 2.4% false findings ([evidence.md](evidence.md#orchestrator-neon-as-a-reviewer-2026-11-21)). On Gemini-authored changes, fresh Neon (`xhigh`) joins only at Deep for an open look (never Light, Standard, cross review, focused Deep roles, or second opinions).
+- **Gemini 4 Hydrogen reviews at Light only** (for non-Gemini changes), while `gemini_models_five_hour` is under about 85% (raised from 60% in 8.6.0 on Google AI Ultra). It found
+  27% of the defects and 6 of 27 blockers. Plain Gemini 4 Neon at `high` (which found 50%) and all other unbenchmarked Gemini models remain excluded.
 - **The trial is over.** Four cheap models each added one extra review in round 1 until 6.0.0. A study of 92
   gates and the benchmark settled them: Hydrogen got its place (Light's alone since 8.5.0), Claude Haiku 5.5 ends the free order at
   Standard and Deep, and GPT-6 Luna and Muse Spark 1.3 Contributor got none. A new model is measured with
