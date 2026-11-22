@@ -205,8 +205,14 @@ Rules that are the owner's choice, with when they made it:
   dropped ("Argon is anyways not the good option for the Gemini lineup"); Hydrogen stays for "cheap, fast
   tasks", and Claude stays the daily driver, since Ultra's usage "is still not there what I have with
   Claude".
-- **2026-11-22:** helpers and second opinions follow `delegate_task`'s 45-second wait ("Apply this also on
-  the next run").
+- **2026-11-22:** Claude Max 20x and Google AI Ultra ($200) operate as peer primary subscriptions (relaxing "home harness first"); weekly limits or weekly budgets may spill queued or running tasks once per running task between peer primary subscriptions via clean handoff (while 5-hour resets pause on the same thread, and small plans never absorb primary tasks); fast helpers prefer Hydrogen first while its 5-hour window is under ~85%; Antigravity's `claude_and_gpt_models` bucket carries Claude reviews (under ~80%) and optional bounded Claude tasks (never `GPT-OSS 120B`); Fable 5.2 stays the only orchestrator second-opinion model; plain `gemini-4-neon` at `xhigh` replaces `Orchestrator (Neon)` in `review-gate 8.6.0`.
+
+### Ultra $200 calibration observations and dual-primary routing (2026-11-22)
+
+- **Antigravity `claude_and_gpt_models` bucket:** initial Ultra $200 observations show ~0.8 percentage points of `claude_and_gpt_models_weekly` (~1.15 pt of `claude_and_gpt_models_five_hour`) per Antigravity Sonnet 5.5 `high` review round, and ~3 pt weekly (~6 pt 5h) per Antigravity Opus 5.5 `high` review round. The bucket comfortably absorbs many code reviews under the ~80% cutoff while sparing Claude Max, whereas full Opus coding tasks on Antigravity should be budgeted conservatively until calibrated on full tasks. Antigravity exposes `thought_level` up to `high` on its Claude models (never `xhigh`), and `GPT-OSS 120B` stays excluded from reviews and primary coding tasks.
+- **Antigravity `gemini_models` bucket:** initial Ultra $200 sizing defaults put `gemini-4-neon` / `gemini-pro-orchestrator-neon` primary tasks at ~0.5 pt of `gemini_models_weekly` per task-hour and plain `gemini-4-neon` `xhigh` reviews at ~0.2–0.3 pt per review round (beside the earlier ~0.65 pt/review observed across mixed Neon/Orchestrator benchmark runs), superseded by the owner's profile calibration once populated.
+- **Hydrogen-first fast helpers and 85% Light cutoff:** on Google AI Ultra, Hydrogen calls consume ~0.1–0.2 pt of `gemini_models_five_hour` (2026-11-13 probe), leaving ample room to run Hydrogen ahead of OpenCode's free and Go tiers until `gemini_models_five_hour` reaches ~85% (matching `review-gate 8.6.0`'s 85% Light cutoff).
+- **Peer weekly-limit spillover:** while short 5-hour resets pause cleanly in place to preserve context, weekly limits or exhausted run budgets can sit hours or days from reset; allowing queued tasks and at most one clean handoff per running task between peer primary subscriptions prevents multi-day stalls when the peer primary subscription has room.
 
 ### Antigravity conversation database schema (2026-11-22)
 
@@ -671,8 +677,8 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
   fast-forwards itself. With a few to a few dozen tasks a night, each merge is worth its check, and Cursor
   found one small error could halt the whole system.
 - **Cheaper models may do most of the work.** In Cursor's SQLite rebuild, a frontier planner with cheaper
-  workers cost about an eighth of GPT-5.5 doing everything alone. The skill keeps a whole task on the
-  home harness's model and gives cheaper models research and fully specified steps, because its tasks arrive
+  workers cost about an eighth of GPT-5.5 doing everything alone. The skill keeps a whole task on a
+  primary subscription's model and gives cheaper models research and fully specified steps, because its tasks arrive
   as objectives, not detailed instructions, and the owner's subscriptions are already paid for. Cursor's
   result is one task with an exact specification, measured with its own model.
 - **Low reasoning with re-runs can beat high.** Anthropic's model guide reports Opus 5.5 at low, with

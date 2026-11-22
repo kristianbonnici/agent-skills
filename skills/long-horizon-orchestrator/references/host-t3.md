@@ -15,7 +15,7 @@ jq -c '.providers[] | select(.providerInstanceId=="claudeAgent") | .models[] | {
 ```
 
 - **Providers:** use only those with no `constraints`.
-- **Model options:** reasoning is passed as an option, and its name differs by provider: Claude uses `{"id": "effort", "value": "high"}`, Codex uses `{"id": "reasoningEffort", "value": "high"}`. Always set it explicitly, following [routing.md](routing.md), and use only values the catalog lists.
+- **Model options:** reasoning is passed as an option, and its name differs by provider: Claude uses `{"id": "effort", "value": "high"}`, Codex uses `{"id": "reasoningEffort", "value": "high"}`, Antigravity uses `{"id": "thought_level", "value": "high"}` (Antigravity Claude defaults to `medium` and never exposes `"xhigh"`). Always set it explicitly, following [routing.md](routing.md), and use only values the catalog lists.
 - **Record your `parentThreadId`** in the ledger. Every brief's report-back instruction needs it.
 - **Record your own settings.** `t3_thread_configure` with no `threadId` and no `modelSelection` only reads, and returns your provider, model and reasoning option (older T3 builds call it `t3_thread_configuration`). Never pass `modelSelection` for your own thread ("When a window runs out", below). Copy them into the ledger for the report's charts.
 
@@ -164,9 +164,9 @@ A task's turn usually ends with its final message, just after the report-back. I
 
 ## When a window runs out
 
-For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-out): work pauses and resumes on the same subscription. The mechanics:
+For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-out): short 5-hour windows pause and resume on the same thread, while weekly limits or budgets on a peer primary subscription may spill queued work or hand off a running task at most once. The mechanics:
 
-- **A task stopped on quota:** leave its thread, queue and worktree alone. Schedule the resume wake. On the first wake after the reset, read the thread with `t3_thread_list`. If it isn't running again, send `t3_thread_send` in mode `"auto"`: "Your usage limit has reset. Continue the brief from where you stopped." The agent keeps its whole conversation, so it carries on where it was.
+- **A task stopped on a 5-hour quota:** leave its thread, queue and worktree alone. Schedule the resume wake. On the first wake after the reset, read the thread with `t3_thread_list`. If it isn't running again, send `t3_thread_send` in mode `"auto"`: "Your usage limit has reset. Continue the brief from where you stopped." The agent keeps its whole conversation, so it carries on where it was.
 - **Your own window is nearly used up:** schedule the resume wake, update the ledger, and end your turn.
 - **A Fable task whose Fable week ran out or passed the run's budget** continues on Opus 5.5 on its own thread ([routing.md](routing.md#when-the-fable-week-runs-out-or-passes-its-budget)). For the budget, stop its turn first with `t3_thread_interrupt` on its thread; the Fable limit stops it by itself. Either way, delete its review-gate and helper wakes if listed and empty `<task>/helper-wake.txt` and its `review*/wake.txt`, so no wake starts a turn on Fable before the switch; the continue message asks it to set new ones for a reviewer or helper still running. Once `t3_thread_read` shows it idle, update the ledger and set its model as the last call of your wake, since a switch of your own thread ends the calling turn and one of another thread isn't known not to:
 
@@ -175,6 +175,13 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
   ```
 
   On the next wake (the heartbeat brings it), read it back with `t3_thread_configure` and the `threadId` alone, and send the continue message in mode `"auto"` only once it shows Opus 5.5. If it still shows Fable, set it again as the last call of that wake and read it back on the next one. After the task's next turn starts, check its run's `model` in `t3_thread_read`; if it still ran on Fable, interrupt it and start again from the read-back. Record the switch in the ledger. The warning below is about your own thread, which you never switch.
+- **A running task stopped by a weekly limit or weekly budget on a peer primary subscription** ([routing.md](routing.md#a-weekly-limit)): when the peer primary subscription has ample room and the task has not already moved once:
+  1. Ensure the old thread is idle (`t3_thread_interrupt` first if stopping early for a run budget, then wait until `t3_thread_read` shows it idle) and cancel anything still queued (`t3_queue` with `action: "list"`, then `action: "cancel"`).
+  2. Check for and stop or wait for any leftover background jobs and leases the old thread started ([integration.md](integration.md#cleanup-after-a-merge), steps 2 and 3).
+  3. Delete its old thread's review-gate and helper wakes if listed (`list_scheduled_tasks` on its computer, titled `<task> review-gate wake` or `<task> helper wake`, bound to its thread) and empty `<task>/review*/wake.txt` and `<task>/helper-wake.txt`.
+  4. Save any uncommitted changes as a patch in `<run directory>` (`git -C <worktree> diff > <run directory>/<task>-handoff.patch`, or `add -A` + `diff --cached --binary` when launching a fresh worktree).
+  5. Launch the successor with `t3_thread_launch` on the peer primary subscription (`modelSelection` from its catalog) in the same branch and worktree (`workspaceStrategy: {type: "existing_worktree", worktreePath: "<its worktree>"}`; or, where the host cannot reuse the worktree, a new worktree based on `<task branch>` on a handoff branch such as `<task branch>-handoff` with the saved patch applied) with a [continuation brief](task-brief.md#continuation-brief) (adjusting harness-specific helper sections for the new provider/model).
+  6. Update `<run directory>/watch.json` with the new `thread`, `harness`, and `model` (clearing stale `session` / `session_log`), settle the old thread (`t3_thread_organize`), and record the move in the ledger and report.
 - **Never call `t3_thread_configure` with a `modelSelection` on your own thread during a run** (a call without one only reads). In the first real run a switch went wrong in three ways:
   - the call ended the calling turn on the spot, so nothing after it ran, and T3 recorded the turn as failed;
   - the first switch didn't stick: the next heartbeat ran on the old model again;

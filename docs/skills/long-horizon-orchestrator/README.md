@@ -8,10 +8,10 @@ agent, reviewed and merged by itself, and a plain-language report at the end. Ve
 
 ```mermaid
 flowchart TD
-  plan([Task list, or plan one]) --> contract["Contract: tasks, waves, models,<br/>review levels, usage, permissions"]
+  plan([Task list, or plan one]) --> contract["Contract: tasks, waves, peer primary routing,<br/>review levels, budgets, permissions"]
   contract -->|one approval| prep["Prepare: ledger, warm-up,<br/>leases, usage sampler, common file"]
   prep --> launch["Launch a wave: one agent per task,<br/>own worktree, own brief"]
-  launch --> work["Task works; may hand research<br/>and simple steps to fast helpers"]
+  launch --> work["Task works; may hand research and<br/>simple steps to Hydrogen-first helpers"]
   work --> gate["review-gate: level by what the diff touches,<br/>reviewers of another family"]
   gate -->|review stopped converging| ready([Report ready: orchestrator decides])
   gate --> checks["Rebase, full checks"]
@@ -20,11 +20,13 @@ flowchart TD
   merge --> report["Report back to the orchestrator"]
   report --> wake{"Orchestrator wakes:<br/>report, heartbeat or resume wake"}
   wake -->|dependents now unblocked| launch
-  wake -->|"limit: paid window"| pause["Pause; resume on the same<br/>thread after the reset"]
+  wake -->|"limit: 5-hour window"| pause["Pause; resume on the same<br/>thread after the reset"]
   pause --> work
+  wake -->|"limit: weekly limit or budget on a peer primary"| spillover["Spill queued work or hand off<br/>a running task once to the peer primary"]
+  spillover --> work
   wake -->|"limit: Claude's Fable week or its budget"| opus["A Fable task goes on<br/>on Opus 5.5, same thread"]
   opus --> work
-  wake -->|"limit: free model"| move["Move on: OpenCode free ⇄ Go ⇄ Gemini,<br/>then Terra or Sonnet"]
+  wake -->|"limit: free model"| move["Move on: OpenCode Go ⇄ free ⇄ Hydrogen,<br/>then Terra or Sonnet"]
   move --> work
   wake -->|all tasks done or parked| finish["Finish: final checks, restore the<br/>user's state, run map and report"]
 ```
