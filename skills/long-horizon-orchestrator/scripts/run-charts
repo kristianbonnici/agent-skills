@@ -75,7 +75,10 @@ Only for the run map, all optional:
 
   "costs": {"file": "<run directory>/report/costs.json"}   # what scripts/run-costs --json wrote: each task's and
                                                    # the orchestrator's cost at API prices on their cards, the
-                                                   # run's in the header, and its paragraph in summary.txt
+                                                   # run's in the header, and its paragraph in summary.txt;
+                                                   # a task with no "helpers" gets its reviewers and helpers
+                                                   # from the file's lines, and one whose list is shorter than
+                                                   # the file's threads a warning
   "usage": {"folder": "<run directory>/usage"}     # the folder scripts/usage-sampler wrote (absolute, or
                                                    # relative to the facts file): machine.jsonl and
                                                    # providers.jsonl. Adds a usage panel under the timeline, usage.mmd and
@@ -1520,6 +1523,43 @@ def read_costs(facts: dict, base: Path) -> dict | None:
         return None
 
 
+HARNESS_NAMES = {"claude": "Claude Code", "claude-api": "Claude Code (API)", "codex": "Codex", "opencode": "OpenCode",
+                 "antigravity": "Antigravity", "copilot": "Copilot"}
+
+
+def helpers_from_costs(facts: dict, costs: dict | None) -> None:
+    """Gives each task with no "helpers" its reviewers and helpers from the costs file's lines (owner the
+    task, role reviewer or helper), one entry per harness, model and role, counted in threads; warns
+    when the facts list fewer for a task than the costs file holds."""
+    lines = (costs or {}).get("lines")
+    if not isinstance(lines, list):
+        return
+    for t in facts["tasks"]:
+        threads: dict[tuple, set] = {}
+        for l in lines:
+            if isinstance(l, dict) and l.get("owner") == t["id"] and l.get("role") in ("reviewer", "helper"):
+                harness = HARNESS_NAMES.get(str(l.get("harness") or ""), str(l.get("harness") or "").capitalize())
+                threads.setdefault((harness, l.get("model") or "", l["role"]), set()).add(l.get("thread"))
+        held = len(set().union(*threads.values()))   # a thread that moved model is one thread
+        if not held:
+            continue
+        given = t.get("helpers") or []
+        if not given:
+            t["helpers"] = [{"label": " · ".join(x for x in (harness, model) if x),
+                             "did": f"{'review' if role == 'reviewer' else 'research'} ×{len(ids)}",
+                             "role": "review" if role == "reviewer" else "research", "status": "done", "count": len(ids)}
+                            for (harness, model, role), ids in sorted(threads.items(), key=lambda kv: (kv[0][2] != "reviewer", kv[0]))]
+            continue
+        listed = 0
+        for h in given:
+            times = re.search(r"×\s*(\d+)\s*$", str(h.get("did") or ""))
+            listed += int(h["count"]) if is_number(h.get("count")) else int(times.group(1)) if times else 1
+        if listed < held:
+            print(f"run-charts: task {t['id']}'s facts list {listed} helper{'s' if listed != 1 else ''} or reviewer"
+                  f"{'s' if listed != 1 else ''}, but the costs file holds {held} threads; the map shows the facts' list",
+                  file=sys.stderr)
+
+
 def cost_of(owner: dict) -> dict:
     """A card's cost: its total at API prices and the lines its hover lists (who, then which model)."""
     names = {"orchestrator": "Its own work", "task": "Its own work", "reviewer": "Its reviewers", "helper": "Its helpers"}
@@ -1661,6 +1701,8 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError) as error:
         raise SystemExit(f"run-charts: can't read {args.facts}: {error}")
     check_facts(facts)
+    costs = read_costs(facts, Path(args.facts).resolve().parent)
+    helpers_from_costs(facts, costs)
     ids = [t["id"] for t in facts["tasks"]]
     if len(ids) != len(set(ids)):
         raise SystemExit("run-charts: task IDs must be unique")
@@ -1681,7 +1723,6 @@ def main(argv: list[str]) -> int:
     (folder / "timeline.mmd").write_text(timeline(facts))
     line = summary(facts)
     extra = usage_line(usage) if usage else ""
-    costs = read_costs(facts, Path(args.facts).resolve().parent)
     cost_line = costs.get("paragraph", "") if costs else ""
     (folder / "summary.txt").write_text(line + "\n" + (extra + "\n" if extra else "") + (cost_line + "\n" if cost_line else ""))
     print(f"run-charts: wrote {folder / 'graph.mmd'}, {folder / 'timeline.mmd'} and {folder / 'summary.txt'}")

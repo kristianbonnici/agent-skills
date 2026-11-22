@@ -3492,6 +3492,43 @@ a = data["tasks"][0]["cost"]
 assert a["incomplete"] is True and any(l.startswith("Not counted or partly counted") for l in a["lines"]), a
 assert data["orch"]["cost"]["incomplete"] is False, data["orch"]["cost"]   # the orchestrator's figure misses nothing
 EOF
+# the facts give task A no helpers: the map draws its reviewers and helpers from the costs file, one entry
+# per harness, model and role, counted in threads; a shorter list is kept with a warning, a full one without
+python3 -I - "$costs" <<'EOF'
+import json, os, re, sys
+root = sys.argv[1]
+d = json.load(open(os.path.join(root, "costs.json")))
+mine = [l for l in d["lines"] if l["owner"] == "A" and l["role"] in ("reviewer", "helper")]
+threads = {l["thread"] for l in mine}
+reviews = {l["thread"] for l in mine if l["role"] == "reviewer"}
+assert len(reviews) >= 2 and len(threads) > len(reviews), mine
+read = lambda name: json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
+drawn = read("charts")["tasks"][0]["helpers"]
+assert sum(h["count"] for h in drawn) >= len(threads) and all(h["status"] == "done" for h in drawn), drawn
+assert {h["title"].split(" ×")[0] for h in drawn} == {"Reviewer", "Researcher"}, drawn
+assert any(h["harness"] == "Codex" and h["model"] == "gpt-6.1-terra" and h["did"].startswith("review ×") for h in drawn), drawn
+assert all(re.fullmatch(r"(review|research) ×\d+", h["did"]) for h in drawn), drawn
+assert "gpt-6.1-terra" in open(os.path.join(root, "charts", "graph.mmd")).read()
+facts = json.load(open(os.path.join(root, "facts.json")))
+facts["tasks"][0]["helpers"] = [{"label": "Codex · gpt-6.1-terra", "did": "review ×1"}]
+json.dump(facts, open(os.path.join(root, "facts-fewer.json"), "w"))
+facts["tasks"][0]["helpers"] = [{"label": "Codex · gpt-6.1-terra", "did": "review", "count": len(threads)}]
+json.dump(facts, open(os.path.join(root, "facts-full.json"), "w"))
+EOF
+"$scripts/run-charts" "$costs/facts.json" "$costs/charts-auto" > /dev/null 2> "$costs/auto.err"
+test -z "$(grep "the costs file holds" "$costs/auto.err")"   # a full list, drawn or given: no warning
+"$scripts/run-charts" "$costs/facts-fewer.json" "$costs/charts-fewer" > /dev/null 2> "$costs/fewer.err"
+grep -q "task A's facts list 1 helper or reviewer, but the costs file holds" "$costs/fewer.err"
+"$scripts/run-charts" "$costs/facts-full.json" "$costs/charts-full" > /dev/null 2> "$costs/full.err"
+test -z "$(grep "the costs file holds" "$costs/full.err")"   # a full list, drawn or given: no warning
+python3 -I - "$costs" <<'EOF'
+import json, os, re, sys
+root = sys.argv[1]
+read = lambda name: json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
+for name, did, count in (("charts-fewer", "review ×1", 1), ("charts-full", "review", None)):
+    drawn = read(name)["tasks"][0]["helpers"]
+    assert len(drawn) == 1 and drawn[0]["did"] == did and (count is None or drawn[0]["count"] == count), (name, drawn)
+EOF
 
 # A run on several computers, with made-up computers: studio-mac (the orchestrator's, with GPU readings),
 # den-mac (an Intel Mac: no GPU readings, its clock an hour behind) and attic-mac (whose samples and costs never
