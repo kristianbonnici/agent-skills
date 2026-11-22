@@ -1534,13 +1534,31 @@ def helpers_from_costs(facts: dict, costs: dict | None) -> None:
     lines = (costs or {}).get("lines")
     if not isinstance(lines, list):
         return
+    def weight(l: dict) -> tuple:
+        tokens = l.get("tokens") if isinstance(l.get("tokens"), dict) else {}
+        return (l["usd"] if is_number(l.get("usd")) else -1, sum(v for v in tokens.values() if is_number(v)))
+
+    skipped = 0
     for t in facts["tasks"]:
-        threads: dict[tuple, set] = {}
+        # a thread that moved model, or whose harness logged a helper model beside its own, counts once,
+        # under the model it used most
+        main: dict[str, dict] = {}
         for l in lines:
-            if isinstance(l, dict) and l.get("owner") == t["id"] and l.get("role") in ("reviewer", "helper"):
-                harness = HARNESS_NAMES.get(str(l.get("harness") or ""), str(l.get("harness") or "").capitalize())
-                threads.setdefault((harness, l.get("model") or "", l["role"]), set()).add(l.get("thread"))
-        held = len(set().union(*threads.values()))   # a thread that moved model is one thread
+            if not (isinstance(l, dict) and l.get("owner") == t["id"] and l.get("role") in ("reviewer", "helper")):
+                continue
+            if not (isinstance(l.get("thread"), str) and l["thread"] and all(isinstance(l.get(k) or "", str) for k in ("harness", "model"))):
+                skipped += 1
+                continue
+            if l["thread"] not in main or weight(l) > weight(main[l["thread"]]):
+                main[l["thread"]] = l
+        threads: dict[tuple, set] = {}
+        for thread, l in main.items():
+            model = l.get("model") or "default"   # no model named: the harness's own mark, as for "default"
+            harness = HARNESS_NAMES.get(l.get("harness") or "", (l.get("harness") or "").capitalize())
+            if l.get("harness") == "opencode" and model.startswith("opencode-go/"):
+                harness = "OpenCode Go"
+            threads.setdefault((harness, model, l["role"]), set()).add(thread)
+        held = len(main)
         if not held:
             continue
         given = t.get("helpers") or []
@@ -1553,11 +1571,14 @@ def helpers_from_costs(facts: dict, costs: dict | None) -> None:
         listed = 0
         for h in given:
             times = re.search(r"×\s*(\d+)\s*$", str(h.get("did") or ""))
-            listed += int(h["count"]) if is_number(h.get("count")) else int(times.group(1)) if times else 1
+            listed += int(h.get("count") or (times.group(1) if times else 1))   # as the map counts it
         if listed < held:
             print(f"run-charts: task {t['id']}'s facts list {listed} helper{'s' if listed != 1 else ''} or reviewer"
-                  f"{'s' if listed != 1 else ''}, but the costs file holds {held} threads; the map shows the facts' list",
+                  f"{'s' if listed != 1 else ''}, but the costs file holds {held} thread{'s' if held != 1 else ''}; the map shows the facts' list",
                   file=sys.stderr)
+    if skipped:
+        print(f"run-charts: {skipped} reviewer or helper line{'s' if skipped != 1 else ''} in the costs file had no thread, harness"
+              " or model to read; left out of the map's helpers", file=sys.stderr)
 
 
 def cost_of(owner: dict) -> dict:

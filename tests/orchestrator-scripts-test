@@ -3493,7 +3493,8 @@ assert a["incomplete"] is True and any(l.startswith("Not counted or partly count
 assert data["orch"]["cost"]["incomplete"] is False, data["orch"]["cost"]   # the orchestrator's figure misses nothing
 EOF
 # the facts give task A no helpers: the map draws its reviewers and helpers from the costs file, one entry
-# per harness, model and role, counted in threads; a shorter list is kept with a warning, a full one without
+# per harness, model and role, each thread once (under the model it used most); a list one short is kept
+# with a warning, a full one (as a count or as "×n") without; unreadable lines are left out with a note
 python3 -I - "$costs" <<'EOF'
 import json, os, re, sys
 root = sys.argv[1]
@@ -3501,33 +3502,57 @@ d = json.load(open(os.path.join(root, "costs.json")))
 mine = [l for l in d["lines"] if l["owner"] == "A" and l["role"] in ("reviewer", "helper")]
 threads = {l["thread"] for l in mine}
 reviews = {l["thread"] for l in mine if l["role"] == "reviewer"}
-assert len(reviews) >= 2 and len(threads) > len(reviews), mine
+terra = {l["thread"] for l in mine if l["role"] == "reviewer" and l["model"] == "gpt-6.1-terra"}
+assert len(reviews) >= 2 and len(threads) > len(reviews) and len(mine) > len(threads), mine   # a thread that moved model
 read = lambda name: json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
 drawn = read("charts")["tasks"][0]["helpers"]
-assert sum(h["count"] for h in drawn) >= len(threads) and all(h["status"] == "done" for h in drawn), drawn
+assert sum(h["count"] for h in drawn) == len(threads) and all(h["status"] == "done" for h in drawn), drawn
+assert sum(h["count"] for h in drawn if h["title"].startswith("Reviewer")) == len(reviews), drawn
 assert {h["title"].split(" ×")[0] for h in drawn} == {"Reviewer", "Researcher"}, drawn
-assert any(h["harness"] == "Codex" and h["model"] == "gpt-6.1-terra" and h["did"].startswith("review ×") for h in drawn), drawn
+assert [h["did"] for h in drawn if h["harness"] == "Codex" and h["model"] == "gpt-6.1-terra"] == [f"review ×{len(terra)}"], drawn
+assert not any(h["model"] == "gpt-6-luna" for h in drawn), drawn   # the Terra thread's later Luna lines aren't another reviewer
 assert all(re.fullmatch(r"(review|research) ×\d+", h["did"]) for h in drawn), drawn
 assert "gpt-6.1-terra" in open(os.path.join(root, "charts", "graph.mmd")).read()
 facts = json.load(open(os.path.join(root, "facts.json")))
-facts["tasks"][0]["helpers"] = [{"label": "Codex · gpt-6.1-terra", "did": "review ×1"}]
-json.dump(facts, open(os.path.join(root, "facts-fewer.json"), "w"))
-facts["tasks"][0]["helpers"] = [{"label": "Codex · gpt-6.1-terra", "did": "review", "count": len(threads)}]
-json.dump(facts, open(os.path.join(root, "facts-full.json"), "w"))
+for name, helpers in (("fewer", [{"label": "Codex · gpt-6.1-terra", "did": f"review ×{len(threads) - 1}"}]),
+                      ("full", [{"label": "Codex · gpt-6.1-terra", "did": "review", "count": len(threads)}]),
+                      ("times", [{"label": "Codex · gpt-6.1-terra", "did": f"review ×{len(threads)}"}])):
+    facts["tasks"][0]["helpers"] = helpers
+    json.dump(facts, open(os.path.join(root, f"facts-{name}.json"), "w"))
+open(os.path.join(root, "threads.txt"), "w").write(str(len(threads)))
+d["lines"] += [dict(mine[0], thread=[]), dict(mine[0], thread=None),                         # unreadable: left out
+               dict(mine[0], thread="t-go", role="helper", harness="opencode", model="opencode-go/deepseek-v4.1-flash"),
+               dict(mine[0], thread="t-none", role="reviewer", harness="antigravity", model=None, usd=None)]
+json.dump(d, open(os.path.join(root, "costs-odd.json"), "w"))
+facts["tasks"][0].pop("helpers")
+facts["costs"] = {"file": "costs-odd.json"}
+json.dump(facts, open(os.path.join(root, "facts-odd.json"), "w"))
 EOF
 "$scripts/run-charts" "$costs/facts.json" "$costs/charts-auto" > /dev/null 2> "$costs/auto.err"
-test -z "$(grep "the costs file holds" "$costs/auto.err")"   # a full list, drawn or given: no warning
+test -z "$(grep "the costs file holds" "$costs/auto.err")"   # drawn from the file: no warning
 "$scripts/run-charts" "$costs/facts-fewer.json" "$costs/charts-fewer" > /dev/null 2> "$costs/fewer.err"
-grep -q "task A's facts list 1 helper or reviewer, but the costs file holds" "$costs/fewer.err"
-"$scripts/run-charts" "$costs/facts-full.json" "$costs/charts-full" > /dev/null 2> "$costs/full.err"
-test -z "$(grep "the costs file holds" "$costs/full.err")"   # a full list, drawn or given: no warning
+grep -q "task A's facts list $(($(cat "$costs/threads.txt") - 1)) helpers or reviewers, but the costs file holds $(cat "$costs/threads.txt") threads" "$costs/fewer.err"
+for name in full times; do
+  "$scripts/run-charts" "$costs/facts-$name.json" "$costs/charts-$name" > /dev/null 2> "$costs/$name.err"
+  test -z "$(grep "the costs file holds" "$costs/$name.err")"   # a full list: no warning
+done
+"$scripts/run-charts" "$costs/facts-odd.json" "$costs/charts-odd" > /dev/null 2> "$costs/odd.err"
+grep -q "2 reviewer or helper lines in the costs file had no thread" "$costs/odd.err"
 python3 -I - "$costs" <<'EOF'
 import json, os, re, sys
 root = sys.argv[1]
+n = int(open(os.path.join(root, "threads.txt")).read())
 read = lambda name: json.loads(re.search(r"const DATA = (\{.*?\});\n", open(os.path.join(root, name, "run-map.html")).read()).group(1))
-for name, did, count in (("charts-fewer", "review ×1", 1), ("charts-full", "review", None)):
+for name, did in (("charts-fewer", f"review ×{n - 1}"), ("charts-full", "review"), ("charts-times", f"review ×{n}")):
     drawn = read(name)["tasks"][0]["helpers"]
-    assert len(drawn) == 1 and drawn[0]["did"] == did and (count is None or drawn[0]["count"] == count), (name, drawn)
+    assert len(drawn) == 1 and drawn[0]["did"] == did and drawn[0]["count"] == (n - 1 if name == "charts-fewer" else n), (name, drawn)
+data = read("charts-odd")
+drawn = data["tasks"][0]["helpers"]
+assert sum(h["count"] for h in drawn) == n + 2, drawn
+go = [h for h in drawn if h["model"] == "opencode-go/deepseek-v4.1-flash"]
+assert len(go) == 1 and go[0]["harness"] == "OpenCode Go", go
+none = [h for h in drawn if h["harness"] == "Antigravity" and h["model"] == "default"]
+assert len(none) == 1 and none[0]["effort"] is None and none[0]["mark"] is not None, none   # the harness's own mark
 EOF
 
 # A run on several computers, with made-up computers: studio-mac (the orchestrator's, with GPU readings),
