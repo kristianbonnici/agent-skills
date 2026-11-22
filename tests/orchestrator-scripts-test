@@ -3970,7 +3970,7 @@ assert lbl_no["tokens"]["input"] == 1200 and "gemini/gemini-4-neon" in lbl_no["b
 h_unk = by_tm[("ag:help-unk-mid", "gemini-4-neon")]
 assert h_unk["tokens"]["input"] == 4000 and "inferred from the thread's selection" in (h_unk.get("missing") or ""), h_unk
 
-# Live WAL-mode DB counted cleanly
+# Checkpointed WAL-mode DB counted cleanly (live uncheckpointed WAL checked below)
 h_wal = by_tm[("ag:help-wal", "gemini-4-neon")]
 assert h_wal["tokens"]["input"] == 7000 and h_wal["usd"] > 0 and not h_wal.get("missing"), h_wal
 
@@ -4088,10 +4088,34 @@ json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z"
            "tasks": {"A": {"thread": "loc:a"}, "B": {"thread": "ag:task-a", "computer": "den-mac"}}},
           open(os.path.join(mc, "run/watch.json"), "w"))
 ag_data = json.load(open(os.path.join(root, "costs.json")))
-remote_lines = [dict(l, owner="B") for l in ag_data["lines"] if l["thread"] == "ag:task-a"]
-remote_lines.append({"owner": "B", "thread": "oc:zero", "role": "helper", "harness": "opencode", "model": "unknown", "usd": 0.0,
-                     "tokens": {"input": 0, "cache_read": 0, "cache_write": 0, "cache_write_1h": 0, "output": 0},
-                     "basis": "no tokens used in the run", "billed": False})
+assert all(ns["costs_line"](l) for l in ag_data["lines"]), "all Antigravity line shapes must satisfy costs_line"
+# Generate the model-less OpenCode $0.00 line via run-costs itself to exercise model=r["model"] or "unknown"
+oc_zero_dir = os.path.join(mc, "oc-zero")
+os.makedirs(os.path.join(oc_zero_dir, "t3/logs/provider"), exist_ok=True)
+os.makedirs(os.path.join(oc_zero_dir, "run"), exist_ok=True)
+z_oc = sqlite3.connect(os.path.join(oc_zero_dir, "opencode.db"))
+z_oc.execute("create table session_message (id text, session_id text, type text, time_created int, data text)")
+z_oc.execute("insert into session_message values ('m', 'ses_nomodel', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}}),))
+z_oc.commit(); z_oc.close()
+z_db = sqlite3.connect(os.path.join(oc_zero_dir, "t3/statev2.sqlite"))
+z_db.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+z_db.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+z_db.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+z_db.execute("insert into orchestration_v2_projection_threads values ('oc:zero', ?)", (json.dumps({
+    "title": "B helper", "providerInstanceId": "opencode", "modelSelection": {},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
+z_db.execute("insert into orchestration_v2_projection_provider_threads values ('oc:zero', ?)", (json.dumps({"nativeThreadRef": {"driver": "opencode", "nativeId": "ses_nomodel"}}),))
+z_db.commit(); z_db.close()
+json.dump({"fetchedAtMs": 1794345905354, "document": doc}, open(os.path.join(oc_zero_dir, "t3/usage-model-rates.json"), "w"))
+env_z = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
+env_z["T3_USERDATA"] = os.path.join(oc_zero_dir, "t3")
+env_z["OPENCODE_DB"] = os.path.join(oc_zero_dir, "opencode.db")
+subprocess.run([script, os.path.join(oc_zero_dir, "run"), "--from", "2026-11-10T00:00:00Z", "--to", "2026-11-10T06:00:00Z",
+                "--task", "B=oc:zero", "--computer", "den-mac", "--json", os.path.join(oc_zero_dir, "zero.json")],
+               env=env_z, capture_output=True, text=True, check=True)
+z_lines = json.load(open(os.path.join(oc_zero_dir, "zero.json")))["lines"]
+assert len(z_lines) == 1 and z_lines[0]["model"] == "unknown" and z_lines[0]["usd"] == 0.0, z_lines
+remote_lines = [dict(l, owner="B") for l in ag_data["lines"] if l["thread"] == "ag:task-a"] + [dict(z_lines[0], role="helper")]
 json.dump({"lines": remote_lines}, open(os.path.join(mc, "run/computers/den-mac/costs.json"), "w"))
 env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
 env["T3_USERDATA"] = os.path.join(mc, "t3")
