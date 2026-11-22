@@ -4978,6 +4978,18 @@ case "$out" in *"usage: antigravity claude_and_gpt_models_five_hour at 82%, at o
 case "$out" in *"usage: antigravity gemini_models_five_hour at 90%, at or past the run's mark of 85%"*) ;; *) echo "heartbeat antigravity gemini 5h: $out"; exit 1;; esac
 case "$out" in *"usage: codex five_hour at 62%, at or past the run's mark of 60%"*) ;; *) echo "heartbeat codex 5h: $out"; exit 1;; esac
 case "$out" in *"usage: codex weekly at 71%, at or past the run's mark of 70%"*) ;; *) echo "heartbeat codex weekly: $out"; exit 1;; esac
+# Live Antigravity check (--live) reads live Antigravity windows and trips configured usage_marks; removing a lower crossed mark lets built-in >=95% fire.
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
+printf '#!/bin/sh\necho %s\n' "'{\"providers\": {\"antigravity\": {\"windows\": {\"gemini_models_five_hour\": {\"used_percent\": 90}, \"claude_and_gpt_models_five_hour\": {\"used_percent\": 82}}}, \"claude\": {\"windows\": {\"weekly\": {\"used_percent\": 96}}}}}'" > "$work/hb-usage-agy-live"
+chmod +x "$work/hb-usage-agy-live"
+printf '%s\n' '{"usage_marks": {"antigravity.gemini_models_five_hour": 85, "antigravity.claude_and_gpt_models_five_hour": 80, "claude.weekly": 34}, "tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-agy-live" "$scripts/heartbeat" "$hb" --no-ledger --live)
+case "$out" in *"act on the lines below"*"live: antigravity"*"usage: antigravity claude_and_gpt_models_five_hour at 82%, at or past the run's mark of 80%"*"usage: antigravity gemini_models_five_hour at 90%, at or past the run's mark of 85%"*) ;; *) echo "heartbeat live antigravity marks: $out"; exit 1;; esac
+case "$out" in *"usage: claude weekly at 96%, at or past the run's mark of 34%"*) ;; *) echo "heartbeat lower mark masks 95: $out"; exit 1;; esac
+case "$out" in *"schedule the resume wake if work depends on it"*) echo "heartbeat lower mark should mask 95: $out"; exit 1;; esac
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-usage-agy-live" "$scripts/heartbeat" "$hb" --no-ledger --live)
+case "$out" in *"usage: claude weekly at 96%: schedule the resume wake if work depends on it"*) ;; *) echo "heartbeat built-in 95 without lower mark: $out"; exit 1;; esac
 status=0
 "$scripts/heartbeat" "$hb" --bogus >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
