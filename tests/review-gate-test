@@ -700,6 +700,7 @@ assert "Gemini 4 Neon" in parsed860["reviewers"] and "Orchestrator Neon" in pars
 assert "Antigravity Claude Opus 5.5" not in parsed860["reviewers"], parsed860["reviewers"]
 # Conflicting replies in the same round across two Claude bucket names are refused by shape_problems().
 conflict_failover = copy.deepcopy(g2)
+conflict_failover["reviewers"][1]["rounds"] = [1, 2]
 conflict_failover["findings"] = [
     {"id": 2, "round": 1, "reviewer": "Antigravity Claude Sonnet 5.5, high", "reviewer_tag": "blocker",
      "tag": "follow-up", "checked": "read", "title": "Bucket failover lowered", "why": "Corner case only", "reply": "agrees"},

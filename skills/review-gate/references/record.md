@@ -13,7 +13,7 @@ Never inside the repository under review: the reports quote its code, and the re
 
 ## The reports
 
-Save each reviewer's report when it arrives, whole and unedited, as `round-<n>-<reviewer>.md` (`round-1-terra.md`, `round-2-terra.md`). A second opinion, or a look after a rebase, is `look-<n>-<reviewer>.md`. Save its final report only, not its commands or the files it read. In T3 the folder also holds `wake.txt`, the ID of the gate's wake while it is set ([launching.md](launching.md#in-t3)). A reviewer that was limited and reported nothing has no file: it goes under `skipped`. A reviewer's reply about a blocker you tagged lower is `reply-<the finding's id>-<reviewer>.md`, and one about the same finding in a later round `reply-<id>-<reviewer>-round-<n>.md`: never write over a saved reply.
+Save each reviewer's report when it arrives, whole and unedited, as `round-<n>-<reviewer>.md` (`round-1-terra.md`, `round-2-terra.md`). A supplemental pass covering an uncovered Deep focus in the same round (SKILL.md, section 2) is saved as `round-<n>-<reviewer>-supplemental.md` and listed beside its first report under the same reviewer's `reports` (never as a second reviewer entry). A second opinion, or a look after a rebase, is `look-<n>-<reviewer>.md`. Save its final report only, not its commands or the files it read. In T3 the folder also holds `wake.txt`, the ID of the gate's wake while it is set ([launching.md](launching.md#in-t3)). A reviewer that was limited and reported nothing has no file: it goes under `skipped`. A reviewer's reply about a blocker you tagged lower is `reply-<the finding's id>-<reviewer>.md`, and one about the same finding in a later round `reply-<id>-<reviewer>-round-<n>.md`: never write over a saved reply.
 
 ## review.json
 
