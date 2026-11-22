@@ -125,12 +125,13 @@ schedule_task({
 A crashed or provider-failed run leaves the thread with status `failed`. A restart of the computer or of the T3 server cancels every run in progress, which leaves `cancelled` or `interrupted`. In each case T3 does not start the thread's queued messages, so a follow-up queued behind the stopped turn never runs, and the task sits silent. Several tasks stopping at the same moment points to a restart: nudge each of them. A task that stopped because its usage window ran out is different; see "When a window runs out" below.
 
 1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what happened, and ask it to continue the brief from where it stopped.
-2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief and a fresh branch name such as `<branch>-r2`. On the old thread:
-   - remove anything still queued: `t3_queue` with `action: "list"`, then `action: "cancel"` for each (older T3 builds: `t3_queue_list`, `t3_queue_cancel`);
-   - remove its worktree and branch if they hold nothing;
+2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief and a fresh branch name such as `<branch>-r2`. First, on the old thread:
+   - stop its reviewers and helpers still running: its child threads (`t3_thread_list` with `includeSubagents: true`, by `parentThreadId`) that are running or waiting, each with `t3_thread_interrupt`, since you hold no `taskId` for them; see each idle before you go on;
    - delete its review-gate and helper wakes if listed (titled `<task> review-gate wake` or `<task> helper wake`, bound to the old thread), and empty `<task>/helper-wake.txt`;
-   - settle it.
-3. **If the nudge fails and the task did make progress,** mark it failed instead, and delete its wakes as in step 2. Keep its worktree and name it in the report; settle its thread at the finish.
+   - remove anything still queued: `t3_queue` with `action: "list"`, then `action: "cancel"` for each (older T3 builds: `t3_queue_list`, `t3_queue_cancel`).
+
+   Then launch it, and on the old thread remove its worktree and branch if they hold nothing, and settle it.
+3. **If the nudge fails and the task did make progress,** mark it failed instead, and stop its helpers and delete its wakes as in step 2. Keep its worktree and name it in the report; settle its thread at the finish.
 
 ## Checking a task
 
@@ -168,7 +169,7 @@ For the policy, see [routing.md](routing.md#3-when-a-window-runs-short-or-runs-o
 
 - **A task stopped on quota:** leave its thread, queue and worktree alone. Schedule the resume wake. On the first wake after the reset, read the thread with `t3_thread_list`. If it isn't running again, send `t3_thread_send` in mode `"auto"`: "Your usage limit has reset. Continue the brief from where you stopped." The agent keeps its whole conversation, so it carries on where it was.
 - **Your own window is nearly used up:** schedule the resume wake, update the ledger, and end your turn.
-- **A Fable task whose Fable week ran out or passed the run's budget** continues on Opus 5.5 on its own thread ([routing.md](routing.md#when-the-fable-week-runs-out-or-passes-its-budget)). For the budget, stop its turn first with `t3_thread_interrupt` on its thread, and delete its review-gate and helper wakes if listed and empty `<task>/helper-wake.txt`, so no wake starts a turn on Fable before the switch (its gate sets a new one, and its rules a new helper wake for a helper still running); the Fable limit stops it by itself. Once `t3_thread_read` shows it idle, update the ledger and set its model as the last call of your wake, since a switch of your own thread ends the calling turn and one of another thread isn't known not to:
+- **A Fable task whose Fable week ran out or passed the run's budget** continues on Opus 5.5 on its own thread ([routing.md](routing.md#when-the-fable-week-runs-out-or-passes-its-budget)). For the budget, stop its turn first with `t3_thread_interrupt` on its thread; the Fable limit stops it by itself. Either way, delete its review-gate and helper wakes if listed and empty `<task>/helper-wake.txt`, so no wake starts a turn on Fable before the switch (its gate sets a new one, and the continue message asks for a new helper wake for a helper still running). Once `t3_thread_read` shows it idle, update the ledger and set its model as the last call of your wake, since a switch of your own thread ends the calling turn and one of another thread isn't known not to:
 
   ```text
   t3_thread_configure({threadId: "<the task's thread>", modelSelection: {instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{id: "effort", value: "<its effort>"}]}})
