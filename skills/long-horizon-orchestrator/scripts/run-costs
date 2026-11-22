@@ -44,8 +44,10 @@ Where the numbers come from (T3 Code's records; T3_USERDATA moves its folder, ~/
     price table;
   - Copilot keeps no token counts this script can read: its threads are listed as
     "not counted" (as is any Antigravity thread whose conversation database is missing or
-    unreadable). A Claude Code subagent that T3 mirrors as a thread of its own is in its
-    parent's figures already, and is listed as such.
+    unreadable, whose records are already counted under another thread, or whose untimestamped
+    records fall outside the run by fallback time; counted lines placed by fallback time or
+    inferred from the thread's selected model are flagged). A Claude Code subagent that T3
+    mirrors as a thread of its own is in its parent's figures already, and is listed as such.
 The price table is LiteLLM's model price list, as T3 Code caches it (usage-model-rates.json, with the
 time it fetched it), or a copy given as RUN_COSTS_PRICES. A model is priced by its own entry, else its
 maker's (deepseek/, zai/, gemini/), else Azure AI's listing, and the source is named. T3's provider logs
@@ -198,10 +200,9 @@ def _lookup_price(name: str, doc: dict) -> tuple[dict | None, str]:
 def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
     """The price entry for a model ID, and the entry's name; OpenCode's prefixes, -free,
     stacked Gemini/Claude effort/routing suffixes and Antigravity orchestrator aliases resolved."""
-    name = re.sub(r"^(opencode-go|opencode)/", "", model or "")
-    name = re.sub(r"-free$", "", name)
-    if name.startswith("gemini-"):
-        name = GEMINI_EFFORT_SUFFIX.sub("", name)
+    raw_name = re.sub(r"^(opencode-go|opencode)/", "", model or "")
+    raw_name = re.sub(r"-free$", "", raw_name)
+    name = GEMINI_EFFORT_SUFFIX.sub("", raw_name) if raw_name.startswith("gemini-") else raw_name
     entry, key = _lookup_price(name, doc)
     if entry is not None:
         return entry, key
@@ -227,6 +228,8 @@ def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
             entry, key = _lookup_price(stripped, doc)
             if entry is not None:
                 return entry, key
+    if raw_name != name:
+        return _lookup_price(raw_name, doc)
     return None, ""
 
 
@@ -1150,6 +1153,9 @@ def antigravity_usage(rows: list[dict], natives: dict, start: float, end: float)
                 continue
         elif not in_span:
             continue
+        for o in cluster:
+            if o["owner_thread"] != owner_tid:
+                shared.setdefault(o["owner_thread"], owner_tid)
         slot = out[owner_tid][model]
         slot["input"] += inp
         slot["cache_read"] += cache_read
@@ -1282,12 +1288,13 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
         if mine and first is not None and first > max(start, created or start) + 60:
             for l in mine:
                 flag(l, "T3's logs for it begin after the run's start (rotated away): earlier turns are missing")
-        if not mine and any(app == r["thread"] and sid in opencode and not opencode[sid] and sid not in unreadable for sid, app in oc_sessions.items()):
+        ag_issue = bool(ag["errors"].get(r["thread"]) or r["thread"] in ag["malformed_threads"]
+                        or r["thread"] in ag["approx_out"] or r["thread"] in ag["shared"])
+        oc_issue = any(app == r["thread"] and (sid in unreadable or sid in outside) for sid, app in oc_sessions.items())
+        if not mine and not ag_issue and not oc_issue and any(app == r["thread"] and sid in opencode and not opencode[sid] for sid, app in oc_sessions.items()):
             lines.append(dict(r, model=r["model"] or "unknown", tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
             continue
-        if (not mine and r["thread"] in ag["ok"] and not ag["errors"].get(r["thread"])
-                and r["thread"] not in ag["malformed_threads"] and r["thread"] not in ag["approx_out"]
-                and r["thread"] not in ag["shared"]):
+        if not mine and not ag_issue and not oc_issue and r["thread"] in ag["ok"]:
             lines.append(dict(r, model=r["model"] or "unknown", tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
             continue
         if not mine and any(app == r["thread"] and sid in outside for sid, app in oc_sessions.items()):

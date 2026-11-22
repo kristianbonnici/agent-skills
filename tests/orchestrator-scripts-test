@@ -3,7 +3,7 @@
 set -eu
 # Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
 # under test, which keep caps already set: start without them.
-unset MAKEFLAGS CARGO_BUILD_JOBS CMAKE_BUILD_PARALLEL_LEVEL LEASE_JOBS LEASE_REAL_SWIFT
+unset MAKEFLAGS CARGO_BUILD_JOBS CMAKE_BUILD_PARALLEL_LEVEL LEASE_JOBS LEASE_REAL_SWIFT ANTIGRAVITY_CONVERSATIONS_DIR
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
@@ -3794,23 +3794,24 @@ make_ag_db(
     st=[(0, pb_step_meta(primary=pb_usage(mid=9999, inp=4000, out3=400, f11="req-unk1"), ts8=T_IN1))],
 )
 
-# 6e. Live WAL-mode DB with committed rows still in -wal (not checkpointed) while read-only query runs!
+# 6e. WAL-mode DB (live uncheckpointed WAL write is exercised in the concurrent-writer block below)
 wal_db = os.path.join(convs, "ag-live-wal.db")
 wc = sqlite3.connect(wal_db)
 wc.execute("PRAGMA journal_mode=WAL")
-wc.execute("PRAGMA wal_autocheckpoint=0")
 wc.execute("create table gen_metadata (idx integer primary key, data blob)")
 wc.execute("create table steps (idx integer primary key, metadata blob)")
 wc.execute("create table trajectory_metadata_blob (id text primary key, data blob)")
-wc.commit()
 wc.execute("insert into gen_metadata values (0, ?)", (
     pb_gen_meta(mid=1532, f19="gemini-4-neon", primary=pb_usage(mid=1532, inp=7000, out3=700, f11="req-wal1"), ts=T_IN1),))
 wc.commit()
-# Leave -wal uncheckpointed by closing only after checking -wal is non-empty, or open a reader before close;
-# SQLite WAL persists in -wal when wal_autocheckpoint=0 and we disable checkpoint on close via a second open reader,
-# or simply keep the WAL file present on disk after SQLITE_FCNTL_PERSIST_WAL / uncheckpointed commit.
-assert os.path.exists(wal_db + "-wal") and os.path.getsize(wal_db + "-wal") > 0
 wc.close()
+
+# 6e2. Distinct DB whose ONLY record shares merge ID req-h1 with ag:task-a -> flagged shared, NOT clean $0.00!
+make_ag_db(
+    os.path.join(convs, "ag-shared-only.db"),
+    gm=[(0, pb_gen_meta(mid=1669, f19="gemini-flash-worker-agy",
+                        primary=pb_usage(mid=1669, inp=20000, out3=2000, f11="req-h1"), ts=T_IN1))],
+)
 
 # 6f. DB with symlinked -wal sidecar -> refused!
 side_db = os.path.join(convs, "ag-bad-sidecar.db")
@@ -3867,6 +3868,7 @@ thread("ag:help-unk-mid", "A helper unknown mid", "antigravity", "gemini-4-neon"
 thread("ag:help-wal", "A helper wal", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-live-wal")
 thread("ag:help-sidecar", "A helper sidecar", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-bad-sidecar")
 thread("ag:help-shared", "A helper shared", "antigravity", "gemini-4-neon", parent="ag:task-a", native="ag-orch")
+thread("ag:help-shared-x", "A helper shared cross-db", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-shared-only")
 thread("ag:help-unhash", "A helper unhash", "antigravity", "gemini-4-neon", parent="ag:task-a", native=["not-a-str"])
 thread("ag:help-missing", "A helper missing", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-does-not-exist")
 thread("ag:help-corrupt", "A helper corrupt", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-corrupt")
@@ -3972,9 +3974,12 @@ assert h_unk["tokens"]["input"] == 4000 and "inferred from the thread's selectio
 h_wal = by_tm[("ag:help-wal", "gemini-4-neon")]
 assert h_wal["tokens"]["input"] == 7000 and h_wal["usd"] > 0 and not h_wal.get("missing"), h_wal
 
-# Shared DB between two threads -> second thread flagged as counted under first, NOT clean $0.00!
+# Shared DB (same file) and cross-DB shared-only cluster -> flagged as counted under owner, NOT clean $0.00!
 h_sh = by_t["ag:help-shared"][0]
 assert h_sh["usd"] is None and "counted under ag:orch" in (h_sh.get("missing") or ""), h_sh
+h_shx = by_t["ag:help-shared-x"][0]
+assert h_shx["usd"] is None and "counted under ag:task-a" in (h_shx.get("missing") or ""), h_shx
+assert "already counted under ag:task-a" in (rev_h.get("missing") or ""), rev_h
 
 # Missing, corrupt, symlinked, symlinked sidecar, traversal, unhashable -> uncounted with missing reason, no crash
 for tid in ("ag:help-missing", "ag:help-corrupt", "ag:help-symlink", "ag:help-sidecar", "ag:help-traversal", "ag:help-unhash"):
@@ -4015,9 +4020,10 @@ rev_count = sum(h["count"] for h in helpers if h["title"].startswith("Reviewer")
 assert rev_count == 2, helpers
 EOF
 
-# Existing Gemini effort-suffix precedence preserved (base rate wins over suffixed entry in price table),
-# plus multi-computer merge with Antigravity lines & model-less OpenCode zero line, and live WAL open concurrently,
-# plus unreadable Antigravity folder never breaks a Claude-only report.
+# Existing Gemini effort-suffix precedence preserved (base rate wins over suffixed entry, and suffixed entry
+# still matches when base rate is absent), live uncheckpointed WAL row read concurrently, end-to-end
+# multi-computer merge with Antigravity + model-less OpenCode zero line, multi-provider zero-token guard,
+# and unreadable Antigravity profile directory beside a readable sibling + on a Claude-only run.
 python3 -I - "$scripts/run-costs" "$ag_costs" <<'EOF'
 import json, os, runpy, sqlite3, subprocess, sys
 script, root = sys.argv[1:]
@@ -4025,54 +4031,150 @@ ns = runpy.run_path(script, run_name="run_costs")
 doc = json.load(open(os.path.join(root, "t3/usage-model-rates.json")))["document"]
 entry, key = ns["price_of"]("gemini-4-argon-high", doc)
 assert key == "gemini/gemini-4-argon", (entry, key)   # base rate wins over gemini/gemini-4-argon-high
+doc_only_suffixed = {k: v for k, v in doc.items() if k != "gemini/gemini-4-argon"}
+entry_s, key_s = ns["price_of"]("gemini-4-argon-high", doc_only_suffixed)
+assert key_s == "gemini/gemini-4-argon-high", (entry_s, key_s)   # falls back to original suffixed key when base absent
 entry2, key2 = ns["price_of"]("claude-opus-5-5-thinking-high", doc)
 assert key2 == "claude-opus-5-5-thinking", (entry2, key2)   # intermediate rate wins over claude-opus-5-5
 
-# Multi-computer merge accepts Antigravity lines + zero-token line with model="unknown"
-ag_data = json.load(open(os.path.join(root, "costs.json")))
-assert all(ns["costs_line"](l) for l in ag_data["lines"]), "Antigravity lines must satisfy costs_line"
-zero_oc = {"owner": "B", "thread": "oc:zero", "role": "helper", "harness": "opencode", "model": "unknown", "usd": 0.0}
-assert ns["costs_line"](zero_oc)
+# Helper to encode one protobuf gen_metadata row for live WAL test
+def enc_varint(v):
+    out = bytearray()
+    while True:
+        b = v & 0x7F; v >>= 7
+        out.append(b | 0x80 if v else b)
+        if not v: return bytes(out)
+pb_v = lambda f, v: enc_varint((f << 3) | 0) + enc_varint(v)
+pb_b = lambda f, p: enc_varint((f << 3) | 2) + enc_varint(len(p)) + (p.encode() if isinstance(p, str) else p)
+wal_row2 = pb_b(1, pb_v(3, 1532)
+    + pb_b(4, pb_v(1, 1532) + pb_v(2, 3000) + pb_v(3, 300) + pb_b(11, "req-wal2"))
+    + pb_b(9, pb_b(4, pb_v(1, 1794276000))) + pb_b(19, "gemini-4-neon"))
 
-# Live WAL-mode DB held open by another writer connection while run-costs reads it
+# Live WAL-mode DB: writer inserts & commits a new row with wal_autocheckpoint=0 and stays open so frames
+# live ONLY in -wal while run-costs reads it read-only -> must see 7000 + 3000 = 10000 input tokens!
 wal_path = os.path.join(root, "t3/providers/antigravity/profile-1/antigravity-acp/conversations/ag-live-wal.db")
 writer = sqlite3.connect(wal_path)
 writer.execute("PRAGMA journal_mode=WAL")
 writer.execute("PRAGMA wal_autocheckpoint=0")
 try:
+    writer.execute("insert into gen_metadata values (1, ?)", (wal_row2,))
+    writer.commit()
+    assert os.path.exists(wal_path + "-wal") and os.path.getsize(wal_path + "-wal") > 0, "expected uncheckpointed WAL"
+    assert os.path.exists(wal_path + "-shm"), "expected live -shm sidecar"
     env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
     env["T3_USERDATA"] = os.path.join(root, "t3")
-    res = subprocess.run([script, os.path.join(root, "run"), "--json", os.path.join(root, "costs-live.json")],
-                         env=env, capture_output=True, text=True, check=True)
+    subprocess.run([script, os.path.join(root, "run"), "--json", os.path.join(root, "costs-live.json")],
+                   env=env, capture_output=True, text=True, check=True)
     live = json.load(open(os.path.join(root, "costs-live.json")))
     wal_lines = [l for l in live["lines"] if l["thread"] == "ag:help-wal"]
-    assert len(wal_lines) == 1 and wal_lines[0]["tokens"]["input"] == 7000, wal_lines
+    assert len(wal_lines) == 1 and wal_lines[0]["tokens"]["input"] == 10000, wal_lines
 finally:
     writer.close()
 
-# Unreadable Antigravity profile directory does not abort a Claude-only run
-claude_only = os.path.join(root, "claude-only")
-os.makedirs(os.path.join(claude_only, "t3/providers/antigravity/locked"), exist_ok=True)
-os.makedirs(os.path.join(claude_only, "t3/logs/provider"), exist_ok=True)
-os.makedirs(os.path.join(claude_only, "run"), exist_ok=True)
-cdb = sqlite3.connect(os.path.join(claude_only, "t3/statev2.sqlite"))
-cdb.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
-cdb.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
-cdb.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
-cdb.execute("insert into orchestration_v2_projection_threads values ('cl:a', ?)", (json.dumps({
+# End-to-end multi-computer merge: remote den-mac costs.json holds Antigravity lines + model-less OpenCode zero line
+mc = os.path.join(root, "mc-merge")
+os.makedirs(os.path.join(mc, "t3/logs/provider"), exist_ok=True)
+os.makedirs(os.path.join(mc, "run/computers/den-mac"), exist_ok=True)
+mdb = sqlite3.connect(os.path.join(mc, "t3/statev2.sqlite"))
+mdb.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+mdb.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+mdb.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+mdb.execute("insert into orchestration_v2_projection_threads values ('loc:a', ?)", (json.dumps({
     "title": "A", "providerInstanceId": "claudeAgent", "modelSelection": {"model": "claude-opus-5-5"},
     "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
-cdb.commit(); cdb.close()
-json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "tasks": {"A": {"thread": "cl:a"}}},
-          open(os.path.join(claude_only, "run/watch.json"), "w"))
-json.dump({"fetchedAtMs": 1794345905354, "document": doc}, open(os.path.join(claude_only, "t3/usage-model-rates.json"), "w"))
-locked = os.path.join(claude_only, "t3/providers/antigravity/locked")
+mdb.commit(); mdb.close()
+json.dump({"fetchedAtMs": 1794345905354, "document": doc}, open(os.path.join(mc, "t3/usage-model-rates.json"), "w"))
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "computer": "studio-mac",
+           "tasks": {"A": {"thread": "loc:a"}, "B": {"thread": "ag:task-a", "computer": "den-mac"}}},
+          open(os.path.join(mc, "run/watch.json"), "w"))
+ag_data = json.load(open(os.path.join(root, "costs.json")))
+remote_lines = [dict(l, owner="B") for l in ag_data["lines"] if l["thread"] == "ag:task-a"]
+remote_lines.append({"owner": "B", "thread": "oc:zero", "role": "helper", "harness": "opencode", "model": "unknown", "usd": 0.0,
+                     "tokens": {"input": 0, "cache_read": 0, "cache_write": 0, "cache_write_1h": 0, "output": 0},
+                     "basis": "no tokens used in the run", "billed": False})
+json.dump({"lines": remote_lines}, open(os.path.join(mc, "run/computers/den-mac/costs.json"), "w"))
+env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
+env["T3_USERDATA"] = os.path.join(mc, "t3")
+subprocess.run([script, os.path.join(mc, "run"), "--json", os.path.join(mc, "merged.json")],
+               env=env, capture_output=True, text=True, check=True)
+merged = json.load(open(os.path.join(mc, "merged.json")))
+b_lines = [l for l in merged["lines"] if l["owner"] == "B"]
+assert len(b_lines) == 3 and {l["computer"] for l in b_lines} == {"den-mac"}, b_lines
+assert any(l["thread"] == "oc:zero" and l["usd"] == 0.0 for l in b_lines), b_lines
+assert merged["totals"]["owners"]["B"]["total"] > 0 and not merged["totals"]["computers_missing"], merged["totals"]
+
+# Multi-provider thread (OpenCode zero + Antigravity approx_out) must NOT emit a clean $0.00!
+mp = os.path.join(root, "multi-prov")
+os.makedirs(os.path.join(mp, "t3/providers/antigravity/p1/antigravity-acp/conversations"), exist_ok=True)
+os.makedirs(os.path.join(mp, "t3/logs/provider"), exist_ok=True)
+os.makedirs(os.path.join(mp, "run"), exist_ok=True)
+mp_convs = os.path.join(mp, "t3/providers/antigravity/p1/antigravity-acp/conversations")
+import shutil
+shutil.copyfile(os.path.join(root, "t3/providers/antigravity/profile-1/antigravity-acp/conversations/ag-reused-before.db"),
+                os.path.join(mp_convs, "ag-reused-before.db"))
+mp_oc = sqlite3.connect(os.path.join(mp, "opencode.db"))
+mp_oc.execute("create table session_message (id text, session_id text, type text, time_created int, data text)")
+mp_oc.execute("insert into session_message values ('m', 'ses_z', 'assistant', 1794272400000, ?)", (json.dumps({"time": {"created": 1794272400000}}),))
+mp_oc.commit(); mp_oc.close()
+mp_db = sqlite3.connect(os.path.join(mp, "t3/statev2.sqlite"))
+mp_db.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+mp_db.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+mp_db.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+mp_db.execute("insert into orchestration_v2_projection_threads values ('mp:t1', ?)", (json.dumps({
+    "title": "A", "providerInstanceId": "antigravity", "modelSelection": {"model": "gemini-4-neon"},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
+mp_db.execute("insert into orchestration_v2_projection_provider_threads values ('mp:t1', ?)", (json.dumps({"nativeThreadRef": {"driver": "opencode", "nativeId": "ses_z"}}),))
+mp_db.execute("insert into orchestration_v2_projection_provider_threads values ('mp:t1', ?)", (json.dumps({"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag-reused-before"}}),))
+mp_db.commit(); mp_db.close()
+json.dump({"fetchedAtMs": 1794345905354, "document": doc}, open(os.path.join(mp, "t3/usage-model-rates.json"), "w"))
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "tasks": {"A": {"thread": "mp:t1"}}},
+          open(os.path.join(mp, "run/watch.json"), "w"))
+env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
+env["T3_USERDATA"] = os.path.join(mp, "t3")
+env["OPENCODE_DB"] = os.path.join(mp, "opencode.db")
+subprocess.run([script, os.path.join(mp, "run"), "--json", os.path.join(mp, "out.json")], env=env, capture_output=True, text=True, check=True)
+mp_out = json.load(open(os.path.join(mp, "out.json")))
+assert len(mp_out["lines"]) == 1 and mp_out["lines"][0]["usd"] is None and "fell outside the run" in (mp_out["lines"][0].get("missing") or ""), mp_out["lines"]
+
+# Unreadable Antigravity profile directory: skipped on Claude-only run AND tolerated beside readable sibling profile on Antigravity run
+perm_run = os.path.join(root, "perm-run")
+os.makedirs(os.path.join(perm_run, "t3/providers/antigravity/00-locked"), exist_ok=True)
+os.makedirs(os.path.join(perm_run, "t3/providers/antigravity/01-good/antigravity-acp/conversations"), exist_ok=True)
+os.makedirs(os.path.join(perm_run, "t3/logs/provider"), exist_ok=True)
+os.makedirs(os.path.join(perm_run, "run"), exist_ok=True)
+shutil.copyfile(os.path.join(root, "t3/providers/antigravity/profile-1/antigravity-acp/conversations/ag-orch.db"),
+                os.path.join(perm_run, "t3/providers/antigravity/01-good/antigravity-acp/conversations/ag-orch.db"))
+pdb = sqlite3.connect(os.path.join(perm_run, "t3/statev2.sqlite"))
+pdb.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+pdb.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+pdb.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+pdb.execute("insert into orchestration_v2_projection_threads values ('cl:a', ?)", (json.dumps({
+    "title": "A", "providerInstanceId": "claudeAgent", "modelSelection": {"model": "claude-opus-5-5"},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
+pdb.execute("insert into orchestration_v2_projection_threads values ('ag:ok', ?)", (json.dumps({
+    "title": "B", "providerInstanceId": "antigravity", "modelSelection": {"model": "gemini-4-neon"},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
+pdb.execute("insert into orchestration_v2_projection_provider_threads values ('ag:ok', ?)", (json.dumps({"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag-orch"}}),))
+pdb.execute("insert into orchestration_v2_projection_threads values ('ag:miss', ?)", (json.dumps({
+    "title": "C", "providerInstanceId": "antigravity", "modelSelection": {"model": "gemini-4-neon"},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"}),))
+pdb.execute("insert into orchestration_v2_projection_provider_threads values ('ag:miss', ?)", (json.dumps({"nativeThreadRef": {"driver": "antigravity", "nativeId": "ag-no-such"}}),))
+pdb.commit(); pdb.close()
+json.dump({"fetchedAtMs": 1794345905354, "document": doc}, open(os.path.join(perm_run, "t3/usage-model-rates.json"), "w"))
+locked = os.path.join(perm_run, "t3/providers/antigravity/00-locked")
 os.chmod(locked, 0o000)
 try:
     env = {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_CONVERSATIONS_DIR"}
-    env["T3_USERDATA"] = os.path.join(claude_only, "t3")
-    subprocess.run([script, os.path.join(claude_only, "run"), "--json", os.path.join(claude_only, "out.json")],
-                   env=env, capture_output=True, text=True, check=True)
+    env["T3_USERDATA"] = os.path.join(perm_run, "t3")
+    json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "tasks": {"A": {"thread": "cl:a"}}},
+              open(os.path.join(perm_run, "run/watch.json"), "w"))
+    subprocess.run([script, os.path.join(perm_run, "run"), "--json", os.path.join(perm_run, "out-cl.json")], env=env, capture_output=True, text=True, check=True)
+    json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z", "tasks": {"B": {"thread": "ag:ok"}, "C": {"thread": "ag:miss"}}},
+              open(os.path.join(perm_run, "run/watch.json"), "w"))
+    subprocess.run([script, os.path.join(perm_run, "run"), "--json", os.path.join(perm_run, "out-ag.json")], env=env, capture_output=True, text=True, check=True)
+    out_ag = {l["thread"]: l for l in json.load(open(os.path.join(perm_run, "out-ag.json")))["lines"]}
+    assert out_ag["ag:ok"]["tokens"]["input"] == 5000 and out_ag["ag:ok"]["usd"] > 0, out_ag["ag:ok"]
+    assert out_ag["ag:miss"]["usd"] is None and "not found" in (out_ag["ag:miss"].get("missing") or ""), out_ag["ag:miss"]
 finally:
     os.chmod(locked, 0o755)
 EOF

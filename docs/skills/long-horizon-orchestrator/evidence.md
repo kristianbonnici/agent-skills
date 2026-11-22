@@ -207,6 +207,14 @@ Rules that are the owner's choice, with when they made it:
   Claude".
 - **2026-11-22:** helpers and second opinions follow `delegate_task`'s 45-second wait ("Apply this also on
   the next run").
+- **Antigravity conversation SQLite schema for `scripts/run-costs`** (verified read-only against Antigravity
+  `1.5.14` on 2026-11-22 across 232 local conversation databases under
+  `providers/antigravity/*/antigravity-acp/conversations/*.db`):
+  - Tables: `gen_metadata(idx, data)`, `steps(idx, metadata)` and `trajectory_metadata_blob(id, data)` (SQLite WAL mode).
+  - Protobuf wire layout: `gen_metadata` wraps the generation message in root field 1 (model ID field 3, model names fields 19 and 21, primary usage field 4, repeated retries field 17 → usage field 2, timestamp field 9 → field 4); `steps.metadata` holds the model object in field 24 (ID field 1, names fields 12 and 8), primary usage field 9, repeated retries field 28 → usage field 2, and timestamp field 8 (fallback field 1); `trajectory_metadata_blob` carries a fallback timestamp in field 2.
+  - Usage message fields: 1 (`modelId`), 2 (uncached input), 3 (total output), 4 (cache creation), 5 (cached input), 9 (reasoning), 10 (completion), with total output equal to `max(field 3, field 9 + field 10)` so reasoning is not double-counted; merge/dedupe IDs in UTF-8 fields 11, 12 and 7.
+  - Observed invariants across the sample: in 5 multi-turn conversations totaling 653 generations (249, 47, 85, 206, 66 rows), fields 11 and 7 were strictly 1-to-1 per generation (never shared across distinct turns) while matching across `gen_metadata`, retries and `steps`; field 12 did not appear in the 232 sampled `1.5.14` databases (`0` rows) and is kept as an optional per-request merge key from the documented usage message layout; every `gen_metadata` row without a row timestamp matched a `steps` row carrying one (`2,946` matched, `0` unmatched across 60 recent databases); Orchestrator (Neon) databases recorded both orchestrator turns (`1537`, `gemini-pro-orchestrator-neon`) and worker turns (`1669`, `gemini-flash-worker-agy` / `Gemini 4 Hydrogen (Orchestrator)`). Known numeric model IDs observed: `1320` (`gemini-3.8-flash`), `1402` (`claude-opus-5-5`), `1405` (`claude-sonnet-5-5`), `1525`/`1530` (`gemini-4-hydrogen`), `1532`/`1535` (`gemini-4-neon`), `1537` (`gemini-pro-orchestrator-neon`), `1669` (`gemini-4-hydrogen-orchestrator`).
+  - If a future Antigravity release changes table or field numbers, malformed wire payloads are counted and flagged, and threads whose records lack row timestamps or known model names are flagged incomplete rather than reported as a clean `$0.00`.
 
 ## Outside sources
 
@@ -674,14 +682,6 @@ Rules that are the owner's choice, with when they made it:
   unattended runs", and Epoch found Fable's work better at about twice Opus's time. The skill keeps Opus as
   the home model and Fable rare by the owner's decision of 2026-11-11, within the Fable week's budget; the
   evidence bears on which tasks get Fable, which the contract states per task.
-- **Antigravity conversation SQLite schema for `scripts/run-costs`** (verified read-only against Antigravity
-  `1.5.14` on 2026-11-22 across 232 local conversation databases under
-  `providers/antigravity/*/antigravity-acp/conversations/*.db`):
-  - Tables: `gen_metadata(idx, data)`, `steps(idx, metadata)` and `trajectory_metadata_blob(id, data)` (SQLite WAL mode).
-  - Protobuf wire layout: `gen_metadata` wraps the generation message in root field 1 (model ID field 3, model names fields 19 and 21, primary usage field 4, repeated retries field 17 → usage field 2, timestamp field 9 → field 4); `steps.metadata` holds the model object in field 24 (ID field 1, names fields 12 and 8), primary usage field 9, repeated retries field 28 → usage field 2, and timestamp field 8 (fallback field 1); `trajectory_metadata_blob` carries a fallback timestamp in field 2.
-  - Usage message fields: 1 (`modelId`), 2 (uncached input), 3 (total output), 4 (cache creation), 5 (cached input), 9 (reasoning), 10 (completion), with total output equal to `max(field 3, field 9 + field 10)` so reasoning is not double-counted; merge/dedupe IDs in UTF-8 fields 11, 12 and 7.
-  - Observed invariants across the sample: in 5 multi-turn conversations totaling 653 generations (249, 47, 85, 206, 66 rows), fields 11 and 7 were strictly 1-to-1 per generation (never shared across distinct turns) while matching across `gen_metadata`, retries and `steps`; every `gen_metadata` row without a row timestamp matched a `steps` row carrying one (`2,946` matched, `0` unmatched across 60 recent databases); Orchestrator (Neon) databases recorded both orchestrator turns (`1537`, `gemini-pro-orchestrator-neon`) and worker turns (`1669`, `gemini-flash-worker-agy` / `Gemini 4 Hydrogen (Orchestrator)`). Known numeric model IDs observed: `1320` (`gemini-3.8-flash`), `1402` (`claude-opus-5-5`), `1405` (`claude-sonnet-5-5`), `1525`/`1530` (`gemini-4-hydrogen`), `1532`/`1535` (`gemini-4-neon`), `1537` (`gemini-pro-orchestrator-neon`), `1669` (`gemini-4-hydrogen-orchestrator`).
-  - If a future Antigravity release changes table or field numbers, malformed wire payloads are counted and flagged, and threads whose records lack row timestamps or known model names are flagged incomplete rather than reported as a clean `$0.00`.
 
 ## Left out
 
