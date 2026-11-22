@@ -36,9 +36,16 @@ Where the numbers come from (T3 Code's records; T3_USERDATA moves its folder, ~/
     the price table; a session with no per-message records counts by its totals only when it lies
     inside the run; its free models cost the owner $0, and
     the estimate is their list-price equivalent;
-  - Antigravity and Copilot keep no token counts this script can read: their threads are listed as
-    "not counted". A Claude Code subagent that T3 mirrors as a thread of its own is in its parent's
-    figures already, and is listed as such.
+  - Antigravity: Antigravity's local SQLite conversation databases under T3's folder
+    (providers/antigravity/*/antigravity-acp/conversations/<nativeId>.db, read only;
+    ANTIGRAVITY_CONVERSATIONS_DIR moves the folder), decoding protobuf usage records from
+    gen_metadata and steps, deduplicating across both tables and across threads in the run,
+    and pricing orchestrators, workers, Claude variants and stacked effort suffixes by the
+    price table;
+  - Copilot keeps no token counts this script can read: its threads are listed as
+    "not counted" (as is any Antigravity thread whose conversation database is missing or
+    unreadable). A Claude Code subagent that T3 mirrors as a thread of its own is in its
+    parent's figures already, and is listed as such.
 The price table is LiteLLM's model price list, as T3 Code caches it (usage-model-rates.json, with the
 time it fetched it), or a copy given as RUN_COSTS_PRICES. A model is priced by its own entry, else its
 maker's (deepseek/, zai/, gemini/), else Azure AI's listing, and the source is named. T3's provider logs
@@ -64,16 +71,39 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 REVIEW = re.compile(r"review|critique|re-look", re.I)
 MAKERS = ("deepseek/", "zai/", "gemini/", "openai/", "anthropic/", "azure_ai/")
 FREE = re.compile(r"(^|/)opencode/.*-free$|-free$")
+EFFORT_SUFFIX = re.compile(r"-(?:extra-low|low|medium|high|xhigh|max|tiered|control|thinking|agent)$")
+ANTIGRAVITY_MODEL_ALIASES = {
+    "gemini-pro-orchestrator-neon": "gemini-4-neon",
+    "gemini-4-hydrogen-orchestrator": "gemini-4-hydrogen",
+    "gemini-flash-worker-agy": "gemini-4-hydrogen",
+    "gemini-pro-orchestrator-argon": "gemini-4-argon",
+    "gemini-pro-orchestrator": "gemini-4-carbon",
+    "gemini-3.8-flash-n": "gemini-3.8-flash",
+}
+ANTIGRAVITY_MODEL_IDS = {
+    1320: "gemini-3.8-flash",
+    1402: "claude-opus-5-5",
+    1405: "claude-sonnet-5-5",
+    1525: "gemini-4-hydrogen",
+    1530: "gemini-4-hydrogen",
+    1532: "gemini-4-neon",
+    1535: "gemini-4-neon",
+    1537: "gemini-pro-orchestrator-neon",
+    1669: "gemini-4-hydrogen-orchestrator",
+}
+ANTIGRAVITY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+CONCRETE_MODEL = re.compile(r"^(?:gemini-\d|claude-(?:sonnet|opus|haiku|fable)-\d|gpt-)")
 
 
 def userdata() -> Path:
@@ -151,11 +181,7 @@ def load_prices() -> tuple[dict, str]:
     return doc, f"LiteLLM's model price list as T3 Code cached it on {when}"
 
 
-def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
-    """The price entry for a model ID, and the entry's name; OpenCode's prefixes and -free dropped."""
-    name = re.sub(r"^(opencode-go|opencode)/", "", model or "")
-    name = re.sub(r"-free$", "", name)
-    name = re.sub(r"-(low|medium|high|xhigh|max)$", "", name) if name.startswith("gemini-") else name
+def _lookup_price(name: str, doc: dict) -> tuple[dict | None, str]:
     if name in doc:
         return doc[name], name
     for prefix in MAKERS:
@@ -163,6 +189,28 @@ def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
             return doc[prefix + name], prefix + name
     tails = sorted(k for k in doc if k.split("/")[-1] == name)
     return (doc[tails[0]], tails[0]) if tails else (None, "")
+
+
+def price_of(model: str, doc: dict) -> tuple[dict | None, str]:
+    """The price entry for a model ID, and the entry's name; OpenCode's prefixes, -free,
+    stacked Gemini/Claude effort/routing suffixes and Antigravity orchestrator aliases resolved."""
+    name = re.sub(r"^(opencode-go|opencode)/", "", model or "")
+    name = re.sub(r"-free$", "", name)
+    entry, key = _lookup_price(name, doc)
+    if entry is not None:
+        return entry, key
+    if name.startswith(("gemini-", "claude-")):
+        stripped = name
+        while True:
+            stripped = ANTIGRAVITY_MODEL_ALIASES.get(stripped, stripped)
+            nxt = EFFORT_SUFFIX.sub("", stripped)
+            if nxt == stripped:
+                break
+            stripped = nxt
+        stripped = ANTIGRAVITY_MODEL_ALIASES.get(stripped, stripped)
+        if stripped != name:
+            return _lookup_price(stripped, doc)
+    return None, ""
 
 
 def priced(tokens: dict, entry: dict) -> float:
@@ -428,6 +476,587 @@ def opencode_usage(sessions: set[str], start: float, end: float) -> tuple[dict, 
     return out, whole, outside, unreadable
 
 
+# ------------------------------------------------------------------------------------------ antigravity
+
+def _read_varint(buf: bytes, pos: int, end: int) -> tuple[int, int] | None:
+    val, shift = 0, 0
+    while pos < end and shift < 70:
+        b = buf[pos]
+        pos += 1
+        val |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return val, pos
+        shift += 7
+    return None
+
+
+def _skip_group(buf: bytes, pos: int, end: int, group_field: int, depth: int) -> int | None:
+    if depth > 16:
+        return None
+    while pos < end:
+        res = _read_varint(buf, pos, end)
+        if res is None:
+            return None
+        tag, pos = res
+        fnum, wtype = tag >> 3, tag & 0x07
+        if fnum == 0:
+            return None
+        if wtype == 4:
+            return pos if fnum == group_field else None
+        if wtype == 0:
+            res = _read_varint(buf, pos, end)
+            if res is None:
+                return None
+            pos = res[1]
+        elif wtype == 1:
+            if pos + 8 > end:
+                return None
+            pos += 8
+        elif wtype == 2:
+            res = _read_varint(buf, pos, end)
+            if res is None:
+                return None
+            ln, pos = res
+            if ln < 0 or pos + ln > end:
+                return None
+            pos += ln
+        elif wtype == 3:
+            pos = _skip_group(buf, pos, end, fnum, depth + 1)
+            if pos is None:
+                return None
+        elif wtype == 5:
+            if pos + 4 > end:
+                return None
+            pos += 4
+        else:
+            return None
+    return None
+
+
+def _parse_proto(raw, depth: int = 0) -> tuple[dict[int, list[tuple[int, object]]], bool]:
+    """Decode one protobuf binary message into {field_number: [(wire_type, value), ...]}."""
+    if isinstance(raw, memoryview):
+        buf = raw.tobytes()
+    elif isinstance(raw, bytearray):
+        buf = bytes(raw)
+    elif isinstance(raw, bytes):
+        buf = raw
+    else:
+        return {}, False
+    if depth > 16:
+        return {}, False
+    fields: dict[int, list[tuple[int, object]]] = defaultdict(list)
+    pos, end = 0, len(buf)
+    while pos < end:
+        res = _read_varint(buf, pos, end)
+        if res is None:
+            return fields, False
+        tag, pos = res
+        fnum, wtype = tag >> 3, tag & 0x07
+        if fnum == 0:
+            return fields, False
+        if wtype == 0:
+            res = _read_varint(buf, pos, end)
+            if res is None:
+                return fields, False
+            val, pos = res
+            fields[fnum].append((0, val))
+        elif wtype == 1:
+            if pos + 8 > end:
+                return fields, False
+            fields[fnum].append((1, buf[pos:pos + 8]))
+            pos += 8
+        elif wtype == 2:
+            res = _read_varint(buf, pos, end)
+            if res is None:
+                return fields, False
+            ln, pos = res
+            if ln < 0 or pos + ln > end:
+                return fields, False
+            fields[fnum].append((2, buf[pos:pos + ln]))
+            pos += ln
+        elif wtype == 3:
+            nxt = _skip_group(buf, pos, end, fnum, depth + 1)
+            if nxt is None:
+                return fields, False
+            pos = nxt
+        elif wtype == 5:
+            if pos + 4 > end:
+                return fields, False
+            fields[fnum].append((5, buf[pos:pos + 4]))
+            pos += 4
+        else:
+            return fields, False
+    return fields, True
+
+
+def _proto_uint(fields: dict, num: int) -> int | None:
+    vals = [v for wt, v in fields.get(num, ()) if wt == 0 and isinstance(v, int)]
+    if not vals:
+        return None
+    v = vals[-1]
+    return v if 0 <= v < (1 << 63) else None
+
+
+def _proto_has_negative(fields: dict, nums: tuple[int, ...]) -> bool:
+    for n in nums:
+        for wt, v in fields.get(n, ()):
+            if wt == 0 and isinstance(v, int) and v >= (1 << 63):
+                return True
+    return False
+
+
+def _proto_strs(fields: dict, num: int) -> list[str]:
+    out = []
+    for wt, v in fields.get(num, ()):
+        if wt != 2 or not isinstance(v, bytes):
+            continue
+        try:
+            s = v.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            continue
+        if s:
+            out.append(s)
+    return out
+
+
+def _proto_ts(blob: bytes) -> float | None:
+    fields, ok = _parse_proto(blob)
+    if not ok:
+        return None
+    secs = _proto_uint(fields, 1)
+    if secs is None or secs <= 0:
+        return None
+    if _proto_has_negative(fields, (2,)):
+        return None
+    nanos = _proto_uint(fields, 2) or 0
+    if nanos >= 1_000_000_000:
+        return None
+    return secs + nanos / 1e9
+
+
+def _normalize_ag_model(raw: str) -> str:
+    s = raw.strip().lower()
+    if not s:
+        return ""
+    s = re.sub(r"\s*\(([^()]+)\)\s*$", lambda m: "-" + m.group(1).strip(), s)
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    s = re.sub(
+        r"^claude-(\d+(?:[.-]\d+)*)-(opus|sonnet|haiku|fable)(?=(-|$))",
+        lambda m: f"claude-{m.group(2)}-{m.group(1).replace('.', '-')}",
+        s,
+    )
+    s = re.sub(
+        r"^claude-(opus|sonnet|haiku|fable)-(\d+(?:\.\d+)+)(?=(-|$))",
+        lambda m: f"claude-{m.group(1)}-{m.group(2).replace('.', '-')}",
+        s,
+    )
+    return s
+
+
+def _ag_model_rank(name: str) -> int:
+    if not name:
+        return -1
+    if CONCRETE_MODEL.match(name):
+        return 3
+    if name.startswith(("gemini-", "claude-")):
+        return 2
+    if not name.startswith(("model_", "model-")) and name not in ("unknown", "default"):
+        return 1
+    return 0
+
+
+def _better_model(a: str, b: str) -> str:
+    return b if _ag_model_rank(b) > _ag_model_rank(a) else a
+
+
+def _pick_model(candidates: list[str]) -> str:
+    best = ""
+    for raw in candidates:
+        best = _better_model(best, _normalize_ag_model(raw))
+    return best
+
+
+def _parse_ag_usage(blob: bytes) -> tuple[dict | None, bool]:
+    fields, ok = _parse_proto(blob)
+    if not ok or _proto_has_negative(fields, (2, 3, 4, 5, 9, 10)):
+        return None, False
+    mid = _proto_uint(fields, 1)
+    model_id = mid if mid else None
+    inp = _proto_uint(fields, 2) or 0
+    out3 = _proto_uint(fields, 3) or 0
+    cache_write = _proto_uint(fields, 4) or 0
+    cache_read = _proto_uint(fields, 5) or 0
+    reasoning = _proto_uint(fields, 9) or 0
+    completion = _proto_uint(fields, 10) or 0
+    keys = [(k, s) for k in (11, 12, 7) for s in _proto_strs(fields, k)]
+    return {"model_id": model_id, "input": inp, "cache_read": cache_read, "cache_write": cache_write,
+            "output": max(out3, reasoning + completion), "keys": keys}, True
+
+
+def _ag_conv_dirs() -> tuple[list[Path], bool]:
+    """Conversation folders to search, and whether a symlink was skipped."""
+    override = os.environ.get("ANTIGRAVITY_CONVERSATIONS_DIR")
+    if override:
+        folder = Path(override)
+        if folder.is_symlink():
+            return [], True
+        return ([folder] if folder.is_dir() else []), False
+    root = userdata() / "providers" / "antigravity"
+    if root.is_symlink():
+        return [], True
+    if not root.is_dir():
+        return [], False
+    dirs, saw_symlink = [], False
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return [], False
+    for entry in entries:
+        if entry.is_symlink():
+            saw_symlink = True
+            continue
+        if not entry.is_dir():
+            continue
+        acp = entry / "antigravity-acp"
+        if acp.is_symlink():
+            saw_symlink = True
+            continue
+        if not acp.is_dir():
+            continue
+        conv = acp / "conversations"
+        if conv.is_symlink():
+            saw_symlink = True
+            continue
+        if conv.is_dir():
+            dirs.append(conv)
+    return dirs, saw_symlink
+
+
+def _find_ag_db(native_id: str, dirs: list[Path], saw_symlink: bool) -> tuple[Path | None, str | None]:
+    if not isinstance(native_id, str) or not ANTIGRAVITY_ID.fullmatch(native_id):
+        return None, "Antigravity conversation database couldn't be read"
+    saw_bad = False
+    for folder in dirs:
+        cand = folder / f"{native_id}.db"
+        try:
+            st = os.lstat(cand)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            saw_bad = True
+            continue
+        if not stat.S_ISREG(st.st_mode) or cand.parent != folder:
+            saw_bad = True
+            continue
+        return cand, None
+    if saw_bad or (saw_symlink and not dirs):
+        return None, "Antigravity conversation database couldn't be read"
+    return None, "Antigravity conversation database not found"
+
+
+def _open_ag_db(path: Path) -> tuple[sqlite3.Connection | None, float | None]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None, None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None, None
+        mtime = st.st_mtime
+    finally:
+        os.close(fd)
+    wal = Path(f"{path}-wal")
+    try:
+        wst = os.lstat(wal)
+        if stat.S_ISREG(wst.st_mode):
+            mtime = max(mtime, wst.st_mtime)
+    except OSError:
+        pass
+    try:
+        con = sqlite3.connect(f"file:{quote(str(path), safe='/')}?mode=ro", uri=True, timeout=10)
+    except sqlite3.Error:
+        return None, None
+    return con, mtime
+
+
+def _read_ag_db(path: Path, db_key: str) -> dict:
+    """Read one Antigravity conversation SQLite DB (read-only) into raw usage observations."""
+    con, mtime = _open_ag_db(path)
+    if con is None or mtime is None:
+        return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+    records: list[dict] = []
+    learned: dict[int, str] = {}
+    malformed = 0
+    traj_ts: float | None = None
+    has_gm, has_st = False, False
+    try:
+        try:
+            for (blob,) in con.execute("select data from trajectory_metadata_blob").fetchall():
+                if blob is None:
+                    continue
+                fields, ok = _parse_proto(blob)
+                if not ok:
+                    malformed += 1
+                    continue
+                for wt, v in fields.get(2, ()):
+                    if wt == 2 and isinstance(v, bytes):
+                        ts = _proto_ts(v)
+                        if ts is not None:
+                            traj_ts = ts if traj_ts is None else min(traj_ts, ts)
+                            break
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e).lower():
+                return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+        except sqlite3.Error:
+            return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+
+        def add_usage(src: str, idx, slot: str, ublob: bytes, row_mid: int | None, row_name: str, row_ts: float | None) -> None:
+            nonlocal malformed
+            usage, uok = _parse_ag_usage(ublob)
+            if not uok or usage is None:
+                malformed += 1
+                return
+            u_mid = usage["model_id"]
+            if u_mid and row_mid and u_mid != row_mid:
+                eff_mid, eff_name = u_mid, ""
+            else:
+                eff_mid = u_mid or row_mid
+                eff_name = row_name
+                if eff_mid and eff_name:
+                    learned[eff_mid] = _better_model(learned.get(eff_mid, ""), eff_name)
+            ts_pri, ts_val = ((3, row_ts) if row_ts is not None else (2, traj_ts) if traj_ts is not None else (1, mtime))
+            keys = usage["keys"] or [("row", db_key, src, idx, slot)]
+            records.append({"model_id": eff_mid, "model": eff_name, "input": usage["input"], "cache_read": usage["cache_read"],
+                            "cache_write": usage["cache_write"], "output": usage["output"], "ts_pri": ts_pri, "ts": ts_val,
+                            "keys": keys})
+
+        try:
+            gm_rows = con.execute("select idx, data from gen_metadata").fetchall()
+            has_gm = True
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e).lower():
+                return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+            gm_rows = []
+        except sqlite3.Error:
+            return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+
+        for idx, blob in gm_rows:
+            if blob is None:
+                continue
+            root, ok = _parse_proto(blob)
+            if not ok:
+                malformed += 1
+                continue
+            for gi, (_, dblob) in enumerate((wt, v) for wt, v in root.get(1, ()) if wt == 2 and isinstance(v, bytes)):
+                d, dok = _parse_proto(dblob)
+                if not dok:
+                    malformed += 1
+                    continue
+                row_mid = _proto_uint(d, 3) or None
+                row_name = _pick_model(_proto_strs(d, 19) + _proto_strs(d, 21))
+                if row_mid and row_name:
+                    learned[row_mid] = _better_model(learned.get(row_mid, ""), row_name)
+                row_ts = None
+                for wt9, f9 in d.get(9, ()):
+                    if wt9 == 2 and isinstance(f9, bytes):
+                        m9, m9ok = _parse_proto(f9)
+                        if not m9ok:
+                            continue
+                        for wt4, f4 in m9.get(4, ()):
+                            if wt4 == 2 and isinstance(f4, bytes):
+                                ts = _proto_ts(f4)
+                                if ts is not None:
+                                    row_ts = ts
+                                    break
+                        if row_ts is not None:
+                            break
+                for pi, (_, ublob) in enumerate((wt, v) for wt, v in d.get(4, ()) if wt == 2 and isinstance(v, bytes)):
+                    add_usage("gm", idx, f"g{gi}.p{pi}", ublob, row_mid, row_name, row_ts)
+                for ri, (_, rblob) in enumerate((wt, v) for wt, v in d.get(17, ()) if wt == 2 and isinstance(v, bytes)):
+                    rm, rok = _parse_proto(rblob)
+                    if not rok:
+                        malformed += 1
+                        continue
+                    for ui, (_, ublob) in enumerate((wt, v) for wt, v in rm.get(2, ()) if wt == 2 and isinstance(v, bytes)):
+                        add_usage("gm", idx, f"g{gi}.r{ri}.{ui}", ublob, row_mid, row_name, row_ts)
+
+        try:
+            st_rows = con.execute("select idx, metadata from steps where metadata is not null").fetchall()
+            has_st = True
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e).lower():
+                return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+            st_rows = []
+        except sqlite3.Error:
+            return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+
+        for idx, blob in st_rows:
+            if blob is None:
+                continue
+            d, ok = _parse_proto(blob)
+            if not ok:
+                malformed += 1
+                continue
+            m_names: list[str] = []
+            row_mid = None
+            for wt24, mblob in d.get(24, ()):
+                if wt24 == 2 and isinstance(mblob, bytes):
+                    mobj, mok = _parse_proto(mblob)
+                    if not mok:
+                        malformed += 1
+                        continue
+                    m_names += _proto_strs(mobj, 12) + _proto_strs(mobj, 8)
+                    mid = _proto_uint(mobj, 1)
+                    if mid:
+                        row_mid = mid
+            row_name = _pick_model(m_names)
+            if row_mid and row_name:
+                learned[row_mid] = _better_model(learned.get(row_mid, ""), row_name)
+            row_ts = None
+            for tfield in (8, 1):
+                for wt, tblob in d.get(tfield, ()):
+                    if wt == 2 and isinstance(tblob, bytes):
+                        ts = _proto_ts(tblob)
+                        if ts is not None:
+                            row_ts = ts
+                            break
+                if row_ts is not None:
+                    break
+            for pi, (_, ublob) in enumerate((wt, v) for wt, v in d.get(9, ()) if wt == 2 and isinstance(v, bytes)):
+                add_usage("st", idx, f"p{pi}", ublob, row_mid, row_name, row_ts)
+            for ri, (_, rblob) in enumerate((wt, v) for wt, v in d.get(28, ()) if wt == 2 and isinstance(v, bytes)):
+                rm, rok = _parse_proto(rblob)
+                if not rok:
+                    malformed += 1
+                    continue
+                for ui, (_, ublob) in enumerate((wt, v) for wt, v in rm.get(2, ()) if wt == 2 and isinstance(v, bytes)):
+                    add_usage("st", idx, f"r{ri}.{ui}", ublob, row_mid, row_name, row_ts)
+    finally:
+        con.close()
+
+    if not has_gm and not has_st:
+        return {"ok": False, "records": [], "malformed": 0, "error": "Antigravity conversation database couldn't be read"}
+
+    for rec in records:
+        mid = rec["model_id"]
+        if mid:
+            rec["model"] = _better_model(rec["model"], learned.get(mid, ""))
+            if _ag_model_rank(rec["model"]) <= 0:
+                rec["model"] = _better_model(rec["model"], ANTIGRAVITY_MODEL_IDS.get(mid, ""))
+    return {"ok": True, "records": records, "malformed": malformed, "error": None}
+
+
+def antigravity_usage(rows: list[dict], natives: dict, start: float, end: float) -> tuple[dict, set, dict, set, int]:
+    """Read Antigravity conversation DBs for the run's threads, deduplicate by merge IDs across tables
+    and threads in deterministic order, and return (thread -> {model: tokens}, ok_threads,
+    thread -> [error reasons], malformed_threads, total_malformed)."""
+    dirs, saw_symlink = _ag_conv_dirs()
+    out: dict = defaultdict(lambda: defaultdict(zero))
+    ok_threads: set[str] = set()
+    errors: dict[str, list[str]] = defaultdict(list)
+    malformed_threads: set[str] = set()
+    total_malformed = 0
+    observations: list[dict] = []
+    cached: dict[Path, dict] = {}
+    seq = 0
+
+    for order, r in enumerate(rows):
+        tid = r["thread"]
+        seen_nids: set = set()
+        ag_nids = []
+        for driver, nid in natives.get(tid, []):
+            if driver == "antigravity" and nid not in seen_nids:
+                seen_nids.add(nid)
+                ag_nids.append(nid)
+        for nid in ag_nids:
+            path, err = _find_ag_db(nid, dirs, saw_symlink)
+            if err or path is None:
+                msg = err or "Antigravity conversation database not found"
+                if msg not in errors[tid]:
+                    errors[tid].append(msg)
+                continue
+            key = path.resolve()
+            if key in cached:
+                res = cached[key]
+            else:
+                res = _read_ag_db(path, str(key))
+                cached[key] = res
+                total_malformed += res["malformed"]
+                if res["ok"]:
+                    for rec in res["records"]:
+                        observations.append(dict(rec, owner_order=order, owner_thread=tid, seq=seq))
+                        seq += 1
+            if not res["ok"]:
+                msg = res["error"] or "Antigravity conversation database couldn't be read"
+                if msg not in errors[tid]:
+                    errors[tid].append(msg)
+                continue
+            ok_threads.add(tid)
+            if res["malformed"]:
+                malformed_threads.add(tid)
+
+    if not observations:
+        return out, ok_threads, errors, malformed_threads, total_malformed
+
+    parent = list(range(len(observations)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            if ra < rb:
+                parent[rb] = ra
+            else:
+                parent[ra] = rb
+
+    key_owner: dict[tuple, int] = {}
+    for i, obs in enumerate(observations):
+        for k in obs["keys"]:
+            if k in key_owner:
+                union(i, key_owner[k])
+            else:
+                key_owner[k] = i
+
+    clusters: dict[int, list[dict]] = defaultdict(list)
+    for i, obs in enumerate(observations):
+        clusters[find(i)].append(obs)
+
+    for cluster in clusters.values():
+        cluster.sort(key=lambda o: (o["owner_order"], o["seq"]))
+        owner_tid = cluster[0]["owner_thread"]
+        best_ts_pri, best_ts = -1, float("inf")
+        model = ""
+        inp = cache_read = cache_write = output = 0
+        for o in cluster:
+            if o["ts_pri"] > best_ts_pri or (o["ts_pri"] == best_ts_pri and o["ts"] < best_ts):
+                best_ts_pri, best_ts = o["ts_pri"], o["ts"]
+            model = _better_model(model, o["model"])
+            inp = max(inp, o["input"])
+            cache_read = max(cache_read, o["cache_read"])
+            cache_write = max(cache_write, o["cache_write"])
+            output = max(output, o["output"])
+        if not (start <= best_ts <= end):
+            continue
+        if inp + cache_read + cache_write + output == 0:
+            continue
+        slot = out[owner_tid][model or "unknown"]
+        slot["input"] += inp
+        slot["cache_read"] += cache_read
+        slot["cache_write"] += cache_write
+        slot["output"] += output
+
+    return out, ok_threads, errors, malformed_threads, total_malformed
+
+
 # ------------------------------------------------------------------------------------------ the run
 
 def harness_of(instance: str | None) -> str:
@@ -473,6 +1102,8 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
     malformed += scan["malformed"]
     oc_sessions = {n: r["thread"] for r in rows for d, n in natives.get(r["thread"], []) if d == "opencode"}
     opencode, whole, outside, unreadable = opencode_usage(set(oc_sessions), start, end)
+    ag_usage, ag_ok, ag_errors, ag_malformed, ag_malformed_total = antigravity_usage(rows, natives, start, end)
+    malformed += ag_malformed_total
 
     def flag(l: dict, why: str) -> None:
         """Add a reason the line's figure is partial, keeping the ones it has."""
@@ -521,13 +1152,25 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
                         flag(mine[-1], "OpenCode kept only the session's totals (the session lies inside the run)")
                     if sid in unreadable:
                         flag(mine[-1], "some of OpenCode's records for it couldn't be read")
+        if ag_usage.get(r["thread"]):
+            for model, tokens in ag_usage[r["thread"]].items():
+                mine.append(line(r, (r["model"] or "unknown") if model == "unknown" else model, dict(tokens)))
+            for err in ag_errors.get(r["thread"], []):
+                for l in mine:
+                    flag(l, err)
+            if r["thread"] in ag_malformed:
+                for l in mine:
+                    flag(l, "some of Antigravity's records for it couldn't be read")
         first = scan["file_first"].get(r["thread"])
         created = threads.get(r["thread"], {}).get("created")
         if mine and first is not None and first > max(start, created or start) + 60:
             for l in mine:
                 flag(l, "T3's logs for it begin after the run's start (rotated away): earlier turns are missing")
         if not mine and any(app == r["thread"] and sid in opencode and not opencode[sid] and sid not in unreadable for sid, app in oc_sessions.items()):
-            lines.append(dict(r, tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
+            lines.append(dict(r, model=r["model"] or "unknown", tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
+            continue
+        if not mine and r["thread"] in ag_ok and not ag_errors.get(r["thread"]) and r["thread"] not in ag_malformed:
+            lines.append(dict(r, model=r["model"] or "unknown", tokens=zero(), usd=0.0, basis="no tokens used in the run", billed=False))
             continue
         if not mine and any(app == r["thread"] and sid in outside for sid, app in oc_sessions.items()):
             why = "OpenCode kept only its session's totals, which reach outside the run"
@@ -540,7 +1183,10 @@ def collect(run_dir: Path, orchestrator: str | None, start: float, end: float, t
             # already in its parent's result figures
             lines.append(dict(r, tokens=None, usd=None, included=True, basis="in its parent's Claude figures (a Claude Code subagent)", billed=False))
         else:
-            why = ("its harness keeps no token counts that can be read" if r["harness"] in ("antigravity", "copilot")
+            why = ("its harness keeps no token counts that can be read" if r["harness"] == "copilot"
+                   else "; ".join(ag_errors[r["thread"]]) if ag_errors.get(r["thread"])
+                   else "Antigravity's records for it couldn't be read" if r["thread"] in ag_malformed
+                   else "Antigravity conversation database not found" if r["harness"] == "antigravity"
                    else "OpenCode's records for it couldn't be read" if any(app == r["thread"] and sid in unreadable for sid, app in oc_sessions.items())
                    else "no usage logged in the span")
             lines.append(dict(r, tokens=None, usd=None, basis="not counted: " + why, missing=why, billed=False))

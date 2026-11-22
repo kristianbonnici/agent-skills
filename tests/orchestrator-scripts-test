@@ -3578,6 +3578,360 @@ none = [h for h in drawn if h["harness"] == "Antigravity" and h["model"] == "def
 assert len(none) == 1 and none[0]["effort"] is None and none[0]["mark"] is not None, none   # the harness's own mark
 EOF
 
+# run-costs: Antigravity conversation SQLite DBs (protobuf decoding, multi-model Orchestrator + Hydrogen worker,
+# merge-ID deduplication across steps/gen_metadata/retries and across threads, stacked effort/routing suffixes,
+# Antigravity Claude variants, time-window filtering and timestamp fallbacks, missing/corrupt/symlinked/traversal
+# DB handling, ANTIGRAVITY_CONVERSATIONS_DIR override, and run-charts integration).
+ag_costs="$work/ag-costs"
+mkdir -p "$ag_costs/t3/providers/antigravity/profile-1/antigravity-acp/conversations" "$ag_costs/t3/logs/provider" "$ag_costs/run" "$ag_costs/alt-convs"
+python3 -I - "$ag_costs" <<'EOF'
+import json, os, sqlite3, sys
+root = sys.argv[1]
+t3 = os.path.join(root, "t3")
+convs = os.path.join(t3, "providers/antigravity/profile-1/antigravity-acp/conversations")
+alt_convs = os.path.join(root, "alt-convs")
+
+def enc_varint(v):
+    out = bytearray()
+    while True:
+        b = v & 0x7F
+        v >>= 7
+        if v:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            break
+    return bytes(out)
+
+def pb_varint(fnum, val):
+    return enc_varint((fnum << 3) | 0) + enc_varint(val)
+
+def pb_bytes(fnum, payload):
+    if isinstance(payload, str):
+        payload = payload.encode("utf-8")
+    return enc_varint((fnum << 3) | 2) + enc_varint(len(payload)) + payload
+
+def pb_ts(secs, nanos=0):
+    b = pb_varint(1, secs)
+    if nanos:
+        b += pb_varint(2, nanos)
+    return b
+
+def pb_usage(mid=None, inp=0, out3=0, cache_write=0, cache_read=0, reasoning=0, completion=0, f11=None, f12=None, f7=None):
+    b = b""
+    if mid is not None: b += pb_varint(1, mid)
+    if inp: b += pb_varint(2, inp)
+    if out3: b += pb_varint(3, out3)
+    if cache_write: b += pb_varint(4, cache_write)
+    if cache_read: b += pb_varint(5, cache_read)
+    if f7: b += pb_bytes(7, f7)
+    if reasoning: b += pb_varint(9, reasoning)
+    if completion: b += pb_varint(10, completion)
+    if f11: b += pb_bytes(11, f11)
+    if f12: b += pb_bytes(12, f12)
+    return b
+
+def pb_gen_meta(mid=None, f19=None, f21=None, primary=None, retries=(), ts=None):
+    d = b""
+    if mid is not None: d += pb_varint(3, mid)
+    if primary is not None: d += pb_bytes(4, primary)
+    if ts is not None: d += pb_bytes(9, pb_bytes(4, pb_ts(ts)))
+    for r in retries:
+        d += pb_bytes(17, pb_bytes(2, r))
+    if f19: d += pb_bytes(19, f19)
+    if f21: d += pb_bytes(21, f21)
+    return pb_bytes(1, d)
+
+def pb_step_meta(mid=None, m12=None, m8=None, primary=None, retries=(), ts8=None, ts1=None):
+    d = b""
+    if ts1 is not None: d += pb_bytes(1, pb_ts(ts1))
+    if ts8 is not None: d += pb_bytes(8, pb_ts(ts8))
+    if primary is not None: d += pb_bytes(9, primary)
+    if mid is not None or m12 or m8:
+        m = b""
+        if mid is not None: m += pb_varint(1, mid)
+        if m8: m += pb_bytes(8, m8)
+        if m12: m += pb_bytes(12, m12)
+        d += pb_bytes(24, m)
+    for r in retries:
+        d += pb_bytes(28, pb_bytes(2, r))
+    return d
+
+def make_ag_db(path, gm=(), st=(), traj_ts=None):
+    c = sqlite3.connect(path)
+    c.execute("create table gen_metadata (idx integer primary key, data blob)")
+    c.execute("create table steps (idx integer primary key, metadata blob)")
+    c.execute("create table trajectory_metadata_blob (id text primary key, data blob)")
+    for idx, blob in gm:
+        c.execute("insert into gen_metadata values (?, ?)", (idx, blob))
+    for idx, blob in st:
+        c.execute("insert into steps values (?, ?)", (idx, blob))
+    if traj_ts is not None:
+        c.execute("insert into trajectory_metadata_blob values ('main', ?)", (pb_bytes(2, pb_ts(traj_ts)),))
+    c.commit()
+    c.close()
+
+# Span: 2026-11-10T00:00:00Z (1794268800) to 2026-11-10T06:00:00Z (1794290400)
+T_BEFORE = 1794265200   # 23:00 before run
+T_IN1    = 1794272400   # 01:00 inside run
+T_IN2    = 1794276000   # 02:00 inside run
+T_AFTER  = 1794294000   # 07:00 after run
+
+# 1. Orchestrator (Neon) task DB: both Neon orchestrator (1537) and Hydrogen worker (1669),
+# duplicate entries across steps/gen_metadata/retries sharing f11/f12/f7 (transitive union),
+# reasoning+completion > out3 check (no double-charge!), learned modelId for unnamed steps-only row,
+# and an out-of-span record excluded.
+make_ag_db(
+    os.path.join(convs, "ag-neon-orch.db"),
+    gm=[
+        # Neon gen_metadata row with NO row timestamp (will merge with steps row that has T_IN1!)
+        # and retry carrying identical merge IDs (must count ONCE, taking max of each token field).
+        (0, pb_gen_meta(mid=1537, f19="gemini-pro-orchestrator-neon", f21="Orchestrator (Neon)",
+                        primary=pb_usage(mid=1537, inp=10000, out3=1000, cache_read=50000, reasoning=400, completion=600, f11="req-n1", f7="tr-n1"),
+                        retries=[pb_usage(mid=1537, inp=12000, out3=900, cache_read=50000, reasoning=500, completion=700, f11="req-n1", f7="tr-n1")])),
+        # Hydrogen worker row (1669): f19='gemini-flash-worker-agy', f21='Gemini 4 Hydrogen (Orchestrator)' -> prefers concrete gemini-4-hydrogen-orchestrator
+        (1, pb_gen_meta(mid=1669, f19="gemini-flash-worker-agy", f21="Gemini 4 Hydrogen (Orchestrator)",
+                        primary=pb_usage(mid=1669, inp=20000, out3=2000, cache_read=100000, f11="req-h1", f12="alt-h1"), ts=T_IN1)),
+        # Out-of-span record before run: must be excluded
+        (2, pb_gen_meta(mid=1537, f19="gemini-pro-orchestrator-neon",
+                        primary=pb_usage(mid=1537, inp=999999, out3=99999, f11="req-old"), ts=T_BEFORE)),
+    ],
+    st=[
+        # Same Neon generation in steps (shares f7='tr-n1' and adds f12='alt-n1'), has exact T_IN1 timestamp
+        (0, pb_step_meta(primary=pb_usage(mid=1537, inp=11000, out3=1100, cache_read=55000, reasoning=450, completion=650, f7="tr-n1", f12="alt-n1"), ts8=T_IN1)),
+        # Transitive merge via f12='alt-n1' only (retry in steps)
+        (1, pb_step_meta(retries=[pb_usage(mid=1537, inp=10000, out3=1000, cache_read=60000, reasoning=500, completion=700, f12="alt-n1")], ts8=T_IN1)),
+        # Unnamed steps-only Hydrogen worker turn (only modelId=1669): resolves via learned model map!
+        (2, pb_step_meta(primary=pb_usage(mid=1669, inp=5000, out3=500, f11="req-h2"), ts1=T_IN2)),
+    ],
+)
+
+# 2. Reviewer DB with stacked suffix (gemini-4-hydrogen-tiered-high), fallback model ID (1532 -> gemini-4-neon),
+# AND a record shared with ag-neon-orch.db via f11='req-h1' (must NOT be double-counted under reviewer!).
+make_ag_db(
+    os.path.join(convs, "ag-rev-stacked.db"),
+    gm=[
+        (0, pb_gen_meta(mid=1530, f19="gemini-4-hydrogen-tiered-high", f21="Gemini 4 Hydrogen (High)",
+                        primary=pb_usage(mid=1530, inp=30000, out3=3000, f11="req-st1"), ts=T_IN2)),
+        # Shared merge ID with task A's DB: owned by task A (earlier in scan order), skipped here!
+        (1, pb_gen_meta(mid=1669, f19="gemini-flash-worker-agy",
+                        primary=pb_usage(mid=1669, inp=20000, out3=2000, f11="req-h1"), ts=T_IN1)),
+    ],
+    st=[
+        # Unnamed row with fallback modelId 1532 (no gen_metadata for 1532 in this DB) -> gemini-4-neon
+        (0, pb_step_meta(primary=pb_usage(mid=1532, inp=4000, out3=400, f11="req-fb1"), ts8=T_IN2)),
+    ],
+)
+
+# 3. Antigravity Claude reviewer DB (claude-opus-5-5-high and claude-sonnet-5-5-high + cache_write)
+make_ag_db(
+    os.path.join(convs, "ag-rev-claude.db"),
+    gm=[
+        (0, pb_gen_meta(mid=1402, f19="claude-opus-5-5-high", f21="Claude Opus 5.5 (High)",
+                        primary=pb_usage(mid=1402, inp=10000, out3=1000, cache_write=2000, cache_read=100000, f11="req-c1"), ts=T_IN1)),
+        (1, pb_gen_meta(mid=1405, f21="Claude 5.5 Sonnet (High)",
+                        primary=pb_usage(mid=1405, inp=8000, out3=800, f11="req-c2"), ts=T_IN2)),
+    ],
+)
+
+# 4. Helper DB using trajectory_metadata_blob fallback timestamp + orchestrator-argon & orchestrator-carbon aliases
+make_ag_db(
+    os.path.join(convs, "ag-help-traj.db"),
+    gm=[
+        (0, pb_gen_meta(f19="gemini-pro-orchestrator-argon",
+                        primary=pb_usage(inp=10000, out3=1000, f11="req-arg1"))),
+        (1, pb_gen_meta(f19="gemini-pro-orchestrator",
+                        primary=pb_usage(inp=5000, out3=500, f11="req-carb1"))),
+    ],
+    traj_ts=T_IN2,
+)
+
+# 5. Helper DB with valid records ALL outside [start, end] -> $0.00 ("no tokens used in the run")
+make_ag_db(
+    os.path.join(convs, "ag-outside.db"),
+    gm=[(0, pb_gen_meta(mid=1532, f19="gemini-4-neon-xhigh",
+                        primary=pb_usage(mid=1532, inp=50000, out3=5000, f11="req-after"), ts=T_AFTER))],
+)
+
+# 6. Helper DB with no row/traj timestamp -> uses max(db mtime, wal mtime) fallback!
+mtime_db = os.path.join(convs, "ag-mtime.db")
+make_ag_db(mtime_db, gm=[(0, pb_gen_meta(mid=1525, f19="gemini-4-hydrogen", primary=pb_usage(mid=1525, inp=2000, out3=200)))])
+os.utime(mtime_db, (T_BEFORE, T_BEFORE))   # DB mtime is before run,
+with open(mtime_db + "-wal", "wb") as wf:  # but WAL mtime is inside run!
+    wf.write(b"")
+os.utime(mtime_db + "-wal", (T_IN2, T_IN2))
+
+# 7. Corrupt DB (not SQLite), symlinked DB, and DB with one malformed blob alongside a good one
+with open(os.path.join(convs, "ag-corrupt.db"), "wb") as f:
+    f.write(b"not a sqlite database at all")
+os.symlink(os.path.join(convs, "ag-rev-claude.db"), os.path.join(convs, "ag-symlink.db"))
+make_ag_db(
+    os.path.join(convs, "ag-partial-bad.db"),
+    gm=[
+        (0, b"\x0a\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"),   # truncated/invalid varint blob
+        (1, pb_gen_meta(mid=1532, f19="gemini-4-neon-xhigh", primary=pb_usage(mid=1532, inp=1000, out3=100, f11="req-good1"), ts=T_IN1)),
+    ],
+)
+
+# Also place a DB in alt-convs to test ANTIGRAVITY_CONVERSATIONS_DIR override
+make_ag_db(
+    os.path.join(alt_convs, "ag-alt.db"),
+    gm=[(0, pb_gen_meta(mid=1669, f19="gemini-flash-worker-agy", primary=pb_usage(mid=1669, inp=10000, out3=1000, f11="req-alt1"), ts=T_IN1))],
+)
+
+# T3 statev2.sqlite + price table
+db = sqlite3.connect(os.path.join(t3, "statev2.sqlite"))
+db.execute("create table orchestration_v2_projection_threads (thread_id text, payload_json text)")
+db.execute("create table orchestration_v2_projection_provider_threads (thread_id text, payload_json text)")
+db.execute("create table orchestration_v2_projection_runs (thread_id text, requested_at text, payload_json text)")
+def thread(tid, title, instance, model, parent=None, native=None, driver="antigravity"):
+    db.execute("insert into orchestration_v2_projection_threads values (?, ?)", (tid, json.dumps({
+        "title": title, "providerInstanceId": instance, "modelSelection": {"model": model},
+        "lineage": {"parentThreadId": parent}, "createdAt": "2026-11-10T00:30:00Z"})))
+    if native is not None:
+        db.execute("insert into orchestration_v2_projection_provider_threads values (?, ?)", (tid, json.dumps({
+            "nativeThreadRef": {"driver": driver, "nativeId": native}})))
+
+thread("ag:task-a", "A", "antigravity", "gemini-pro-orchestrator-neon", native="ag-neon-orch")
+thread("ag:rev-stacked", "A review (Stacked)", "antigravity", "gemini-4-hydrogen-tiered-high", parent="ag:task-a", native="ag-rev-stacked")
+thread("ag:rev-claude", "A review (Claude)", "antigravity", "claude-opus-5-5-high", parent="ag:task-a", native="ag-rev-claude")
+thread("ag:help-traj", "A helper traj", "antigravity", "gemini-pro-orchestrator-argon", parent="ag:task-a", native="ag-help-traj")
+thread("ag:help-outside", "A helper outside", "antigravity", "gemini-4-neon-xhigh", parent="ag:task-a", native="ag-outside")
+thread("ag:help-mtime", "A helper mtime", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-mtime")
+thread("ag:help-missing", "A helper missing", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-does-not-exist")
+thread("ag:help-corrupt", "A helper corrupt", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-corrupt")
+thread("ag:help-symlink", "A helper symlink", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="ag-symlink")
+thread("ag:help-traversal", "A helper traversal", "antigravity", "gemini-4-hydrogen", parent="ag:task-a", native="../ag-neon-orch")
+thread("ag:help-partial", "A helper partial", "antigravity", "gemini-4-neon-xhigh", parent="ag:task-a", native="ag-partial-bad")
+thread("cp:help-copilot", "A helper copilot", "copilot", "gpt-6.1-terra", parent="ag:task-a")
+db.commit()
+db.close()
+
+prices = {"fetchedAtMs": 1794345905354, "document": {
+    "gemini/gemini-4-neon": {"input_cost_per_token": 3e-06, "output_cost_per_token": 1.5e-05, "cache_read_input_token_cost": 1.5e-07},
+    "gemini/gemini-4-hydrogen": {"input_cost_per_token": 1.5e-06, "output_cost_per_token": 7.5e-06, "cache_read_input_token_cost": 7.5e-08},
+    "gemini/gemini-4-argon": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07},
+    "gemini/gemini-4-carbon": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07},
+    "claude-opus-5-5": {"input_cost_per_token": 4e-06, "output_cost_per_token": 2e-05, "cache_read_input_token_cost": 2e-07,
+                        "cache_creation_input_token_cost": 5e-06},
+    "claude-sonnet-5-5": {"input_cost_per_token": 2e-06, "output_cost_per_token": 1e-05, "cache_read_input_token_cost": 1e-07,
+                          "cache_creation_input_token_cost": 2.5e-06},
+}}
+json.dump(prices, open(os.path.join(t3, "usage-model-rates.json"), "w"))
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z",
+           "tasks": {"A": {"thread": "ag:task-a", "status": "merged"}}},
+          open(os.path.join(root, "run/watch.json"), "w"))
+EOF
+T3_USERDATA="$ag_costs/t3" "$scripts/run-costs" "$ag_costs/run" --json "$ag_costs/costs.json" > "$ag_costs/costs.md"
+python3 -I - "$ag_costs" <<'EOF'
+import json, os, sys
+root = sys.argv[1]
+d = json.load(open(os.path.join(root, "costs.json")))
+by_tm = {(l["thread"], l["model"]): l for l in d["lines"]}
+by_t = {l["thread"]: [x for x in d["lines"] if x["thread"] == l["thread"]] for l in d["lines"]}
+
+# Task A: Neon orchestrator (1537) + Hydrogen worker (1669), deduplicated across gm/steps/retries
+neon = by_tm[("ag:task-a", "gemini-pro-orchestrator-neon")]
+assert neon["tokens"] == {"input": 12000, "cache_read": 60000, "cache_write": 0, "cache_write_1h": 0, "output": 1200}, neon
+assert abs(neon["usd"] - round(12000 * 3e-06 + 60000 * 1.5e-07 + 1200 * 1.5e-05, 4)) < 1e-6, neon
+assert "gemini/gemini-4-neon" in neon["basis"], neon
+
+hydro = by_tm[("ag:task-a", "gemini-4-hydrogen-orchestrator")]
+assert hydro["tokens"] == {"input": 25000, "cache_read": 100000, "cache_write": 0, "cache_write_1h": 0, "output": 2500}, hydro
+assert abs(hydro["usd"] - round(25000 * 1.5e-06 + 100000 * 7.5e-08 + 2500 * 7.5e-06, 4)) < 1e-6, hydro
+assert "gemini/gemini-4-hydrogen" in hydro["basis"], hydro
+
+# Stacked suffix reviewer: tiered-high -> gemini-4-hydrogen, fallback 1532 -> gemini-4-neon,
+# and shared req-h1 NOT double-counted!
+rev_h = by_tm[("ag:rev-stacked", "gemini-4-hydrogen-tiered-high")]
+assert rev_h["tokens"]["input"] == 30000 and rev_h["tokens"]["output"] == 3000 and "gemini/gemini-4-hydrogen" in rev_h["basis"], rev_h
+rev_n = by_tm[("ag:rev-stacked", "gemini-4-neon")]
+assert rev_n["tokens"]["input"] == 4000 and rev_n["tokens"]["output"] == 400 and "gemini/gemini-4-neon" in rev_n["basis"], rev_n
+assert len(by_t["ag:rev-stacked"]) == 2, by_t["ag:rev-stacked"]
+
+# Antigravity Claude reviewer: opus-5-5-high and normalized "Claude 5.5 Sonnet (High)" -> claude-sonnet-5-5-high
+c_opus = by_tm[("ag:rev-claude", "claude-opus-5-5-high")]
+assert c_opus["tokens"] == {"input": 10000, "cache_read": 100000, "cache_write": 2000, "cache_write_1h": 0, "output": 1000}, c_opus
+assert abs(c_opus["usd"] - round(10000 * 4e-06 + 100000 * 2e-07 + 2000 * 5e-06 + 1000 * 2e-05, 4)) < 1e-6, c_opus
+c_son = by_tm[("ag:rev-claude", "claude-sonnet-5-5-high")]
+assert c_son["tokens"]["input"] == 8000 and c_son["tokens"]["output"] == 800 and "claude-sonnet-5-5" in c_son["basis"], c_son
+
+# Trajectory timestamp fallback + argon/carbon orchestrator aliases
+h_arg = by_tm[("ag:help-traj", "gemini-pro-orchestrator-argon")]
+assert h_arg["tokens"]["input"] == 10000 and "gemini/gemini-4-argon" in h_arg["basis"], h_arg
+h_carb = by_tm[("ag:help-traj", "gemini-pro-orchestrator")]
+assert h_carb["tokens"]["input"] == 5000 and "gemini/gemini-4-carbon" in h_carb["basis"], h_carb
+
+# Out-of-span DB -> $0.00 ("no tokens used in the run"), NOT missing!
+h_out = by_t["ag:help-outside"][0]
+assert h_out["usd"] == 0.0 and h_out["basis"] == "no tokens used in the run" and not h_out.get("missing"), h_out
+
+# WAL mtime fallback -> counted!
+h_mt = by_tm[("ag:help-mtime", "gemini-4-hydrogen")]
+assert h_mt["tokens"]["input"] == 2000 and h_mt["usd"] > 0, h_mt
+
+# Missing, corrupt, symlinked, traversal -> uncounted with missing reason, no crash
+for tid in ("ag:help-missing", "ag:help-corrupt", "ag:help-symlink", "ag:help-traversal"):
+    row = by_t[tid][0]
+    assert row["usd"] is None and row.get("missing"), (tid, row)
+assert "not found" in by_t["ag:help-missing"][0]["missing"]
+for tid in ("ag:help-corrupt", "ag:help-symlink", "ag:help-traversal"):
+    assert "couldn't be read" in by_t[tid][0]["missing"], (tid, by_t[tid][0])
+
+# Malformed blob alongside valid record -> valid record counted, flagged incomplete, malformed >= 1
+h_part = by_tm[("ag:help-partial", "gemini-4-neon-xhigh")]
+assert h_part["tokens"]["input"] == 1000 and "gemini/gemini-4-neon" in h_part["basis"], h_part
+assert "some of Antigravity's records" in (h_part.get("missing") or ""), h_part
+assert d["totals"]["malformed"] >= 1, d["totals"]
+
+# Copilot still uncounted with its original reason
+cp = by_t["cp:help-copilot"][0]
+assert cp["usd"] is None and cp["missing"] == "its harness keeps no token counts that can be read", cp
+
+# run-charts integration with Antigravity lines in costs.json
+facts = {"title": "AG Costs", "orchestrator": "Antigravity · Orchestrator (Neon) (High)",
+         "integration": {"branch": "main", "head": "abc"},
+         "run": {"start": "02:00", "end": "08:00", "level": "high", "worked_minutes": 10, "wakes": 3},
+         "costs": {"file": "costs.json"},
+         "tasks": [{"id": "A", "name": "A", "level": "high", "agent": "Antigravity · Orchestrator (Neon)",
+                    "status": "merged", "needs": [], "first_wave": True, "launched": "02:10", "ended": "05:00", "worked_minutes": 100}]}
+json.dump(facts, open(os.path.join(root, "facts.json"), "w"))
+EOF
+"$scripts/run-charts" "$ag_costs/facts.json" "$ag_costs/charts" >/dev/null 2>&1
+grep -q '^Cost at API prices (estimate): \$' "$ag_costs/charts/summary.txt"
+python3 -I - "$ag_costs/charts/run-map.html" <<'EOF'
+import json, re, sys
+data = json.loads(re.search(r"const DATA = (\{.*?\});\n", open(sys.argv[1]).read()).group(1))
+assert data["cost"]["total"] > 0 and data["tasks"][0]["cost"]["total"] > 0, data.get("cost")
+helpers = data["tasks"][0]["helpers"]
+# Two Antigravity reviewers (ag:rev-stacked and ag:rev-claude), each counted once despite multi-model lines
+rev_count = sum(h["count"] for h in helpers if h["title"].startswith("Reviewer"))
+assert rev_count == 2, helpers
+EOF
+
+# ANTIGRAVITY_CONVERSATIONS_DIR override: finds ag-alt.db without touching providers/antigravity
+python3 -I - "$ag_costs/t3/statev2.sqlite" "$ag_costs/run/watch-alt.json" <<'EOF'
+import json, sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("insert into orchestration_v2_projection_threads values (?, ?)", ("ag:task-alt", json.dumps({
+    "title": "Alt", "providerInstanceId": "antigravity", "modelSelection": {"model": "gemini-flash-worker-agy"},
+    "lineage": {}, "createdAt": "2026-11-10T00:30:00Z"})))
+db.execute("insert into orchestration_v2_projection_provider_threads values (?, ?)", ("ag:task-alt", json.dumps({
+    "nativeThreadRef": {"driver": "antigravity", "nativeId": "ag-alt"}})))
+db.commit()
+db.close()
+json.dump({"started": "2026-11-10T00:00:00Z", "finished": "2026-11-10T06:00:00Z",
+           "tasks": {"Z": {"thread": "ag:task-alt", "status": "merged"}}}, open(sys.argv[2], "w"))
+EOF
+mkdir -p "$ag_costs/run-alt" && cp "$ag_costs/run/watch-alt.json" "$ag_costs/run-alt/watch.json"
+T3_USERDATA="$ag_costs/t3" ANTIGRAVITY_CONVERSATIONS_DIR="$ag_costs/alt-convs" "$scripts/run-costs" "$ag_costs/run-alt" --json "$ag_costs/costs-alt.json" > /dev/null
+python3 -I - "$ag_costs/costs-alt.json" <<'EOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert len(d["lines"]) == 1 and d["lines"][0]["model"] == "gemini-flash-worker-agy", d["lines"]
+assert "gemini/gemini-4-hydrogen" in d["lines"][0]["basis"] and d["lines"][0]["usd"] > 0, d["lines"]
+EOF
+
 # A run on several computers, with made-up computers: studio-mac (the orchestrator's, with GPU readings),
 # den-mac (an Intel Mac: no GPU readings, its clock an hour behind) and attic-mac (whose samples and costs never
 # arrive). share-usage sends den-mac's samples and costs over the run's briefs branch of a made-up state

@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 5.16.0 (2026-11-22)
+
+- **`scripts/run-costs` reads Antigravity conversation databases and prices Antigravity models.** For Antigravity threads, it finds `<nativeId>.db` under `T3_USERDATA/providers/antigravity/*/antigravity-acp/conversations/` (or `ANTIGRAVITY_CONVERSATIONS_DIR`), opens each database read-only without following symlinks, decodes protobuf usage rows from `gen_metadata` and `steps` (with `trajectory_metadata_blob` and file/WAL mtime fallbacks), deduplicates overlapping records across tables and threads via merge IDs, filters to the run's span, and resolves orchestrator/worker aliases (`gemini-pro-orchestrator-neon`, `gemini-4-hydrogen-orchestrator`, `gemini-flash-worker-agy`, `gemini-pro-orchestrator-argon`, `gemini-pro-orchestrator`) and stacked Gemini/Claude effort/routing suffixes in `price_of`. `references/final-report.md` now notes that Antigravity tokens are read from its local conversation databases and only Copilot (or an Antigravity thread whose database is missing or unreadable) remains uncounted.
+
 ## 5.15.0 (2026-11-22)
 
 - **The run map shows each task's reviewers and helpers from the costs file** (accepted lesson, owner 2026-11-22). When the facts give a task no `helpers`, run-charts takes them from the costs file's lines for that task (role reviewer or helper), one entry per harness, model and role, as "review ×n" or "research ×n", counted in threads; when the facts list fewer than the file holds, it keeps the facts' list and prints a warning. The final report's "Helpers and waits" says the costs file is their source in T3. In one run the facts left every task's helpers out, so the map showed a single sub-agent while the costs file held 86 reviewer threads over ten tasks, and the owner read it as no review having run.
