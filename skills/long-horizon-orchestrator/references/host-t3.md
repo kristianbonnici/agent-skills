@@ -126,12 +126,11 @@ A crashed or provider-failed run leaves the thread with status `failed`. A resta
 
 1. **Nudge it once** with `t3_thread_send` in mode `"auto"`, which starts an idle thread. Say what happened, and ask it to continue the brief from where it stopped.
 2. **If the nudge fails too and the task made no progress,** relaunch it once with `t3_thread_launch` on the same provider and model, using the same brief and a fresh branch name such as `<branch>-r2`. First, on the old thread:
-   - **wait for its reviewers and helpers to finish.** List those that haven't: `t3_thread_list({includeSubagents: true, allProjects: true, settled: false, limit: 100})` (its `environmentId` when it is elsewhere), every page, each thread whose `parentThreadId` is the old thread or one of its subagents, walked down from the old thread, whose status is `preparing`, `queued`, `starting`, `running` or `waiting`. You can't stop another thread's delegate (`task_cancel` takes only the `taskId` the task got when it launched it, and `t3_thread_interrupt` is for top-level threads), and one that finishes wakes the old thread, so while any hasn't finished, nothing replaces the old thread: set a `<run> <task> drain wake` (`schedule_task`, every 5 minutes, bound to your thread, `clientRequestId` `<run>-<task>-drain-wake-<n>`, its ID in the ledger) whose prompt says to list them again as here and read the old thread; go on with the step below once none is unfinished and the old thread is idle, and delete the wake. A turn that a completion starts on the old thread means the task has resumed: delete the wake and treat it as running. One still unfinished 30 minutes after the nudge failed is stuck: delete the wake, mark the task `blocked` with that thread named, and leave it for the owner;
    - delete its review-gate and helper wakes if listed (titled `<task> review-gate wake` or `<task> helper wake`, bound to the old thread), and empty `<task>/helper-wake.txt`;
    - remove anything still queued: `t3_queue` with `action: "list"`, then `action: "cancel"` for each (older T3 builds: `t3_queue_list`, `t3_queue_cancel`).
 
    Then launch it, and on the old thread remove its worktree and branch if they hold nothing, and settle it.
-3. **If the nudge fails and the task did make progress,** mark it failed instead, once its helpers have finished as in step 2, and delete its wakes and cancel its queue as there. Keep its worktree and name it in the report; settle its thread at the finish.
+3. **If the nudge fails and the task did make progress,** mark it failed instead, and delete its wakes as in step 2. Keep its worktree and name it in the report; settle its thread at the finish.
 
 ## Checking a task
 
