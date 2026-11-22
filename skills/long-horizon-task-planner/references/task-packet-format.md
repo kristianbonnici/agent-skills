@@ -65,7 +65,7 @@ Name the execution target, then provide launch-time metadata for the user to sel
 - Model, using the selectable label and model ID or alias when known
 - Reasoning, effort, or thought level, if exposed
 - Execution/delegation choice using the host's supported terminology
-- Persistent execution: native `/goal` for Codex and Claude Code; for Antigravity, live-verified `/goal` on its own chat UI or a plain task prompt with an explicit persistence disclosure (handled by an outer host if one is used, such as `long-horizon-orchestrator` in T3) on ACP/T3, headless `agy -p`, or unverified surfaces; verified equivalent or an explicit persistence limitation for any other host
+- Persistent execution: native `/goal` for Codex and Claude Code; for Antigravity, `/goal` only when the live session lists it with verified syntax, or a plain task prompt with an explicit persistence disclosure (unverified, or handled by an outer host if one is used, such as `long-horizon-orchestrator` in T3); verified equivalent or an explicit persistence limitation for any other host
 - Permission or approval mode using the host's actual labels
 - Useful installed skills or tools
 - Parallel compatibility and likely merge-conflict surfaces
@@ -76,7 +76,7 @@ Keep this entire configuration outside the ready-to-paste prompt. The user may o
 
 ### Ready-to-paste prompt
 
-Write one self-contained prompt in a fenced text block. For Codex and Claude Code, begin with `/goal` and a measurable completion condition; for Antigravity, use `/goal` only when verified on its own chat UI, and otherwise omit `/goal` and write a plain task prompt with an explicit stopping condition and validation commands; use a verified equivalent or a plain task prompt for any other host. Preserve the execution contract below while adapting its length and structure to the host.
+Write one self-contained prompt in a fenced text block. For Codex and Claude Code, begin with `/goal` and a measurable completion condition; for Antigravity, use `/goal` only when the live session lists it with verified syntax, and otherwise omit `/goal` and write a plain task prompt with an explicit stopping condition and validation commands; use a verified equivalent or a plain task prompt for any other host. Preserve the execution contract below while adapting its length and structure to the host.
 
 For Claude Code, the entire condition after `/goal` must be at most 4,000 characters, including subsequent lines. Use the compact form below instead of copying every heading from the expanded template. Include project-specific scope, readiness boundaries, required work, validation, authorization, stop conditions, and handoff evidence; keep detailed rationale and calibration in the surrounding task packet. If essential instructions cannot fit, provide a separate instruction prompt for the user to send first, followed by a short `/goal` condition that refers to that brief. Label the two messages and their order explicitly; do not write a planning file into the project.
 
