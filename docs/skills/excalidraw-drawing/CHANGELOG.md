@@ -1,5 +1,9 @@
 # excalidraw-drawing changelog
 
+## 3.6.0 (2026-11-22)
+
+- New `image` element (`src` path to a local `.svg`, `.png`, `.jpg` or `.webp` file relative to the spec, or inline `svg` markup, with optional `color`): embeds logos and icons directly in the scene's `files` (deduplicated by content) so both the PNG and the editable `.excalidraw` file carry them self-contained. For SVGs, `currentColor` resolves to `color` or the active theme's ink (adapting to `"theme": "dark"`), and relative root dimensions such as `1em` are normalized from `viewBox` so offline PNG rendering scales cleanly. Checked for panel bounds and overlaps like shapes; missing files or unsupported types warn and skip. `drawing.mjs render` previews embedded images without falsely noting them as undrawn. From building a model-similarity heatmap for a social post where lab icons next to model names made the chart much easier to scan.
+
 ## 3.5.1 (2026-11-21)
 
 - The spec reference says that a long straight line at the default roughness can draw as two strokes that drift apart, and to give it `roughness` 0.5 to 0.6. From a chart whose level line across the plot looked doubled to the user, while its other lines read as one.

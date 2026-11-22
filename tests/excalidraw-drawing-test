@@ -904,4 +904,95 @@ echo '{"title": "x", "theme": "blue"}' >"$work/badtheme.json"
 set +e; node "$build" "$work/badtheme.json" >"$work/badtheme.out" 2>&1; status=$?; set -e
 [ "$status" -eq 1 ] && grep -q "theme must be one of light, dark" "$work/badtheme.out" || { cat "$work/badtheme.out"; fail "an unknown theme should stop the build, got $status"; }
 
+# 26. Image elements: local SVG (with 1em sizing and currentColor) and inline SVG embed into
+# scene.files deduplicated, render into PNG and drawing.mjs previews, adapt currentColor on dark,
+# and warn on missing files or overlaps.
+mkdir -p "$work/img/icons"
+cat >"$work/img/icons/mark.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="2" width="20" height="20"/></svg>
+SVG
+cat >"$work/img/page.json" <<'JSON'
+{ "title": "Icons", "format": "fit", "frame": false, "panels": [ { "id": "i", "span": 2, "elements": [
+  { "type": "image", "id": "a", "x": 0, "y": 0, "width": 32, "height": 32, "src": "icons/mark.svg", "color": "#e03131" },
+  { "type": "image", "id": "b", "x": 48, "y": 0, "width": 32, "height": 32, "src": "icons/mark.svg", "color": "#e03131" },
+  { "type": "image", "id": "c", "x": 96, "y": 0, "width": 32, "height": 32, "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>" }
+] } ] }
+JSON
+node "$build" "$work/img/page.json" >"$work/img.out" || { cat "$work/img.out"; fail "an image page should build cleanly"; }
+node "$skill/scripts/drawing.mjs" render "$work/img/page.excalidraw" "$work/img/preview.png" >"$work/img-prev.out" || fail "an image drawing should preview"
+! grep -q "aren't drawn" "$work/img-prev.out" || { cat "$work/img-prev.out"; fail "embedded images should not be reported as undrawn"; }
+python3 -I - "$work/img" <<'PY2' || fail "image embedding or rendering failed"
+import base64, json, struct, sys, zlib
+d = sys.argv[1]
+scene = json.load(open(f"{d}/page.excalidraw"))
+imgs = [e for e in scene["elements"] if e["type"] == "image"]
+assert len(imgs) == 3, f"expected 3 image elements, got {len(imgs)}"
+assert imgs[0]["fileId"] == imgs[1]["fileId"], "identical icons should share one fileId"
+assert len(scene["files"]) == 2, f"expected 2 deduplicated files, got {len(scene['files'])}"
+svg_a = base64.b64decode(scene["files"][imgs[0]["fileId"]]["dataURL"].split(",", 1)[1]).decode()
+assert "#e03131" in svg_a and 'width="24"' in svg_a and 'height="24"' in svg_a, svg_a
+svg_c = base64.b64decode(scene["files"][imgs[2]["fileId"]]["dataURL"].split(",", 1)[1]).decode()
+assert "#1e1e1e" in svg_c and 'width="24"' in svg_c, svg_c
+# Verify the red icon actually painted red pixels into the PNG (not dropped).
+def has_red(path):
+    data = open(path, "rb").read()
+    pos, idat, w, h = 8, b"", 0, 0
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        chunk = data[pos + 8:pos + 8 + n]
+        if kind == b"IHDR": w, h = struct.unpack(">II", chunk[:8])
+        elif kind == b"IDAT": idat += chunk
+        pos += 12 + n
+    raw = zlib.decompress(idat)
+    stride = w * 4
+    prev = bytearray(stride)
+    for y in range(h):
+        ft = raw[y * (stride + 1)]
+        row = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        if ft == 1:
+            for i in range(4, stride): row[i] = (row[i] + row[i - 4]) & 255
+        elif ft == 2:
+            for i in range(stride): row[i] = (row[i] + prev[i]) & 255
+        elif ft == 3:
+            for i in range(stride): row[i] = (row[i] + ((row[i - 4] if i >= 4 else 0) + prev[i]) // 2) & 255
+        elif ft == 4:
+            for i in range(stride):
+                a = row[i - 4] if i >= 4 else 0; b = prev[i]; c = prev[i - 4] if i >= 4 else 0
+                p = a + b - c; pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                row[i] = (row[i] + (a if pa <= pb and pa <= pc else (b if pb <= pc else c))) & 255
+        for x in range(0, stride, 4):
+            if row[x] > 200 and row[x + 1] < 80 and row[x + 2] < 80:
+                return True
+        prev = row
+    return False
+assert has_red(f"{d}/page.png"), "red SVG icon did not paint into page.png"
+assert has_red(f"{d}/preview.png"), "red SVG icon did not paint into preview.png"
+PY2
+# Dark theme adapts currentColor to dark ink, and bad image specs warn cleanly.
+cat >"$work/img/dark.json" <<'JSON'
+{ "title": "", "theme": "dark", "format": "fit", "frame": false, "panels": [ { "id": "d", "span": 2, "elements": [
+  { "type": "image", "id": "a", "x": 0, "y": 0, "width": 24, "height": 24, "src": "icons/mark.svg" }
+] } ] }
+JSON
+node "$build" "$work/img/dark.json" >"$work/img-dark.out" || { cat "$work/img-dark.out"; fail "dark image page should build"; }
+python3 -I - "$work/img/dark.excalidraw" <<'PY2' || fail "dark image currentColor did not adapt"
+import base64, json, sys
+scene = json.load(open(sys.argv[1]))
+svg = base64.b64decode(next(iter(scene["files"].values()))["dataURL"].split(",", 1)[1]).decode()
+assert "#d3d3d3" in svg, f"expected dark ink #d3d3d3 in SVG, got {svg}"
+PY2
+cat >"$work/img/bad.json" <<'JSON'
+{ "title": "", "format": "fit", "frame": false, "panels": [ { "id": "b", "span": 2, "elements": [
+  { "type": "image", "id": "miss", "x": 0, "y": 0, "width": 24, "height": 24, "src": "icons/missing.svg" },
+  { "type": "image", "id": "empty", "x": 40, "y": 0, "width": 24, "height": 24 },
+  { "type": "image", "id": "i1", "x": 80, "y": 0, "width": 24, "height": 24, "src": "icons/mark.svg" },
+  { "type": "text", "id": "t1", "x": 92, "y": 4, "text": "overlap" }
+] } ] }
+JSON
+set +e; node "$build" "$work/img/bad.json" --lint-only >"$work/img-bad.out" 2>&1; status=$?; set -e
+[ "$status" -eq 3 ] || { cat "$work/img-bad.out"; fail "bad image spec should exit 3, got $status"; }
+for expect in 'could not read icons/missing.svg' 'needs either "src" or "svg"' '"i1" and "t1" overlap'; do
+  grep -q -- "$expect" "$work/img-bad.out" || { cat "$work/img-bad.out"; fail "missing image warning: $expect"; }
+done
+
 echo "excalidraw-drawing: ok"

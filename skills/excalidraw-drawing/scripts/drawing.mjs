@@ -318,7 +318,7 @@ export async function renderDrawing(file, out, { scale = 1 } = {}) {
   const fontWarnings = missingFonts(elements).map(f => `${FONTS[f].name} isn't on this computer, so text meant ` +
     `for it is drawn in Excalifont (${FONTS[f].files.join(', ')})`);
   return { width: png.width, height: png.height, warnings: [...(png.warnings ?? []), ...fontWarnings],
-    images: elements.filter(e => e.type === 'image').length };
+    images: elements.filter(e => e.type === 'image' && !scene.files?.[e.fileId]?.dataURL).length };
 }
 
 async function main() {

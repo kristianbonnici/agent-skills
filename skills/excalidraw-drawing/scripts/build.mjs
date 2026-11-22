@@ -18,6 +18,7 @@
 // (Excalidraw's own exporter under jsdom), so the PNG matches what the
 // .excalidraw file shows when opened.
 
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -152,7 +153,9 @@ async function prepare(skeleton) {
 // ---------- element expansion (panel-local coordinates) ----------
 
 // A color name gives a fill and a stroke; a hex color is the stroke.
-const strokeOf = color => !color ? undefined : T.colors[color]?.[1] ?? (color.startsWith('#') ? color : undefined);
+const strokeOf = color => !color ? undefined
+  : color === 'ink' ? T.ink : color === 'muted' ? T.muted
+  : T.colors[color]?.[1] ?? (color.startsWith('#') ? color : undefined);
 function colorPair(el) {
   const c = el.color && T.colors[el.color];
   return {
@@ -161,12 +164,39 @@ function colorPair(el) {
   };
 }
 
+const IMAGE_MIMES = { '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+
+// Replace relative root SVG sizing (such as width="1em") with the viewBox's
+// numbers so offline SVG-to-PNG rendering scales crisp icons to their box, and
+// resolve currentColor against the element's color or the active theme's ink.
+function normalizeSvg(raw, tint) {
+  let s = String(raw).trim();
+  if (!/<svg[\s>]/i.test(s)) return null;
+  if (tint) s = s.replace(/currentColor/gi, tint);
+  s = s.replace(/<svg\b([^>]*)>/i, (whole, attrs) => {
+    const vb = attrs.match(/\bviewBox\s*=\s*["']\s*[-.\d]+[\s,]+[-.\d]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*["']/i);
+    if (!vb) return whole;
+    const [, vw, vh] = vb;
+    let a = attrs;
+    const fixDim = (name, val) => {
+      const re = new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, 'i');
+      const m = a.match(re);
+      if (!m) a += ` ${name}="${val}"`;
+      else if (!/^\d+(\.\d+)?(px)?$/i.test(m[1].trim())) a = a.replace(re, `${name}="${val}"`);
+    };
+    fixDim('width', vw);
+    fixDim('height', vh);
+    return `<svg${a}>`;
+  });
+  return s;
+}
+
 const SHAPES = new Set(['rectangle', 'ellipse', 'diamond']);
 
 // Expand one spec element into Excalidraw skeleton elements. `boxes` collects
 // every id's bounding box for arrow routing.
 let autoId = 0;
-function expand(el, pid, boxes, warnings) {
+function expand(el, pid, boxes, warnings, ctx = {}) {
   const id = `${pid}.${el.id ?? `${el.type}${++autoId}`}`;
   const g = [id + '.g'];
   const out = [];
@@ -278,6 +308,55 @@ function expand(el, pid, boxes, warnings) {
       const c = draw(el, id, g, common, pid, warnings);
       out.push(...c.out);
       boxes[id] = { ...c.box, bind: false };
+      break;
+    }
+    case 'image': {
+      const hasSrc = typeof el.src === 'string' && el.src.trim().length > 0;
+      const hasSvg = typeof el.svg === 'string' && el.svg.trim().length > 0;
+      if (hasSrc === hasSvg) {
+        warnings.push(`${pid}: image "${el.id ?? 'no id'}" needs either "src" or "svg" (not both): skipped`);
+        break;
+      }
+      let mimeType, buf;
+      const tint = strokeOf(el.color) ?? strokeOf(el.strokeColor) ?? T.ink;
+      if (hasSvg) {
+        const norm = normalizeSvg(el.svg, tint);
+        if (!norm) { warnings.push(`${pid}: image "${el.id ?? 'no id'}" has invalid inline svg: skipped`); break; }
+        mimeType = 'image/svg+xml';
+        buf = Buffer.from(norm, 'utf8');
+      } else {
+        const filePath = path.isAbsolute(el.src) ? el.src : path.resolve(ctx.baseDir ?? process.cwd(), el.src);
+        const ext = path.extname(filePath).toLowerCase();
+        mimeType = IMAGE_MIMES[ext];
+        if (!mimeType) {
+          warnings.push(`${pid}: image "${el.id ?? 'no id'}" has unsupported type "${ext || 'none'}" (use svg, png, jpg or webp): skipped`);
+          break;
+        }
+        try {
+          const raw = fs.readFileSync(filePath);
+          if (mimeType === 'image/svg+xml') {
+            const norm = normalizeSvg(raw.toString('utf8'), tint);
+            if (!norm) { warnings.push(`${pid}: image "${el.id ?? 'no id'}" (${el.src}) is not valid svg: skipped`); break; }
+            buf = Buffer.from(norm, 'utf8');
+          } else {
+            buf = raw;
+          }
+        } catch (err) {
+          warnings.push(`${pid}: image "${el.id ?? 'no id'}" could not read ${el.src}: ${err.message}`);
+          break;
+        }
+      }
+      const w = el.width ?? el.height ?? 32;
+      const h = el.height ?? el.width ?? 32;
+      const fileId = 'img_' + crypto.createHash('sha256').update(mimeType).update('\0').update(buf).digest('hex').slice(0, 16);
+      if (ctx.files && !ctx.files[fileId]) {
+        ctx.files[fileId] = { mimeType, id: fileId, dataURL: `data:${mimeType};base64,${buf.toString('base64')}`, created: 1700000000000 };
+      }
+      out.push({
+        id, type: 'image', x: el.x ?? 0, y: el.y ?? 0, width: w, height: h,
+        fileId, status: 'saved', scale: [1, 1], opacity: el.opacity ?? 100, roundness: null
+      });
+      boxes[id] = { x: el.x ?? 0, y: el.y ?? 0, w, h, bind: true, shape: 'image' };
       break;
     }
     default:
@@ -718,6 +797,8 @@ async function buildPage(spec, opts = {}) {
   const innerW = pageW - 2 * P.margin;
   const colW = (innerW - P.gap) / 2;
   const elements = [];
+  const files = {};
+  const ctx = { files, baseDir: opts.baseDir ?? process.cwd() };
   // The click each element appears on, by element id (absent = the first).
   // Labels bound to a shape take the shape's step (stepOf below).
   const stepById = new Map();
@@ -768,7 +849,7 @@ async function buildPage(spec, opts = {}) {
     const boxes = {};
     const linked = [];
     const raw = (p.elements ?? []).flatMap(el => {
-      const out = expand(el, pid, boxes, warnings);
+      const out = expand(el, pid, boxes, warnings, ctx);
       if (el.step !== undefined) {
         if (Number.isInteger(el.step) && el.step >= 1 && el.step <= MAX_STEPS) {
           for (const e of out) stepById.set(e.id, el.step);
@@ -878,7 +959,7 @@ async function buildPage(spec, opts = {}) {
   }
   if (steps > 1 && footerEl) stepById.set(footerEl.id, steps);
   const stepOf = el => stepById.get(el.id) ?? stepById.get(el.containerId) ?? 1;
-  return { elements: finalElements, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs, steps, stepOf,
+  return { elements: finalElements, files, warnings, report, size: [outW, Math.round(pageH)], missingGlyphs, steps, stepOf,
     background: T.background };
 }
 
@@ -934,7 +1015,7 @@ function lintPanel(p, warnings) {
   }
   // 3. Partial overlaps between solid things (one fully inside another is fine).
   // Text inside a box counts too: it is what collides with notes drawn on the box.
-  const solid = live.filter(e => SHAPES.has(e.type) || e.type === 'text');
+  const solid = live.filter(e => SHAPES.has(e.type) || e.type === 'text' || e.type === 'image');
   for (let i = 0; i < solid.length; i++) {
     for (let j = i + 1; j < solid.length; j++) {
       const a = solid[i], b = solid[j];
@@ -1042,9 +1123,9 @@ async function main() {
   catch (e) { console.error(`Could not read ${input}: ${e.message}`); process.exit(1); }
 
   let built;
-  try { built = await build(spec); }
+  try { built = await build(spec, { baseDir: path.dirname(path.resolve(input)) }); }
   catch (e) { console.error(`Could not build ${input}: ${e.message}`); process.exit(1); }
-  const { elements, warnings, report, size, missingGlyphs, steps, stepOf, background } = built;
+  const { elements, files, warnings, report, size, missingGlyphs, steps, stepOf, background } = built;
   // Inside an Obsidian vault the outputs are the Excalidraw plugin's own: a
   // plain .excalidraw opens there only in compatibility mode, and the plugin's
   // auto-export writes <name>.excalidraw.png, which would leave a second PNG
@@ -1087,14 +1168,14 @@ async function main() {
     const frames = [], buildId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
     for (let k = 1; k <= want; k++) {
       const frame = elements.map(e => (stepOf(e) > k ? { ...e, opacity: 0 } : e));
-      const shot = await renderPng(frame, {}, { scale, padding: 0, systemFonts: missingGlyphs, background });
+      const shot = await renderPng(frame, files, { scale, padding: 0, systemFonts: missingGlyphs, background });
       frames.push([stepFile(k), markStep(Buffer.from(shot.data, 'base64'), k, steps, buildId, base)]);
     }
     const scene = { type: 'excalidraw', version: 2, source: SOURCE,
-      elements, appState: { viewBackgroundColor: background, gridSize: null }, files: {} };
+      elements, appState: { viewBackgroundColor: background, gridSize: null }, files };
     // Render first: if it fails, neither file is touched, so the PNG and the
     // .excalidraw on disk never come from different builds.
-    const png = await renderPng(elements, {}, { scale, padding: 0, background,
+    const png = await renderPng(elements, files, { scale, padding: 0, background,
       // Every glyph was checked against Excalifont above; system fonts are
       // only needed for the ones it lacks.
       systemFonts: missingGlyphs });

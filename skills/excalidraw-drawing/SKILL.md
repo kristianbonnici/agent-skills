@@ -2,7 +2,7 @@
 name: excalidraw-drawing
 description: Draw hand-drawn pictures in Excalidraw's style - a one-page infographic that explains an article, talk, thread, paper or notes (a title, six or so panels, a source line), a single diagram such as a line, bar or scatter chart or any other chart, flowchart, architecture or boundary diagram, sequence diagram, timeline, quadrant, cycle, tree or comparison table, or a slide deck for a talk (one hand-drawn slide per point, speaker notes, click-by-click reveals) - delivered as a PNG to post and an .excalidraw file to edit by hand (in an Obsidian vault, the Excalidraw plugin's .excalidraw.md), and a deck also as a browser presentation, a PDF and a PowerPoint - and change an existing Excalidraw drawing in place. Use when the user wants a sketch page, a visual summary, an Excalidraw-style explainer, cheat sheet, chart or diagram, "one of those hand-drawn infographic posts", a picture like an example image they share, slides or a presentation in this style, or a change to an .excalidraw or .excalidraw.md drawing they have.
 metadata:
-  version: 3.5.1
+  version: 3.6.0
 ---
 
 # Excalidraw Drawing
@@ -40,7 +40,7 @@ Pick the kind from the table at the top of [references/diagrams.md](references/d
 
 - **From numbers:** use the `chart` element (a line, bar or scatter chart) and give it the numbers exactly as the source or the user gave them; it does the scaling. Any other chart is fine too: build it from shapes, with every position worked out from the numbers ([references/spec.md](references/spec.md#charts)). When the user asks for options, or another kind of chart would show the point better, offer different kinds.
 - **From a description of a shape** ("rose, then fell"): a trend sketch without ticks. Say on the page that the shape is illustrative, unless it's the user's own sketch.
-- **From an example image:** list everything it shows (nodes, arrows, labels, legend, the order of messages) and keep all of it. Redraw it in this skill's style and colors unless the user asks to match theirs. What the skill can't draw (logos, icons, a code font) becomes the plainest stand-in, and you say so.
+- **From an example image:** list everything it shows (nodes, arrows, labels, legend, the order of messages) and keep all of it. Redraw it in this skill's style and colors unless the user asks to match theirs. Embed logos and icons with the `image` element (local `.svg` or `.png` files beside the spec, such as `@lobehub/icons-static-svg` for AI labs or Simple Icons, or inline `svg`); what the skill still lacks (such as a code font) becomes the plainest stand-in, and you say so.
 
 ### Either
 
