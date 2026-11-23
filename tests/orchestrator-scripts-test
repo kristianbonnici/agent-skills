@@ -803,7 +803,15 @@ cat > "$work/facts-models.json" <<'EOF'
        {"label": "Claude Code (T3) · Opus 5.5 (high -> xhigh)", "did": "review ×1"},
        {"label": "Claude Code (T3) · Opus 5.5 (Above Extra High)", "did": "review ×1"},
        {"label": "Custom · Orchestrator (Xenon)", "did": "research ×1"},
-       {"label": "Custom · Orchestrator", "did": "research ×1"}
+       {"label": "Custom · Orchestrator", "did": "research ×1"},
+       {"label": "OpenCode · DeepSeek V4.1 Flash (OpenAI-compatible)", "did": "research ×1"},
+       {"label": "Antigravity (T3) · Orchestrator (Mercury)", "did": "research ×1"},
+       {"label": "Antigravity · orchestrator-xenon", "did": "review ×1"},
+       {"label": "Antigravity · orchestrator-mercury", "did": "review ×1"},
+       {"label": "orchestrator-neon", "did": "review ×1"},
+       {"label": "Custom · orchestrator-xenon", "did": "research ×1"},
+       {"label": "Antigravity (T3) · Orchestrator (Neon)", "did": "research ×1", "maker": "openai"},
+       {"label": "Antigravity (T3) · Orchestrator (Neon)", "did": "research ×1", "maker": "acme"}
      ]},
     {"id": "B", "name": "Future codename", "agent": "Antigravity (T3) · Orchestrator (Xenon)", "level": "high",
      "launched": "01:05", "ended": "01:25", "status": "merged"},
@@ -861,6 +869,14 @@ expected_helpers = [
     ("Claude Code (T3)", "Opus 5.5", "Above Extra High", "above", "claude.svg", "O"),
     ("Custom", "Orchestrator (Xenon)", None, "high", None, "O"),
     ("Custom", "Orchestrator", None, "high", None, "O"),
+    ("OpenCode", "DeepSeek V4.1 Flash (OpenAI-compatible)", None, "high", "deepseek.svg", "D"),
+    ("Antigravity (T3)", "Orchestrator (Mercury)", None, "high", "gemini.svg", "O"),
+    ("Antigravity", "orchestrator-xenon", None, "high", "gemini.svg", "O"),
+    ("Antigravity", "orchestrator-mercury", None, "high", "gemini.svg", "O"),
+    (None, "orchestrator-neon", None, "high", "gemini.svg", "O"),
+    ("Custom", "orchestrator-xenon", None, "high", None, "O"),
+    ("Antigravity (T3)", "Orchestrator (Neon)", None, "high", "openai.svg", "O"),
+    ("Antigravity (T3)", "Orchestrator (Neon)", None, "high", None, "O"),
 ]
 assert len(helpers) == len(expected_helpers)
 for got, want in zip(helpers, expected_helpers):

@@ -157,8 +157,8 @@ private records.
   tasks did most other screen checks themselves, through the accessibility API and screenshots. →
   *computer-use steps handed to Codex; VoiceOver checks left to the task or the user.*
 - **Settling threads** (2026-10-12; updated 2026-11-23): a call to settle threads that passed a list in the wrong field acted on
-  the orchestrator's own thread, and about 40 finished threads stayed open. In later runs with many parallel review rounds, enumerating every helper thread after each clean merge added orchestrator turns while each task already held its reviewer and helper IDs. → *one thread per call, always
-  with its `threadId`; in T3, tasks settle their own idle reviewer and helper threads once done and report any they could not settle, while the orchestrator settles each task's thread on merge and keeps one finish-time `t3_thread_list({settled: false, includeSubagents: true})` sweep as a safety net.*
+  the orchestrator's own thread, and about 40 finished threads stayed open. In multi-task runs with parallel Deep review rounds (2026-11-22–23; 10–30+ reviewer and helper threads per run), enumerating every helper thread after each clean merge added orchestrator turns while each task already held its reviewer and helper IDs. → *one thread per call, always
+  with its `threadId`; in T3, tasks settle their own idle reviewer and helper threads once finished or stopped and report any they could not settle, while the orchestrator settles each task's thread on merge (plus idle handoff-listed helpers) and keeps one cross-project finish-time `t3_thread_list({settled: false, allProjects: true, includeSubagents: true})` sweep as a safety net.*
 - **The usage sampler's cost** (measured 2026-10-29, OpenCode Go's reading 2026-11-02): a Mac sample 0.06 s
   of processor time, a cached reading 0.14 s with half a second waiting for Go, a live reading 22 s; about
   30 s an hour in all. The known limits of the Claude API credits' report were left after five review rounds

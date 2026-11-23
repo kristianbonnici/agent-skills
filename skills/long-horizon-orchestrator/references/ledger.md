@@ -12,7 +12,7 @@ SKILL.md ("Ledger") says where the ledger and the run directory are, and what is
 - **One row per task:**
   - ID, title, dependencies;
   - host, provider, model and effort, as the host reports them after launch;
-  - thread or agent ID and helper thread IDs, branch, worktree path, ports;
+  - thread or agent ID (plus any approval-stuck, unsettled handoff, or finish-sweep helper thread IDs), branch, worktree path, ports;
   - status (`pending`, `running`, `paused`, `merged`, `ready`, `blocked`, `failed`, `stopped`, `parked`); a `paused` task also names the blocking provider and window/bucket (so a resume wake continues only tasks paused on that window), and a `ready` task notes why it isn't merged ("leave on branch", "narrow miss", "review didn't converge", "no reviewer available", "checkout dirty");
   - launch and finish times taken from the host's timestamps, never estimated; merged commits; notes;
   - the harness, model and reasoning level of every agent that worked on it, including a relaunched attempt;
