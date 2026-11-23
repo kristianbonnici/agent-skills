@@ -98,10 +98,11 @@ task running then. A trailing "(...)" in an agent or helper label is parsed as r
 when it names a recognized level (above, above extra high, max, ultra, ultracode, ultrathink, xhigh,
 extra high, high, medium, low) or a transition ("→" / "->") between them; other parentheticals
 ("(Neon)", "(Orchestrator)", "(free)") stay in the model name. Each card's mark is its model's maker,
-found from explicit "maker" first, then Antigravity's Gemini Orchestrator aliases ("Orchestrator
-(<codename>)" and "orchestrator-<codename>"), then the model's base name (ignoring display tags in
-parentheses) or full name, else, for a model named only "default" or "auto", its harness's, else a
-letter: assets/marks/marks.json.
+found from explicit "maker" first (preserving same-company sub-brands such as Gemini/Gemma under
+"google"), then Antigravity's Gemini Orchestrator aliases ("Orchestrator (<codename>)" and
+"orchestrator-<codename>"), then the model's base name without parenthetical display tags or named
+Orchestrator (<codename>) aliases, else, for a model named only "default" or "auto", its harness's,
+else a letter: assets/marks/marks.json.
 
 Usage:
   run-charts <facts.json> <output folder> [--render] [--puppeteer-config <file>] [--repo <integration checkout>]
@@ -1373,26 +1374,42 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         band = LEVELS.get(raw) or (EFFORT_BANDS[parts[0]] if parts else None) or "high"
         entry = {"harness": harness, "model": model, "effort": effort, "band": band,
                  "mark": None, "ink": None, "letter": (model or harness or "?").strip()[:1].upper()}
-        # the model's maker: explicit "maker" first, then Antigravity's Gemini Orchestrator aliases
-        # (including future codenames and run-costs' hyphenated form, before generic model matching
+        # the model's maker: explicit "maker" first (preserving same-company sub-brands such as
+        # google-gemini / google-gemma), then Antigravity's Gemini Orchestrator aliases (including
+        # future codenames and hyphenated bare orchestrator-<codename> IDs, before generic matching
         # so a codename like "Mercury" isn't claimed by another maker), then the base model name
-        # without parenthetical display tags (so "(OpenAI-compatible)" doesn't override the model's
-        # maker) or full model name, then the harness for "default"/"auto", else a letter
+        # without parenthetical display tags (so tags like "(OpenAI-compatible)" never pick a maker)
+        # or named Orchestrator (<codename>) aliases from marks.json, then the harness for
+        # "default"/"auto", else a letter
         def match_model(text: str) -> dict | None:
             return next((m for m in makers if m.get("models") and text and re.search(m["models"], text, re.I)), None)
 
+        gemini = next((m for m in makers if m.get("id") == "google-gemini"), None)
+
+        def match_named_orchestrator(text: str) -> dict | None:
+            head = re.match(r"orchestrator\s*\([^()]+\)", text, re.I)
+            if gemini and gemini.get("models") and head \
+                    and re.fullmatch(r"orchestrator\s*\([^()]+\)(?:\s*\([^()]+\))*", text, re.I) \
+                    and re.search(gemini["models"], head.group(0), re.I):
+                return gemini
+            return None
+
         maker_text = maker.strip() if isinstance(maker, str) else ""
         model_text = (model or "").strip()
+        base_model = re.sub(r"\s*\([^()]+\)", "", model_text).strip()
         if maker_text:
             chosen = match_model(maker_text)
+            if chosen:
+                sub = match_model(base_model) or match_named_orchestrator(model_text)
+                if sub and sub["id"].startswith(chosen["id"] + "-"):
+                    chosen = sub
         else:
             chosen = None
             if harness and re.search(r"\bantigravity\b", harness, re.I) \
-                    and re.fullmatch(r"orchestrator(?:\s*\([^()]+\)|-[a-z0-9][a-z0-9._-]*)?", model_text, re.I):
-                chosen = next((m for m in makers if m.get("id") == "google-gemini"), None)
+                    and re.fullmatch(r"orchestrator(?:-[a-z0-9][a-z0-9._-]*)?", base_model, re.I):
+                chosen = gemini
             if not chosen:
-                base_model = re.sub(r"\s*\([^()]+\)", "", model_text).strip()
-                chosen = match_model(base_model) or match_model(model_text)
+                chosen = match_model(base_model) or match_named_orchestrator(model_text)
             if not chosen and re.fullmatch(r"(default|auto)?", model_text, re.I):
                 chosen = next((m for m in makers if m.get("harnesses") and harness and re.search(m["harnesses"], harness, re.I)), None)
         mark, ink = mark_of(chosen)

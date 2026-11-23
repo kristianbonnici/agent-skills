@@ -811,7 +811,14 @@ cat > "$work/facts-models.json" <<'EOF'
        {"label": "orchestrator-neon", "did": "review ×1"},
        {"label": "Custom · orchestrator-xenon", "did": "research ×1"},
        {"label": "Antigravity (T3) · Orchestrator (Neon)", "did": "research ×1", "maker": "openai"},
-       {"label": "Antigravity (T3) · Orchestrator (Neon)", "did": "research ×1", "maker": "acme"}
+       {"label": "Antigravity (T3) · Orchestrator (Neon)", "did": "research ×1", "maker": "acme"},
+       {"label": "OpenCode · Gemini 4 Neon", "did": "research ×1", "maker": "google"},
+       {"label": "OpenCode · Gemma 4 27B", "did": "research ×1", "maker": "google"},
+       {"label": "Antigravity (T3) · Orchestrator (Neon)", "did": "research ×1", "maker": "google"},
+       {"label": "Antigravity · MysteryModel (OpenAI-compatible)", "did": "research ×1"},
+       {"label": "Local · House-7B (OpenAI-compatible)", "did": "research ×1"},
+       {"label": "Custom · Orchestrator (Mercury)", "did": "research ×1"},
+       {"label": "Antigravity · orchestrator-xenon (free) (High)", "did": "review ×1"}
      ]},
     {"id": "B", "name": "Future codename", "agent": "Antigravity (T3) · Orchestrator (Xenon)", "level": "high",
      "launched": "01:05", "ended": "01:25", "status": "merged"},
@@ -877,6 +884,13 @@ expected_helpers = [
     ("Custom", "orchestrator-xenon", None, "high", None, "O"),
     ("Antigravity (T3)", "Orchestrator (Neon)", None, "high", "openai.svg", "O"),
     ("Antigravity (T3)", "Orchestrator (Neon)", None, "high", None, "O"),
+    ("OpenCode", "Gemini 4 Neon", None, "high", "gemini.svg", "G"),
+    ("OpenCode", "Gemma 4 27B", None, "high", "gemma.svg", "G"),
+    ("Antigravity (T3)", "Orchestrator (Neon)", None, "high", "gemini.svg", "O"),
+    ("Antigravity", "MysteryModel (OpenAI-compatible)", None, "high", None, "M"),
+    ("Local", "House-7B (OpenAI-compatible)", None, "high", None, "H"),
+    ("Custom", "Orchestrator (Mercury)", None, "high", None, "O"),
+    ("Antigravity", "orchestrator-xenon (free)", "High", "high", "gemini.svg", "O"),
 ]
 assert len(helpers) == len(expected_helpers)
 for got, want in zip(helpers, expected_helpers):
