@@ -3,7 +3,7 @@
 // (excalidraw.com, the Excalidraw app, build.mjs) or an .excalidraw.md from
 // Obsidian's Excalidraw plugin, where the drawing is the JSON under "## Drawing".
 //
-//   node drawing.mjs render <drawing> <out.png> [--scale 1-4]
+//   node drawing.mjs render <drawing> <out.png> [--scale 1-4, default 2]
 //
 // As a module, for a one-off edit script (references/editing.md):
 //
@@ -322,7 +322,7 @@ export async function renderDrawing(file, out, { scale = 2 } = {}) {
 }
 
 async function main() {
-  const usage = 'usage: drawing.mjs render <drawing> <out.png> [--scale 1-4]';
+  const usage = 'usage: drawing.mjs render <drawing> <out.png> [--scale 1-4, default 2]';
   const args = process.argv.slice(2);
   let scale = 2;
   const i = args.indexOf('--scale');
@@ -337,7 +337,7 @@ async function main() {
   try { r = await renderDrawing(file, out, { scale }); }
   catch (e) { console.error(`Could not render ${file}: ${e.message}`); process.exit(1); }
   console.log(`wrote ${out} (${r.width}×${r.height})`);
-  if (r.images) console.log(`note: ${r.images} embedded image(s) aren't drawn in the preview`);
+  if (r.images) console.log(`note: ${r.images} image(s) without embedded data aren't drawn in the preview`);
   for (const w of r.warnings) console.log(`renderer: ${w}`);
 }
 

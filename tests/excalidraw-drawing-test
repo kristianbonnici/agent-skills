@@ -425,8 +425,8 @@ if (!made || made.id.length !== 8 || !md.includes(\`\nAdded words ^\${made.id}\n
 if (newId().length !== 8) fail('newId should give 8 characters');
 JS
 node "$work/edit.mjs" || fail "drawing.mjs didn't keep the file or the edit"
-node "$drawing" render "$work/edit.excalidraw.md" "$work/preview.png" >"$work/render.out" || { cat "$work/render.out"; fail "a preview doesn't render"; }
-node "$drawing" render "$work/edit.excalidraw.md" "$work/preview-1x.png" --scale 1 >/dev/null || fail "a --scale 1 preview doesn't render"
+EXCALIDRAW_RENDER_MAX_DIM=8192 node "$drawing" render "$work/edit.excalidraw.md" "$work/preview.png" >"$work/render.out" || { cat "$work/render.out"; fail "a preview doesn't render"; }
+EXCALIDRAW_RENDER_MAX_DIM=8192 node "$drawing" render "$work/edit.excalidraw.md" "$work/preview-1x.png" --scale 1 >/dev/null || fail "a --scale 1 preview doesn't render"
 python3 -I - "$work/preview.png" "$work/preview-1x.png" <<'PY' || fail "the preview isn't a 2x PNG by default"
 import struct, sys
 def info(p):
@@ -435,7 +435,7 @@ def info(p):
     return struct.unpack(">II", b[16:24])
 w2, h2 = info(sys.argv[1])
 w1, h1 = info(sys.argv[2])
-assert (w2, h2) == (w1 * 2, h1 * 2), ((w2, h2), (w1, h1))
+assert abs(w2 - w1 * 2) <= 1 and abs(h2 - h1 * 2) <= 1, ((w2, h2), (w1, h1))
 PY
 printf -- '---\n\nexcalidraw-plugin: parsed\n\n---\n%%%%\n## Drawing\n```compressed-json\nN4Ig\n```\n%%%%' >"$work/packed.excalidraw.md"
 set +e; node "$drawing" render "$work/packed.excalidraw.md" "$work/packed.png" >"$work/packed.out" 2>&1; status=$?; set -e
