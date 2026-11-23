@@ -780,6 +780,98 @@ if command -v node >/dev/null 2>&1; then
   node --check "$work/run-map.js"
 fi
 
+# run-charts: parenthetical model names (codenames, tags) stay in model while recognized effort
+# labels (including transitions) strip into effort; Antigravity Orchestrator models get gemini.svg
+# without claiming non-Gemini or unknown models on Antigravity or plain "Orchestrator" elsewhere.
+cat > "$work/facts-models.json" <<'EOF'
+{
+  "orchestrator": "Claude Code (T3) · Opus 5.5 (Ultracode → Extra High)",
+  "integration": {"branch": "main", "head": "def5678"},
+  "run": {"start": "01:00", "end": "02:00"},
+  "tasks": [
+    {"id": "A", "name": "Neon orch", "agent": "Antigravity (T3) · Orchestrator (Neon)", "level": "high",
+     "launched": "01:00", "ended": "01:20", "status": "merged",
+     "helpers": [
+       {"label": "Antigravity (T3) · Orchestrator (Neon) (High)", "did": "review ×1"},
+       {"label": "Antigravity (T3) · Orchestrator (Carbon)", "did": "research ×1"},
+       {"label": "Orchestrator (Argon)", "did": "research ×1"},
+       {"label": "Antigravity (T3) · Claude Opus 5.5 (High)", "did": "review ×1"},
+       {"label": "Antigravity (T3) · GPT-OSS 120B (Medium)", "did": "research ×1"},
+       {"label": "OpenCode · DeepSeek V4.1 Flash (free)", "did": "review ×1"},
+       {"label": "OpenCode · DeepSeek V4.1 Flash (free) (High)", "did": "review ×1"},
+       {"label": "Claude Code (T3) · Opus 5.5 (Extra High)", "did": "review ×1"},
+       {"label": "Claude Code (T3) · Opus 5.5 (high -> xhigh)", "did": "review ×1"},
+       {"label": "Claude Code (T3) · Opus 5.5 (Above Extra High)", "did": "review ×1"},
+       {"label": "Custom · Orchestrator (Xenon)", "did": "research ×1"},
+       {"label": "Custom · Orchestrator", "did": "research ×1"}
+     ]},
+    {"id": "B", "name": "Future codename", "agent": "Antigravity (T3) · Orchestrator (Xenon)", "level": "high",
+     "launched": "01:05", "ended": "01:25", "status": "merged"},
+    {"id": "C", "name": "Hydrogen worker", "agent": "Antigravity (T3) · Gemini 4 Hydrogen (Orchestrator)", "level": "high",
+     "launched": "01:10", "ended": "01:30", "status": "merged"},
+    {"id": "D", "name": "Free model task", "agent": "OpenCode · DeepSeek V4.1 Flash (free)", "level": "high",
+     "launched": "01:15", "ended": "01:35", "status": "merged"},
+    {"id": "E", "name": "Default agy", "agent": "Antigravity (T3) · default", "level": "high",
+     "launched": "01:20", "ended": "01:40", "status": "merged"},
+    {"id": "F", "name": "Unknown agy", "agent": "Antigravity (T3) · MysteryModel", "level": "high",
+     "launched": "01:25", "ended": "01:45", "status": "merged"}
+  ]
+}
+EOF
+"$scripts/run-charts" "$work/facts-models.json" "$work/charts-models" >/dev/null 2>&1
+python3 -I - "$work/charts-models" "$scripts/run-charts" "$work/facts-models.json" <<'EOF'
+import json, os, re, runpy, sys
+folder, script_path, facts_path = sys.argv[1], sys.argv[2], sys.argv[3]
+stub = open(os.path.join(folder, "run-map-t3.html")).read()
+page = open(os.path.join(folder, "run-map.html")).read()
+files = json.loads(re.search(r"window\.RUN_MAP_FILES = (\[.*?\]);", stub).group(1))
+data = json.loads(re.search(r"const DATA = (\{.*?\});\n", page).group(1))
+def mark_name(entry):
+    return files[entry["mark"]].rsplit("/", 1)[-1] if entry["mark"] is not None else None
+
+orch = data["orch"]
+assert (orch["harness"], orch["model"], orch["effort"], orch["band"], mark_name(orch)) == (
+    "Claude Code (T3)", "Opus 5.5", "Ultracode → Extra High", "above", "claude.svg"), orch
+
+tasks = {t["id"]: t for t in data["tasks"]}
+assert (tasks["A"]["harness"], tasks["A"]["model"], tasks["A"]["effort"], tasks["A"]["band"], mark_name(tasks["A"])) == (
+    "Antigravity (T3)", "Orchestrator (Neon)", "High", "high", "gemini.svg"), tasks["A"]
+assert (tasks["B"]["harness"], tasks["B"]["model"], tasks["B"]["effort"], tasks["B"]["band"], mark_name(tasks["B"])) == (
+    "Antigravity (T3)", "Orchestrator (Xenon)", "High", "high", "gemini.svg"), tasks["B"]
+assert (tasks["C"]["harness"], tasks["C"]["model"], tasks["C"]["effort"], tasks["C"]["band"], mark_name(tasks["C"])) == (
+    "Antigravity (T3)", "Gemini 4 Hydrogen (Orchestrator)", "High", "high", "gemini.svg"), tasks["C"]
+assert (tasks["D"]["harness"], tasks["D"]["model"], tasks["D"]["effort"], tasks["D"]["band"], mark_name(tasks["D"])) == (
+    "OpenCode", "DeepSeek V4.1 Flash (free)", "High", "high", "deepseek.svg"), tasks["D"]
+assert (tasks["E"]["harness"], tasks["E"]["model"], tasks["E"]["effort"], tasks["E"]["band"], mark_name(tasks["E"])) == (
+    "Antigravity (T3)", "default", "High", "high", "antigravity.svg"), tasks["E"]
+assert (tasks["F"]["harness"], tasks["F"]["model"], tasks["F"]["effort"], tasks["F"]["letter"], mark_name(tasks["F"])) == (
+    "Antigravity (T3)", "MysteryModel", "High", "M", None), tasks["F"]
+
+helpers = tasks["A"]["helpers"]
+expected_helpers = [
+    ("Antigravity (T3)", "Orchestrator (Neon)", "High", "high", "gemini.svg", "O"),
+    ("Antigravity (T3)", "Orchestrator (Carbon)", None, "high", "gemini.svg", "O"),
+    (None, "Orchestrator (Argon)", None, "high", "gemini.svg", "O"),
+    ("Antigravity (T3)", "Claude Opus 5.5", "High", "high", "claude.svg", "C"),
+    ("Antigravity (T3)", "GPT-OSS 120B", "Medium", "high", "openai.svg", "G"),
+    ("OpenCode", "DeepSeek V4.1 Flash (free)", None, "high", "deepseek.svg", "D"),
+    ("OpenCode", "DeepSeek V4.1 Flash (free)", "High", "high", "deepseek.svg", "D"),
+    ("Claude Code (T3)", "Opus 5.5", "Extra High", "xhigh", "claude.svg", "O"),
+    ("Claude Code (T3)", "Opus 5.5", "high -> xhigh", "high", "claude.svg", "O"),
+    ("Claude Code (T3)", "Opus 5.5", "Above Extra High", "above", "claude.svg", "O"),
+    ("Custom", "Orchestrator (Xenon)", None, "high", None, "O"),
+    ("Custom", "Orchestrator", None, "high", None, "O"),
+]
+assert len(helpers) == len(expected_helpers)
+for got, want in zip(helpers, expected_helpers):
+    actual = (got["harness"], got["model"], got["effort"], got["band"], mark_name(got), got["letter"])
+    assert actual == want, (actual, want)
+
+mod = runpy.run_path(script_path, run_name="run_charts_check")
+used = mod["subscriptions_used"](json.load(open(facts_path)))
+assert "antigravity" in used and "claude" in used, used
+EOF
+
 # run-charts without a usage folder writes none of the usage files and no usage data; naming a folder
 # that holds no samples changes nothing either (outputs are the ones above).
 test ! -e "$work/charts/usage.mmd"

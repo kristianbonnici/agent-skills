@@ -1227,7 +1227,37 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets"
 EFFORTS = {"above": "Above Extra High", "max": "Max", "ultra": "Ultra", "ultracode": "Ultracode",
            "ultrathink": "Ultrathink", "xhigh": "Extra High", "extra high": "Extra High", "high": "High",
            "medium": "Medium", "low": "Low"}
-AGENT = re.compile(r"^(?:(?P<harness>.+?) · )?(?P<model>.+?)(?: \((?P<effort>[^()]+)\))?$")
+EFFORT_BANDS = {**LEVELS, **{v.lower(): LEVELS[k] for k, v in EFFORTS.items() if k in LEVELS}}
+AGENT_SPLIT = re.compile(r"^(?:(?P<harness>.+?) · )?(?P<rest>.+)$")
+TRAILING_PAREN = re.compile(r"^(?P<model>.+?)\s+\((?P<paren>[^()]+)\)$")
+EFFORT_ARROW = re.compile(r"\s*(?:→|->)\s*")
+
+
+def effort_parts(text: str | None) -> list[str]:
+    """Recognized effort tokens in a label or transition ("High", "Ultracode → Extra High",
+    "high -> xhigh"), normalized to lowercase keys in EFFORT_BANDS; empty if any part isn't recognized."""
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return []
+    parts = [re.sub(r"\s+", " ", p).lower() for p in EFFORT_ARROW.split(cleaned)]
+    return parts if parts and all(p in EFFORT_BANDS for p in parts) else []
+
+
+def parse_agent(agent: str | None) -> tuple[str | None, str | None, str | None]:
+    """Split an agent label into (harness, model, effort), stripping a trailing parenthetical into
+    effort only when it names a recognized reasoning level (or transition between recognized levels),
+    so model codenames and tags such as "(Neon)", "(Orchestrator)" or "(free)" stay in model."""
+    text = agent.strip() if isinstance(agent, str) else ""
+    if not text:
+        return None, None, None
+    found = AGENT_SPLIT.match(text)
+    if not found:
+        return None, None, None
+    harness, rest = found.group("harness"), found.group("rest").strip()
+    trailing = TRAILING_PAREN.match(rest)
+    if trailing and effort_parts(trailing.group("paren")):
+        return harness, trailing.group("model").strip(), trailing.group("paren").strip()
+    return harness, rest, None
 STUB = """<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Run map</title></head>
@@ -1330,17 +1360,21 @@ def map_data(facts: dict, base: Path) -> tuple[dict, list[str], list[str]]:
         return marks[path.name], chosen.get("ink")
 
     def who(agent: str | None, level_value=None, level_label=None, maker: str | None = None) -> dict:
-        found = AGENT.match(agent.strip()) if agent else None
-        harness, model, effort = (found.group("harness"), found.group("model"), found.group("effort")) if found else (None, None, None)
+        harness, model, effort = parse_agent(agent)
         raw = str(level_value or "").strip().lower()
         effort = effort or level_label or EFFORTS.get(raw)
-        band = LEVELS.get(raw) or LEVELS.get(str(effort or "").strip().lower()) or "high"
+        parts = effort_parts(effort)
+        band = LEVELS.get(raw) or (EFFORT_BANDS[parts[0]] if parts else None) or "high"
         entry = {"harness": harness, "model": model, "effort": effort, "band": band,
                  "mark": None, "ink": None, "letter": (model or harness or "?").strip()[:1].upper()}
-        # the model's maker (from "maker", or the model's name); for a model with no real name, the
-        # harness's own mark; else a letter, rather than a mark that would claim the wrong maker
+        # the model's maker (from "maker", or the model's name); for Antigravity's Gemini Orchestrator
+        # models under future codenames, Google Gemini; for a model with no real name, the harness's
+        # own mark; else a letter, rather than a mark that would claim the wrong maker
         named = f"{maker or ''} {model or ''}".strip()
         chosen = next((m for m in makers if m.get("models") and named and re.search(m["models"], named, re.I)), None)
+        if not chosen and not maker and harness and re.search(r"\bantigravity\b", harness, re.I) \
+                and re.fullmatch(r"orchestrator(?:\s*\([^()]+\))?", (model or "").strip(), re.I):
+            chosen = next((m for m in makers if m.get("id") == "google-gemini"), None)
         if not chosen and not maker and re.fullmatch(r"(default|auto)?", (model or "").strip(), re.I):
             chosen = next((m for m in makers if m.get("harnesses") and harness and re.search(m["harnesses"], harness, re.I)), None)
         mark, ink = mark_of(chosen)
