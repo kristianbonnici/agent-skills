@@ -178,6 +178,26 @@ AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_bin:$PATH" HOME="$test_home" "$repo_ro
 grep -q "mcp-excalidraw-server 2.1.2 is newer than npm's latest release, 2.1.2-rc.1" "$test_home/doctor-pre.out"
 fi
 
+# Standalone cua-driver update checks warn without failing; Cua Spaces embedded installs pass; offline skips.
+fake_cua="$test_home/fake-cua"
+mkdir -p "$fake_cua"
+printf '#!/bin/sh\nexit 1\n' >"$fake_cua/npm"
+chmod +x "$fake_cua/npm"
+printf '#!/bin/sh\nprintf '\''{"current_version":"0.51.5","latest_version":"0.62.0","update_available":true,"error":null}'\''\n' >"$fake_cua/cua-driver"
+chmod +x "$fake_cua/cua-driver"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_cua:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host factory >"$test_home/doctor-cua-outdated.out" 2>&1 || true
+grep -q "WARN cua-driver 0.62.0 is out (installed 0.51.5): run cua-driver update --apply && cua-driver skills update" "$test_home/doctor-cua-outdated.out"
+if grep -q "FAIL.*cua-driver" "$test_home/doctor-cua-outdated.out"; then echo "outdated cua-driver failed doctor" >&2; exit 1; fi
+printf '#!/bin/sh\nprintf '\''{"current_version":"0.62.0","latest_version":"0.62.0","update_available":false,"error":null}'\''\n' >"$fake_cua/cua-driver"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_cua:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host factory >"$test_home/doctor-cua-current.out" 2>&1 || true
+grep -q "PASS cua-driver 0.62.0 is its newest release" "$test_home/doctor-cua-current.out"
+printf '#!/bin/sh\nprintf '\''{"current_version":"0.61.2","latest_version":null,"update_available":false,"error":"This Cua Driver is part of Cua Spaces and updates with it."}'\''\n' >"$fake_cua/cua-driver"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_cua:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host factory >"$test_home/doctor-cua-embedded.out" 2>&1 || true
+grep -q "PASS cua-driver 0.61.2 (managed by Cua Spaces)" "$test_home/doctor-cua-embedded.out"
+printf '#!/bin/sh\nexit 1\n' >"$fake_cua/cua-driver"
+AGENT_SKILLS_NO_UPDATE_CHECK= PATH="$fake_cua:$PATH" HOME="$test_home" "$repo_root/scripts/doctor" --host factory >"$test_home/doctor-cua-offline.out" 2>&1 || true
+grep -q "SKIP could not ask cua-driver whether a newer release is out" "$test_home/doctor-cua-offline.out"
+
 # Hosts read the checkout itself through the links, so doctor fails while the checkout is off its
 # default branch or a file a host reads has an uncommitted change. A stand-in checkout holds this
 # repository's scripts and manifests, so this passes on any branch and with work in progress.

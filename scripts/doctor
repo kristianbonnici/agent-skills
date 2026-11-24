@@ -453,6 +453,40 @@ if checks_host antigravity; then
   fi
 fi
 
+# Standalone cua-driver installations do not auto-update; warn when a newer release is out (never a
+# failure). Embedded installs managed by Cua Spaces report that in check-update's error field.
+if command -v cua-driver >/dev/null 2>&1; then
+  if [ -n "${AGENT_SKILLS_NO_UPDATE_CHECK:-}" ]; then
+    echo "SKIP newer-release check for cua-driver (AGENT_SKILLS_NO_UPDATE_CHECK)"
+  else
+    cua_check=$(cua-driver check-update --json 2>/dev/null || true)
+    cua_line=$(python3 -c '
+import json, sys
+raw = sys.argv[1].strip()
+if not raw:
+    print("SKIP could not ask cua-driver whether a newer release is out")
+    sys.exit(0)
+try:
+    d = json.loads(raw)
+except Exception:
+    print("SKIP could not parse cua-driver check-update output")
+    sys.exit(0)
+cur = d.get("current_version") or "unknown"
+latest = d.get("latest_version")
+err = (d.get("error") or "").strip()
+if d.get("update_available") and latest:
+    print(f"WARN cua-driver {latest} is out (installed {cur}): run cua-driver update --apply && cua-driver skills update")
+elif "part of Cua Spaces" in err:
+    print(f"PASS cua-driver {cur} (managed by Cua Spaces)")
+elif err:
+    print(f"SKIP could not check whether cua-driver has a newer release ({err})")
+else:
+    print(f"PASS cua-driver {cur} is its newest release")
+' "$cua_check" 2>/dev/null || echo "SKIP could not check whether cua-driver has a newer release")
+    printf '%s\n' "$cua_line"
+  fi
+fi
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed." >&2
   exit 1
