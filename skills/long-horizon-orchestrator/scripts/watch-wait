@@ -6,13 +6,17 @@ Usage: watch-wait <run directory> [--every <seconds, default 300>] [--max <secon
 
 It sleeps --every first (--now checks at once), then runs scripts/heartbeat <run directory> --no-ledger
 (run-watch, the integration branch, the computer, the usage sampler's last readings and T3's pending requests)
-each loop. It exits 0, printing one line and then heartbeat's output, once a check has a line to act on that it
-hasn't delivered in the last 30 minutes: a task's report, a commit or merge, an approval, a hang, a usage mark,
-a settings change, a next-run line. It remembers what it delivered in <run directory>/watch-wait.seen.json
-across restarts, by each line less the readings that change while its condition lasts (minutes, sizes, a usage
-reading, low disk's folder sizing; a request's time, a task, a thread and a mark stay), so a condition that
-lasts (a quiet task, a usage mark, low disk) wakes the orchestrator once and then every 30 minutes, not on
-every restart. Reminders
+each loop. It exits 0, printing one line and then heartbeat's output, once a check has an actionable line
+that it hasn't delivered yet: a task's report or merge, an approval, a hang/idle/quiet/hog/disk/swap/dialog/
+keep-awake/sampler/vm/slept/settings/next-run/watcher/blind/t3-state/leftover/unreachable line, or a usage
+warning/mark crossed for the first time or changed. `commit <task>` lines alone never wake it: any seen while
+waiting are carried in <run directory>/watch-wait.state.json and printed alongside the next real exit.
+It remembers lasting non-usage lines in <run directory>/watch-wait.seen.json across restarts, by each line
+less the readings that change while its condition lasts (minutes, sizes, low disk's folder sizing; a request's
+time, a task and a thread stay), so a lasting non-usage condition (a quiet task, low disk) wakes the
+orchestrator once and then every 30 minutes, not on every restart. Per-window usage warnings are tracked by
+window state in <run directory>/watch-wait.state.json and do not wake again until that window resets, recovers
+below its threshold, or crosses a new threshold or mark. Reminders
 ("vm … still running", "leftover … still running") never count. Tasks heartbeat says to read with the tools
 (blind, or on another computer), and a "t3-state unreadable" line, bring it out once every 15 minutes, so
 those threads are read that often. A stop by signal or a heartbeat's 5-minute limit ends that heartbeat's
@@ -47,19 +51,28 @@ import re
 import signal
 import subprocess
 import time
+from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 LIVE_EVERY_S = 900
 STOP = {"starting": False, "held": 0}
-REMIND_S = 1800          # a line already delivered comes again after this long
+REMIND_S = 1800          # a lasting non-usage line already delivered comes again after this long
 READ_EVERY_S = 900       # blind tasks or tasks on another computer: their threads are read this often
+CARRIED_CAP = 200
+RESET_TOLERANCE_S = 300
 IDLE = re.compile(r"^heartbeat \d\d:\d\d: nothing to act on\.")
 REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
+COMMIT = re.compile(r"^commit ")
 # said once by run-watch (as its one_time() says, here or "on <computer>"), or once a value: always new
-ONCE = re.compile(r"^((commit|merged|report|settings|blind|hog|vm|leftover) |disk(?: on \S+)?: free disk fell |"
+ONCE = re.compile(r"^((merged|report|settings|blind|hog|vm|leftover) |disk(?: on \S+)?: free disk fell |"
                   r"slept \S+(?: on \S+)? (?!- )\S+ \()")
 TOOL_READS = re.compile(r"blind, read their threads|read with the tools on ")
 SOON = re.compile(r"^t3-state ")   # the tools read what it can't, as often as blind tasks
+USAGE_MARK = re.compile(r"^usage: (\S+) (\S+) at ([\d.]+)%, at or past the run's mark of ([\d.]+)%:")
+USAGE_BUILTIN = re.compile(r"^usage: (\S+) (\S+) at ([\d.]+)%: schedule the resume wake")
+LEGACY_USAGE_MARK = re.compile(r"^usage: (\S+) (\S+) at #%, at or past the run's mark of ([\d.]+)%:")
+LEGACY_USAGE_BUILTIN = re.compile(r"^usage: (\S+) (\S+) at #%: schedule the resume wake")
+NO_USAGE_READING = re.compile(r"usage: (?:the live reading failed|no live reading|no sampler readings)")
 
 
 def option(args: list, name: str, default: float):
@@ -76,10 +89,98 @@ def option(args: list, name: str, default: float):
 
 def load_json(path: str) -> dict:
     try:
-        data = json.load(open(path))
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def save_json_atomic(path: str, data: dict) -> None:
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def parse_iso(s):
+    if not isinstance(s, str) or not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def same_reset_window(prev_resets, cur_resets) -> bool:
+    if not prev_resets or not cur_resets or prev_resets == cur_resets:
+        return True
+    t_prev, t_cur = parse_iso(prev_resets), parse_iso(cur_resets)
+    if t_prev is not None and t_cur is not None:
+        return abs(t_cur - t_prev) <= RESET_TOLERANCE_S
+    return False
+
+
+def parse_usage_line(line: str):
+    """Parse a per-window usage warning into (wkey, state, threshold), or None for non-window/error lines."""
+    m = USAGE_MARK.match(line)
+    if m:
+        mark = float(m.group(4))
+        return f"{m.group(1)}.{m.group(2)}", f"mark:{mark:g}", mark
+    m = USAGE_BUILTIN.match(line)
+    if m:
+        used = float(m.group(3))
+        if used >= 95:
+            return f"{m.group(1)}.{m.group(2)}", "builtin:95", 95.0
+        return f"{m.group(1)}.{m.group(2)}", "builtin:85", 85.0
+    return None
+
+
+def migrate_legacy_usage(seen: dict) -> dict:
+    """Seed per-window usage state from a 5.20.0 watch-wait.seen.json when watch-wait.state.json is absent."""
+    migrated = {}
+    for k in seen:
+        if not isinstance(k, str):
+            continue
+        m = LEGACY_USAGE_MARK.match(k)
+        if m:
+            mark = float(m.group(3))
+            migrated[f"{m.group(1)}.{m.group(2)}"] = {"state": f"mark:{mark:g}", "threshold": mark, "resets_at": None}
+            continue
+        m = LEGACY_USAGE_BUILTIN.match(k)
+        if m:
+            is_5h = m.group(2) == "five_hour"
+            migrated[f"{m.group(1)}.{m.group(2)}"] = {
+                "state": "builtin:85" if is_5h else "builtin:95",
+                "threshold": 85.0 if is_5h else 95.0,
+                "resets_at": None,
+            }
+    return migrated
+
+
+def summary_usage(first: str) -> dict:
+    """Parse current per-window percentages from heartbeat's summary line."""
+    m = re.search(r"(?:\.\s+|^)(?:live|sampled \d\d:\d\d): (.+?)\.?$", first)
+    if not m:
+        return {}
+    readings = {}
+    for chunk in m.group(1).split(";"):
+        parts = chunk.strip().split(" ", 1)
+        if len(parts) != 2:
+            continue
+        prov, rest = parts
+        for wm in re.finditer(r"(\S+) ([\d.]+)%", rest):
+            try:
+                readings[f"{prov}.{wm.group(1)}"] = float(wm.group(2))
+            except ValueError:
+                pass
+    return readings
 
 
 def live_needed(watch: dict) -> bool:
@@ -158,6 +259,8 @@ def main(argv: list) -> int:
         return 3
     pid_path = os.path.join(run_dir, "watch-wait.pid")
     seen_path = os.path.join(run_dir, "watch-wait.seen.json")
+    state_path = os.path.join(run_dir, "watch-wait.state.json")
+    hb_state_path = os.path.join(run_dir, "heartbeat.state.json")
     with open(pid_path, "w") as fh:
         fh.write(f"{os.getpid()}\n")
 
@@ -201,29 +304,101 @@ def main(argv: list) -> int:
             summary = first.split(". ", 1)[1] if ". " in first else first
             minutes = (time.time() - t0) / 60
             t_now = time.time()
-            seen = {k: v for k, v in load_json(seen_path).items() if isinstance(v, (int, float)) and t_now - v < 6 * 3600}
-            act = [] if IDLE.match(first) else [l for l in out[1:] if not REMINDER.match(l)]
-            new = [l for l in act if ONCE.match(l)
-                   or t_now - seen.get(line_key(l), 0) >= (READ_EVERY_S if SOON.match(l) else REMIND_S)]
+            seen = {k: v for k, v in load_json(seen_path).items()
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and t_now - v < 6 * 3600}
+            if os.path.exists(state_path):
+                raw_state = load_json(state_path)
+                carried = [l for l in (raw_state.get("carried_commits") if isinstance(raw_state.get("carried_commits"), list) else [])
+                           if isinstance(l, str) and COMMIT.match(l)][-CARRIED_CAP:]
+                usage_state = {
+                    k: dict(v) for k, v in (raw_state.get("usage") if isinstance(raw_state.get("usage"), dict) else {}).items()
+                    if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("state"), str)
+                }
+                state_dirty = False
+            else:
+                carried = []
+                usage_state = migrate_legacy_usage(seen)
+                state_dirty = bool(usage_state)
+            hb_state = load_json(hb_state_path)
+            hb_usage = hb_state.get("usage_delivered") if isinstance(hb_state.get("usage_delivered"), dict) else None
+            commits = [l for l in out[1:] if COMMIT.match(l)]
+            act = [] if IDLE.match(first) else [l for l in out[1:] if not REMINDER.match(l) and not COMMIT.match(l)]
+            active_usage = {}
+            new = []
+            for l in act:
+                parsed = parse_usage_line(l)
+                if parsed is not None:
+                    wkey, ustate, threshold = parsed
+                    active_usage[wkey] = (ustate, threshold)
+                    hb_entry = hb_usage.get(wkey) if isinstance(hb_usage, dict) and isinstance(hb_usage.get(wkey), dict) else None
+                    cur_resets = (hb_entry.get("resets_at") if hb_entry and isinstance(hb_entry.get("resets_at"), str)
+                                  and hb_entry.get("resets_at") else None)
+                    prev = usage_state.get(wkey)
+                    prev_state = prev.get("state") if isinstance(prev, dict) else None
+                    prev_resets = (prev.get("resets_at") if isinstance(prev, dict) and isinstance(prev.get("resets_at"), str)
+                                   and prev.get("resets_at") else None)
+                    if prev_state != ustate or not same_reset_window(prev_resets, cur_resets):
+                        new.append(l)
+                    elif not prev_resets and cur_resets:
+                        usage_state[wkey]["resets_at"] = cur_resets
+                        state_dirty = True
+                elif ONCE.match(l) or t_now - seen.get(line_key(l), 0) >= (READ_EVERY_S if SOON.match(l) else REMIND_S):
+                    new.append(l)
+            if not NO_USAGE_READING.search(first):
+                readings = summary_usage(first)
+                hb_has_usage = os.path.exists(hb_state_path) and isinstance(hb_usage, dict)
+                for wkey in list(usage_state):
+                    if wkey in active_usage:
+                        continue
+                    thresh = usage_state[wkey].get("threshold")
+                    below_summary = (wkey in readings and isinstance(thresh, (int, float))
+                                     and not isinstance(thresh, bool) and readings[wkey] < thresh)
+                    hb_cleared = hb_has_usage and wkey not in hb_usage
+                    standin_gone = not hb_has_usage and wkey not in readings
+                    if hb_cleared or below_summary or standin_gone:
+                        del usage_state[wkey]
+                        state_dirty = True
             reads = not IDLE.match(first) and TOOL_READS.search(first) and t_now - seen.get("\0reads", 0) >= READ_EVERY_S
             if new or reads:
+                seen = {k: v for k, v in seen.items()
+                        if not (LEGACY_USAGE_MARK.match(k) or LEGACY_USAGE_BUILTIN.match(k))}
                 for l in act:
-                    seen[line_key(l)] = t_now
+                    if parse_usage_line(l) is None:
+                        seen[line_key(l)] = t_now
                 if reads or TOOL_READS.search(first):
                     seen["\0reads"] = t_now
-                try:
-                    with open(seen_path + ".tmp", "w") as fh:
-                        json.dump(seen, fh)
-                    os.replace(seen_path + ".tmp", seen_path)
-                except OSError:
-                    pass
+                for wkey, (ustate, threshold) in active_usage.items():
+                    hb_entry = hb_usage.get(wkey) if isinstance(hb_usage, dict) and isinstance(hb_usage.get(wkey), dict) else None
+                    cur_resets = (hb_entry.get("resets_at") if hb_entry and isinstance(hb_entry.get("resets_at"), str)
+                                  and hb_entry.get("resets_at") else None)
+                    prev_resets = (usage_state[wkey].get("resets_at") if wkey in usage_state
+                                   and isinstance(usage_state[wkey].get("resets_at"), str) else None)
+                    stored_resets = (cur_resets if cur_resets and (not prev_resets or not same_reset_window(prev_resets, cur_resets))
+                                     else (prev_resets or cur_resets))
+                    usage_state[wkey] = {"state": ustate, "threshold": threshold, "resets_at": stored_resets}
+                all_commits = list(carried)
+                for c in commits:
+                    if c not in all_commits:
+                        all_commits.append(c)
+                emit = [out[0]] + [l for l in out[1:] if not COMMIT.match(l)] + all_commits
+                save_json_atomic(seen_path, seen)
+                if os.path.exists(state_path) or usage_state or carried or state_dirty:
+                    save_json_atomic(state_path, {"carried_commits": [], "usage": usage_state})
                 why = (f"act on heartbeat's lines below ({len(new)} new of {len(act)})" if new
                        else "read the threads heartbeat names (blind, or on another computer)")
                 print(f"watch-wait {time.strftime('%H:%M')}: {why}, after {minutes:.0f} min and {checks} checks; "
                       "then start watch-wait again")
-                print("\n".join(out))
+                print("\n".join(emit))
                 ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
                 return 0
+            if commits:
+                for c in commits:
+                    if c not in carried:
+                        carried.append(c)
+                carried = carried[-CARRIED_CAP:]
+                state_dirty = True
+            if state_dirty:
+                save_json_atomic(state_path, {"carried_commits": carried, "usage": usage_state})
             left = deadline - time.time()
             if left <= 0:
                 print(f"watch-wait {time.strftime('%H:%M')}: nothing new to act on in {minutes:.0f} min ({checks} checks): "

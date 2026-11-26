@@ -7,10 +7,12 @@ Usage: heartbeat <run directory> [--live | --no-live] [--no-ledger]
 
 It reads <run directory>/watch.json, as run-watch does, and prints:
 
-  heartbeat HH:MM: nothing to act on. <the summary>     when run-watch flagged nothing and no task
-                                                         committed, merged or reported since last time
+  heartbeat HH:MM: nothing to act on. <the summary>     when run-watch flagged nothing actionable (a
+                                                         commit-only wake stays idle, carrying the
+                                                         commit lines to the next real wake) and no
+                                                         task merged or reported since last time
   heartbeat HH:MM: act on the lines below. <the summary>
-  <run-watch's lines, each as it printed it>             otherwise
+  <run-watch's lines, plus carried commits>              otherwise
 
 A task run-watch can't read (its "blind" list) is named on every wake and keeps it from being idle, since
 only its thread shows an approval prompt or a turn that ended; Antigravity tasks whose conversation DB
@@ -41,10 +43,15 @@ a scheduled heartbeat and scripts/watch-wait never read run-watch's state togeth
 
 The summary: the running tasks, the integration branch's head and how many tracked files are changed
 in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
-sampler run, and each subscription's windows used. A window to act on is a line of its own and makes the
-wake not idle: a 5-hour window past 85%, any window at 95% or more, and any window at or past its mark in
-watch.json's "usage_marks" ({"claude.weekly": 34, "claude.weekly_fable": 21}: the readings at which the
-run's Claude and Fable budgets are used, which the orchestrator keeps up to date, also after a reset). Usage comes from the sampler's last readings
+sampler run, and each subscription's windows used. A window crossing a threshold is a line of its own
+and makes the wake not idle: a 5-hour window past 85%, any window at 95% or more, and any window at or
+past its mark in watch.json's "usage_marks" ({"claude.weekly": 34, "claude.weekly_fable": 21}: the
+readings at which the run's Claude and Fable budgets are used, which the orchestrator keeps up to date,
+also after a reset). Once delivered for a window, an unchanged warning is remembered in
+<run directory>/heartbeat.state.json (beside any carried commit lines) and suppressed on later checks
+until that window resets, recovers below its threshold, or crosses a new threshold or mark (including
+>= 95% on first crossing); the summary always shows current window percentages. Usage comes from the
+sampler's last readings
 (<run directory>/usage/providers.jsonl, no new process); with --live, or when a running task's
 "model" in watch.json names Fable (whose weekly window is read live only), from a live
 provider-usage call (about 20 seconds, no model tokens); --no-live never reads live, a Fable task's
@@ -64,6 +71,7 @@ if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's 
 
 import fcntl
 import json
+import math
 import os
 import re
 import shutil
@@ -77,9 +85,47 @@ from datetime import datetime
 from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+COMMIT = re.compile(r"^commit ")
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
 REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
 DIALOG_PATH = "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
+CARRIED_CAP = 200
+RESET_TOLERANCE_S = 300
+
+
+def load_json_dict(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_json_atomic(path: str, data: dict) -> None:
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def finite_num(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def same_reset_window(prev_resets, cur_resets) -> bool:
+    if not prev_resets or not cur_resets or prev_resets == cur_resets:
+        return True
+    t_prev, t_cur = parse_iso(prev_resets), parse_iso(cur_resets)
+    if t_prev is not None and t_cur is not None:
+        return abs(t_cur - t_prev) <= RESET_TOLERANCE_S
+    return False
 
 
 def run(cmd, timeout=60):
@@ -90,22 +136,48 @@ def run(cmd, timeout=60):
         return ""
 
 
-def near_limits(providers: dict, key_used: str, marks: dict) -> list[str]:
-    """Windows to act on: a 5-hour window past 85%, any window at 95% or more, and any window at or past
-    the mark watch.json's "usage_marks" sets for it ("claude.weekly": the reading at which the run's
-    Claude budget is used)."""
+def near_limits(providers: dict, key_used: str, marks: dict, delivered: dict) -> list[str]:
+    """Windows crossing a threshold: a 5-hour window past 85%, any window at 95% or more, and any window
+    at or past the mark watch.json's "usage_marks" sets for it ("claude.weekly": the reading at which the
+    run's Claude budget is used). Suppresses repeated unchanged warnings for a window until it resets,
+    recovers below its threshold, or crosses a new threshold or mark (including >= 95% on first crossing)."""
     out = []
     for name, p in sorted(providers.items()):
         windows = p.get("windows") if isinstance(p, dict) else None
         for key, w in sorted(windows.items()) if isinstance(windows, dict) else []:
-            used = w.get(key_used) if isinstance(w, dict) else None
-            if not isinstance(used, (int, float)):
+            if not isinstance(w, dict):
                 continue
-            mark = marks.get(f"{name}.{key}")
-            if isinstance(mark, (int, float)) and used >= mark:
-                out.append(f"usage: {name} {key} at {used:g}%, at or past the run's mark of {mark:g}%: its budget is used")
-            elif used >= 95 or (key == "five_hour" and used >= 85):
-                out.append(f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it")
+            wkey = f"{name}.{key}"
+            if w.get("reset") or w.get("reset_since_observed"):
+                delivered.pop(wkey, None)
+                continue
+            used = w.get(key_used)
+            if not finite_num(used):
+                continue
+            resets_at = w.get("resets_at") if isinstance(w.get("resets_at"), str) and w.get("resets_at") else None
+            mark = marks.get(wkey)
+            if finite_num(mark) and used >= mark:
+                state = f"mark:{mark:g}"
+                line = f"usage: {name} {key} at {used:g}%, at or past the run's mark of {mark:g}%: its budget is used"
+            elif used >= 95:
+                state = "builtin:95"
+                line = f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it"
+            elif key == "five_hour" and used >= 85:
+                state = "builtin:85"
+                line = f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it"
+            else:
+                delivered.pop(wkey, None)
+                continue
+            prev = delivered.get(wkey)
+            prev_state = prev.get("state") if isinstance(prev, dict) else None
+            prev_resets = (prev.get("resets_at") if isinstance(prev, dict) and isinstance(prev.get("resets_at"), str)
+                           and prev.get("resets_at") else None)
+            if prev_state == state and same_reset_window(prev_resets, resets_at):
+                if not prev_resets and resets_at:
+                    delivered[wkey] = {"state": state, "resets_at": resets_at}
+                continue
+            delivered[wkey] = {"state": state, "resets_at": resets_at}
+            out.append(line)
     return out
 
 
@@ -116,22 +188,22 @@ def windows_line(providers: dict, key_used: str) -> str:
             continue
         shown = []
         for key, w in sorted(p["windows"].items()):
-            if isinstance(w, dict) and isinstance(w.get(key_used), (int, float)):
+            if isinstance(w, dict) and finite_num(w.get(key_used)):
                 shown.append(f"{key} {w[key_used]:g}%")
         if shown:
             parts.append(f"{name} " + ", ".join(shown))
-        elif name == "claude_api" and isinstance(p.get("left_usd"), (int, float)):
+        elif name == "claude_api" and finite_num(p.get("left_usd")):
             parts.append(f"Claude API credits ${p['left_usd']:.0f} left (estimate)")
     return "; ".join(parts)
 
 
-def usage(run_dir: str, live: bool, marks: dict, fable: bool = False) -> tuple[str, list[str]]:
+def usage(run_dir: str, live: bool, marks: dict, delivered: dict, fable: bool = False) -> tuple[str, list[str]]:
     if live:
         out = run([os.environ.get("HEARTBEAT_PROVIDER_USAGE", os.path.join(HERE, "provider-usage"))], timeout=120)
         try:
             providers = json.loads(out).get("providers") or {}
             line = windows_line(providers, "used_percent")
-            limits = near_limits(providers, "used_percent", marks)
+            limits = near_limits(providers, "used_percent", marks, delivered)
             if not line:
                 limits.append("usage: the live reading had no windows: read provider-usage yourself")
             elif fable and "weekly_fable" not in ((providers.get("claude") or {}).get("windows") or {}):
@@ -157,7 +229,7 @@ def usage(run_dir: str, live: bool, marks: dict, fable: bool = False) -> tuple[s
             latest.update(record["providers"])
             when = str(record.get("t", ""))[11:16]
     line = windows_line(latest, "used")
-    return ((f"sampled {when}: " + line) if line else "usage: no sampler readings"), near_limits(latest, "used", marks)
+    return ((f"sampled {when}: " + line) if line else "usage: no sampler readings"), near_limits(latest, "used", marks, delivered)
 
 
 def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
@@ -373,8 +445,18 @@ def main(argv):
     pending, tool_reads = t3_pending(watch, running, here_name)
     bits += tool_reads
     marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
+    hb_state_path = os.path.join(run_dir, "heartbeat.state.json")
+    hb_state = load_json_dict(hb_state_path)
+    carried_commits = [l for l in (hb_state.get("carried_commits") if isinstance(hb_state.get("carried_commits"), list) else [])
+                       if isinstance(l, str) and COMMIT.match(l)][-CARRIED_CAP:]
+    usage_delivered = {
+        k: dict(v) for k, v in (hb_state.get("usage_delivered") if isinstance(hb_state.get("usage_delivered"), dict) else {}).items()
+        if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("state"), str)
+    }
+    hb_state_before = (list(carried_commits), {k: dict(v) for k, v in usage_delivered.items()})
+
     live = "--live" in flags or (fable and "--no-live" not in flags)
-    usage_line, limits = usage(run_dir, live, marks, fable and live)
+    usage_line, limits = usage(run_dir, live, marks, usage_delivered, fable and live)
     bits.append(usage_line)
     summary = ". ".join(bits) + "."
     flagged += pending + limits
@@ -382,11 +464,27 @@ def main(argv):
     if dialogs and not any(l.startswith("dialog") for l in flagged):
         flagged.append(f"dialog: {dialogs} password dialog(s) on the screen")
         watch_lines.append(flagged[-1])
-    idle = not flagged and not events and not blind_running and not tool_reads
+    commit_lines = [l for l in watch_lines if COMMIT.match(l)]
+    action_events = {k: v for k, v in events.items() if k != "commit"}
+    idle = not flagged and not action_events and not blind_running and not tool_reads
+    if idle:
+        for c in commit_lines:
+            if c not in carried_commits:
+                carried_commits.append(c)
+        carried_commits = carried_commits[-CARRIED_CAP:]
+        emit_lines = []
+    else:
+        all_commits = list(carried_commits)
+        for c in commit_lines:
+            if c not in all_commits:
+                all_commits.append(c)
+        emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + all_commits
+        carried_commits = []
+    if (carried_commits, usage_delivered) != hb_state_before:
+        save_json_atomic(hb_state_path, {"carried_commits": carried_commits, "usage_delivered": usage_delivered})
     print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
-    for l in watch_lines:
-        if not idle:
-            print(l)
+    for l in emit_lines:
+        print(l)
     if "--no-ledger" not in flags:
         ledger = run_dir.rstrip("/") + ".md"
         if os.path.isfile(ledger):
