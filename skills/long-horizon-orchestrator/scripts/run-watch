@@ -913,7 +913,10 @@ def settings_drift(watch: dict, run_dir: str, state: dict) -> list[str]:
         else:
             why = f"its snapshot {snap} isn't a settings file"
         if old is not None:
-            exported = capture([defaults, "export", domain, "-"], 10)
+            try:
+                exported = capture([defaults, "export", domain, "-"], 10)
+            except (OSError, subprocess.TimeoutExpired) as err:
+                exported = subprocess.CompletedProcess([], 1, "", str(err))
             try:
                 new = plistlib.loads(exported.stdout.encode()) if exported.returncode == 0 and exported.stdout.strip() else None
             except (ValueError, plistlib.InvalidFileException):
