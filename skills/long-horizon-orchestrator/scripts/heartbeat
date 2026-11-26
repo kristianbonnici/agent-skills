@@ -30,8 +30,8 @@ In T3 (watch.json's "host" is "t3", or no "host" and the database exists) it als
 no thread needs a tool read to find an approval: each pending request on a running task's thread or on any
 thread under it (reviewers, helpers and theirs, by their parent links) is a line,
 
-  approval-task <task> <thread> <kind> since HH:MM       on the task's own thread
-  approval-subagent <task> <thread> <kind> since HH:MM   on a thread under it
+  approval-task <task> <thread> <kind> since HH:MM:SS       on the task's own thread
+  approval-subagent <task> <thread> <kind> since HH:MM:SS   on a thread under it
 
 and a database or table it can't read (missing while watch.json's "host" is "t3", locked past 5 seconds, a
 schema it doesn't know) is "t3-state unreadable: <why>", which is never idle: read the subagents with the tools then. A running
@@ -235,7 +235,7 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
         launched = parse_iso(tasks[task].get("launched"))
         if t is not None and launched is not None and t < launched - 60:
             continue   # older than the task: another run's, left pending
-        since = time.strftime("%H:%M", time.localtime(t)) if t is not None else "?"
+        since = time.strftime("%H:%M:%S", time.localtime(t)) if t is not None else "?"   # to the second: one request
         out.append(f"approval-{'task' if thread == tasks[task]['thread'] else 'subagent'} {task} {thread} "
                    f"{kind or 'request'} since {since}")
     return out, bits

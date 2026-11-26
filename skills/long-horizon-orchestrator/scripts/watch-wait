@@ -9,10 +9,14 @@ It sleeps --every first (--now checks at once), then runs scripts/heartbeat <run
 each loop. It exits 0, printing one line and then heartbeat's output, once a check has a line to act on that it
 hasn't delivered in the last 30 minutes: a task's report, a commit or merge, an approval, a hang, a usage mark,
 a settings change, a next-run line. It remembers what it delivered in <run directory>/watch-wait.seen.json
-across restarts, by each line's word and subject without its numbers, so a condition that lasts (a quiet task,
-a usage mark, low disk) wakes the orchestrator once and then every 30 minutes, not on every restart. Reminders
+across restarts, by each line less the readings that change while its condition lasts (minutes, sizes, a usage
+reading, low disk's folder sizing; a request's time, a task, a thread and a mark stay), so a condition that
+lasts (a quiet task, a usage mark, low disk) wakes the orchestrator once and then every 30 minutes, not on
+every restart. Reminders
 ("vm … still running", "leftover … still running") never count. Tasks heartbeat says to read with the tools
-(blind, or on another computer) bring it out once every 15 minutes, so their threads are read that often. It
+(blind, or on another computer), and a "t3-state unreadable" line, bring it out once every 15 minutes, so
+those threads are read that often. A stop by signal or a heartbeat's 5-minute limit ends that heartbeat's
+whole process group, run-watch with it. It
 also exits at --max, saying nothing new needed acting on; each heartbeat may take up to 5 minutes, so give the
 host's limit room: run it with Claude Code's timeout 7200000 and --max 6600 (the default fits the default 30
 minutes). Either way it adds one line to the ledger (<run directory>.md), never one a loop.
@@ -99,6 +103,23 @@ def line_key(line: str) -> str:
     return re.sub(r"\b[\d.]+ ?(min|GB|MB|KB|s)\b", r"# \1", line)[:300]
 
 
+def check(heartbeat: str, run_dir: str, live: bool) -> subprocess.CompletedProcess:
+    """One heartbeat, in a process group of its own: a stop or a timeout ends run-watch with it, before run-watch
+    saves a state it read earlier (over a change made meanwhile) or marks lines told that nobody saw."""
+    proc = subprocess.Popen([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=300)
+    except BaseException:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
+        raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
 def ledger_line(run_dir: str, text: str) -> None:
     ledger = run_dir.rstrip("/") + ".md"
     if os.path.isfile(ledger):
@@ -154,8 +175,7 @@ def main(argv: list) -> int:
             if live:
                 last_live = time.time()
             try:
-                done = subprocess.run([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
-                                      capture_output=True, text=True, timeout=300)
+                done = check(heartbeat, run_dir, live)
             except (OSError, subprocess.TimeoutExpired) as e:
                 print(f"watch-wait {time.strftime('%H:%M')}: heartbeat didn't run ({e}): run it yourself, then start watch-wait again")
                 ledger_line(run_dir, f"heartbeat didn't run ({e})")

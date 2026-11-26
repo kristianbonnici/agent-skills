@@ -5153,7 +5153,7 @@ sums_before=$(cat "$T3_USERDATA/statev2.sqlite" "$T3_USERDATA/statev2.sqlite-wal
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 test "$(cat "$T3_USERDATA/statev2.sqlite" "$T3_USERDATA/statev2.sqlite-wal" 2>/dev/null | shasum)" = "$sums_before" || { echo "heartbeat wrote to T3's database"; exit 1; }
 case "$out" in *"act on the lines below"*) ;; *) echo "heartbeat t3 pending: $out"; exit 1;; esac
-printf '%s\n' "$out" | grep -q '^approval-subagent A rev-a-child command since [0-9][0-9]:[0-9][0-9]$' || { echo "heartbeat subagent line: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q '^approval-subagent A rev-a-child command since [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$' || { echo "heartbeat subagent line: $out"; exit 1; }
 printf '%s\n' "$out" | grep -q '^approval-subagent A helper-only-in-subagents user_input since ' || { echo "heartbeat subagents table: $out"; exit 1; }
 test "$(printf '%s\n' "$out" | grep -c '^approval-')" -eq 2 || { echo "heartbeat t3 extra lines: $out"; exit 1; }
 python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id IN (?, ?)", ("resolved", "r1", "r2")); c.execute("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, ?, ?, ?, ?)", ("r7", "task-a", "user_input", "pending", "2026-11-26T01:20:00Z", "{}")); c.commit()' "$T3_USERDATA/statev2.sqlite"
@@ -5215,6 +5215,7 @@ case "\$(cat "$work/ww-mode")" in
   act) if [ "\$n" -ge 2 ]; then echo "heartbeat 01:00: act on the lines below. running A."; echo "commit A 2026-11-26T01:00:00+02:00 abc fix"; else echo "heartbeat 01:00: nothing to act on. running A."; fi;;
   fail) echo "broken" >&2; exit 3;;
   line) echo "heartbeat 01:00: act on the lines below. running A."; cat "$work/ww-line";;
+  slow) sh -c "sleep 2; touch '$work/ww-orphan'" & wait;;
 esac
 EOF
 chmod +x "$work/ww-hb"
@@ -5304,6 +5305,17 @@ test "$status" -eq 3 && case "$out" in *"already running for this run (pid $firs
 kill "$first"
 wait "$first" 2>/dev/null || true
 test ! -e "$ww/watch-wait.pid"
+# a stop mid-check ends the heartbeat's whole group: what it started (run-watch, here a stand-in) saves nothing after
+echo slow > "$work/ww-mode"; : > "$work/ww-calls"
+"$scripts/watch-wait" "$ww" --every 60 --max 600 --now > /dev/null &
+first=$!
+background="$background $first"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do grep -q . "$work/ww-calls" 2>/dev/null && break; sleep 0.1; done
+sleep 0.3
+kill "$first"
+wait "$first" 2>/dev/null || true
+sleep 2.5
+test ! -e "$work/ww-orphan" || { echo "watch-wait left its heartbeat's child running"; exit 1; }
 printf '%s\n' '{"finished": "2026-11-26T02:00:00Z", "tasks": {}}' > "$ww/watch.json"
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 5)
 case "$out" in "watch-wait: the run is finished; nothing to watch") ;; *) echo "watch-wait finished: $out"; exit 1;; esac

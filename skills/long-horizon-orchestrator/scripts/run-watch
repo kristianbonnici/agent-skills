@@ -4,6 +4,7 @@ network) and prints one line per finding, nothing when all is well. references/r
 what to do with each line.
 
 Usage: run-watch <run directory> [--watch <file>|-] [--as <computer>]
+       run-watch <run directory> --forget-session <task>   (a task moved to a new thread: forget its log, under the lock)
 
 It reads <run directory>/watch.json (or --watch), which the orchestrator writes in Prepare and
 adds each task to at launch:
@@ -98,8 +99,8 @@ Each line starts with a word saying what it is:
   next-run <thread>   (every wake until "next_run" has "started") a run waiting to start after this one
                    (watch.json's "next_run": {"thread", "environmentId", "repo", "needs": ["screen", "gpu"],
                    "leases": <lease folder>}) can start: "queued" is an empty list, no task is paused, and the
-                   tasks still running are none in its repository (found here) and hold no lease it needs; or
-                   "finished"
+                   tasks still running (some must) are none in its repository (found here) and hold no lease it
+                   needs; or "finished"
   watcher          watch.json has "watcher" and no watch-wait runs for the run (<run directory>/watch-wait.pid)
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
                    worktree, of each merge of its branch into the integration branch, and of each
@@ -895,7 +896,8 @@ def read_plist(data: bytes):
     from xml.parsers.expat import ExpatError
     try:
         parsed = plistlib.loads(data)
-    except (ValueError, plistlib.InvalidFileException, ExpatError, OverflowError, AttributeError, TypeError, KeyError):
+    except (ValueError, plistlib.InvalidFileException, ExpatError, OverflowError, AttributeError, TypeError, LookupError,
+            RecursionError):
         return None   # a damaged file (plistlib raises AttributeError on a bad <date>, for one)
     return parsed if isinstance(parsed, dict) else None
 
@@ -983,9 +985,9 @@ DONE = {"merged", "ready", "blocked", "failed", "stopped", "parked", "cancelled"
 def next_run_line(watch: dict, run_dir: str) -> str | None:
     """watch.json's "next_run": {"thread", "environmentId"?, "repo", "needs"?: ["screen", "gpu"], "leases"?}: a
     run waiting to start after this one. Its line comes once nothing is queued ("queued" is empty), no task is
-    paused, and the tasks still running are none in its repository (which must be found here) and hold none
-    of the leases it needs (whose state must be readable); or at the finish ("finished"); until "next_run"
-    has "started"."""
+    paused, and the tasks still running (when none runs, the finish starts it) are none in its repository (which
+    must be found here) and hold none of the leases it needs (whose state must be readable); or at the finish
+    ("finished"); until "next_run" has "started"."""
     nxt = watch.get("next_run")
     if not isinstance(nxt, dict) or nxt.get("started") or not isinstance(nxt.get("thread"), str) or not nxt["thread"]:
         return None
@@ -1025,7 +1027,10 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
             leases = {}
         t_now = now()
         for res in needs:
-            for lease in leases.get(res) or [] if isinstance(leases.get(res), list) else []:
+            held = leases.get(res)
+            if held is not None and not isinstance(held, list):
+                return None   # a lease list it can't read: can't tell who holds it
+            for lease in held or []:
                 if not isinstance(lease, dict):
                     continue
                 expires = lease.get("expires")
@@ -1215,7 +1220,7 @@ def on_computer(line: str, name: str) -> str:
 def main(argv: list[str]) -> int:
     args = list(argv)
     options = {}
-    for flag in ("--watch", "--as"):
+    for flag in ("--watch", "--as", "--forget-session"):
         if flag in args:
             i = args.index(flag)
             if i + 1 >= len(args):
@@ -1224,6 +1229,18 @@ def main(argv: list[str]) -> int:
             options[flag] = args[i + 1]
             del args[i:i + 2]
     watch_path, as_computer = options.get("--watch"), options.get("--as")
+    if "--forget-session" in options:   # a task handed to a new thread: drop its remembered log, under the lock
+        if len(args) != 1 or not os.path.isdir(args[0]):
+            print(__doc__.split("\n\n")[1], file=sys.stderr)
+            return 2
+        state_path = os.path.join(os.path.abspath(args[0]), "run-watch.state.json")
+        with open(os.path.join(os.path.abspath(args[0]), "run-watch.lock"), "a+") as state_lock:
+            fcntl.flock(state_lock, fcntl.LOCK_EX)
+            state = load_json(state_path) or {}
+            gone = (state.get("sessions") or {}).pop(options["--forget-session"], None) if isinstance(state.get("sessions"), dict) else None
+            save_state(state_path, state)
+        print(f"forgot {options['--forget-session']}'s session{'' if gone else ' (none was remembered)'}")
+        return 0
     if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or \
             (as_computer is not None and not SSH_ALIAS.fullmatch(as_computer)):
         print(__doc__.split("\n\n")[1], file=sys.stderr)
