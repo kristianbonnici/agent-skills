@@ -1,5 +1,9 @@
 # long-horizon-orchestrator changelog
 
+## 5.20.0 (2026-11-26)
+
+- **Plain `gemini-4-neon` replaces `gemini-pro-orchestrator-neon` for all Antigravity primary tasks** (owner, 2026-11-26; [evidence](evidence.md)): `SKILL.md` and `references/routing.md` now route every Antigravity primary task to plain `gemini-4-neon` (`thought_level: "high"`, or `"xhigh"` with a named benefit) and retire `gemini-pro-orchestrator-neon` (Orchestrator (Neon)) from task routing. A 33-task Antigravity trace analysis (13,373 tool calls, 1.89B tokens) showed Orchestrator (Neon) ran 74.5% of tokens on Hydrogen across ~27 single-thread model switches per task, dropping prompt cache hit from 96.6% to 91.0% (2.7× uncached input per 100 tool calls) and leaving API-list cost essentially unchanged ($4.58 vs. $4.63 per 100 tool calls) for the same Ultra weekly quota rate. Historical parsing, pricing, and chart icon support for `gemini-pro-orchestrator-neon` in `scripts/run-costs`, `scripts/run-charts`, and `marks.json` stays intact.
+
 ## 5.19.0 (2026-11-26)
 
 - **The owner's settings are compared by a script (L-4FVR):** `watch.json` takes `"owner_defaults"` (domain, snapshot, optional keys), and `run-watch`, so the heartbeat too, prints `settings <domain>: <key> <old>→<new>` once for each new value, hiding long, structured and secret-looking values as `<changed>` and keeping only a digest of each value in its state; an entry's `"ignore"` lists keys the owner's own copy writes. machine.md §7 now only says to act on that line. Three runs in a row caught the drift by hand, late, and once misread it.

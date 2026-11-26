@@ -207,6 +207,7 @@ Rules that are the owner's choice, with when they made it:
   Claude".
 - **2026-11-22:** helpers and second opinions follow `delegate_task`'s 45-second wait ("Apply this also on the next run").
 - **2026-11-22:** Claude Max 20x and Google AI Ultra ($200) operate as peer primary subscriptions (relaxing "home harness first"); weekly limits or weekly budgets may spill queued or running tasks once per running task between peer primary subscriptions via clean handoff (while 5-hour resets pause on the same thread, and small plans never absorb primary tasks); fast helpers prefer Hydrogen first while its 5-hour window is under ~85% and the Gemini weekly budget has room; Antigravity's `claude_and_gpt_models` bucket carries Claude reviews (under ~80%) and optional bounded Claude tasks (never `GPT-OSS 120B`); Fable 5.2 stays the only orchestrator second-opinion model; plain `gemini-4-neon` at `xhigh` replaces `Orchestrator (Neon)` in `review-gate 8.6.0`.
+- **2026-11-26:** plain `gemini-4-neon` (`high`, or `xhigh` with a named benefit) replaces `gemini-pro-orchestrator-neon` (Orchestrator (Neon)) for all Antigravity primary tasks after a 33-task trace analysis showed Orchestrator (Neon) ran ~75% of tokens on Hydrogen while prompt-cache misses on model switches erased the price discount.
 
 ### Ultra $200 calibration observations and dual-primary routing (2026-11-22)
 
@@ -257,6 +258,22 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
   `run-watch` and the T3 read, one running task) used 1.8 s of processor time (1.4 s user, 0.45 s
   system) in 1.7 s, at most 60 MB; every 5 minutes that is about 0.6% of one core, and nothing while it
   sleeps.
+- **Plain `gemini-4-neon` vs. `gemini-pro-orchestrator-neon` (2026-11-26), 33 Antigravity coding tasks at
+  `high` (2026-11-22 to -26; 13,373 tool calls, 1.89B tokens; 19 timed tasks totaling 56.7 active hours):**
+  plain `gemini-4-neon` (17 tasks; 2,987 tool calls; 0.42B tokens; 11 timed = 17.1 h) ran 100% of tokens on
+  Neon in one unbroken context with a **96.6%** prompt cache hit (`0.47M` uncached input tokens per 100 tool
+  calls) at **$4.63** per 100 tool calls at API list prices (`$6.83/hr`, 145 tool calls/hr).
+  `gemini-pro-orchestrator-neon` (16 tasks; 10,386 tool calls; 1.47B tokens; 8 timed = 39.6 h) ran in a single
+  thread (`0` sub-trajectories, `0` concurrent calls within 2 s) switching between Neon (`1537`) and Hydrogen
+  (`1669`) **433 times** (~27× per task), placing **74.5%** of tokens (63.9%–82.8% on every task; 73.3% of
+  turns) on Hydrogen and **25.5%** on Neon. Because prompt caches are not shared across models, cache hit fell
+  to **91.0%** (`1.27M` uncached input tokens per 100 tool calls — **2.7×** plain Neon, with 33.7% of all
+  uncached input occurring directly on model switches), leaving API-list cost at **$4.58** per 100 tool calls
+  (`$7.86/hr`, 172 tool calls/hr) — within 1% of plain Neon despite Hydrogen's half-price token rate (at 96.6%
+  cache hit it would have been `$3.17` per 100 tool calls: `+$1.41` cache-miss tax vs. `-$1.46` discount).
+  Both used ~0.4–0.6 points of `gemini_models_weekly` per task-hour on Ultra $200. → *plain `gemini-4-neon`
+  (`high`, or `xhigh` with a named benefit) takes all Antigravity primary tasks; `gemini-pro-orchestrator-neon`
+  is retired from task routing (`long-horizon-orchestrator 5.20.0`).*
 
 ## Outside sources
 
