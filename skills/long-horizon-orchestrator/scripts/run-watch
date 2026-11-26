@@ -88,6 +88,16 @@ Each line starts with a word saying what it is:
                    sleep something asked for passes caffeinate -i, and tasks then run only in dark wakes;
                    also added to times.log. "slept <from> -" says this wake is itself a dark wake
   keep-awake / sampler   the recorded keep-awake or usage sampler isn't running
+  settings <domain>: <key> <old>→<new>   (once for each new value) a key of the owner's settings that differs
+                   from its snapshot: watch.json's "owner_defaults": [{"domain", "snapshot" (from the run
+                   directory), "keys" (optional: only these)}], compared with `defaults export <domain> -`
+                   (RUN_WATCH_DEFAULTS replaces defaults); a value over 40 characters, one that isn't a plain
+                   string, number or boolean, and one that looks like a secret print as <changed>
+  next-run <thread>   (every wake until "next_run" has "started") a run waiting to start after this one
+                   (watch.json's "next_run": {"thread", "environmentId", "repo", "needs": ["screen", "gpu"],
+                   "leases": <lease folder>}) can start: "queued" is an empty list and no running task works in
+                   its repository or holds a lease it needs; or "finished" is set
+  watcher          watch.json has "watcher" and no watch-wait runs for the run (<run directory>/watch-wait.pid)
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
                    worktree, of each merge of its branch into the integration branch, and of each
                    report-back it sent, once each, for the ledger; they are also added to
@@ -181,6 +191,7 @@ DISK_DROP_GB, DISK_DROP_MIN, DISK_LOW_GB, SWAP_GB = 10, 5, 20, 20
 DISK_SIZE_BUDGET_S = float(os.environ.get("RUN_WATCH_DISK_BUDGET_SECONDS", 20))  # for sizing folders on a disk line
 GROWTH_KB = 1024 * float(os.environ.get("RUN_WATCH_GROWTH_MB", 1024))  # grew this much since last sized: growing
 TIMES_LOG = "times.log"
+HERE = os.path.dirname(os.path.realpath(__file__))
 RESIZE_S = float(os.environ.get("RUN_WATCH_RESIZE_SECONDS", 600))  # while free disk only stays low, the folders are sized again at most this often
 KEEP_SAMPLES_S = 2 * 3600
 SSH_S = float(os.environ.get("RUN_WATCH_SSH_SECONDS", 90))   # the whole SSH check of one other computer
@@ -850,6 +861,148 @@ def rate_since(samples: list, cpu_now: float, t_now: float, window_s: float):
     return max(0.0, cpu_now - c0) / max(1.0, t_now - t0)
 
 
+# ---------------------------------------------------------------- the orchestrator's own computer
+
+SECRET_KEY = re.compile(r"token|secret|passw|api.?key|auth|credential|cookie|private|session|bearer", re.I)
+SECRET_VALUE = re.compile(r"^(sk-|ghp_|gho_|xox[a-z]-|eyJ|AKIA|AIza)|^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9+/=_.-]{20,}$")
+
+
+def shown(key_name: str, value) -> str:
+    """A settings value as the settings line prints it: a short plain value, else <changed>, never a secret."""
+    if value is None:
+        return "(none)"
+    if isinstance(value, bool):
+        text = "true" if value else "false"
+    elif isinstance(value, (int, float)):
+        text = f"{value:g}" if isinstance(value, float) else str(value)
+    elif isinstance(value, str):
+        text = value
+    else:   # a dictionary, a list, data or a date: too much to show, and it may hold anything
+        return "<changed>"
+    if len(text) > 40 or "\n" in text or SECRET_KEY.search(key_name) or SECRET_VALUE.search(text):
+        return "<changed>"
+    return text
+
+
+def read_plist(path: str):
+    import plistlib
+    with open(path, "rb") as fh:
+        data = plistlib.load(fh)
+    return data if isinstance(data, dict) else None
+
+
+def settings_drift(watch: dict, run_dir: str, state: dict) -> list[str]:
+    """watch.json's "owner_defaults": [{"domain", "snapshot", "keys"?}]: each key changed since the snapshot
+    (taken in Prepare), once for each new value, so a test build's write is caught on the next wake."""
+    import plistlib
+    entries = watch.get("owner_defaults")
+    if not isinstance(entries, list):
+        return []
+    told = set(state.get("settings_told") or []) if isinstance(state.get("settings_told"), list) else set()
+    now_told, out = set(), []
+    defaults = os.environ.get("RUN_WATCH_DEFAULTS", "defaults")
+    for e in entries:
+        if not isinstance(e, dict) or not isinstance(e.get("domain"), str) or not isinstance(e.get("snapshot"), str):
+            continue
+        domain, snap = e["domain"], os.path.join(run_dir, os.path.expanduser(e["snapshot"]))
+        keys = [k for k in e.get("keys") or [] if isinstance(k, str)] if isinstance(e.get("keys"), list) else None
+        try:
+            old = read_plist(snap)
+        except (OSError, ValueError, plistlib.InvalidFileException) as err:
+            old, why = None, f"its snapshot {snap} can't be read ({short(getattr(err, 'strerror', None) or str(err), 60)})"
+        else:
+            why = f"its snapshot {snap} isn't a settings file"
+        if old is not None:
+            exported = capture([defaults, "export", domain, "-"], 10)
+            try:
+                new = plistlib.loads(exported.stdout.encode()) if exported.returncode == 0 and exported.stdout.strip() else None
+            except (ValueError, plistlib.InvalidFileException):
+                new = None
+            # a domain nothing has written yet exports nothing: every key is then gone
+            new = new if isinstance(new, dict) else ({} if exported.returncode == 0 or "does not exist" in exported.stderr else None)
+            why = f"defaults export {domain} failed: {short(exported.stderr.strip() or 'no output', 60)}"
+        if old is None or new is None:
+            k = f"{domain}\0!{why}"
+            if k not in told and k not in now_told:
+                out.append(f"settings {domain}: not compared: {why}")
+            now_told.add(k)
+            continue
+        for name in sorted(keys if keys is not None else set(old) | set(new)):
+            a, b = old.get(name), new.get(name)
+            if a == b:
+                continue
+            k = f"{domain}\0{name}\0{repr(b)[:200]}"
+            if k not in told and k not in now_told:   # once, however many entries name the key
+                out.append(f"settings {domain}: {name} {shown(name, a)}→{shown(name, b)}")
+            now_told.add(k)
+    state["settings_told"] = sorted(now_told)
+    return out
+
+
+def common_dir(path: str) -> str | None:
+    if not path or not os.path.isdir(path):
+        return None
+    out = run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"]).strip()
+    return os.path.realpath(out) if out else None
+
+
+def next_run_line(watch: dict, run_dir: str) -> str | None:
+    """watch.json's "next_run": {"thread", "environmentId"?, "repo", "needs"?: ["screen", "gpu"], "leases"?}: a
+    run waiting to start after this one. Its line comes once nothing is queued ("queued" is empty) and the tasks
+    still running are none in its repository and hold none of the leases it needs, or at the finish ("finished"),
+    until "next_run" has "started"."""
+    nxt = watch.get("next_run")
+    if not isinstance(nxt, dict) or nxt.get("started") or not isinstance(nxt.get("thread"), str):
+        return None
+    tasks = {k: v for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict)}
+    running = sorted(t for t, v in tasks.items() if v.get("status", "running") == "running")
+    say = (f"next-run {nxt['thread']}: send the waiting run its start message (the skill versions, the lease folder, what still "
+           "runs: {left}), record it in the ledger and set \"started\" in watch.json's \"next_run\"")
+    if watch.get("finished"):
+        return say.format(left=", ".join(running) or "nothing") + " (this run is finishing)"
+    queued = watch.get("queued")
+    if not isinstance(queued, list) or queued:
+        return None   # not known to be down to its final tasks
+    theirs = common_dir(str(nxt.get("repo") or ""))
+    mine_repo = common_dir(str(watch.get("repo") or ""))
+    in_repo = []
+    here = str(watch.get("computer") or this_computer()).casefold() if any(tasks[t].get("computer") for t in running) else ""
+    for t in running:
+        v = tasks[t]
+        there = v.get("computer") and str(v["computer"]).casefold() != here
+        cd = mine_repo if there else (common_dir(str(v.get("worktree") or "")) or mine_repo)
+        if theirs and cd == theirs:
+            in_repo.append(t)
+    needs = [n for n in nxt.get("needs") or [] if isinstance(n, str)] if isinstance(nxt.get("needs"), list) else []
+    held = []
+    if needs and running:
+        folder = os.path.expanduser(str(nxt.get("leases") or run_dir))
+        leases = (load_json(os.path.join(folder, "locks", "state.json")) or {}).get("leases")
+        t_now = now()
+        for res in needs:
+            for lease in (leases.get(res) or []) if isinstance(leases, dict) else []:
+                owner = str(lease.get("owner", "")) if isinstance(lease, dict) else ""
+                if (lease.get("expires") or 0) > t_now and any(owner == t or owner.endswith("-" + t) for t in running):
+                    held.append(f"{owner} holds {res}")
+    if in_repo or held:
+        return None
+    return say.format(left=", ".join(running) or "nothing") + (" (none in its repository, none holding what it needs)" if running else "")
+
+
+def watcher_line(watch: dict, run_dir: str, procs: dict) -> str | None:
+    """watch.json's "watcher" (set when the orchestrator uses scripts/watch-wait): it isn't running."""
+    if not watch.get("watcher") or watch.get("finished"):
+        return None
+    try:
+        pid = int(open(os.path.join(run_dir, "watch-wait.pid")).read().split()[0])
+    except (OSError, ValueError, IndexError):
+        pid = None
+    if pid is not None and "watch-wait" in procs.get(pid, {}).get("args", ""):
+        return None
+    return (f"watcher: watch-wait isn't running{f' (pid {pid} is gone)' if pid else ''}: start it again as a background command "
+            f"({os.path.join(HERE, 'watch-wait')} {run_dir})")
+
+
 # ---------------------------------------------------------------- other computers, over SSH
 
 class OutOfTime(BaseException):
@@ -1468,6 +1621,14 @@ def main(argv: list[str]) -> int:
         summary["sampler"] = "DOWN"
         lines.append(f"sampler: the usage sampler's last sample is {(t_now - os.path.getmtime(machine)) / 60:.0f} min old: "
                      "start it again on the same folder with scripts/detach and record its pid")
+
+    # The orchestrator's own computer: the owner's settings since the snapshot, a run waiting to start after
+    # this one, and the watcher.
+    if as_computer is None:
+        lines.extend(settings_drift(watch, run_dir, state))
+        for extra in (next_run_line(watch, run_dir), watcher_line(watch, run_dir, procs)):
+            if extra:
+                lines.append(extra)
 
     # Leftovers, on another computer (where nobody else looks for them during the run): processes started
     # since the run began that name the run directory or work in a task's folders, and aren't a running

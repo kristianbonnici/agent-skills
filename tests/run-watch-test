@@ -797,6 +797,108 @@ try:
     for t in ("AG4", "AG5"):
         assert t not in ag_state3["blind"], (t, ag_state3["blind"])
     assert not os.path.exists(state_db), "run-watch created statev2.sqlite"
+    # The orchestrator's own checks (L-4FVR, L-XAYK, the watcher): the owner's settings against their snapshot,
+    # once for each new value, a long, structured or secret-looking value as <changed>, a snapshot that can't be
+    # read; the next-run line only once nothing is queued and no running task works in the waiting run's
+    # repository or holds a lease it needs, at the finish whatever runs, and never once "started"; a watcher
+    # that isn't running.
+    import plistlib
+    o_run = os.path.join(work, "own-run")
+    os.makedirs(os.path.join(o_run, "owner"))
+    plistlib.dump({"readingSpeed": 1.4, "windowSection": "appearance", "notch": {"x": 1}, "apiToken": "a",
+                   "long": "x" * 10, "same": True}, open(os.path.join(o_run, "owner", "app.plist"), "wb"))
+    current = os.path.join(work, "own-defaults.plist")
+    plistlib.dump({"readingSpeed": 1, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
+                   "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"), fmt=plistlib.FMT_XML)
+    fake_defaults = os.path.join(bin_dir, "fake-defaults")
+    open(fake_defaults, "w").write(f"#!/bin/sh\n[ \"$2\" = com.example.app ] || {{ echo \"Domain $2 does not exist\" >&2; exit 1; }}\ncat {current}\n")
+    os.chmod(fake_defaults, 0o755)
+    o_env = dict(env, RUN_WATCH_DEFAULTS=fake_defaults)
+    o_watch = {"started": stamp(time.time() - 60), "repo": repo, "integration_branch": "main", "tasks": {},
+               "owner_defaults": [{"domain": "com.example.app", "snapshot": "owner/app.plist"},
+                                  {"domain": "com.example.app", "snapshot": "owner/app.plist", "keys": ["same", "readingSpeed"]},
+                                  {"domain": "com.example.gone", "snapshot": "owner/missing.plist"}]}
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+
+    def own(**kw):
+        done = subprocess.run([sys.executable, "-I", script, o_run], capture_output=True, text=True, env=dict(o_env, **kw), timeout=120)
+        assert done.returncode == 0 and "Traceback" not in done.stderr, done.stderr
+        return done.stdout.splitlines()
+
+    first = own()
+    s = sorted(l for l in first if l.startswith("settings "))
+    assert "settings com.example.app: readingSpeed 1.4→1" in s, s
+    assert s.count("settings com.example.app: readingSpeed 1.4→1") == 1, s      # two entries name it, one line
+    for want in ("windowSection appearance→highlight", "notch <changed>→<changed>", "apiToken <changed>→<changed>",
+                 "long xxxxxxxxxx→<changed>", "added (none)→<changed>"):
+        assert f"settings com.example.app: {want}" in s, (want, s)
+    assert not any("same" in l for l in s), s
+    assert any(l.startswith("settings com.example.gone: not compared: its snapshot") for l in s), s
+    assert not any(l.startswith(("next-run", "watcher")) for l in first), first
+    again = own()
+    assert not any(l.startswith("settings ") for l in again), again                  # once each
+    plistlib.dump({"readingSpeed": 1.6, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
+                   "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"))
+    third = [l for l in own() if l.startswith("settings ")]
+    assert third == ["settings com.example.app: readingSpeed 1.4→1.6"], third        # a new value is told again
+    plistlib.dump({"readingSpeed": 1.4, "windowSection": "appearance", "notch": {"x": 1}, "apiToken": "a",
+                   "long": "x" * 10, "same": True}, open(current, "wb"))
+    assert not any(l.startswith("settings com.example.app") for l in own())        # restored: nothing
+    del o_watch["owner_defaults"]
+
+    # next-run: B works in the waiting run's repository; C holds the screen it needs, in the shared lease folder
+    other_repo = os.path.join(work, "other-repo")
+    os.makedirs(other_repo)
+    git("init", "-q", "-b", "main", cwd=other_repo)
+    leases = os.path.join(work, "shared-leases")
+    os.makedirs(os.path.join(leases, "locks"))
+    json.dump({"leases": {"screen": [{"owner": "app-C", "slots": 1, "expires": time.time() + 600, "since": time.time()}]}},
+              open(os.path.join(leases, "locks", "state.json"), "w"))
+    o_watch["tasks"] = {"B": {"worktree": wt["A"], "status": "running"}, "C": {"worktree": other_repo + "-none", "status": "running"}}
+    o_watch["next_run"] = {"thread": "thread-next", "repo": repo, "needs": ["screen"], "leases": leases}
+    o_watch["queued"] = []
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "B works in its repository"
+    o_watch["next_run"]["repo"] = other_repo
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "C holds the screen"
+    json.dump({"leases": {"screen": [{"owner": "app-C", "slots": 1, "expires": time.time() - 5, "since": time.time() - 900}]}},
+              open(os.path.join(leases, "locks", "state.json"), "w"))
+    o_watch["queued"] = ["E"]
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "E is still queued"
+    del o_watch["queued"]
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "no queued list: not known to be down to its last tasks"
+    o_watch["queued"] = []
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    nr = [l for l in own() if l.startswith("next-run")]
+    assert len(nr) == 1 and nr[0].startswith("next-run thread-next: ") and "B, C" in nr[0], nr
+    assert len([l for l in own() if l.startswith("next-run")]) == 1, "every wake until started"
+    o_watch["next_run"]["repo"] = repo
+    o_watch["finished"] = stamp(time.time())
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    nr = [l for l in own() if l.startswith("next-run")]
+    assert len(nr) == 1 and "this run is finishing" in nr[0], nr                      # at the finish whatever runs
+    o_watch["next_run"]["started"] = stamp(time.time())
+    del o_watch["finished"]
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "started: no line"
+
+    # watcher: none running, then one running (its pid file), then gone
+    o_watch["watcher"] = "background"
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    w = [l for l in own() if l.startswith("watcher")]
+    assert len(w) == 1 and "watch-wait isn't running" in w[0], w
+    fake_watcher = spawn(["sh", "-c", "sleep 600; :", "watch-wait"], elsewhere)   # sh stays, with the name
+    open(os.path.join(o_run, "watch-wait.pid"), "w").write(f"{fake_watcher.pid}\n")
+    time.sleep(0.3)
+    assert not any(l.startswith("watcher") for l in own()), "a running watcher"
+    os.killpg(fake_watcher.pid, signal.SIGKILL)
+    fake_watcher.wait()
+    w = [l for l in own() if l.startswith("watcher")]
+    assert len(w) == 1 and f"pid {fake_watcher.pid} is gone" in w[0], w
+
 finally:
     for p in started:
         try:

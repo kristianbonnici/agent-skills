@@ -18,7 +18,7 @@ flowchart TD
   checks -->|pass| merge["Fast-forward the integration branch"]
   checks -->|narrow miss| ready
   merge --> report["Report back to the orchestrator"]
-  report --> wake{"Orchestrator wakes:<br/>report, heartbeat or resume wake"}
+  report --> wake{"Orchestrator wakes:<br/>report, watcher, heartbeat or resume wake"}
   wake -->|dependents now unblocked| launch
   wake -->|"limit: 5-hour window"| pause["Pause; resume on the same<br/>thread after the reset"]
   pause --> work
@@ -28,6 +28,7 @@ flowchart TD
   opus --> work
   wake -->|"limit: free model"| move["Move on: OpenCode Go ⇄ free ⇄ Hydrogen,<br/>then Terra or Sonnet"]
   move --> work
+  wake -->|"down to final tasks; a run waits behind"| nextrun["Start the waiting run:<br/>its start message"]
   wake -->|all tasks done or parked| finish["Finish: final checks, restore the<br/>user's state, run map and report"]
 ```
 

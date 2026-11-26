@@ -1,5 +1,9 @@
 # review-gate changelog
 
+## 8.7.1 (2026-11-26)
+
+- **In T3 with tools missing, reviewers still go through T3 (L-ML29):** when `delegate_task`, `schedule_task` or `t3_thread_read` is missing from the tool list and `T3_ACP_MCP_NODE` is set, the gate calls them through `acp-mcp-call`, keeping its `clientRequestId` and `threads.txt` tracking, and never falls back to the command-line reviewers. An Antigravity task ran 13 reviewer runs from the command line after a context summary, outside T3's approval checks and the run's costs.
+
 ## 8.7.0 (2026-11-23)
 
 - **In T3, each gate tracks and settles the reviewer threads it started when the gate ends** (owner, 2026-11-23): each `delegate_task` launch (reviewer, approval relaunch, replacement/supplemental pass, tag question, Deep second opinion, or rebase look) uses a gate-specific `clientRequestId` and appends its `childThreadId` to `threads.txt` in the gate's record folder so context summaries never lose track of earlier rounds (with child-thread reconciliation by that gate prefix on resume after an interrupted launch; a paused/resumed gate appends to the same folder's file, and a later gate such as `review-2/` keeps its own). When the gate ends (`passed`, `stopped`, `no reviewer`, or `reported`) and its wake is deleted, the caller settles every non-running thread ID in `threads.txt` (including terminal statuses `completed`, `cancelled`, `failed`, `interrupted`, `rolled_back`, and `idle`) one call at a time via `t3_thread_organize({action: "settle", threadId: "<id>"})` — deduplicating IDs, always passing `threadId` explicitly, skipping threads that still have active or queued work (cancelling timed-out/stopped ones first), retrying failures once, and listing any unsettled IDs in the handoff or reply.

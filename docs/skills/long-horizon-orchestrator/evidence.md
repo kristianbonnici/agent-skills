@@ -226,6 +226,38 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
 - **Observed invariants:** in 5 multi-turn conversations totaling 653 generations (249, 47, 85, 206, 66 rows), fields 11 and 7 were strictly 1-to-1 per generation (never shared across distinct turns) while matching across `gen_metadata`, retries and `steps`; field 12 did not appear in the 232 sampled `1.5.14` databases (`0` rows) and is kept as a defensive merge key; every `gen_metadata` row without a row timestamp matched a `steps` row carrying one (`2,946` matched, `0` unmatched across 60 recent databases); Orchestrator (Neon) databases recorded both orchestrator turns (`1537`, `gemini-pro-orchestrator-neon`) and worker turns (`1669`, `gemini-flash-worker-agy` / `Gemini 4 Hydrogen (Orchestrator)`). Known numeric model IDs observed: `1320` (`gemini-3.8-flash`), `1402` (`claude-opus-5-5`), `1405` (`claude-sonnet-5-5`), `1525`/`1530` (`gemini-4-hydrogen`), `1532`/`1535` (`gemini-4-neon`), `1537` (`gemini-pro-orchestrator-neon`), `1669` (`gemini-4-hydrogen-orchestrator`).
 - **Drift handling:** if a future Antigravity release changes table or field numbers, malformed wire payloads are counted and flagged, and threads whose records lack row timestamps or known model names are flagged incomplete rather than reported as a clean `$0.00`.
 
+### Wakes, the owner's settings and a run waiting behind (2026-11-26)
+
+- **Settings drift, three runs running (2026-11-22 to 25):** a test build changed the owner's app settings
+  in two runs; once the change was judged the owner's own and left, once it was noticed only hours later,
+  when a merge prompted a manual comparison. The rule to compare on every wake was in the skill, but the
+  heartbeat didn't run it, so wakes skipped it. Hence `run-watch`'s `settings` line.
+- **A run told to start after another (2026-11-25):** it polled every 30 minutes for about 12 hours, while
+  the run ahead had been down to its last task, in another repository, for over 7 of them. The owner's
+  later word: the waiting run "unnecessarily used the heartbeat for the entire time of the previous run …
+  it just uses unnecessary credits". Hence a waiting run that schedules nothing, and the leader's
+  `next-run` line.
+- **Computer use (2026-11-25), a graded comparison of 8 tasks × 3 seeds:** Codex's own computer use scored
+  23/24 and was fastest; Cua Driver from Claude Code (Opus), from Antigravity Neon and from Hydrogen each
+  scored 21/24, every Cua loss the same double mouse-down on a drawn canvas (background delivery). In the
+  run's real checks, Claude Code with Cua Driver verified 9 of 11; Codex couldn't see a non-activating
+  panel of the app and twice fell back to Cua Driver, and Codex's 5-hour window ran out under reviews, at
+  about 1% a computer-use run. One day's numbers, with one seed for some models.
+- **The heartbeat's tool reads:** an idle T3 heartbeat cost one script call plus a paginated
+  `t3_thread_list` and a `t3_thread_read` for each running subagent and Antigravity task. T3's state
+  database holds the same facts: read-only on 2026-11-26, `orchestration_v2_projection_runtime_requests`
+  had 45 rows (`kind` `command` or `user_input`; `status` `pending`, `resolved`, `cancelled` or `expired`),
+  and the parent of 3,810 of 4,709 threads was in their `payload_json` (`$.lineage.parentThreadId`), with
+  `orchestration_v2_projection_subagents` linking delegated children too.
+- **Waking without the model (2026-11-26):** in a Claude Code thread in T3, a background command that slept
+  20 seconds and exited after the turn had ended started the next turn about 5 seconds after its exit. A
+  detached process started from an Antigravity turn in T3, calling `acp-mcp-call t3_thread_send` 75
+  seconds after that turn ended, got HTTP 401: the credentials in a turn's environment end with the turn,
+  so Antigravity and Codex orchestrators keep the scheduled heartbeat. One `watch-wait` loop (heartbeat with
+  `run-watch` and the T3 read, one running task) used 1.8 s of processor time (1.4 s user, 0.45 s
+  system) in 1.7 s, at most 60 MB; every 5 minutes that is about 0.6% of one core, and nothing while it
+  sleeps.
+
 ## Outside sources
 
 - **Anthropic, [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)**

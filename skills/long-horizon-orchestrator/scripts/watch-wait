@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Wait for something to act on, without model tokens: heartbeat's checks every few minutes, in a loop that
+exits as soon as one finds something, so the orchestrator is woken only then.
+
+Usage: watch-wait <run directory> [--every <seconds, default 300>] [--max <seconds, default 1740>] [--live]
+
+Each loop runs scripts/heartbeat <run directory> --no-ledger (run-watch, the integration branch, the computer,
+the usage sampler's last readings and T3's pending requests), and sleeps in between. It exits 0, printing one
+line and then heartbeat's output, as soon as a check isn't idle with a line to act on: a task's report, a
+commit or merge, an approval, a hang, a usage mark, a settings change, a next-run line. A wake that only names
+blind tasks or tasks read with the tools on another computer isn't a reason to exit: those are read on the
+wake it ends with. It also exits at --max, with one line saying nothing needed acting on, which stays under
+Claude Code's background limit (2 minutes under its default 30; pass timeout 7200000 and --max 7080 for two
+hours). Either way it adds one line to the ledger (<run directory>.md), never one a loop.
+
+It reads usage live only when it must: with --live, or while a running task's "model" in watch.json names
+Fable (whose week is read live only), at most every 15 minutes; otherwise heartbeat runs with --no-live.
+
+Start it in Claude Code (also in T3) as a background command, whose exit starts the orchestrator's next turn
+(run_in_background). Only one runs for a run directory: a second exits 3 at once, naming the first's process
+ID. It keeps <run directory>/watch-wait.pid while it runs, which run-watch reads when watch.json has
+"watcher" (its "watcher" line says one isn't running). It exits 1 when heartbeat itself fails, 2 for a usage
+error, and quietly with 0 when watch.json says the run is "finished". For tests, WATCH_WAIT_HEARTBEAT
+replaces the heartbeat it runs.
+"""
+
+import sys
+
+if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's own /usr/bin/python3
+    print(f"watch-wait: needs Python 3.9 or newer, and {sys.executable} is {sys.version.split()[0]}: run it with a newer "
+          "python3 (on a Mac, Homebrew's)", file=sys.stderr)
+    sys.exit(69)
+
+import fcntl
+import json
+import os
+import re
+import signal
+import subprocess
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+LIVE_EVERY_S = 900
+
+
+def option(args: list, name: str, default: float):
+    if name not in args:
+        return default
+    i = args.index(name)
+    try:
+        value = float(args[i + 1])
+    except (IndexError, ValueError):
+        return None
+    del args[i:i + 2]
+    return value if value > 0 else None
+
+
+def load_watch(run_dir: str) -> dict:
+    try:
+        watch = json.load(open(os.path.join(run_dir, "watch.json")))
+        return watch if isinstance(watch, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def fable_running(watch: dict) -> bool:
+    tasks = watch.get("tasks") if isinstance(watch.get("tasks"), dict) else {}
+    return any(isinstance(v, dict) and v.get("status", "running") == "running" and re.search(r"fable", str(v.get("model", "")), re.I)
+               for v in tasks.values())
+
+
+def ledger_line(run_dir: str, text: str) -> None:
+    ledger = run_dir.rstrip("/") + ".md"
+    if os.path.isfile(ledger):
+        try:
+            with open(ledger, "a", encoding="utf-8") as fh:
+                fh.write(f"- {time.strftime('%H:%M')} watch-wait: {text}\n")
+        except OSError as e:
+            print(f"note: couldn't add to the ledger: {e}")
+
+
+def main(argv: list) -> int:
+    args = list(argv)
+    every, most = option(args, "--every", 300), option(args, "--max", 1740)
+    live_wanted = "--live" in args
+    args = [a for a in args if a != "--live"]
+    if every is None or most is None or len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]):
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    run_dir = os.path.abspath(args[0])
+    lock = open(os.path.join(run_dir, "watch-wait.lock"), "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            other = open(os.path.join(run_dir, "watch-wait.pid")).read().split()[0]
+        except (OSError, IndexError):
+            other = "unknown"
+        print(f"watch-wait: already running for this run (pid {other}): nothing started")
+        return 3
+    pid_path = os.path.join(run_dir, "watch-wait.pid")
+    with open(pid_path, "w") as fh:
+        fh.write(f"{os.getpid()}\n")
+
+    def stop(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, stop)
+    heartbeat = os.environ.get("WATCH_WAIT_HEARTBEAT", os.path.join(HERE, "heartbeat"))
+    t0 = time.time()
+    deadline = t0 + most
+    checks, last_live, summary = 0, None, ""
+    try:
+        while True:
+            watch = load_watch(run_dir)
+            if watch.get("finished"):
+                print("watch-wait: the run is finished; nothing to watch")
+                return 0
+            live = (live_wanted or fable_running(watch)) and (last_live is None or time.time() - last_live >= LIVE_EVERY_S)
+            if live:
+                last_live = time.time()
+            try:
+                done = subprocess.run([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
+                                      capture_output=True, text=True, timeout=300)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                print(f"watch-wait {time.strftime('%H:%M')}: heartbeat didn't run ({e}): run it yourself, then start watch-wait again")
+                ledger_line(run_dir, f"heartbeat didn't run ({e})")
+                return 1
+            checks += 1
+            out = [l for l in done.stdout.splitlines() if l.strip()]
+            if done.returncode != 0 or not out:
+                print(f"watch-wait {time.strftime('%H:%M')}: heartbeat failed (exit {done.returncode}): "
+                      f"{done.stderr.strip()[-200:]}; run it yourself, then start watch-wait again")
+                ledger_line(run_dir, f"heartbeat failed (exit {done.returncode})")
+                return 1
+            first = out[0]
+            summary = first.split(". ", 1)[1] if ". " in first else first
+            minutes = (time.time() - t0) / 60
+            if "nothing to act on" not in first and len(out) > 1:
+                print(f"watch-wait {time.strftime('%H:%M')}: act on heartbeat's lines below (after {minutes:.0f} min, {checks} checks); "
+                      "then start watch-wait again")
+                print("\n".join(out))
+                ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
+                return 0
+            left = deadline - time.time()
+            if left <= 0:
+                print(f"watch-wait {time.strftime('%H:%M')}: nothing to act on in {minutes:.0f} min ({checks} checks): "
+                      f"start it again. {first}")
+                ledger_line(run_dir, f"nothing to act on in {minutes:.0f} min, {checks} checks: {summary}")
+                return 0
+            time.sleep(min(every, left))
+    finally:
+        try:
+            if open(pid_path).read().split()[:1] == [str(os.getpid())]:
+                os.remove(pid_path)
+        except (OSError, IndexError):
+            pass
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

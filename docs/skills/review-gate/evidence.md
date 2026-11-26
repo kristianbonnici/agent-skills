@@ -50,6 +50,13 @@ as rough. The per-task details stay in the owner's private records.
   reviewer's must-fixes, the must-fixes only it found, and its rejected findings, so the next study can show whether they earn a
   place at more levels or fewer.
 
+### T3 tools missing after a context summary (2026-11-25)
+
+One Antigravity task in T3 ran its reviewers through T3 for 7 reviewer threads, then, after a context
+summary, no longer saw `delegate_task` or `schedule_task` among its tools and ran the next 13 reviewer
+runs from the command line: no approval or pace checks through T3, and none of the 13 in the run's costs or
+map. `acp-mcp-call`, which the same task had used before, reaches every T3 tool from the shell.
+
 ## Outside sources
 
 - **Anthropic, [How the Claude Code team does code review](https://claude.dev/blog/solving-code-review-at-anthropic/)**

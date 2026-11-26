@@ -3,7 +3,7 @@
 line added to the ledger. An idle wake is then this one tool call and a one-line reply, instead of five
 to twelve calls that each re-read the orchestrator's large context.
 
-Usage: heartbeat <run directory> [--live] [--no-ledger]
+Usage: heartbeat <run directory> [--live | --no-live] [--no-ledger]
 
 It reads <run directory>/watch.json, as run-watch does, and prints:
 
@@ -27,6 +27,19 @@ that computer couldn't take or send it), or
 when this heartbeat's run-watch didn't finish (its "run-watch failed" note says why), so no earlier reading
 passes for this one; every computer watch.json's "machines" reaches over SSH is named, a first wake's too.
 
+In T3 it also reads T3's state database read-only (<T3_USERDATA, default ~/.t3/userdata>/statev2.sqlite), so
+no thread needs a tool read to find an approval: each pending request on a running task's thread or on any
+thread under it (reviewers, helpers and theirs, by their parent links) is a line,
+
+  approval-task <task> <thread> <kind> since HH:MM       on the task's own thread
+  approval-subagent <task> <thread> <kind> since HH:MM   on a thread under it
+
+and a database or table it can't read (missing while watch.json's "host" is "t3", locked, a schema it doesn't
+know) is "t3-state unreadable: <why>", which is never idle: read the subagents with the tools then. A running
+task on another computer, whose database isn't here, is named in the summary ("read with the tools on
+den-mac: B") and keeps the wake from being idle. Runs one at a time per run directory (heartbeat.lock), so
+a scheduled heartbeat and scripts/watch-wait never read run-watch's state together.
+
 The summary: the running tasks, the integration branch's head and how many tracked files are changed
 in its checkout, free disk, swap and the load, password dialogs, whether the keep-awake and the usage
 sampler run, and each subscription's windows used. A window to act on is a line of its own and makes the
@@ -35,7 +48,8 @@ watch.json's "usage_marks" ({"claude.weekly": 34, "claude.weekly_fable": 21}: th
 run's Claude and Fable budgets are used, which the orchestrator keeps up to date, also after a reset). Usage comes from the sampler's last readings
 (<run directory>/usage/providers.jsonl, no new process); with --live, or when a running task's
 "model" in watch.json names Fable (whose weekly window is read live only), from a live
-provider-usage call (about 20 seconds, no model tokens). Without readings either way it says so.
+provider-usage call (about 20 seconds, no model tokens); --no-live never reads live, a Fable task's
+budget included. Without readings either way it says so.
 
 It appends "- HH:MM heartbeat: <the summary>" to the ledger (<run directory>.md) unless
 --no-ledger. It exits 0, or 2 for a usage error. For tests, HEARTBEAT_RUN_WATCH and
@@ -49,15 +63,19 @@ if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's 
           "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
     sys.exit(69)
 
+import fcntl
 import json
 import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
 import uuid
+from datetime import datetime
+from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 EVENT = re.compile(r"^(commit|merged|report|slept) ")
@@ -143,13 +161,105 @@ def usage(run_dir: str, live: bool, marks: dict, fable: bool = False) -> tuple[s
     return ((f"sampled {when}: " + line) if line else "usage: no sampler readings"), near_limits(latest, "used", marks)
 
 
+def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
+    """Pending requests in T3's state database (read-only) on a running task's thread or any thread under it:
+    a reviewer, helper or Antigravity task waiting on an approval or a question nobody will answer. Returns
+    (lines, summary bits). A task on another computer, whose T3 database isn't here, keeps the tool reads."""
+    tasks = watch.get("tasks") if isinstance(watch.get("tasks"), dict) else {}
+    mine, away = {}, {}
+    for t in running:
+        v = tasks[t]
+        if not isinstance(v.get("thread"), str):
+            continue
+        if v.get("computer") and str(v["computer"]).casefold() != here:
+            away.setdefault(str(v["computer"]), []).append(t)
+        else:
+            mine[v["thread"]] = t
+    bits = [f"read with the tools on {c}: {', '.join(ts)}" for c, ts in sorted(away.items())]
+    if not mine:
+        return [], bits
+    db = os.path.join(os.environ.get("T3_USERDATA") or os.path.expanduser("~/.t3/userdata"), "statev2.sqlite")
+    if not os.path.isfile(db):
+        if watch.get("host") == "t3":
+            return [f"t3-state unreadable: no T3 state database at {db}: read the running tasks' subagents with the tools"], bits
+        return [], bits
+    uri = f"file:{quote(os.path.abspath(db), safe='/')}?mode=ro"
+    why = ""
+    for suffix in ("", "&immutable=1"):   # immutable: when a read-only folder keeps the WAL's index from opening
+        con = None
+        try:
+            con = sqlite3.connect(uri + suffix, uri=True, timeout=2)
+            cols = {t: {r[1] for r in con.execute(f"PRAGMA table_info({t})")} for t in
+                    ("orchestration_v2_projection_runtime_requests", "orchestration_v2_projection_threads",
+                     "orchestration_v2_projection_subagents")}
+            req, thr, sub = cols.values()
+            if not {"thread_id", "status", "created_at"} <= req:
+                return ["t3-state unreadable: T3's database has no runtime requests table it knows (its schema changed): "
+                        "read the running tasks' subagents with the tools"], bits
+            if not {"thread_id", "payload_json"} <= thr:
+                return ["t3-state unreadable: T3's database has no threads table it knows (its schema changed): "
+                        "read the running tasks' subagents with the tools"], bits
+            pending = con.execute("SELECT thread_id, " + ("kind" if "kind" in req else "''") + ", created_at FROM "
+                                  "orchestration_v2_projection_runtime_requests WHERE status = 'pending'").fetchall()
+            parent = {}
+            if pending:
+                for child, up in con.execute("SELECT thread_id, json_extract(payload_json, '$.lineage.parentThreadId') FROM "
+                                             "orchestration_v2_projection_threads WHERE json_valid(payload_json)"):
+                    if isinstance(up, str) and up:
+                        parent[child] = up
+                if {"thread_id", "child_thread_id"} <= sub:
+                    for up, child in con.execute("SELECT thread_id, child_thread_id FROM orchestration_v2_projection_subagents "
+                                                 "WHERE child_thread_id IS NOT NULL"):
+                        parent.setdefault(child, up)
+            break
+        except sqlite3.Error as e:
+            why = str(e)
+            continue
+        finally:
+            if con is not None:
+                con.close()
+    else:
+        return [f"t3-state unreadable: {why[:120]}: read the running tasks' subagents with the tools"], bits
+    out = []
+    for thread, kind, created in sorted(pending, key=lambda r: str(r[2])):
+        task, seen, at = None, set(), thread
+        while at and at not in seen and len(seen) < 50:
+            if at in mine:
+                task = mine[at]
+                break
+            seen.add(at)
+            at = parent.get(at)
+        if task is None:
+            continue
+        t = parse_iso(created)
+        launched = parse_iso(tasks[task].get("launched"))
+        if t is not None and launched is not None and t < launched - 60:
+            continue   # older than the task: another run's, left pending
+        since = time.strftime("%H:%M", time.localtime(t)) if t is not None else "?"
+        out.append(f"approval-{'task' if thread == tasks[task]['thread'] else 'subagent'} {task} {thread} "
+                   f"{kind or 'request'} since {since}")
+    return out, bits
+
+
+def parse_iso(s):
+    if not isinstance(s, str) or not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def main(argv):
     args = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}
-    if len(args) != 1 or not os.path.isdir(args[0]) or flags - {"--live", "--no-ledger"}:
+    if len(args) != 1 or not os.path.isdir(args[0]) or flags - {"--live", "--no-live", "--no-ledger"} or {"--live", "--no-live"} <= flags:
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
     run_dir = os.path.abspath(args[0])
+    # one at a time per run (a scheduled heartbeat and watch-wait's loop), so run-watch's state stays whole
+    lock = open(os.path.join(run_dir, "heartbeat.lock"), "a+")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     try:
         watch = json.load(open(os.path.join(run_dir, "watch.json")))
         watch = watch if isinstance(watch, dict) else {}
@@ -255,15 +365,24 @@ def main(argv):
         bits.append(f"{name}: " + ", ".join(there))
     if blind_running:
         bits.append(f"blind, read their threads: {', '.join(blind_running)}")
+    # T3's pending requests: an approval a reviewer, helper or Antigravity task waits on
+    away = [t for t in running if tasks[t].get("computer")]
+    here_name = str(watch.get("computer") or os.environ.get("RUN_WATCH_COMPUTER")
+                    or run(["scutil", "--get", "LocalHostName"], timeout=10).strip() or socket.gethostname().split(".")[0]
+                    ).casefold() if away else ""
+    pending, tool_reads = t3_pending(watch, running, here_name)
+    bits += tool_reads
     marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
-    usage_line, limits = usage(run_dir, "--live" in flags or fable, marks, fable)
+    live = "--live" in flags or (fable and "--no-live" not in flags)
+    usage_line, limits = usage(run_dir, live, marks, fable and live)
     bits.append(usage_line)
     summary = ". ".join(bits) + "."
-    flagged += limits
-    watch_lines += limits
+    flagged += pending + limits
+    watch_lines += pending + limits
     if dialogs and not any(l.startswith("dialog") for l in flagged):
-        flagged.append("dialog")
-    idle = not flagged and not events and not blind_running
+        flagged.append(f"dialog: {dialogs} password dialog(s) on the screen")
+        watch_lines.append(flagged[-1])
+    idle = not flagged and not events and not blind_running and not tool_reads
     print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
     for l in watch_lines:
         if not idle:

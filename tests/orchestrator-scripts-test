@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch (also over SSH), heartbeat, run-costs, share-usage and detach. RUN_MAP_CHROME names the browser for the page checks.
+# Checks the long-horizon-orchestrator's helper scripts: lease, run-charts with its run map and usage panel, usage-sampler, report-offer, prune-runs, run-watch (also over SSH), heartbeat (with T3's pending requests), watch-wait, run-costs, share-usage and detach. RUN_MAP_CHROME names the browser for the page checks.
 set -eu
 # Run as a run's tasks must, inside `lease run cpu`, the outer lease's job caps would reach the leases
 # under test, which keep caps already set: start without them.
@@ -3482,7 +3482,7 @@ sys.version_info = tuple(int(n) for n in version.split(".")) + ("final", 0); sys
 sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' "\$@"
 EOF
 chmod +x "$work/old-python/python3"
-for name in heartbeat lease provider-usage prune-runs report-offer run-charts run-costs run-watch share-usage usage-sampler; do
+for name in heartbeat lease provider-usage prune-runs report-offer run-charts run-costs run-watch share-usage usage-sampler watch-wait; do
   if [ "$name" = run-watch ]; then needs=3.10 old=3.9.6; else needs=3.9 old=3.8.18; fi
   status=0
   out=$(MADE_UP_PYTHON=$old PATH="$work/old-python:$PATH" "$scripts/$name" --help 2>&1) || status=$?
@@ -3496,7 +3496,7 @@ done
 # and where this computer has a real Python 3.9 (macOS's own /usr/bin/python3), each script runs on it: run-watch
 # stops with its line, the others start (a made-up version can't catch a newer call in a "3.9" script)
 if [ -x /usr/bin/python3 ] && /usr/bin/python3 -c 'import sys; sys.exit(sys.version_info[:2] != (3, 9))' 2>/dev/null; then
-  for name in heartbeat lease provider-usage prune-runs report-offer run-charts run-costs run-watch share-usage usage-sampler; do
+  for name in heartbeat lease provider-usage prune-runs report-offer run-charts run-costs run-watch share-usage usage-sampler watch-wait; do
     status=0
     out=$(/usr/bin/python3 "$scripts/$name" --help 2>&1) || status=$?
     case "$out" in *Traceback*) echo "$name on the real Python 3.9: $out"; exit 1;; esac
@@ -5115,6 +5115,131 @@ case "$out" in *"usage: claude weekly at 96%: schedule the resume wake if work d
 status=0
 "$scripts/heartbeat" "$hb" --bogus >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
+# heartbeat in T3: pending requests from T3's state database (read-only) on a running task's thread or any thread
+# under it, none older than the task or on another run's threads; a database or table it can't read says so and
+# is never idle; a task on another computer keeps the tool reads; --no-live reads nothing live, a Fable task's too.
+export T3_USERDATA="$work/hb-t3"
+mkdir -p "$T3_USERDATA"
+printf '%s\n' '{"t": "2026-11-11T01:46:00+02:00", "providers": {"claude": {"windows": {"weekly": {"used": 22.0}, "five_hour": {"used": 5.0}}}}}' > "$hb/usage/providers.jsonl"
+printf '%s\n' '{"host": "t3", "tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a", "launched": "2026-11-26T01:00:00Z"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"t3-state unreadable: no T3 state database"*) ;; *) echo "heartbeat no t3 db: $out"; exit 1;; esac
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a", "launched": "2026-11-26T01:00:00Z"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"nothing to act on"*) ;; *) echo "heartbeat no t3 db, not a T3 run: $out"; exit 1;; esac
+python3 -I - "$T3_USERDATA/statev2.sqlite" <<'EOF'
+import json, sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("PRAGMA journal_mode=WAL")
+con.execute("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL)")
+con.execute("CREATE TABLE orchestration_v2_projection_subagents (subagent_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, child_thread_id TEXT)")
+con.execute("CREATE TABLE orchestration_v2_projection_runtime_requests (runtime_request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, "
+            "kind TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, payload_json TEXT NOT NULL)")
+lineage = lambda parent: json.dumps({"lineage": {"parentThreadId": parent, "relationshipToParent": "subagent"}})
+con.executemany("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)", [
+    ("task-a", "{}"), ("rev-a", lineage("task-a")), ("rev-a-child", lineage("rev-a")), ("other-run", "{}"), ("loop-1", lineage("loop-2")),
+    ("loop-2", lineage("loop-1")), ("broken", "not json")])
+con.execute("INSERT INTO orchestration_v2_projection_subagents VALUES ('s1', 'rev-a-child', 'helper-only-in-subagents')")
+con.executemany("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, ?, ?, ?, '{}')", [
+    ("r1", "rev-a-child", "command", "pending", "2026-11-26T01:10:00.000Z"),       # two levels under A
+    ("r2", "helper-only-in-subagents", "user_input", "pending", "2026-11-26T01:11:00.000Z"),
+    ("r3", "rev-a", "command", "resolved", "2026-11-26T01:12:00.000Z"),           # answered
+    ("r4", "other-run", "command", "pending", "2026-11-26T01:13:00.000Z"),        # not this run's
+    ("r5", "loop-1", "command", "pending", "2026-11-26T01:14:00.000Z"),           # a cycle, no task
+    ("r6", "rev-a", "command", "pending", "2026-11-25T20:00:00.000Z")])           # older than A
+con.commit()
+EOF
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*) ;; *) echo "heartbeat t3 pending: $out"; exit 1;; esac
+printf '%s\n' "$out" | grep -q '^approval-subagent A rev-a-child command since [0-9][0-9]:[0-9][0-9]$' || { echo "heartbeat subagent line: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q '^approval-subagent A helper-only-in-subagents user_input since ' || { echo "heartbeat subagents table: $out"; exit 1; }
+test "$(printf '%s\n' "$out" | grep -c '^approval-')" -eq 2 || { echo "heartbeat t3 extra lines: $out"; exit 1; }
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id IN (?, ?)", ("resolved", "r1", "r2")); c.execute("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, ?, ?, ?, ?)", ("r7", "task-a", "user_input", "pending", "2026-11-26T01:20:00Z", "{}")); c.commit()' "$T3_USERDATA/statev2.sqlite"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+printf '%s\n' "$out" | grep -q '^approval-task A task-a user_input since ' || { echo "heartbeat task line: $out"; exit 1; }
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id = ?", ("resolved", "r7")); c.commit()' "$T3_USERDATA/statev2.sqlite"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"nothing to act on"*) ;; *) echo "heartbeat t3 none pending: $out"; exit 1;; esac
+test "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 1
+# a task on another computer: read with the tools there, never idle while it runs
+printf '%s\n' '{"computer": "studio-mac", "tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a"}, "B": {"worktree": "/x", "status": "running", "thread": "task-b", "computer": "den-mac"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"read with the tools on den-mac: B"*) ;; *) echo "heartbeat t3 elsewhere: $out"; exit 1;; esac
+# a schema it doesn't know
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("ALTER TABLE orchestration_v2_projection_runtime_requests RENAME TO renamed"); c.commit()' "$T3_USERDATA/statev2.sqlite"
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"act on the lines below"*"t3-state unreadable: T3's database has no runtime requests table"*) ;; *) echo "heartbeat t3 schema: $out"; exit 1;; esac
+test ! -e "$T3_USERDATA/statev2.sqlite-journal"
+unset T3_USERDATA
+# --no-live: a Fable task's usage too comes from the sampler (the stand-in for a live call fails), and with --live it is refused
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger --no-live)
+case "$out" in *"nothing to act on"*"sampled 01:46: claude"*) ;; *) echo "heartbeat no-live: $out"; exit 1;; esac
+status=0
+"$scripts/heartbeat" "$hb" --live --no-live >/dev/null 2>&1 || status=$?
+test "$status" -eq 2
+
+# watch-wait: loops heartbeat (a stand-in here) without a ledger line a loop; exits with its lines on the first
+# that has one to act on, carries on past a wake that only names blind tasks, exits at --max, one at a time per
+# run (the second exits 3), quietly once the run is finished, 1 when heartbeat fails, and reads live only when a
+# Fable task runs, at most every 15 minutes; its pid file goes when it does, a stop by signal too.
+ww="$work/ww-run"
+mkdir -p "$ww"
+printf '# ledger\n' > "$ww.md"
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-opus-5-5"}}}' > "$ww/watch.json"
+cat > "$work/ww-hb" <<EOF
+#!/bin/sh
+echo "\$*" >> "$work/ww-calls"
+n=\$(wc -l < "$work/ww-calls" | tr -d ' ')
+mode=\$(cat "$work/ww-mode")
+case "\$mode" in
+  idle) echo "heartbeat 01:00: nothing to act on. running A.";;
+  blind) echo "heartbeat 01:00: act on the lines below. running A. blind, read their threads: A.";;
+  act) if [ "\$n" -ge 2 ]; then echo "heartbeat 01:00: act on the lines below. running A."; echo "commit A 2026-11-26T01:00:00+02:00 abc fix"; else echo "heartbeat 01:00: nothing to act on. running A."; fi;;
+  fail) echo "broken" >&2; exit 3;;
+esac
+EOF
+chmod +x "$work/ww-hb"
+export WATCH_WAIT_HEARTBEAT="$work/ww-hb"
+echo act > "$work/ww-mode"; : > "$work/ww-calls"
+out=$("$scripts/watch-wait" "$ww" --every 1 --max 30)
+case "$out" in *"act on heartbeat's lines below (after 0 min, 2 checks)"*"commit A 2026-11-26"*) ;; *) echo "watch-wait act: $out"; exit 1;; esac
+test "$(grep -c 'watch-wait: woke after 0 min, 2 checks: running A' "$ww.md")" -eq 1
+grep -q -- '--no-ledger --no-live' "$work/ww-calls"
+test ! -e "$ww/watch-wait.pid"
+echo blind > "$work/ww-mode"; : > "$work/ww-calls"
+out=$("$scripts/watch-wait" "$ww" --every 1 --max 2)
+case "$out" in *"nothing to act on in 0 min (3 checks): start it again"*) ;; *) echo "watch-wait blind only: $out"; exit 1;; esac
+test "$(grep -c 'watch-wait: nothing to act on in 0 min, 3 checks' "$ww.md")" -eq 1
+echo fail > "$work/ww-mode"
+status=0
+out=$("$scripts/watch-wait" "$ww" --every 1 --max 2) || status=$?
+test "$status" -eq 1 && case "$out" in *"heartbeat failed (exit 3): broken"*) ;; *) echo "watch-wait fail: $out"; exit 1;; esac
+# a Fable task: live on the first check, then sampled until 15 minutes have passed
+echo idle > "$work/ww-mode"; : > "$work/ww-calls"
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$ww/watch.json"
+"$scripts/watch-wait" "$ww" --every 1 --max 1 >/dev/null
+test "$(sed -n 1p "$work/ww-calls")" = "$ww --no-ledger --live" && test "$(sed -n 2p "$work/ww-calls")" = "$ww --no-ledger --no-live"
+# one at a time, and a stop by signal removes its pid file
+"$scripts/watch-wait" "$ww" --every 60 --max 600 > "$work/ww-first.out" &
+first=$!
+background="$background $first"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do test -s "$ww/watch-wait.pid" && break; sleep 0.2; done
+test "$(cat "$ww/watch-wait.pid")" = "$first"
+status=0
+out=$("$scripts/watch-wait" "$ww" --every 1 --max 1) || status=$?
+test "$status" -eq 3 && case "$out" in *"already running for this run (pid $first)"*) ;; *) echo "watch-wait twice: $out"; exit 1;; esac
+kill "$first"
+wait "$first" 2>/dev/null || true
+test ! -e "$ww/watch-wait.pid"
+printf '%s\n' '{"finished": "2026-11-26T02:00:00Z", "tasks": {}}' > "$ww/watch.json"
+out=$("$scripts/watch-wait" "$ww" --every 1 --max 5)
+case "$out" in "watch-wait: the run is finished; nothing to watch") ;; *) echo "watch-wait finished: $out"; exit 1;; esac
+status=0
+"$scripts/watch-wait" "$ww" --every 0 >/dev/null 2>&1 || status=$?
+test "$status" -eq 2
+unset WATCH_WAIT_HEARTBEAT
 unset HEARTBEAT_PS
 
 # detach: prints the process ID of a command started in a session and process group of its own, its output
