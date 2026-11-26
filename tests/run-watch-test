@@ -866,6 +866,19 @@ try:
     forgot = subprocess.run([sys.executable, "-I", script, o_run, "--forget-session", "B"], capture_output=True, text=True, env=o_env)
     assert forgot.returncode == 0 and forgot.stdout.strip() == "forgot B's session", forgot
     assert json.load(open(os.path.join(o_run, "run-watch.state.json")))["sessions"] == {"C": "/c.jsonl"}
+    before_forget = open(os.path.join(o_run, "run-watch.state.json")).read()
+    again = subprocess.run([sys.executable, "-I", script, o_run, "--forget-session", "B"], capture_output=True, text=True, env=o_env)
+    assert again.returncode == 0 and "none was remembered" in again.stdout, again
+    assert open(os.path.join(o_run, "run-watch.state.json")).read() == before_forget   # nothing to forget: nothing written
+    for extra in (["--as", "den-mac"], ["--watch", "-"], []):
+        bad_use = subprocess.run([sys.executable, "-I", script, o_run, *extra, "--forget-session", "" if not extra else "C"],
+                                 capture_output=True, text=True, env=o_env)
+        assert bad_use.returncode == 2, (extra, bad_use)
+    open(os.path.join(o_run, "run-watch.state.json"), "w").write("[1]")
+    broken = subprocess.run([sys.executable, "-I", script, o_run, "--forget-session", "C"], capture_output=True, text=True, env=o_env)
+    assert broken.returncode == 1 and "can't be read" in broken.stderr, broken
+    assert open(os.path.join(o_run, "run-watch.state.json")).read() == "[1]"
+    open(os.path.join(o_run, "run-watch.state.json"), "w").write(before_forget)
     json.load(open(os.path.join(o_run, "run-watch.state.json")))
     plistlib.dump({"readingSpeed": 1.6, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
                    "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"))
@@ -928,6 +941,8 @@ try:
     assert not any(l.startswith("next-run") for l in own()), "a lease state that isn't an object"
     json.dump({"leases": {"screen": {"owner": "app-C", "expires": time.time() + 600}}}, open(os.path.join(leases, "locks", "state.json"), "w"))
     assert not any(l.startswith("next-run") for l in own()), "a lease list that isn't a list"
+    json.dump({"leases": {"screen": None}}, open(os.path.join(leases, "locks", "state.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "a lease list that is null"
     json.dump({"leases": {"screen": ["junk", {"owner": "runA:C", "expires": "soon"}]}},
               open(os.path.join(leases, "locks", "state.json"), "w"))
     assert not any(l.startswith("next-run") for l in own()), "a lease whose end can't be read counts as held"

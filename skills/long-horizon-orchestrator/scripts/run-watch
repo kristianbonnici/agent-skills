@@ -1027,8 +1027,8 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
             leases = {}
         t_now = now()
         for res in needs:
-            held = leases.get(res)
-            if held is not None and not isinstance(held, list):
+            held = leases.get(res, [])
+            if not isinstance(held, list):
                 return None   # a lease list it can't read: can't tell who holds it
             for lease in held or []:
                 if not isinstance(lease, dict):
@@ -1230,16 +1230,24 @@ def main(argv: list[str]) -> int:
             del args[i:i + 2]
     watch_path, as_computer = options.get("--watch"), options.get("--as")
     if "--forget-session" in options:   # a task handed to a new thread: drop its remembered log, under the lock
-        if len(args) != 1 or not os.path.isdir(args[0]):
+        task = options["--forget-session"]
+        if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or watch_path or as_computer or not task:
             print(__doc__.split("\n\n")[1], file=sys.stderr)
             return 2
         state_path = os.path.join(os.path.abspath(args[0]), "run-watch.state.json")
         with open(os.path.join(os.path.abspath(args[0]), "run-watch.lock"), "a+") as state_lock:
             fcntl.flock(state_lock, fcntl.LOCK_EX)
-            state = load_json(state_path) or {}
-            gone = (state.get("sessions") or {}).pop(options["--forget-session"], None) if isinstance(state.get("sessions"), dict) else None
+            state = load_json(state_path)
+            if state is None and os.path.exists(state_path) or state is not None and not isinstance(state, dict):
+                print(f"run-watch: {state_path} can't be read: nothing changed", file=sys.stderr)
+                return 1
+            sessions = (state or {}).get("sessions")
+            if not isinstance(sessions, dict) or task not in sessions:
+                print(f"forgot {task}'s session (none was remembered)")
+                return 0
+            del sessions[task]
             save_state(state_path, state)
-        print(f"forgot {options['--forget-session']}'s session{'' if gone else ' (none was remembered)'}")
+        print(f"forgot {task}'s session")
         return 0
     if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or \
             (as_computer is not None and not SSH_ALIAS.fullmatch(as_computer)):

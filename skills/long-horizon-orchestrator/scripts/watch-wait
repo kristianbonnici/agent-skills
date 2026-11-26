@@ -50,6 +50,7 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 LIVE_EVERY_S = 900
+STOP = {"starting": False, "held": 0}
 REMIND_S = 1800          # a line already delivered comes again after this long
 READ_EVERY_S = 900       # blind tasks or tasks on another computer: their threads are read this often
 IDLE = re.compile(r"^heartbeat \d\d:\d\d: nothing to act on\.")
@@ -106,9 +107,15 @@ def line_key(line: str) -> str:
 def check(heartbeat: str, run_dir: str, live: bool) -> subprocess.CompletedProcess:
     """One heartbeat, in a process group of its own: a stop or a timeout ends run-watch with it, before run-watch
     saves a state it read earlier (over a change made meanwhile) or marks lines told that nobody saw."""
-    proc = subprocess.Popen([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    STOP["starting"] = True   # a stop while it starts is held until it can be cleaned up (stop() below)
     try:
+        proc = subprocess.Popen([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    finally:
+        STOP["starting"] = False
+    try:
+        if STOP["held"]:
+            raise SystemExit(128 + STOP["held"])
         out, err = proc.communicate(timeout=300)
     except BaseException:
         try:
@@ -155,6 +162,9 @@ def main(argv: list) -> int:
         fh.write(f"{os.getpid()}\n")
 
     def stop(signum, _frame):
+        if STOP["starting"]:
+            STOP["held"] = signum
+            return
         raise SystemExit(128 + signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

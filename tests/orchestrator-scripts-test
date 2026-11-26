@@ -5252,10 +5252,10 @@ ww_line() {   # $1 the line, $2 "new" or "old"
   out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 0.5 --now)
   case "$2:$out" in new:*"new of 1)"*|old:*"nothing new to act on"*) ;; *) echo "watch-wait key ($2) for '$1': $out"; exit 1;; esac
 }
-ww_line "approval-task A thread-a command since 01:10" new
-ww_line "approval-task A thread-a command since 01:10" old
-ww_line "approval-task A thread-a command since 01:20" new
-ww_line "approval-subagent A a-review-rg-1-sol-2 command since 01:10" new
+ww_line "approval-task A thread-a command since 01:10:05" new
+ww_line "approval-task A thread-a command since 01:10:05" old
+ww_line "approval-task A thread-a command since 01:10:40" new
+ww_line "approval-subagent A a-review-rg-1-sol-2 command since 01:10:05" new
 ww_line "quiet T1: nothing changed for 21 min" new
 ww_line "quiet T1: nothing changed for 26 min" old
 ww_line "quiet T2: nothing changed for 21 min" new
