@@ -1821,7 +1821,7 @@ def grade(events, delay=0):
     )
 
 
-def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, before_attempt=None):
+def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, before_attempt=None, stop_reason=None):
     sleep_fn = time.sleep if sleep is None else sleep
     report = None
     total_wall = 0.0
@@ -1833,13 +1833,17 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
     ended_on_launch_failure = False
     last_launch_error = None
     for attempt in range(attempts):
-        if attempt and not ready():
-            msg = "the check between runs failed"
-            if agent_attempts == 0:
-                report["_stop_abort"] = msg
-            else:
-                report["notes"].append(f"retry stopped: {msg}")
-            break
+        if attempt:
+            reason = stop_reason() if stop_reason is not None else (None if ready() else "the check between runs failed")
+            if reason:
+                if agent_attempts == 0:
+                    report["_stop_abort"] = (
+                        f"{reason} (after launch failure: {last_launch_error})" if last_launch_error else reason
+                    )
+                else:
+                    report["notes"].append(f"retry stopped: {reason}")
+                    report["_retry_abort_msg"] = reason
+                break
         if before_attempt is not None:
             if attempt == 0:
                 before_attempt()
@@ -1848,7 +1852,11 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
                     before_attempt()
                 except Refused as err:
                     if agent_attempts == 0:
-                        report["_stop_abort"] = err.message
+                        report["_stop_abort"] = (
+                            f"{err.message} (after launch failure: {last_launch_error})"
+                            if last_launch_error
+                            else err.message
+                        )
                     else:
                         report["notes"].append(f"retry stopped: {err.message}")
                         report["_retry_abort_msg"] = err.message
@@ -2043,7 +2051,13 @@ def _row_dedup_key(row):
         row.get("started"),
         row.get("wall"),
         row.get("attempts"),
-        tuple(row.get("notes") or ()),
+        row.get("passed"),
+        row.get("wrong"),
+        row.get("seconds"),
+        row.get("final"),
+        json.dumps(row.get("notes") or [], sort_keys=True),
+        json.dumps(row.get("tools"), sort_keys=True),
+        json.dumps(row.get("usage"), sort_keys=True),
     )
 
 
@@ -2063,45 +2077,65 @@ def latest_runs(rows):
 
     out = []
     for entries in grouped.values():
-        win_idx, winner = entries[0]
-        for idx, row in entries[1:]:
+        deduped = []
+        key_folders = collections.defaultdict(set)
+        folder_sig_counts = collections.Counter()
+        seen_keys = set()
+        for idx, row in entries:
+            base_key = _row_dedup_key(row)
+            folder = row.get("folder")
+            if base_key[0] == "sig" and folder is not None:
+                occ = folder_sig_counts[(folder, base_key)]
+                folder_sig_counts[(folder, base_key)] = occ + 1
+                dkey = (base_key, occ)
+            else:
+                dkey = base_key
+            key_folders[dkey].add(folder)
+            if dkey not in seen_keys:
+                seen_keys.add(dkey)
+                deduped.append((idx, dkey, row))
+
+        win_idx, win_dkey, winner = deduped[0]
+        for idx, dkey, row in deduped[1:]:
             if (_incomplete_run(winner) and not _incomplete_run(row)) or (
                 _incomplete_run(winner) == _incomplete_run(row) and (row.get("started") or 0) >= (winner.get("started") or 0)
             ):
-                win_idx, winner = idx, row
+                win_idx, win_dkey, winner = idx, dkey, row
 
         win_started = winner.get("started") or 0
         win_chain = winner.get("chain_id")
-        win_folder = winner.get("folder")
-        same_chain = (
-            (lambda r: r.get("chain_id") == win_chain)
-            if win_chain
-            else (lambda r: r.get("folder") == win_folder)
-        )
-        prior = []
-        latest_complete = None
-        for idx, row in entries:
-            if not same_chain(row):
-                continue
+        win_folders = key_folders[win_dkey]
+        latest_chain_complete = None
+        prior_completes = []
+        for idx, dkey, row in deduped:
             rs = row.get("started") or 0
-            if (rs < win_started) or (rs == win_started and idx < win_idx):
-                prior.append((idx, row))
-                if not _incomplete_run(row):
+            if not ((rs < win_started) or (rs == win_started and idx < win_idx)):
+                continue
+            if not _incomplete_run(row):
+                prior_completes.append((rs, idx, key_folders[dkey]))
+                if win_chain and row.get("chain_id") == win_chain:
                     k = (rs, idx)
-                    if latest_complete is None or k > latest_complete:
-                        latest_complete = k
+                    if latest_chain_complete is None or k > latest_chain_complete:
+                        latest_chain_complete = k
+
         prior_stopped = []
-        seen_stopped = set()
-        for idx, row in prior:
+        for idx, dkey, row in deduped:
             if not retry_stopped(row):
                 continue
-            if latest_complete is not None and ((row.get("started") or 0), idx) <= latest_complete:
+            rs = row.get("started") or 0
+            if not ((rs < win_started) or (rs == win_started and idx < win_idx)):
                 continue
-            dkey = _row_dedup_key(row)
-            if dkey in seen_stopped:
-                continue
-            seen_stopped.add(dkey)
-            prior_stopped.append(row)
+            if win_chain and row.get("chain_id") == win_chain:
+                if latest_chain_complete is not None and (rs, idx) <= latest_chain_complete:
+                    continue
+                prior_stopped.append(row)
+            elif not row.get("chain_id"):
+                shared = key_folders[dkey] & win_folders
+                if not shared:
+                    continue
+                if any((c_folders & shared) and (rs, idx) <= (c_rs, c_idx) for c_rs, c_idx, c_folders in prior_completes):
+                    continue
+                prior_stopped.append(row)
         out.append(_fold_stopped_costs(winner, prior_stopped))
     return out
 
@@ -2397,11 +2431,25 @@ def _write_tx_journal_exclusive(runs_dir, tx_path, payload):
                 raise Refused(
                     f"unresolved transaction journal {tx_path}; inspect {runs_dir} before recording {payload['run_id']}"
                 )
-            with os.fdopen(fd, "w", encoding="utf-8") as ef:
-                json.dump(payload, ef)
-                ef.write("\n")
-                ef.flush()
-                os.fsync(ef.fileno())
+            ef = None
+            try:
+                ef = os.fdopen(fd, "w", encoding="utf-8")
+                with ef:
+                    json.dump(payload, ef)
+                    ef.write("\n")
+                    ef.flush()
+                    os.fsync(ef.fileno())
+            except BaseException:
+                if ef is None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                try:
+                    os.unlink(tx_path)
+                except OSError:
+                    pass
+                raise
     finally:
         try:
             os.unlink(tx_tmp)
@@ -2923,10 +2971,16 @@ def run_batch(
                             active_chain = None
                     cell_chain_id = active_chain or uuid.uuid4().hex[:12]
 
-                    ready = lambda: not os.path.exists(stop_file) and between_ok(between)
+                    def cell_stop_reason():
+                        if os.path.exists(stop_file):
+                            return f"{stop_file} exists"
+                        if not between_ok(between):
+                            return "the check between runs failed"
+                        return None
+
                     report = run_attempts(
                         run_one_attempt,
-                        ready=ready,
+                        stop_reason=cell_stop_reason,
                         before_attempt=(cell_before_attempt if (app_check is not None or arm.endswith("-cua")) else None),
                     )
                     stop_abort = report.pop("_stop_abort", None)
