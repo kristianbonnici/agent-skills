@@ -96,17 +96,19 @@ def load_json(path: str) -> dict:
         return {}
 
 
-def save_json_atomic(path: str, data: dict) -> None:
+def save_json_atomic(path: str, data: dict) -> tuple[bool, str]:
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
         os.replace(tmp, path)
-    except OSError:
+        return True, ""
+    except OSError as e:
         try:
             os.remove(tmp)
         except OSError:
             pass
+        return False, str(e)
 
 
 def parse_iso(s):
@@ -127,39 +129,63 @@ def same_reset_window(prev_resets, cur_resets) -> bool:
     return False
 
 
+def window_span_seconds(wkey: str):
+    win = wkey.split(".", 1)[1] if "." in wkey else ""
+    if win == "five_hour" or win.endswith("_five_hour"):
+        return 5 * 3600
+    if win == "weekly" or win.endswith("_weekly"):
+        return 7 * 86400
+    return None
+
+
+def legacy_matches_window(legacy_at, wkey: str, cur_resets) -> bool:
+    """True only when positive evidence ties a 5.20.0 delivery timestamp to the current reset window."""
+    span = window_span_seconds(wkey)
+    t_reset = parse_iso(cur_resets)
+    if span is None or t_reset is None or not isinstance(legacy_at, (int, float)) or isinstance(legacy_at, bool):
+        return False
+    return t_reset - span + 60 <= legacy_at <= t_reset + 60
+
+
 def parse_usage_line(line: str):
-    """Parse a per-window usage warning into (wkey, state, threshold), or None for non-window/error lines."""
+    """Parse a per-window usage warning into (ckey, wkey, state, threshold), or None for non-window/error lines.
+    Configured marks and built-in thresholds use separate channels so an active mark never masks >= 95%."""
     m = USAGE_MARK.match(line)
     if m:
+        wkey = f"{m.group(1)}.{m.group(2)}"
         mark = float(m.group(4))
-        return f"{m.group(1)}.{m.group(2)}", f"mark:{mark:g}", mark
+        return f"{wkey}:mark", wkey, f"mark:{mark:g}", mark
     m = USAGE_BUILTIN.match(line)
     if m:
+        wkey = f"{m.group(1)}.{m.group(2)}"
         used = float(m.group(3))
         if used >= 95:
-            return f"{m.group(1)}.{m.group(2)}", "builtin:95", 95.0
-        return f"{m.group(1)}.{m.group(2)}", "builtin:85", 85.0
+            return f"{wkey}:builtin", wkey, "builtin:95", 95.0
+        return f"{wkey}:builtin", wkey, "builtin:85", 85.0
     return None
 
 
 def migrate_legacy_usage(seen: dict) -> dict:
     """Seed per-window usage state from a 5.20.0 watch-wait.seen.json when watch-wait.state.json is absent."""
     migrated = {}
-    for k in seen:
-        if not isinstance(k, str):
+    for k, ts in seen.items():
+        if not isinstance(k, str) or not isinstance(ts, (int, float)) or isinstance(ts, bool):
             continue
         m = LEGACY_USAGE_MARK.match(k)
         if m:
+            wkey = f"{m.group(1)}.{m.group(2)}"
             mark = float(m.group(3))
-            migrated[f"{m.group(1)}.{m.group(2)}"] = {"state": f"mark:{mark:g}", "threshold": mark, "resets_at": None}
+            migrated[f"{wkey}:mark"] = {"state": f"mark:{mark:g}", "threshold": mark, "resets_at": None, "legacy_at": float(ts)}
             continue
         m = LEGACY_USAGE_BUILTIN.match(k)
         if m:
+            wkey = f"{m.group(1)}.{m.group(2)}"
             is_5h = m.group(2) == "five_hour"
-            migrated[f"{m.group(1)}.{m.group(2)}"] = {
+            migrated[f"{wkey}:builtin"] = {
                 "state": "builtin:85" if is_5h else "builtin:95",
                 "threshold": 85.0 if is_5h else 95.0,
                 "resets_at": None,
+                "legacy_at": float(ts),
             }
     return migrated
 
@@ -328,36 +354,56 @@ def main(argv: list) -> int:
             for l in act:
                 parsed = parse_usage_line(l)
                 if parsed is not None:
-                    wkey, ustate, threshold = parsed
-                    active_usage[wkey] = (ustate, threshold)
-                    hb_entry = hb_usage.get(wkey) if isinstance(hb_usage, dict) and isinstance(hb_usage.get(wkey), dict) else None
+                    ckey, wkey, ustate, threshold = parsed
+                    active_usage[ckey] = (wkey, ustate, threshold)
+                    hb_entry = hb_usage.get(ckey) if isinstance(hb_usage, dict) and isinstance(hb_usage.get(ckey), dict) else None
                     cur_resets = (hb_entry.get("resets_at") if hb_entry and isinstance(hb_entry.get("resets_at"), str)
                                   and hb_entry.get("resets_at") else None)
-                    prev = usage_state.get(wkey)
-                    prev_state = prev.get("state") if isinstance(prev, dict) else None
-                    prev_resets = (prev.get("resets_at") if isinstance(prev, dict) and isinstance(prev.get("resets_at"), str)
-                                   and prev.get("resets_at") else None)
-                    if prev_state != ustate or not same_reset_window(prev_resets, cur_resets):
-                        new.append(l)
-                    elif not prev_resets and cur_resets:
-                        usage_state[wkey]["resets_at"] = cur_resets
-                        state_dirty = True
+                    cur_did = (hb_entry.get("delivered_id") if hb_entry and isinstance(hb_entry.get("delivered_id"), str)
+                               and hb_entry.get("delivered_id") else None)
+                    prev = usage_state.get(ckey)
+                    if isinstance(prev, dict) and "legacy_at" in prev:
+                        if prev.get("state") == ustate and legacy_matches_window(prev.get("legacy_at"), wkey, cur_resets):
+                            entry = {"state": ustate, "threshold": threshold, "resets_at": cur_resets}
+                            if cur_did:
+                                entry["hb_delivered_id"] = cur_did
+                            usage_state[ckey] = entry
+                            state_dirty = True
+                        else:
+                            new.append(l)
+                    else:
+                        prev_state = prev.get("state") if isinstance(prev, dict) else None
+                        prev_resets = (prev.get("resets_at") if isinstance(prev, dict) and isinstance(prev.get("resets_at"), str)
+                                       and prev.get("resets_at") else None)
+                        prev_did = (prev.get("hb_delivered_id") if isinstance(prev, dict) and isinstance(prev.get("hb_delivered_id"), str)
+                                    and prev.get("hb_delivered_id") else None)
+                        if (prev_state != ustate or not same_reset_window(prev_resets, cur_resets)
+                                or (cur_did and cur_did != prev_did)):
+                            new.append(l)
+                        elif not prev_resets and cur_resets:
+                            usage_state[ckey]["resets_at"] = cur_resets
+                            state_dirty = True
                 elif ONCE.match(l) or t_now - seen.get(line_key(l), 0) >= (READ_EVERY_S if SOON.match(l) else REMIND_S):
                     new.append(l)
             if not NO_USAGE_READING.search(first):
                 readings = summary_usage(first)
                 hb_has_usage = os.path.exists(hb_state_path) and isinstance(hb_usage, dict)
-                for wkey in list(usage_state):
-                    if wkey in active_usage:
+                for ckey in list(usage_state):
+                    if ckey in active_usage:
                         continue
-                    thresh = usage_state[wkey].get("threshold")
-                    below_summary = (wkey in readings and isinstance(thresh, (int, float))
-                                     and not isinstance(thresh, bool) and readings[wkey] < thresh)
-                    hb_cleared = hb_has_usage and wkey not in hb_usage
-                    standin_gone = not hb_has_usage and wkey not in readings
-                    if hb_cleared or below_summary or standin_gone:
-                        del usage_state[wkey]
-                        state_dirty = True
+                    wkey = ckey.rsplit(":", 1)[0]
+                    if hb_has_usage:
+                        if ckey not in hb_usage:
+                            del usage_state[ckey]
+                            state_dirty = True
+                    else:
+                        thresh = usage_state[ckey].get("threshold")
+                        below_summary = (wkey in readings and isinstance(thresh, (int, float))
+                                         and not isinstance(thresh, bool) and readings[wkey] < thresh)
+                        standin_gone = wkey not in readings
+                        if below_summary or standin_gone:
+                            del usage_state[ckey]
+                            state_dirty = True
             reads = not IDLE.match(first) and TOOL_READS.search(first) and t_now - seen.get("\0reads", 0) >= READ_EVERY_S
             if new or reads:
                 seen = {k: v for k, v in seen.items()
@@ -367,15 +413,21 @@ def main(argv: list) -> int:
                         seen[line_key(l)] = t_now
                 if reads or TOOL_READS.search(first):
                     seen["\0reads"] = t_now
-                for wkey, (ustate, threshold) in active_usage.items():
-                    hb_entry = hb_usage.get(wkey) if isinstance(hb_usage, dict) and isinstance(hb_usage.get(wkey), dict) else None
+                for ckey, (wkey, ustate, threshold) in active_usage.items():
+                    hb_entry = hb_usage.get(ckey) if isinstance(hb_usage, dict) and isinstance(hb_usage.get(ckey), dict) else None
                     cur_resets = (hb_entry.get("resets_at") if hb_entry and isinstance(hb_entry.get("resets_at"), str)
                                   and hb_entry.get("resets_at") else None)
-                    prev_resets = (usage_state[wkey].get("resets_at") if wkey in usage_state
-                                   and isinstance(usage_state[wkey].get("resets_at"), str) else None)
+                    cur_did = (hb_entry.get("delivered_id") if hb_entry and isinstance(hb_entry.get("delivered_id"), str)
+                               and hb_entry.get("delivered_id") else None)
+                    prev_entry = usage_state.get(ckey) if isinstance(usage_state.get(ckey), dict) else {}
+                    prev_resets = (prev_entry.get("resets_at") if "legacy_at" not in prev_entry
+                                   and isinstance(prev_entry.get("resets_at"), str) else None)
                     stored_resets = (cur_resets if cur_resets and (not prev_resets or not same_reset_window(prev_resets, cur_resets))
                                      else (prev_resets or cur_resets))
-                    usage_state[wkey] = {"state": ustate, "threshold": threshold, "resets_at": stored_resets}
+                    entry = {"state": ustate, "threshold": threshold, "resets_at": stored_resets}
+                    if cur_did:
+                        entry["hb_delivered_id"] = cur_did
+                    usage_state[ckey] = entry
                 all_commits = list(carried)
                 for c in commits:
                     if c not in all_commits:
@@ -383,7 +435,9 @@ def main(argv: list) -> int:
                 emit = [out[0]] + [l for l in out[1:] if not COMMIT.match(l)] + all_commits
                 save_json_atomic(seen_path, seen)
                 if os.path.exists(state_path) or usage_state or carried or state_dirty:
-                    save_json_atomic(state_path, {"carried_commits": [], "usage": usage_state})
+                    saved, save_err = save_json_atomic(state_path, {"carried_commits": [], "usage": usage_state})
+                    if not saved:
+                        emit.append(f"note: couldn't save watch-wait.state.json ({save_err})")
                 why = (f"act on heartbeat's lines below ({len(new)} new of {len(act)})" if new
                        else "read the threads heartbeat names (blind, or on another computer)")
                 print(f"watch-wait {time.strftime('%H:%M')}: {why}, after {minutes:.0f} min and {checks} checks; "
@@ -398,7 +452,14 @@ def main(argv: list) -> int:
                 carried = carried[-CARRIED_CAP:]
                 state_dirty = True
             if state_dirty:
-                save_json_atomic(state_path, {"carried_commits": carried, "usage": usage_state})
+                saved, save_err = save_json_atomic(state_path, {"carried_commits": carried, "usage": usage_state})
+                if not saved and carried:
+                    note = f"note: couldn't save watch-wait.state.json ({save_err})"
+                    print(f"watch-wait {time.strftime('%H:%M')}: act on heartbeat's lines below (1 new of 1), "
+                          f"after {minutes:.0f} min and {checks} checks; then start watch-wait again")
+                    print("\n".join([out[0], note] + carried))
+                    ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
+                    return 0
             left = deadline - time.time()
             if left <= 0:
                 print(f"watch-wait {time.strftime('%H:%M')}: nothing new to act on in {minutes:.0f} min ({checks} checks): "

@@ -102,17 +102,19 @@ def load_json_dict(path: str) -> dict:
         return {}
 
 
-def save_json_atomic(path: str, data: dict) -> None:
+def save_json_atomic(path: str, data: dict) -> tuple[bool, str]:
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
         os.replace(tmp, path)
-    except OSError:
+        return True, ""
+    except OSError as e:
         try:
             os.remove(tmp)
         except OSError:
             pass
+        return False, str(e)
 
 
 def finite_num(value) -> bool:
@@ -136,48 +138,103 @@ def run(cmd, timeout=60):
         return ""
 
 
-def near_limits(providers: dict, key_used: str, marks: dict, delivered: dict) -> list[str]:
+def near_limits(providers: dict, key_used: str, marks: dict, delivered: dict,
+                obs_by_provider: dict, source: str) -> list[str]:
     """Windows crossing a threshold: a 5-hour window past 85%, any window at 95% or more, and any window
     at or past the mark watch.json's "usage_marks" sets for it ("claude.weekly": the reading at which the
-    run's Claude budget is used). Suppresses repeated unchanged warnings for a window until it resets,
-    recovers below its threshold, or crosses a new threshold or mark (including >= 95% on first crossing)."""
+    run's Claude budget is used). Tracks configured marks and built-in thresholds independently so an active
+    mark never masks the first >= 95% crossing, ignores older readings (e.g. a stale sampler reading after
+    a newer live reading) for recovery/reset, and suppresses repeated unchanged warnings until reset,
+    recovery below threshold, or a new threshold or mark."""
     out = []
+
+    def is_stale(prev, obs_ts) -> bool:
+        if not isinstance(prev, dict):
+            return False
+        prev_obs = prev.get("observed_at")
+        if finite_num(prev_obs):
+            if finite_num(obs_ts):
+                return obs_ts < prev_obs
+            return source == "sampled" and prev.get("source") == "live"
+        return False
+
+    def handle_channel(ckey: str, state, line, resets_at, obs_ts) -> None:
+        prev = delivered.get(ckey)
+        if state is None:
+            if prev is not None and not is_stale(prev, obs_ts):
+                delivered.pop(ckey, None)
+            return
+        if is_stale(prev, obs_ts):
+            return
+        prev_state = prev.get("state") if isinstance(prev, dict) else None
+        prev_resets = (prev.get("resets_at") if isinstance(prev, dict) and isinstance(prev.get("resets_at"), str)
+                       and prev.get("resets_at") else None)
+        if prev_state == state and same_reset_window(prev_resets, resets_at):
+            prev_obs = prev.get("observed_at") if isinstance(prev, dict) else None
+            best_obs = (max(prev_obs, obs_ts) if finite_num(prev_obs) and finite_num(obs_ts)
+                        else (obs_ts if finite_num(obs_ts) else prev_obs))
+            best_resets = prev_resets or resets_at
+            best_src = prev.get("source") if isinstance(prev, dict) and prev.get("source") == "live" else source
+            entry = {"state": state, "resets_at": best_resets, "observed_at": best_obs, "source": best_src}
+            if isinstance(prev, dict) and isinstance(prev.get("delivered_id"), str) and prev["delivered_id"]:
+                entry["delivered_id"] = prev["delivered_id"]
+            delivered[ckey] = entry
+            return
+        delivered[ckey] = {
+            "state": state,
+            "resets_at": resets_at,
+            "observed_at": obs_ts,
+            "source": source,
+            "delivered_id": uuid.uuid4().hex,
+        }
+        out.append(line)
+
     for name, p in sorted(providers.items()):
         windows = p.get("windows") if isinstance(p, dict) else None
+        obs_ts = obs_by_provider.get(name)
         for key, w in sorted(windows.items()) if isinstance(windows, dict) else []:
             if not isinstance(w, dict):
                 continue
             wkey = f"{name}.{key}"
+            mark_ckey, builtin_ckey = f"{wkey}:mark", f"{wkey}:builtin"
             if w.get("reset") or w.get("reset_since_observed"):
-                delivered.pop(wkey, None)
+                handle_channel(mark_ckey, None, None, None, obs_ts)
+                handle_channel(builtin_ckey, None, None, None, obs_ts)
                 continue
             used = w.get(key_used)
             if not finite_num(used):
                 continue
             resets_at = w.get("resets_at") if isinstance(w.get("resets_at"), str) and w.get("resets_at") else None
             mark = marks.get(wkey)
-            if finite_num(mark) and used >= mark:
-                state = f"mark:{mark:g}"
-                line = f"usage: {name} {key} at {used:g}%, at or past the run's mark of {mark:g}%: its budget is used"
-            elif used >= 95:
-                state = "builtin:95"
-                line = f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it"
-            elif key == "five_hour" and used >= 85:
-                state = "builtin:85"
-                line = f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it"
+            mark_crossed = finite_num(mark) and used >= mark
+            if mark_crossed:
+                handle_channel(
+                    mark_ckey,
+                    f"mark:{mark:g}",
+                    f"usage: {name} {key} at {used:g}%, at or past the run's mark of {mark:g}%: its budget is used",
+                    resets_at,
+                    obs_ts,
+                )
             else:
-                delivered.pop(wkey, None)
-                continue
-            prev = delivered.get(wkey)
-            prev_state = prev.get("state") if isinstance(prev, dict) else None
-            prev_resets = (prev.get("resets_at") if isinstance(prev, dict) and isinstance(prev.get("resets_at"), str)
-                           and prev.get("resets_at") else None)
-            if prev_state == state and same_reset_window(prev_resets, resets_at):
-                if not prev_resets and resets_at:
-                    delivered[wkey] = {"state": state, "resets_at": resets_at}
-                continue
-            delivered[wkey] = {"state": state, "resets_at": resets_at}
-            out.append(line)
+                handle_channel(mark_ckey, None, None, resets_at, obs_ts)
+            if used >= 95:
+                handle_channel(
+                    builtin_ckey,
+                    "builtin:95",
+                    f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it",
+                    resets_at,
+                    obs_ts,
+                )
+            elif key == "five_hour" and used >= 85 and not mark_crossed:
+                handle_channel(
+                    builtin_ckey,
+                    "builtin:85",
+                    f"usage: {name} {key} at {used:g}%: schedule the resume wake if work depends on it",
+                    resets_at,
+                    obs_ts,
+                )
+            else:
+                handle_channel(builtin_ckey, None, None, resets_at, obs_ts)
     return out
 
 
@@ -201,9 +258,16 @@ def usage(run_dir: str, live: bool, marks: dict, delivered: dict, fable: bool = 
     if live:
         out = run([os.environ.get("HEARTBEAT_PROVIDER_USAGE", os.path.join(HERE, "provider-usage"))], timeout=120)
         try:
-            providers = json.loads(out).get("providers") or {}
+            root = json.loads(out)
+            providers = root.get("providers") or {}
+            gen_obs = parse_iso(root.get("generated_at"))
+            now_ts = time.time()
+            obs_by_provider = {}
+            for pname, pval in (providers.items() if isinstance(providers, dict) else []):
+                p_obs = parse_iso(pval.get("observed_at")) if isinstance(pval, dict) else None
+                obs_by_provider[pname] = p_obs if p_obs is not None else (gen_obs if gen_obs is not None else now_ts)
             line = windows_line(providers, "used_percent")
-            limits = near_limits(providers, "used_percent", marks, delivered)
+            limits = near_limits(providers, "used_percent", marks, delivered, obs_by_provider, "live")
             if not line:
                 limits.append("usage: the live reading had no windows: read provider-usage yourself")
             elif fable and "weekly_fable" not in ((providers.get("claude") or {}).get("windows") or {}):
@@ -219,6 +283,7 @@ def usage(run_dir: str, live: bool, marks: dict, delivered: dict, fable: bool = 
     except OSError:
         return "usage: no sampler readings", []
     latest: dict = {}
+    obs_by_provider: dict = {}
     when = ""
     for row in rows:
         try:
@@ -226,10 +291,14 @@ def usage(run_dir: str, live: bool, marks: dict, delivered: dict, fable: bool = 
         except ValueError:
             continue
         if isinstance(record, dict) and isinstance(record.get("providers"), dict):
-            latest.update(record["providers"])
+            row_ts = parse_iso(record.get("t"))
+            for pname, pval in record["providers"].items():
+                latest[pname] = pval
+                p_obs = parse_iso(pval.get("observed_at")) if isinstance(pval, dict) else None
+                obs_by_provider[pname] = p_obs if p_obs is not None else row_ts
             when = str(record.get("t", ""))[11:16]
     line = windows_line(latest, "used")
-    return ((f"sampled {when}: " + line) if line else "usage: no sampler readings"), near_limits(latest, "used", marks, delivered)
+    return ((f"sampled {when}: " + line) if line else "usage: no sampler readings"), near_limits(latest, "used", marks, delivered, obs_by_provider, "sampled")
 
 
 def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
@@ -467,21 +536,26 @@ def main(argv):
     commit_lines = [l for l in watch_lines if COMMIT.match(l)]
     action_events = {k: v for k, v in events.items() if k != "commit"}
     idle = not flagged and not action_events and not blind_running and not tool_reads
+    all_commits = list(carried_commits)
+    for c in commit_lines:
+        if c not in all_commits:
+            all_commits.append(c)
     if idle:
-        for c in commit_lines:
-            if c not in carried_commits:
-                carried_commits.append(c)
-        carried_commits = carried_commits[-CARRIED_CAP:]
+        next_carried = all_commits[-CARRIED_CAP:]
         emit_lines = []
     else:
-        all_commits = list(carried_commits)
-        for c in commit_lines:
-            if c not in all_commits:
-                all_commits.append(c)
+        next_carried = []
         emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + all_commits
-        carried_commits = []
-    if (carried_commits, usage_delivered) != hb_state_before:
-        save_json_atomic(hb_state_path, {"carried_commits": carried_commits, "usage_delivered": usage_delivered})
+    if (next_carried, usage_delivered) != hb_state_before:
+        saved, save_err = save_json_atomic(hb_state_path, {"carried_commits": next_carried, "usage_delivered": usage_delivered})
+        if not saved:
+            note = f"note: couldn't save heartbeat.state.json ({save_err})"
+            flagged.append(note)
+            if idle:
+                idle = False
+                emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + [note] + all_commits
+            else:
+                emit_lines.append(note)
     print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
     for l in emit_lines:
         print(l)
