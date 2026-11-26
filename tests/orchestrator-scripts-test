@@ -5149,7 +5149,9 @@ con.executemany("INSERT INTO orchestration_v2_projection_runtime_requests VALUES
     ("r6", "rev-a", "command", "pending", "2026-11-25T20:00:00.000Z")])           # older than A
 con.commit()
 EOF
+sums_before=$(cat "$T3_USERDATA/statev2.sqlite" "$T3_USERDATA/statev2.sqlite-wal" 2>/dev/null | shasum)
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+test "$(cat "$T3_USERDATA/statev2.sqlite" "$T3_USERDATA/statev2.sqlite-wal" 2>/dev/null | shasum)" = "$sums_before" || { echo "heartbeat wrote to T3's database"; exit 1; }
 case "$out" in *"act on the lines below"*) ;; *) echo "heartbeat t3 pending: $out"; exit 1;; esac
 printf '%s\n' "$out" | grep -q '^approval-subagent A rev-a-child command since [0-9][0-9]:[0-9][0-9]$' || { echo "heartbeat subagent line: $out"; exit 1; }
 printf '%s\n' "$out" | grep -q '^approval-subagent A helper-only-in-subagents user_input since ' || { echo "heartbeat subagents table: $out"; exit 1; }
@@ -5165,12 +5167,24 @@ test "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 1
 printf '%s\n' '{"computer": "studio-mac", "tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a"}, "B": {"worktree": "/x", "status": "running", "thread": "task-b", "computer": "den-mac"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"read with the tools on den-mac: B"*) ;; *) echo "heartbeat t3 elsewhere: $out"; exit 1;; esac
+# a run on another host (watch.json's "host") never reads T3, its other computer's tasks included
+printf '%s\n' '{"host": "claude-code", "computer": "studio-mac", "tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a"}, "B": {"worktree": "/x", "status": "running", "thread": "agent-b", "computer": "den-mac"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+case "$out" in *"nothing to act on"*) ;; *) echo "heartbeat claude-code host: $out"; exit 1;; esac
+# a database that can't be opened read-only with its latest writes (a read-only folder with no -shm) is unreadable,
+# never read stale
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("PRAGMA wal_checkpoint(TRUNCATE)"); c.close()' "$T3_USERDATA/statev2.sqlite"
+rm -f "$T3_USERDATA/statev2.sqlite-shm" "$T3_USERDATA/statev2.sqlite-wal"
+chmod 555 "$T3_USERDATA"
+printf '%s\n' '{"host": "t3", "tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a"}}}' > "$hb/watch.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
+chmod 755 "$T3_USERDATA"
+case "$out" in *"act on the lines below"*"t3-state unreadable: "*) ;; *) echo "heartbeat t3 read-only folder: $out"; exit 1;; esac
 # a schema it doesn't know
 python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("ALTER TABLE orchestration_v2_projection_runtime_requests RENAME TO renamed"); c.commit()' "$T3_USERDATA/statev2.sqlite"
 printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "thread": "task-a"}}}' > "$hb/watch.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"act on the lines below"*"t3-state unreadable: T3's database has no runtime requests table"*) ;; *) echo "heartbeat t3 schema: $out"; exit 1;; esac
-test ! -e "$T3_USERDATA/statev2.sqlite-journal"
 unset T3_USERDATA
 # --no-live: a Fable task's usage too comes from the sampler (the stand-in for a live call fails), and with --live it is refused
 printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$hb/watch.json"
@@ -5180,10 +5194,12 @@ status=0
 "$scripts/heartbeat" "$hb" --live --no-live >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
 
-# watch-wait: loops heartbeat (a stand-in here) without a ledger line a loop; exits with its lines on the first
-# that has one to act on, carries on past a wake that only names blind tasks, exits at --max, one at a time per
-# run (the second exits 3), quietly once the run is finished, 1 when heartbeat fails, and reads live only when a
-# Fable task runs, at most every 15 minutes; its pid file goes when it does, a stop by signal too.
+# watch-wait: sleeps --every first (or checks at once with --now), loops heartbeat (a stand-in here) without a
+# ledger line a loop, and exits with its lines once one is new; a line it delivered, by its word and subject
+# without numbers, wakes it again only after 30 minutes, across restarts; reminders never count, nor a status
+# word inside the summary; blind tasks bring it out once every 15 minutes; it exits at --max, one at a time per
+# run (the second exits 3), quietly once the run is finished, 1 when heartbeat fails, and reads live only while a
+# Fable or Antigravity task runs, at most every 15 minutes; its pid file goes when it does, a stop by signal too.
 ww="$work/ww-run"
 mkdir -p "$ww"
 printf '# ledger\n' > "$ww.md"
@@ -5192,10 +5208,10 @@ cat > "$work/ww-hb" <<EOF
 #!/bin/sh
 echo "\$*" >> "$work/ww-calls"
 n=\$(wc -l < "$work/ww-calls" | tr -d ' ')
-mode=\$(cat "$work/ww-mode")
-case "\$mode" in
-  idle) echo "heartbeat 01:00: nothing to act on. running A.";;
-  blind) echo "heartbeat 01:00: act on the lines below. running A. blind, read their threads: A.";;
+case "\$(cat "$work/ww-mode")" in
+  idle) echo "heartbeat 01:00: nothing to act on. running A. main abc1 fix: say act on the lines below.";;
+  quiet) echo "heartbeat 01:00: act on the lines below. running A."; echo "quiet A: nothing changed for \$((20 + n)) min";;
+  remind) echo "heartbeat 01:00: act on the lines below. running A. blind, read their threads: A."; echo "vm 123 qemu-system-aarc: still running, 2.0 GB";;
   act) if [ "\$n" -ge 2 ]; then echo "heartbeat 01:00: act on the lines below. running A."; echo "commit A 2026-11-26T01:00:00+02:00 abc fix"; else echo "heartbeat 01:00: nothing to act on. running A."; fi;;
   fail) echo "broken" >&2; exit 3;;
 esac
@@ -5203,24 +5219,45 @@ EOF
 chmod +x "$work/ww-hb"
 export WATCH_WAIT_HEARTBEAT="$work/ww-hb"
 echo act > "$work/ww-mode"; : > "$work/ww-calls"
-out=$("$scripts/watch-wait" "$ww" --every 1 --max 30)
-case "$out" in *"act on heartbeat's lines below (after 0 min, 2 checks)"*"commit A 2026-11-26"*) ;; *) echo "watch-wait act: $out"; exit 1;; esac
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 30)
+case "$out" in *"act on heartbeat's lines below (1 new of 1), after 0 min and 2 checks"*"commit A 2026-11-26"*) ;; *) echo "watch-wait act: $out"; exit 1;; esac
 test "$(grep -c 'watch-wait: woke after 0 min, 2 checks: running A' "$ww.md")" -eq 1
 grep -q -- '--no-ledger --no-live' "$work/ww-calls"
 test ! -e "$ww/watch-wait.pid"
-echo blind > "$work/ww-mode"; : > "$work/ww-calls"
-out=$("$scripts/watch-wait" "$ww" --every 1 --max 2)
-case "$out" in *"nothing to act on in 0 min (3 checks): start it again"*) ;; *) echo "watch-wait blind only: $out"; exit 1;; esac
-test "$(grep -c 'watch-wait: nothing to act on in 0 min, 3 checks' "$ww.md")" -eq 1
+# a lasting line: delivered once, then not again on a restart (its minutes differ), until 30 minutes have passed
+echo quiet > "$work/ww-mode"; : > "$work/ww-calls"
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 30 --now)
+case "$out" in *"(1 new of 1), after 0 min and 1 checks"*"quiet A: nothing changed for 21 min"*) ;; *) echo "watch-wait quiet first: $out"; exit 1;; esac
+test "$(sed -n 1p "$work/ww-calls")" = "$ww --no-ledger --no-live"
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 1 --now)
+case "$out" in *"nothing new to act on in 0 min"*"start it again"*) ;; *) echo "watch-wait quiet again: $out"; exit 1;; esac
+python3 -I -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); json.dump({k: v - 1801 for k, v in d.items()}, open(p, "w"))' "$ww/watch-wait.seen.json"
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 30 --now)
+case "$out" in *"(1 new of 1)"*"quiet A"*) ;; *) echo "watch-wait quiet after 30 min: $out"; exit 1;; esac
+# reminders and blind tasks: out once for the threads, then not again within 15 minutes
+rm "$ww/watch-wait.seen.json"
+echo remind > "$work/ww-mode"
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 30 --now)
+case "$out" in *"read the threads heartbeat names (blind, or on another computer)"*) ;; *) echo "watch-wait blind: $out"; exit 1;; esac
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 1 --now)
+case "$out" in *"nothing new to act on in 0 min"*) ;; *) echo "watch-wait blind again: $out"; exit 1;; esac
+# "act on the lines below" in a commit's subject isn't the status
+echo idle > "$work/ww-mode"; : > "$work/ww-calls"
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 1)
+case "$out" in *"nothing new to act on in 0 min"*) ;; *) echo "watch-wait idle: $out"; exit 1;; esac
+test "$(wc -l < "$work/ww-calls" | tr -d ' ')" -ge 2
 echo fail > "$work/ww-mode"
 status=0
-out=$("$scripts/watch-wait" "$ww" --every 1 --max 2) || status=$?
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 2) || status=$?
 test "$status" -eq 1 && case "$out" in *"heartbeat failed (exit 3): broken"*) ;; *) echo "watch-wait fail: $out"; exit 1;; esac
-# a Fable task: live on the first check, then sampled until 15 minutes have passed
-echo idle > "$work/ww-mode"; : > "$work/ww-calls"
-printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-fable-5-2"}}}' > "$ww/watch.json"
-"$scripts/watch-wait" "$ww" --every 1 --max 1 >/dev/null
-test "$(sed -n 1p "$work/ww-calls")" = "$ww --no-ledger --live" && test "$(sed -n 2p "$work/ww-calls")" = "$ww --no-ledger --no-live"
+# a Fable task, or an Antigravity one: live on the first check, then sampled until 15 minutes have passed
+echo idle > "$work/ww-mode"
+for task in '"model": "claude-fable-5-2"' '"harness": "antigravity", "model": "gemini-4-neon"'; do
+  : > "$work/ww-calls"
+  printf '%s\n' "{\"tasks\": {\"A\": {\"worktree\": \"/nowhere\", \"status\": \"running\", $task}}}" > "$ww/watch.json"
+  "$scripts/watch-wait" "$ww" --every 0.2 --max 1 --now >/dev/null
+  test "$(sed -n 1p "$work/ww-calls")" = "$ww --no-ledger --live" && test "$(sed -n 2p "$work/ww-calls")" = "$ww --no-ledger --no-live" || { echo "watch-wait live ($task): $(cat "$work/ww-calls")"; exit 1; }
+done
 # one at a time, and a stop by signal removes its pid file
 "$scripts/watch-wait" "$ww" --every 60 --max 600 > "$work/ww-first.out" &
 first=$!
@@ -5234,7 +5271,7 @@ kill "$first"
 wait "$first" 2>/dev/null || true
 test ! -e "$ww/watch-wait.pid"
 printf '%s\n' '{"finished": "2026-11-26T02:00:00Z", "tasks": {}}' > "$ww/watch.json"
-out=$("$scripts/watch-wait" "$ww" --every 1 --max 5)
+out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 5)
 case "$out" in "watch-wait: the run is finished; nothing to watch") ;; *) echo "watch-wait finished: $out"; exit 1;; esac
 status=0
 "$scripts/watch-wait" "$ww" --every 0 >/dev/null 2>&1 || status=$?

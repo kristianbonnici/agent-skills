@@ -90,13 +90,15 @@ Each line starts with a word saying what it is:
   keep-awake / sampler   the recorded keep-awake or usage sampler isn't running
   settings <domain>: <key> <old>→<new>   (once for each new value) a key of the owner's settings that differs
                    from its snapshot: watch.json's "owner_defaults": [{"domain", "snapshot" (from the run
-                   directory), "keys" (optional: only these)}], compared with `defaults export <domain> -`
+                   directory), "keys" (optional: only these), "ignore" (optional: keys the owner's own
+                   copy writes)}], compared with `defaults export <domain> -`
                    (RUN_WATCH_DEFAULTS replaces defaults); a value over 40 characters, one that isn't a plain
-                   string, number or boolean, and one that looks like a secret print as <changed>
+                   string, number or boolean, and one that looks like a secret print as <changed>, and the
+                   state file keeps only a digest of each value
   next-run <thread>   (every wake until "next_run" has "started") a run waiting to start after this one
                    (watch.json's "next_run": {"thread", "environmentId", "repo", "needs": ["screen", "gpu"],
-                   "leases": <lease folder>}) can start: "queued" is an empty list and no running task works in
-                   its repository or holds a lease it needs; or "finished" is set
+                   "leases": <lease folder>}) can start: "queued" is an empty list, no task is paused, and no
+                   running task works in its repository (found here) or holds a lease it needs; or "finished"
   watcher          watch.json has "watcher" and no watch-wait runs for the run (<run directory>/watch-wait.pid)
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
                    worktree, of each merge of its branch into the integration branch, and of each
@@ -125,7 +127,7 @@ What it reads (here, nothing of a task on another computer, whose paths name fol
     tracking max mtime across the .db and its -wal file (never -shm). Antigravity steps are
     binary protobufs without reliable open-call or approval fields, so run-watch checks quiet,
     commits, merges and processes/machine state (not hang, idle, approval or report) for
-    Antigravity tasks; approvals rely on T3's pendingRequestCount check and quiet.
+    Antigravity tasks; approvals rely on the heartbeat's T3 check (approval-task) and quiet.
     CLAUDE_CONFIG_DIR, CODEX_HOME and T3_USERDATA move these.
   - processes (ps, lsof for working folders, ioreg for each process's GPU time, sysctl for swap)
   - files' modification times under the worktree (with its git folder), the task's run folder
@@ -141,11 +143,12 @@ turn (one that holds it and runs a command is judged by that command), a call ru
 command line (a reviewer: codex, claude, opencode, gemini, agy, copilot), and a call that keeps
 starting processes (a sleep loop) or writes files.
 
-It writes only its state file, <run directory>/run-watch.state.json, to compare with its last
+It writes only its state file, <run directory>/run-watch.state.json (one run at a time, through
+run-watch.lock beside it), to compare with its last
 run (CPU samples for the hog check, the disk's recent readings and folder sizes, the times it already
 printed, and each SSH-reached computer's summary for the heartbeat), and adds the time lines to
 <run directory>/times.log, another computer's too (each of its times once, taken from its own
-times.log, so one that couldn't be added is added next time). Over SSH it writes the same two files in the run directory there, nothing else. It exits 0 (2 for a
+times.log, so one that couldn't be added is added next time). Over SSH it writes the same files (and its lock) in the run directory there, nothing else. It exits 0 (2 for a
 usage error), whether or not it printed anything. For tests, RUN_WATCH_HANG_MINUTES,
 RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WATCH_CALL_START_SECONDS, RUN_WATCH_PS, RUN_WATCH_IOREG,
 RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
@@ -163,6 +166,7 @@ if sys.version_info < (3, 10):   # its annotations need 3.10; macOS's own /usr/b
           "python3 (on a Mac, Homebrew's), and over SSH through the login shell (zsh -l)", file=sys.stderr)
     sys.exit(69)
 
+import fcntl
 import json
 import os
 import re
@@ -846,7 +850,7 @@ def load_json(path: str):
 
 
 def save_state(path: str, state: dict) -> None:
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(state, f)
     os.replace(tmp, path)
@@ -884,17 +888,34 @@ def shown(key_name: str, value) -> str:
     return text
 
 
-def read_plist(path: str):
+def read_plist(data: bytes):
+    """A settings file's keys (XML or binary plist), or None when it isn't one."""
     import plistlib
-    with open(path, "rb") as fh:
-        data = plistlib.load(fh)
-    return data if isinstance(data, dict) else None
+    from xml.parsers.expat import ExpatError
+    try:
+        parsed = plistlib.loads(data)
+    except (ValueError, plistlib.InvalidFileException, ExpatError, OverflowError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def fingerprint(value) -> str:
+    """A digest of a whole settings value, kept in the state file in place of the value (which may be a secret)."""
+    import hashlib
+    import plistlib
+    if value is None:
+        return "none"
+    try:
+        blob = plistlib.dumps({"v": value}, fmt=plistlib.FMT_BINARY, sort_keys=True)
+    except (TypeError, ValueError, OverflowError):
+        blob = repr(value).encode(errors="replace")
+    return hashlib.sha256(blob).hexdigest()[:24]
 
 
 def settings_drift(watch: dict, run_dir: str, state: dict) -> list[str]:
-    """watch.json's "owner_defaults": [{"domain", "snapshot", "keys"?}]: each key changed since the snapshot
-    (taken in Prepare), once for each new value, so a test build's write is caught on the next wake."""
-    import plistlib
+    """watch.json's "owner_defaults": [{"domain", "snapshot", "keys"?, "ignore"?}]: each key changed since the
+    snapshot (taken in Prepare), once for each new value, so a test build's write is caught on the next wake.
+    The state file keeps only a digest of each value told."""
     entries = watch.get("owner_defaults")
     if not isinstance(entries, list):
         return []
@@ -906,35 +927,40 @@ def settings_drift(watch: dict, run_dir: str, state: dict) -> list[str]:
             continue
         domain, snap = e["domain"], os.path.join(run_dir, os.path.expanduser(e["snapshot"]))
         keys = [k for k in e.get("keys") or [] if isinstance(k, str)] if isinstance(e.get("keys"), list) else None
+        ignore = {k for k in e.get("ignore") or [] if isinstance(k, str)} if isinstance(e.get("ignore"), list) else set()
+        new = None
         try:
-            old = read_plist(snap)
-        except (OSError, ValueError, plistlib.InvalidFileException) as err:
-            old, why = None, f"its snapshot {snap} can't be read ({short(getattr(err, 'strerror', None) or str(err), 60)})"
-        else:
+            with open(snap, "rb") as fh:
+                old = read_plist(fh.read())
             why = f"its snapshot {snap} isn't a settings file"
+        except OSError as err:
+            old, why = None, f"its snapshot {snap} can't be read ({short(err.strerror or str(err), 60)})"
         if old is not None:
-            try:
-                exported = capture([defaults, "export", domain, "-"], 10)
+            try:   # bytes: a binary or non-UTF-8 export is read as it is
+                exported = subprocess.run([defaults, "export", domain, "-"], capture_output=True, timeout=10)
+                code, data, err_text = exported.returncode, exported.stdout, exported.stderr.decode(errors="replace")
             except (OSError, subprocess.TimeoutExpired) as err:
-                exported = subprocess.CompletedProcess([], 1, "", str(err))
-            try:
-                new = plistlib.loads(exported.stdout.encode()) if exported.returncode == 0 and exported.stdout.strip() else None
-            except (ValueError, plistlib.InvalidFileException):
-                new = None
-            # a domain nothing has written yet exports nothing: every key is then gone
-            new = new if isinstance(new, dict) else ({} if exported.returncode == 0 or "does not exist" in exported.stderr else None)
-            why = f"defaults export {domain} failed: {short(exported.stderr.strip() or 'no output', 60)}"
+                code, data, err_text = 1, b"", str(err)
+            if code == 0 and data.strip():
+                new = read_plist(data)
+                why = f"defaults export {domain} gave no settings file it can read"
+            elif code == 0 or "does not exist" in err_text:
+                new = {}   # a domain nothing has written yet exports nothing: every key is then gone
+            else:
+                why = f"defaults export {domain} failed: {short(err_text.strip() or 'no output', 60)}"
         if old is None or new is None:
             k = f"{domain}\0!{why}"
             if k not in told and k not in now_told:
                 out.append(f"settings {domain}: not compared: {why}")
             now_told.add(k)
+            # what was told for this domain stays told, so the next good reading doesn't say it again
+            now_told |= {t for t in told if t.startswith(domain + "\0") and "\0!" not in t}
             continue
-        for name in sorted(keys if keys is not None else set(old) | set(new)):
+        for name in sorted((set(keys) if keys is not None else set(old) | set(new)) - ignore):
             a, b = old.get(name), new.get(name)
             if a == b:
                 continue
-            k = f"{domain}\0{name}\0{repr(b)[:200]}"
+            k = f"{domain}\0{name}\0{fingerprint(b)}"
             if k not in told and k not in now_told:   # once, however many entries name the key
                 out.append(f"settings {domain}: {name} {shown(name, a)}→{shown(name, b)}")
             now_told.add(k)
@@ -943,53 +969,67 @@ def settings_drift(watch: dict, run_dir: str, state: dict) -> list[str]:
 
 
 def common_dir(path: str) -> str | None:
+    path = os.path.expanduser(path) if path else path
     if not path or not os.path.isdir(path):
         return None
     out = run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"]).strip()
     return os.path.realpath(out) if out else None
 
 
+DONE = {"merged", "ready", "blocked", "failed", "stopped", "parked", "cancelled"}   # statuses that won't run again
+
+
 def next_run_line(watch: dict, run_dir: str) -> str | None:
     """watch.json's "next_run": {"thread", "environmentId"?, "repo", "needs"?: ["screen", "gpu"], "leases"?}: a
-    run waiting to start after this one. Its line comes once nothing is queued ("queued" is empty) and the tasks
-    still running are none in its repository and hold none of the leases it needs, or at the finish ("finished"),
-    until "next_run" has "started"."""
+    run waiting to start after this one. Its line comes once nothing is queued ("queued" is empty), no task is
+    paused, and the tasks still running are none in its repository (which must be found here) and hold none
+    of the leases it needs (whose state must be readable); or at the finish ("finished"); until "next_run"
+    has "started"."""
     nxt = watch.get("next_run")
     if not isinstance(nxt, dict) or nxt.get("started") or not isinstance(nxt.get("thread"), str):
         return None
     tasks = {k: v for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict)}
-    running = sorted(t for t, v in tasks.items() if v.get("status", "running") == "running")
-    say = (f"next-run {nxt['thread']}: send the waiting run its start message (the skill versions, the lease folder, what still "
-           "runs: {left}), record it in the ledger and set \"started\" in watch.json's \"next_run\"")
+    active = sorted(t for t, v in tasks.items() if str(v.get("status", "running")) not in DONE)
+    env = f" (environmentId {nxt['environmentId']})" if isinstance(nxt.get("environmentId"), str) else ""
+    say = (f"next-run {nxt['thread']}{env}: send the waiting run its start message (the skill versions, the lease folder, "
+           "what still runs: {left}), record it in the ledger and set \"started\" in watch.json's \"next_run\"")
     if watch.get("finished"):
-        return say.format(left=", ".join(running) or "nothing") + " (this run is finishing)"
+        return say.format(left=", ".join(active) or "nothing") + " (this run is finishing)"
     queued = watch.get("queued")
     if not isinstance(queued, list) or queued:
         return None   # not known to be down to its final tasks
+    if any(str(tasks[t].get("status", "running")) != "running" for t in active):
+        return None   # a paused task runs again later
+    if not active:
+        return say.format(left="nothing")
     theirs = common_dir(str(nxt.get("repo") or ""))
+    if theirs is None:
+        return None   # its repository can't be compared here: wait for the finish
     mine_repo = common_dir(str(watch.get("repo") or ""))
-    in_repo = []
-    here = str(watch.get("computer") or this_computer()).casefold() if any(tasks[t].get("computer") for t in running) else ""
-    for t in running:
+    here = str(watch.get("computer") or this_computer()).casefold() if any(tasks[t].get("computer") for t in active) else ""
+    for t in active:
         v = tasks[t]
         there = v.get("computer") and str(v["computer"]).casefold() != here
         cd = mine_repo if there else (common_dir(str(v.get("worktree") or "")) or mine_repo)
-        if theirs and cd == theirs:
-            in_repo.append(t)
+        if cd is None or cd == theirs:
+            return None   # in its repository, or can't tell
     needs = [n for n in nxt.get("needs") or [] if isinstance(n, str)] if isinstance(nxt.get("needs"), list) else []
-    held = []
-    if needs and running:
+    if needs:
         folder = os.path.expanduser(str(nxt.get("leases") or run_dir))
         leases = (load_json(os.path.join(folder, "locks", "state.json")) or {}).get("leases")
+        if not isinstance(leases, dict):
+            if os.path.exists(os.path.join(folder, "locks", "state.json")):
+                return None   # a lease state it can't read: can't tell who holds what
+            leases = {}
         t_now = now()
         for res in needs:
-            for lease in (leases.get(res) or []) if isinstance(leases, dict) else []:
-                owner = str(lease.get("owner", "")) if isinstance(lease, dict) else ""
-                if (lease.get("expires") or 0) > t_now and any(owner == t or owner.endswith("-" + t) for t in running):
-                    held.append(f"{owner} holds {res}")
-    if in_repo or held:
-        return None
-    return say.format(left=", ".join(running) or "nothing") + (" (none in its repository, none holding what it needs)" if running else "")
+            for lease in leases.get(res) or [] if isinstance(leases.get(res), list) else []:
+                if not isinstance(lease, dict) or not isinstance(lease.get("expires"), (int, float)) or lease["expires"] <= t_now:
+                    continue
+                owner = str(lease.get("owner", ""))
+                if any(re.search(rf"(^|[^A-Za-z0-9]){re.escape(t)}$", owner) for t in active):
+                    return None
+    return say.format(left=", ".join(active)) + " (none in its repository, none holding what it needs)"
 
 
 def watcher_line(watch: dict, run_dir: str, procs: dict) -> str | None:
@@ -1003,7 +1043,7 @@ def watcher_line(watch: dict, run_dir: str, procs: dict) -> str | None:
     if pid is not None and "watch-wait" in procs.get(pid, {}).get("args", ""):
         return None
     return (f"watcher: watch-wait isn't running{f' (pid {pid} is gone)' if pid else ''}: start it again as a background command "
-            f"({os.path.join(HERE, 'watch-wait')} {run_dir})")
+            f"({os.path.join(HERE, 'watch-wait')} {run_dir} --max 6600, timeout 7200000)")
 
 
 # ---------------------------------------------------------------- other computers, over SSH
@@ -1190,6 +1230,12 @@ def main(argv: list[str]) -> int:
     run_dir = os.path.abspath(args[0])
     watch_path = watch_path or os.path.join(run_dir, "watch.json")
     state_path = os.path.join(run_dir, "run-watch.state.json")
+    # one at a time per run directory (a wake's own run and the watcher's heartbeat), from reading its state to saving it
+    try:
+        state_lock = open(os.path.join(run_dir, "run-watch.lock"), "a+")
+        fcntl.flock(state_lock, fcntl.LOCK_EX)
+    except OSError:
+        state_lock = None
     state = load_json(state_path) or {}
     if watch_path == "-":
         try:

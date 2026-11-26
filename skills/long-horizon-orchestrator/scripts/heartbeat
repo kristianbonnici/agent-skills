@@ -15,8 +15,7 @@ It reads <run directory>/watch.json, as run-watch does, and prints:
 A task run-watch can't read (its "blind" list) is named on every wake and keeps it from being idle, since
 only its thread shows an approval prompt or a turn that ended; Antigravity tasks whose conversation DB
 run-watch found leave "blind" (their activity and 20-minute `quiet` checks read the DB and its `-wal`,
-while immediate approval detection on Antigravity still relies on T3's `pendingRequestCount` check in
-`references/host-t3.md`). A virtual machine or a leftover process
+while their approvals come from the T3 check below). A virtual machine or a leftover process
 already reported is a reminder in the summary ("VMs still running", "leftovers still running"), not a
 finding. run-watch also checks each other computer that watch.json's "machines" reaches over SSH, in
 the same call; its lines name that computer, and the summary gives that computer's free disk, swap, load,
@@ -27,15 +26,15 @@ that computer couldn't take or send it), or
 when this heartbeat's run-watch didn't finish (its "run-watch failed" note says why), so no earlier reading
 passes for this one; every computer watch.json's "machines" reaches over SSH is named, a first wake's too.
 
-In T3 it also reads T3's state database read-only (<T3_USERDATA, default ~/.t3/userdata>/statev2.sqlite), so
+In T3 (watch.json's "host" is "t3", or no "host" and the database exists) it also reads T3's state database read-only (<T3_USERDATA, default ~/.t3/userdata>/statev2.sqlite), so
 no thread needs a tool read to find an approval: each pending request on a running task's thread or on any
 thread under it (reviewers, helpers and theirs, by their parent links) is a line,
 
   approval-task <task> <thread> <kind> since HH:MM       on the task's own thread
   approval-subagent <task> <thread> <kind> since HH:MM   on a thread under it
 
-and a database or table it can't read (missing while watch.json's "host" is "t3", locked, a schema it doesn't
-know) is "t3-state unreadable: <why>", which is never idle: read the subagents with the tools then. A running
+and a database or table it can't read (missing while watch.json's "host" is "t3", locked past 5 seconds, a
+schema it doesn't know) is "t3-state unreadable: <why>", which is never idle: read the subagents with the tools then. A running
 task on another computer, whose database isn't here, is named in the summary ("read with the tools on
 den-mac: B") and keeps the wake from being idle. Runs one at a time per run directory (heartbeat.lock), so
 a scheduled heartbeat and scripts/watch-wait never read run-watch's state together.
@@ -166,6 +165,10 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
     a reviewer, helper or Antigravity task waiting on an approval or a question nobody will answer. Returns
     (lines, summary bits). A task on another computer, whose T3 database isn't here, keeps the tool reads."""
     tasks = watch.get("tasks") if isinstance(watch.get("tasks"), dict) else {}
+    host = watch.get("host")
+    db = os.path.join(os.environ.get("T3_USERDATA") or os.path.expanduser("~/.t3/userdata"), "statev2.sqlite")
+    if (host is not None and host != "t3") or (host is None and not os.path.isfile(db)):
+        return [], []   # not a T3 run: its tasks' threads aren't T3's
     mine, away = {}, {}
     for t in running:
         v = tasks[t]
@@ -178,17 +181,14 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
     bits = [f"read with the tools on {c}: {', '.join(ts)}" for c, ts in sorted(away.items())]
     if not mine:
         return [], bits
-    db = os.path.join(os.environ.get("T3_USERDATA") or os.path.expanduser("~/.t3/userdata"), "statev2.sqlite")
     if not os.path.isfile(db):
-        if watch.get("host") == "t3":
-            return [f"t3-state unreadable: no T3 state database at {db}: read the running tasks' subagents with the tools"], bits
-        return [], bits
+        return [f"t3-state unreadable: no T3 state database at {db}: read the running tasks' subagents with the tools"], bits
     uri = f"file:{quote(os.path.abspath(db), safe='/')}?mode=ro"
     why = ""
-    for suffix in ("", "&immutable=1"):   # immutable: when a read-only folder keeps the WAL's index from opening
+    for _ in range(1):   # read-only, with T3's latest writes (never immutable, which would skip the WAL)
         con = None
         try:
-            con = sqlite3.connect(uri + suffix, uri=True, timeout=2)
+            con = sqlite3.connect(uri, uri=True, timeout=5)
             cols = {t: {r[1] for r in con.execute(f"PRAGMA table_info({t})")} for t in
                     ("orchestration_v2_projection_runtime_requests", "orchestration_v2_projection_threads",
                      "orchestration_v2_projection_subagents")}
@@ -213,7 +213,7 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
                         parent.setdefault(child, up)
             break
         except sqlite3.Error as e:
-            why = str(e)
+            why = str(e) or type(e).__name__
             continue
         finally:
             if con is not None:

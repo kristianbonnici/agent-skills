@@ -218,8 +218,8 @@ sys.exit(done.returncode)
         and seen["dialogs"] == 1 and seen["checked"] == state()["last_run"], seen
     assert sorted(state()["blind"]) == ["C"], state()["blind"]
     # nothing written there but what a local run-watch writes (its state and times.log), nor here
-    assert sorted(os.listdir(den_run)) == sorted(den_before + ["run-watch.state.json", "times.log"]), os.listdir(den_run)
-    assert sorted(os.listdir(studio_run)) == sorted(studio_before + ["run-watch.state.json", "times.log", "watch.json"]), os.listdir(studio_run)
+    assert sorted(os.listdir(den_run)) == sorted(den_before + ["run-watch.lock", "run-watch.state.json", "times.log"]), os.listdir(den_run)
+    assert sorted(os.listdir(studio_run)) == sorted(studio_before + ["run-watch.lock", "run-watch.state.json", "times.log", "watch.json"]), os.listdir(studio_run)
     assert os.listdir(os.path.join(den_home, ".claude", "skills")) == ["long-horizon-orchestrator"]
 
     # the heartbeat: not idle, den-mac's lines, and its free disk, keep-awake and sampler in the summary

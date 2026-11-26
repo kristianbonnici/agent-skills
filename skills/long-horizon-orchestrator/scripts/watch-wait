@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""Wait for something to act on, without model tokens: heartbeat's checks every few minutes, in a loop that
-exits as soon as one finds something, so the orchestrator is woken only then.
+"""Wait for something new to act on, without model tokens: heartbeat's checks every few minutes, in a loop that
+exits as soon as one finds something not delivered yet, so the orchestrator is woken only then.
 
-Usage: watch-wait <run directory> [--every <seconds, default 300>] [--max <seconds, default 1740>] [--live]
+Usage: watch-wait <run directory> [--every <seconds, default 300>] [--max <seconds, default 1440>] [--live] [--now]
 
-Each loop runs scripts/heartbeat <run directory> --no-ledger (run-watch, the integration branch, the computer,
-the usage sampler's last readings and T3's pending requests), and sleeps in between. It exits 0, printing one
-line and then heartbeat's output, as soon as a check isn't idle with a line to act on: a task's report, a
-commit or merge, an approval, a hang, a usage mark, a settings change, a next-run line. A wake that only names
-blind tasks or tasks read with the tools on another computer isn't a reason to exit: those are read on the
-wake it ends with. It also exits at --max, with one line saying nothing needed acting on, which stays under
-Claude Code's background limit (2 minutes under its default 30; pass timeout 7200000 and --max 7080 for two
-hours). Either way it adds one line to the ledger (<run directory>.md), never one a loop.
+It sleeps --every first (--now checks at once), then runs scripts/heartbeat <run directory> --no-ledger
+(run-watch, the integration branch, the computer, the usage sampler's last readings and T3's pending requests)
+each loop. It exits 0, printing one line and then heartbeat's output, once a check has a line to act on that it
+hasn't delivered in the last 30 minutes: a task's report, a commit or merge, an approval, a hang, a usage mark,
+a settings change, a next-run line. It remembers what it delivered in <run directory>/watch-wait.seen.json
+across restarts, by each line's word and subject without its numbers, so a condition that lasts (a quiet task,
+a usage mark, low disk) wakes the orchestrator once and then every 30 minutes, not on every restart. Reminders
+("vm … still running", "leftover … still running") never count. Tasks heartbeat says to read with the tools
+(blind, or on another computer) bring it out once every 15 minutes, so their threads are read that often. It
+also exits at --max, saying nothing new needed acting on; each heartbeat may take up to 5 minutes, so give the
+host's limit room: run it with Claude Code's timeout 7200000 and --max 6600 (the default fits the default 30
+minutes). Either way it adds one line to the ledger (<run directory>.md), never one a loop.
 
-It reads usage live only when it must: with --live, or while a running task's "model" in watch.json names
-Fable (whose week is read live only), at most every 15 minutes; otherwise heartbeat runs with --no-live.
+It reads usage live only when it must: with --live, or while a running task's "model" names Fable (whose week
+is read live only) or an Antigravity task runs (which the sampler reads hourly), at most every 15 minutes;
+otherwise heartbeat runs with --no-live.
 
 Start it in Claude Code (also in T3) as a background command, whose exit starts the orchestrator's next turn
 (run_in_background). Only one runs for a run directory: a second exits 3 at once, naming the first's process
@@ -41,6 +46,12 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 LIVE_EVERY_S = 900
+REMIND_S = 1800          # a line already delivered comes again after this long
+READ_EVERY_S = 900       # blind tasks or tasks on another computer: their threads are read this often
+IDLE = re.compile(r"^heartbeat \d\d:\d\d: nothing to act on\.")
+REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
+ONCE = re.compile(r"^(commit|merged|report|slept|settings|blind|hog) ")   # said once by run-watch: always new
+TOOL_READS = re.compile(r"blind, read their threads|read with the tools on ")
 
 
 def option(args: list, name: str, default: float):
@@ -55,18 +66,27 @@ def option(args: list, name: str, default: float):
     return value if value > 0 else None
 
 
-def load_watch(run_dir: str) -> dict:
+def load_json(path: str) -> dict:
     try:
-        watch = json.load(open(os.path.join(run_dir, "watch.json")))
-        return watch if isinstance(watch, dict) else {}
+        data = json.load(open(path))
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
-def fable_running(watch: dict) -> bool:
+def live_needed(watch: dict) -> bool:
     tasks = watch.get("tasks") if isinstance(watch.get("tasks"), dict) else {}
-    return any(isinstance(v, dict) and v.get("status", "running") == "running" and re.search(r"fable", str(v.get("model", "")), re.I)
-               for v in tasks.values())
+    for v in tasks.values():
+        if isinstance(v, dict) and v.get("status", "running") == "running" and (
+                re.search(r"fable", str(v.get("model", "")), re.I) or "antigravity" in str(v.get("harness", "")).lower()
+                or str(v.get("session_log", "")).endswith(".db")):
+            return True
+    return False
+
+
+def line_key(line: str) -> str:
+    """A line's word and subject, without the numbers that change from one check to the next."""
+    return re.sub(r"\d+(\.\d+)?", "#", line)[:200]
 
 
 def ledger_line(run_dir: str, text: str) -> None:
@@ -81,9 +101,9 @@ def ledger_line(run_dir: str, text: str) -> None:
 
 def main(argv: list) -> int:
     args = list(argv)
-    every, most = option(args, "--every", 300), option(args, "--max", 1740)
-    live_wanted = "--live" in args
-    args = [a for a in args if a != "--live"]
+    every, most = option(args, "--every", 300), option(args, "--max", 1440)
+    live_wanted, now_first = "--live" in args, "--now" in args
+    args = [a for a in args if a not in ("--live", "--now")]
     if every is None or most is None or len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]):
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
@@ -99,6 +119,7 @@ def main(argv: list) -> int:
         print(f"watch-wait: already running for this run (pid {other}): nothing started")
         return 3
     pid_path = os.path.join(run_dir, "watch-wait.pid")
+    seen_path = os.path.join(run_dir, "watch-wait.seen.json")
     with open(pid_path, "w") as fh:
         fh.write(f"{os.getpid()}\n")
 
@@ -110,14 +131,16 @@ def main(argv: list) -> int:
     heartbeat = os.environ.get("WATCH_WAIT_HEARTBEAT", os.path.join(HERE, "heartbeat"))
     t0 = time.time()
     deadline = t0 + most
-    checks, last_live, summary = 0, None, ""
+    checks, last_live, first = 0, None, ""
     try:
+        if not now_first:
+            time.sleep(min(every, most))
         while True:
-            watch = load_watch(run_dir)
+            watch = load_json(os.path.join(run_dir, "watch.json"))
             if watch.get("finished"):
                 print("watch-wait: the run is finished; nothing to watch")
                 return 0
-            live = (live_wanted or fable_running(watch)) and (last_live is None or time.time() - last_live >= LIVE_EVERY_S)
+            live = (live_wanted or live_needed(watch)) and (last_live is None or time.time() - last_live >= LIVE_EVERY_S)
             if live:
                 last_live = time.time()
             try:
@@ -137,17 +160,34 @@ def main(argv: list) -> int:
             first = out[0]
             summary = first.split(". ", 1)[1] if ". " in first else first
             minutes = (time.time() - t0) / 60
-            if "nothing to act on" not in first and len(out) > 1:
-                print(f"watch-wait {time.strftime('%H:%M')}: act on heartbeat's lines below (after {minutes:.0f} min, {checks} checks); "
+            t_now = time.time()
+            seen = {k: v for k, v in load_json(seen_path).items() if isinstance(v, (int, float)) and t_now - v < 6 * 3600}
+            act = [] if IDLE.match(first) else [l for l in out[1:] if not REMINDER.match(l)]
+            new = [l for l in act if ONCE.match(l) or t_now - seen.get(line_key(l), 0) >= REMIND_S]
+            reads = not IDLE.match(first) and TOOL_READS.search(first) and t_now - seen.get("\0reads", 0) >= READ_EVERY_S
+            if new or reads:
+                for l in act:
+                    seen[line_key(l)] = t_now
+                if reads or TOOL_READS.search(first):
+                    seen["\0reads"] = t_now
+                try:
+                    with open(seen_path + ".tmp", "w") as fh:
+                        json.dump(seen, fh)
+                    os.replace(seen_path + ".tmp", seen_path)
+                except OSError:
+                    pass
+                why = (f"act on heartbeat's lines below ({len(new)} new of {len(act)})" if new
+                       else "read the threads heartbeat names (blind, or on another computer)")
+                print(f"watch-wait {time.strftime('%H:%M')}: {why}, after {minutes:.0f} min and {checks} checks; "
                       "then start watch-wait again")
                 print("\n".join(out))
                 ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
                 return 0
             left = deadline - time.time()
             if left <= 0:
-                print(f"watch-wait {time.strftime('%H:%M')}: nothing to act on in {minutes:.0f} min ({checks} checks): "
+                print(f"watch-wait {time.strftime('%H:%M')}: nothing new to act on in {minutes:.0f} min ({checks} checks): "
                       f"start it again. {first}")
-                ledger_line(run_dir, f"nothing to act on in {minutes:.0f} min, {checks} checks: {summary}")
+                ledger_line(run_dir, f"nothing new to act on in {minutes:.0f} min, {checks} checks: {summary}")
                 return 0
             time.sleep(min(every, left))
     finally:
