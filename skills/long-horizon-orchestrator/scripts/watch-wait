@@ -50,8 +50,11 @@ REMIND_S = 1800          # a line already delivered comes again after this long
 READ_EVERY_S = 900       # blind tasks or tasks on another computer: their threads are read this often
 IDLE = re.compile(r"^heartbeat \d\d:\d\d: nothing to act on\.")
 REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
-ONCE = re.compile(r"^(commit|merged|report|slept|settings|blind|hog) ")   # said once by run-watch: always new
+# said once by run-watch (as its one_time() says, here or "on <computer>"), or once a value: always new
+ONCE = re.compile(r"^((commit|merged|report|settings|blind|hog|vm|leftover) |disk(?: on \S+)?: free disk fell |"
+                  r"slept \S+(?: on \S+)? (?!- )\S+ \()")
 TOOL_READS = re.compile(r"blind, read their threads|read with the tools on ")
+SOON = re.compile(r"^t3-state ")   # the tools read what it can't, as often as blind tasks
 
 
 def option(args: list, name: str, default: float):
@@ -85,8 +88,15 @@ def live_needed(watch: dict) -> bool:
 
 
 def line_key(line: str) -> str:
-    """A line's word and subject, without the numbers that change from one check to the next."""
-    return re.sub(r"\d+(\.\d+)?", "#", line)[:200]
+    """A line as it stays while its condition lasts: the readings that change from one check to the next (minutes,
+    sizes, a usage reading, low disk's folder sizing) taken out, and every name, number and time that tells one
+    finding from another (a task, a thread, a request's time, a mark) kept."""
+    if line.startswith(("approval-task ", "approval-subagent ")):
+        return line[:300]   # one request: its task, thread, kind and time
+    if re.match(r"disk(?: on \S+)?: [\d.]+ GB free, below ", line):
+        line = line.split(";", 1)[0]
+    line = re.sub(r"\bat [\d.]+%", "at #%", line)   # usage: the reading, never the mark
+    return re.sub(r"\b[\d.]+ ?(min|GB|MB|KB|s)\b", r"# \1", line)[:300]
 
 
 def ledger_line(run_dir: str, text: str) -> None:
@@ -163,7 +173,8 @@ def main(argv: list) -> int:
             t_now = time.time()
             seen = {k: v for k, v in load_json(seen_path).items() if isinstance(v, (int, float)) and t_now - v < 6 * 3600}
             act = [] if IDLE.match(first) else [l for l in out[1:] if not REMINDER.match(l)]
-            new = [l for l in act if ONCE.match(l) or t_now - seen.get(line_key(l), 0) >= REMIND_S]
+            new = [l for l in act if ONCE.match(l)
+                   or t_now - seen.get(line_key(l), 0) >= (READ_EVERY_S if SOON.match(l) else REMIND_S)]
             reads = not IDLE.match(first) and TOOL_READS.search(first) and t_now - seen.get("\0reads", 0) >= READ_EVERY_S
             if new or reads:
                 for l in act:

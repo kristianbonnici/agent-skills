@@ -843,8 +843,18 @@ try:
     open(fake_defaults, "w").write("#!/bin/sh\necho 'not a plist <'\n")
     bad = [l for l in own() if l.startswith("settings com.example.app")]
     assert bad == ["settings com.example.app: not compared: defaults export com.example.app gave no settings file it can read"], bad
+    open(fake_defaults, "w").write("#!/bin/sh\nprintf '<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>d</key><date>bad</date></dict></plist>'\n")
+    bad = [l for l in own() if l.startswith("settings com.example.app")]   # a damaged date: no crash, and said once already
+    assert bad == [], bad
     open(fake_defaults, "w").write(f"#!/bin/sh\n[ \"$2\" = com.example.app ] || {{ echo \"Domain $2 does not exist\" >&2; exit 1; }}\ncat {current}\n")
     assert not any(l.startswith("settings com.example.app") for l in own())
+    # two run-watches at once (a wake's own and the watcher's): each new value is still said once, and the state stays whole
+    plistlib.dump({"readingSpeed": 1.2, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
+                   "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"))
+    both = [subprocess.Popen([sys.executable, "-I", script, o_run], stdout=subprocess.PIPE, text=True, env=o_env) for _ in range(2)]
+    said = [l for p in both for l in p.communicate(timeout=120)[0].splitlines() if l.startswith("settings com.example.app: readingSpeed")]
+    assert said == ["settings com.example.app: readingSpeed 1.4→1.2"], said
+    json.load(open(os.path.join(o_run, "run-watch.state.json")))
     plistlib.dump({"readingSpeed": 1.6, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
                    "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"))
     third = [l for l in own() if l.startswith("settings ")]
@@ -887,6 +897,10 @@ try:
     json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
     assert not any(l.startswith("next-run") for l in own()), "no queued list: not known to be down to its last tasks"
     o_watch["queued"] = []
+    o_watch["tasks"] = {"B": {"worktree": wt["A"], "status": "merged"}}
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "nothing runs: the finish starts it"
+    o_watch["tasks"] = {"B": {"worktree": wt["A"], "status": "running"}, "C": {"worktree": other_repo + "-none", "status": "running"}}
     o_watch["tasks"]["D"] = {"worktree": wt["D"], "status": "paused"}
     json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
     assert not any(l.startswith("next-run") for l in own()), "D is paused, and runs again"
@@ -898,8 +912,12 @@ try:
     open(os.path.join(leases, "locks", "state.json"), "w").write("{broken")
     json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
     assert not any(l.startswith("next-run") for l in own()), "a lease state it can't read"
-    json.dump({"leases": {"screen": ["junk", {"owner": "runA:C", "expires": "soon"},
-                                     {"owner": "runA:C", "slots": 1, "expires": time.time() + 600}]}},
+    json.dump([1], open(os.path.join(leases, "locks", "state.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "a lease state that isn't an object"
+    json.dump({"leases": {"screen": ["junk", {"owner": "runA:C", "expires": "soon"}]}},
+              open(os.path.join(leases, "locks", "state.json"), "w"))
+    assert not any(l.startswith("next-run") for l in own()), "a lease whose end can't be read counts as held"
+    json.dump({"leases": {"screen": ["junk", {"owner": "runA:C", "slots": 1, "expires": time.time() + 600}]}},
               open(os.path.join(leases, "locks", "state.json"), "w"))
     assert not any(l.startswith("next-run") for l in own()), "an owner prefix ending in another separator"
     json.dump({"leases": {"screen": ["junk", {"owner": "runA:CC", "slots": 1, "expires": time.time() + 600}]}},
@@ -907,6 +925,11 @@ try:
     nr = [l for l in own() if l.startswith("next-run")]
     assert len(nr) == 1 and nr[0].startswith("next-run thread-next: ") and "B, C" in nr[0], nr
     assert len([l for l in own() if l.startswith("next-run")]) == 1, "every wake until started"
+    o_watch["next_run"]["environmentId"] = "env-den"
+    json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))
+    nr = [l for l in own() if l.startswith("next-run")]
+    assert len(nr) == 1 and nr[0].startswith("next-run thread-next (environmentId env-den): "), nr
+    del o_watch["next_run"]["environmentId"]
     o_watch["next_run"]["repo"] = repo
     o_watch["finished"] = stamp(time.time())
     json.dump(o_watch, open(os.path.join(o_run, "watch.json"), "w"))

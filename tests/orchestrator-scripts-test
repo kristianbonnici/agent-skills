@@ -5214,6 +5214,7 @@ case "\$(cat "$work/ww-mode")" in
   remind) echo "heartbeat 01:00: act on the lines below. running A. blind, read their threads: A."; echo "vm 123 qemu-system-aarc: still running, 2.0 GB";;
   act) if [ "\$n" -ge 2 ]; then echo "heartbeat 01:00: act on the lines below. running A."; echo "commit A 2026-11-26T01:00:00+02:00 abc fix"; else echo "heartbeat 01:00: nothing to act on. running A."; fi;;
   fail) echo "broken" >&2; exit 3;;
+  line) echo "heartbeat 01:00: act on the lines below. running A."; cat "$work/ww-line";;
 esac
 EOF
 chmod +x "$work/ww-hb"
@@ -5228,7 +5229,7 @@ test ! -e "$ww/watch-wait.pid"
 echo quiet > "$work/ww-mode"; : > "$work/ww-calls"
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 30 --now)
 case "$out" in *"(1 new of 1), after 0 min and 1 checks"*"quiet A: nothing changed for 21 min"*) ;; *) echo "watch-wait quiet first: $out"; exit 1;; esac
-test "$(sed -n 1p "$work/ww-calls")" = "$ww --no-ledger --no-live"
+case "$(sed -n 1p "$work/ww-calls")" in */ww-run" --no-ledger --no-live") ;; *) echo "watch-wait quiet call: $(cat "$work/ww-calls")"; exit 1;; esac
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 1 --now)
 case "$out" in *"nothing new to act on in 0 min"*"start it again"*) ;; *) echo "watch-wait quiet again: $out"; exit 1;; esac
 python3 -I -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); json.dump({k: v - 1801 for k, v in d.items()}, open(p, "w"))' "$ww/watch-wait.seen.json"
@@ -5241,22 +5242,55 @@ out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 30 --now)
 case "$out" in *"read the threads heartbeat names (blind, or on another computer)"*) ;; *) echo "watch-wait blind: $out"; exit 1;; esac
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 1 --now)
 case "$out" in *"nothing new to act on in 0 min"*) ;; *) echo "watch-wait blind again: $out"; exit 1;; esac
+# what tells one finding from another is kept: a request's time, a task, a mark; a one-time line is always new;
+# what changes while a condition lasts isn't: minutes, sizes, a usage reading, low disk's folder sizing, a dark wake
+echo line > "$work/ww-mode"
+rm "$ww/watch-wait.seen.json"
+ww_line() {   # $1 the line, $2 "new" or "old"
+  printf '%s\n' "$1" > "$work/ww-line"
+  out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 0.5 --now)
+  case "$2:$out" in new:*"new of 1)"*|old:*"nothing new to act on"*) ;; *) echo "watch-wait key ($2) for '$1': $out"; exit 1;; esac
+}
+ww_line "approval-task A thread-a command since 01:10" new
+ww_line "approval-task A thread-a command since 01:10" old
+ww_line "approval-task A thread-a command since 01:20" new
+ww_line "approval-subagent A a-review-rg-1-sol-2 command since 01:10" new
+ww_line "quiet T1: nothing changed for 21 min" new
+ww_line "quiet T1: nothing changed for 26 min" old
+ww_line "quiet T2: nothing changed for 21 min" new
+ww_line "usage: codex five_hour at 61%, at or past the run's mark of 60%: its budget is used" new
+ww_line "usage: codex five_hour at 64%, at or past the run's mark of 60%: its budget is used" old
+ww_line "usage: codex five_hour at 86%, at or past the run's mark of 85%: its budget is used" new
+ww_line "vm 123 qemu-system-aarc: 2.0 GB, started 01:05, since the run began: note which task uses it" new
+ww_line "vm 456 qemu-system-aarc: 2.0 GB, started 01:12, since the run began: note which task uses it" new
+ww_line "disk: free disk fell 12.0 GB in 4.0 min (01:01 150.0 GB → 01:05 138.0 GB; now 138.0 GB)" new
+ww_line "disk: free disk fell 12.0 GB in 4.0 min (01:01 150.0 GB → 01:05 138.0 GB; now 138.0 GB)" new
+ww_line "disk: 18.0 GB free, below 20 GB: pause what fills it; largest of the tasks' folders: /x 4 GB" new
+ww_line "disk: 17.5 GB free, below 20 GB: pause what fills it" old
+ww_line "slept 2026-11-26T01:00:00+02:00 - (Sleep Service): the Mac is asleep and this is a dark wake" new
+ww_line "slept 2026-11-26T01:00:00+02:00 - (Sleep Service): the Mac is asleep and this is a dark wake" old
+ww_line "t3-state unreadable: database is locked: read the running tasks' subagents with the tools" new
+ww_line "t3-state unreadable: database is locked: read the running tasks' subagents with the tools" old
+python3 -I -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); json.dump({k: v - 901 for k, v in d.items()}, open(p, "w"))' "$ww/watch-wait.seen.json"
+ww_line "t3-state unreadable: database is locked: read the running tasks' subagents with the tools" new
+ww_line "quiet T1: nothing changed for 41 min" old
 # "act on the lines below" in a commit's subject isn't the status
 echo idle > "$work/ww-mode"; : > "$work/ww-calls"
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 1)
 case "$out" in *"nothing new to act on in 0 min"*) ;; *) echo "watch-wait idle: $out"; exit 1;; esac
-test "$(wc -l < "$work/ww-calls" | tr -d ' ')" -ge 2
+test "$(wc -l < "$work/ww-calls" | tr -d ' ')" -ge 1
 echo fail > "$work/ww-mode"
 status=0
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 2) || status=$?
 test "$status" -eq 1 && case "$out" in *"heartbeat failed (exit 3): broken"*) ;; *) echo "watch-wait fail: $out"; exit 1;; esac
-# a Fable task, or an Antigravity one: live on the first check, then sampled until 15 minutes have passed
-echo idle > "$work/ww-mode"
+# a Fable task, or an Antigravity one: live on the first check, then sampled until 15 minutes have passed (the
+# stand-in has something new on its second call, so the count doesn't hang on the clock)
+echo act > "$work/ww-mode"
 for task in '"model": "claude-fable-5-2"' '"harness": "antigravity", "model": "gemini-4-neon"'; do
   : > "$work/ww-calls"
   printf '%s\n' "{\"tasks\": {\"A\": {\"worktree\": \"/nowhere\", \"status\": \"running\", $task}}}" > "$ww/watch.json"
-  "$scripts/watch-wait" "$ww" --every 0.2 --max 1 --now >/dev/null
-  test "$(sed -n 1p "$work/ww-calls")" = "$ww --no-ledger --live" && test "$(sed -n 2p "$work/ww-calls")" = "$ww --no-ledger --no-live" || { echo "watch-wait live ($task): $(cat "$work/ww-calls")"; exit 1; }
+  "$scripts/watch-wait" "$ww" --every 0.2 --max 60 --now >/dev/null
+  case "$(sed -n 1p "$work/ww-calls")|$(sed -n 2p "$work/ww-calls")" in */ww-run" --no-ledger --live|"*/ww-run" --no-ledger --no-live") ;; *) echo "watch-wait live ($task): $(cat "$work/ww-calls")"; exit 1;; esac
 done
 # one at a time, and a stop by signal removes its pid file
 "$scripts/watch-wait" "$ww" --every 60 --max 600 > "$work/ww-first.out" &

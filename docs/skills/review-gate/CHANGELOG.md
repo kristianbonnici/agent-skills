@@ -2,7 +2,7 @@
 
 ## 8.7.1 (2026-11-26)
 
-- **In T3 with tools missing, reviewers still go through T3 (L-ML29):** when `delegate_task`, `schedule_task` or `t3_thread_read` is missing from the tool list and `T3_ACP_MCP_NODE` is set, the gate calls them through `acp-mcp-call`, keeping its `clientRequestId` and `threads.txt` tracking, and never falls back to the command-line reviewers. An Antigravity task ran 13 reviewer runs from the command line after a context summary, outside T3's approval checks and the run's costs.
+- **In T3 with tools missing, reviewers still go through T3 (L-ML29):** when `delegate_task`, `schedule_task`, `t3_thread_read` or any other T3 tool the gate uses (`t3_thread_wait`, `task_cancel`, `delete_scheduled_task`, `t3_thread_list`, `t3_thread_organize`) is missing from the tool list and `T3_ACP_MCP_NODE` is set, the gate calls them through `acp-mcp-call`, keeping its `clientRequestId` and `threads.txt` tracking, and never falls back to the command-line reviewers. An Antigravity task ran 13 reviewer runs from the command line after a context summary, outside T3's approval checks and the run's costs.
 
 ## 8.7.0 (2026-11-23)
 

@@ -97,8 +97,9 @@ Each line starts with a word saying what it is:
                    state file keeps only a digest of each value
   next-run <thread>   (every wake until "next_run" has "started") a run waiting to start after this one
                    (watch.json's "next_run": {"thread", "environmentId", "repo", "needs": ["screen", "gpu"],
-                   "leases": <lease folder>}) can start: "queued" is an empty list, no task is paused, and no
-                   running task works in its repository (found here) or holds a lease it needs; or "finished"
+                   "leases": <lease folder>}) can start: "queued" is an empty list, no task is paused, and the
+                   tasks still running are none in its repository (found here) and hold no lease it needs; or
+                   "finished"
   watcher          watch.json has "watcher" and no watch-wait runs for the run (<run directory>/watch-wait.pid)
   commit / merged / report <task> <time>   the exact time of each new commit made in a task's
                    worktree, of each merge of its branch into the integration branch, and of each
@@ -894,8 +895,8 @@ def read_plist(data: bytes):
     from xml.parsers.expat import ExpatError
     try:
         parsed = plistlib.loads(data)
-    except (ValueError, plistlib.InvalidFileException, ExpatError, OverflowError):
-        return None
+    except (ValueError, plistlib.InvalidFileException, ExpatError, OverflowError, AttributeError, TypeError, KeyError):
+        return None   # a damaged file (plistlib raises AttributeError on a bad <date>, for one)
     return parsed if isinstance(parsed, dict) else None
 
 
@@ -986,11 +987,11 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
     of the leases it needs (whose state must be readable); or at the finish ("finished"); until "next_run"
     has "started"."""
     nxt = watch.get("next_run")
-    if not isinstance(nxt, dict) or nxt.get("started") or not isinstance(nxt.get("thread"), str):
+    if not isinstance(nxt, dict) or nxt.get("started") or not isinstance(nxt.get("thread"), str) or not nxt["thread"]:
         return None
     tasks = {k: v for k, v in (watch.get("tasks") or {}).items() if isinstance(v, dict)}
     active = sorted(t for t, v in tasks.items() if str(v.get("status", "running")) not in DONE)
-    env = f" (environmentId {nxt['environmentId']})" if isinstance(nxt.get("environmentId"), str) else ""
+    env = f" (environmentId {nxt['environmentId']})" if isinstance(nxt.get("environmentId"), str) and nxt["environmentId"] else ""
     say = (f"next-run {nxt['thread']}{env}: send the waiting run its start message (the skill versions, the lease folder, "
            "what still runs: {left}), record it in the ledger and set \"started\" in watch.json's \"next_run\"")
     if watch.get("finished"):
@@ -1001,7 +1002,7 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
     if any(str(tasks[t].get("status", "running")) != "running" for t in active):
         return None   # a paused task runs again later
     if not active:
-        return say.format(left="nothing")
+        return None   # nothing runs: the run is at its finish, which starts it (finish.md, step 3)
     theirs = common_dir(str(nxt.get("repo") or ""))
     if theirs is None:
         return None   # its repository can't be compared here: wait for the finish
@@ -1016,7 +1017,8 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
     needs = [n for n in nxt.get("needs") or [] if isinstance(n, str)] if isinstance(nxt.get("needs"), list) else []
     if needs:
         folder = os.path.expanduser(str(nxt.get("leases") or run_dir))
-        leases = (load_json(os.path.join(folder, "locks", "state.json")) or {}).get("leases")
+        raw = load_json(os.path.join(folder, "locks", "state.json"))
+        leases = raw.get("leases") if isinstance(raw, dict) else None
         if not isinstance(leases, dict):
             if os.path.exists(os.path.join(folder, "locks", "state.json")):
                 return None   # a lease state it can't read: can't tell who holds what
@@ -1024,8 +1026,11 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
         t_now = now()
         for res in needs:
             for lease in leases.get(res) or [] if isinstance(leases.get(res), list) else []:
-                if not isinstance(lease, dict) or not isinstance(lease.get("expires"), (int, float)) or lease["expires"] <= t_now:
+                if not isinstance(lease, dict):
                     continue
+                expires = lease.get("expires")
+                if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires <= t_now:
+                    continue   # over (one whose end can't be read counts as held)
                 owner = str(lease.get("owner", ""))
                 if any(re.search(rf"(^|[^A-Za-z0-9]){re.escape(t)}$", owner) for t in active):
                     return None
