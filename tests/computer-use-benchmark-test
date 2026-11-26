@@ -630,6 +630,133 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
             finally:
                 bench._screen, bench.HOME = saved
 
+    def test_drive_claude_accepts_workspace_trust_prompt_and_refuses_dirty_cache(self):
+        with tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as out:
+            saved = (bench._screen, bench.HOME)
+            try:
+                bench.HOME = fake_home
+
+                # 1. Accepts workspace trust prompt (moves from No, exit -> Yes, I trust this folder -> Enter) before pasting prompt.
+                trust_instances = []
+                done_flag = [False]
+
+                class TrustAcceptScreen:
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        self.state = "no_exit"
+                        self.closed = False
+                        self.events = []
+                        self.pasted = []
+                        trust_instances.append(self)
+
+                    def pump(self, seconds):
+                        return True
+
+                    def show(self):
+                        if self.state == "no_exit":
+                            return (
+                                "Quick safety check: Is this a project you created or one you trust?\n"
+                                " ❯ No, exit\n"
+                                "   Yes, I trust this folder\n"
+                            )
+                        if self.state == "yes_selected":
+                            return (
+                                "Quick safety check: Is this a project you created or one you trust?\n"
+                                "   No, exit\n"
+                                " ❯ Yes, I trust this folder\n"
+                            )
+                        return "Claude ready\n"
+
+                    def send(self, text):
+                        self.events.append(("send", text))
+                        if text == "\x1b[B" and self.state == "no_exit":
+                            self.state = "yes_selected"
+                        elif text == "\r" and self.state == "yes_selected":
+                            self.state = "ready"
+
+                    def paste(self, text):
+                        self.events.append(("paste", text))
+                        self.pasted.append(text)
+                        done_flag[0] = True
+
+                    def close(self):
+                        self.closed = True
+
+                bench._screen = lambda: TrustAcceptScreen
+
+                def fake_claude_report(session):
+                    return dict(
+                        tools={},
+                        usage=dict(input=0, cache_read=0, cache_write=0, output=0),
+                        final=("DONE" if done_flag[0] else None),
+                        images=0,
+                    )
+
+                with mock.patch.object(bench, "claude_report", side_effect=fake_claude_report):
+                    rep = bench.drive_claude("claude-native", "P", 10, out, "c-trust", overlays=set())
+                self.assertEqual(rep["final"], "DONE")
+                self.assertEqual(rep["notes"], [])
+                self.assertTrue(trust_instances[-1].closed)
+                self.assertEqual(trust_instances[-1].pasted, ["P"])
+                self.assertEqual(
+                    trust_instances[-1].events[:3],
+                    [("send", "\x1b[B"), ("send", "\r"), ("paste", "P")],
+                )
+
+                # 2. Unresolved workspace trust prompt does not confirm No, exit or paste prompt.
+                stuck_instances = []
+
+                class TrustStuckScreen:
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        self.closed = False
+                        self.pasted = []
+                        stuck_instances.append(self)
+
+                    def pump(self, seconds):
+                        return True
+
+                    def show(self):
+                        return (
+                            "Quick safety check: Is this a project you created or one you trust?\n"
+                            " ❯ No, exit\n"
+                            "   Yes, I trust this folder\n"
+                        )
+
+                    def send(self, text):
+                        pass
+
+                    def paste(self, text):
+                        self.pasted.append(text)
+                        raise AssertionError("paste must not be called when workspace trust stays unresolved")
+
+                    def close(self):
+                        self.closed = True
+
+                bench._screen = lambda: TrustStuckScreen
+                rep_stuck = bench.drive_claude("claude-native", "P", 10, out, "c-stuck", overlays=set())
+                self.assertIn("claude workspace trust prompt unresolved", rep_stuck["notes"])
+                self.assertEqual(stuck_instances[-1].pasted, [])
+                self.assertTrue(stuck_instances[-1].closed)
+
+                # 3. Dirty cache containing Claude project files refuses before spawning _screen().
+                def forbid_screen():
+                    raise AssertionError("_screen() must not be instantiated on dirty cache")
+
+                bench._screen = forbid_screen
+                for dirty_name, is_dir in ((".claude", True), (".mcp.json", False), ("CLAUDE.md", False)):
+                    with tempfile.TemporaryDirectory() as dirty_home:
+                        bench.HOME = dirty_home
+                        dirty_path = os.path.join(dirty_home, dirty_name)
+                        if is_dir:
+                            os.mkdir(dirty_path)
+                        else:
+                            with open(dirty_path, "w", encoding="utf-8") as df:
+                                df.write("dirty\n")
+                        with self.assertRaises(bench.Refused) as ref_err:
+                            bench.drive_claude("claude-native", "P", 10, out, "c-dirty", overlays=set())
+                        self.assertIn(dirty_name, ref_err.exception.message)
+            finally:
+                bench._screen, bench.HOME = saved
+
     def test_drive_codex_tui_handles_partial_harbor_desk_approval_and_interrupt(self):
         with tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as out:
             class PartialApprovalScreen:

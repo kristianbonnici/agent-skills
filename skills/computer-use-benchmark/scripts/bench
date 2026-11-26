@@ -1010,12 +1010,45 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
     os.makedirs(out, exist_ok=True)
     session = str(uuid.uuid4())
     os.makedirs(HOME, exist_ok=True)
+    for unwanted in (".claude", ".mcp.json", "CLAUDE.md"):
+        bad = os.path.join(HOME, unwanted)
+        if os.path.lexists(bad):
+            raise Refused(f"{bad} exists in benchmark cache {HOME}: use a clean cache folder for Claude runs")
     tui = _screen()(claude_argv(arm, session, out, model, effort), HOME)
     started = time.time()
     notes = []
     try:
-        alive = tui.pump(14)
-        if alive:
+        trust_option = re.compile(r"Yes,\s*(?:I trust this folder|proceed)", re.I)
+        trust_selected = re.compile(r"[❯›>]\s*(?:\d+\.\s*)?Yes,\s*(?:I trust this folder|proceed)", re.I)
+        alive = True
+        trust_unresolved = False
+        for wait_s in (4, 4, 6):
+            if not alive:
+                break
+            alive = tui.pump(wait_s)
+            if not alive:
+                break
+            screen = tui.show()
+            if trust_option.search(screen) and re.search(r"trust|safety check", screen, re.I):
+                try:
+                    for _ in range(4):
+                        if trust_selected.search(tui.show()):
+                            break
+                        tui.send("\x1b[B")
+                        if not tui.pump(0.5):
+                            alive = False
+                            break
+                    if alive and trust_selected.search(tui.show()):
+                        tui.send("\r")
+                        alive = tui.pump(12)
+                        if alive and trust_option.search(tui.show()):
+                            trust_unresolved = True
+                    else:
+                        trust_unresolved = True
+                except OSError:
+                    alive = False
+                break
+        if alive and not trust_unresolved:
             try:
                 tui.paste(prompt)
                 alive = tui.pump(0.6)
@@ -1024,7 +1057,9 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
             except OSError:
                 alive = False
         started = time.time()
-        if not alive:
+        if trust_unresolved:
+            notes.append("claude workspace trust prompt unresolved")
+        elif not alive:
             screen = tui.show()
             if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
                 notes.append("claude limit")
