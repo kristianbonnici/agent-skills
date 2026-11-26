@@ -1,0 +1,7 @@
+interface:
+  display_name: "Computer Use Benchmark"
+  short_description: "Measure how well a computer-use setup operates a macOS desktop app across seeded GUI tasks"
+  default_prompt: "Use $computer-use-benchmark to run this setup through Harbor Desk and show how it compares."
+
+policy:
+  allow_implicit_invocation: true

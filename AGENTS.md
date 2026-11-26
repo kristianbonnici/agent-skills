@@ -64,6 +64,7 @@ Before saying a skill is installed, run:
 ./tests/evidence-test               # every evidence file has skill-evidence's "Last checked" line and "Left out" section
 ./tests/disk-cleanup-test           # disk-cleanup's scan script in a made-up home folder, and scripts/decisions: per-computer decisions, the migration and its refusals, two writers at once, CRLF kept
 ./tests/reviewer-benchmark-test     # reviewer-benchmark's bench script with a made-up set: the copy holds the change and nothing after it, a review is saved, skipped or stopped at its time, scoring is blind, and the totals add up
+./tests/computer-use-benchmark-test   # computer-use-benchmark's bench script, tui wrapper and Harbor Desk compile/selftest: relative CODEX_HOME, recovered Codex rate limits, out-of-workspace agy staging, Cua Driver manifest scope/SHA-256 verification, recording and totals
 ./tests/review-gate-test            # review-gate's review-records script: the documented record prints the documented Review lines, a bad record is refused, and totals add up records and older handoff tables
 ./tests/excalidraw-drawing-test     # every documented pattern and diagram and the example page build cleanly, charts place points by their numbers, the checks catch what they claim, vault builds write the Obsidian plugin's files, hand edits are never overwritten, and drawing.mjs edits and previews a drawing
 ```

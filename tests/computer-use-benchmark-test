@@ -1,0 +1,1070 @@
+#!/bin/sh
+# Checks computer-use-benchmark's bench script, tui wrapper, capability manifest verification, and
+# Harbor Desk build/selftest in a disposable work directory without touching live user configs.
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/computer-use-benchmark-test.XXXXXX")
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+python3 -I - "$repo_root/skills/computer-use-benchmark" "$work" <<'EOF'
+from datetime import datetime, timezone
+import errno
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import types
+import unittest
+from unittest import mock
+
+skill_dir = sys.argv[1]
+work = os.path.realpath(sys.argv[2])
+bench_path = os.path.join(skill_dir, "scripts", "bench")
+
+# Isolate state, cache, and socket before loading bench so module defaults never point at live user folders.
+state_dir = os.path.join(work, "agent-skills-state")
+cache_dir = os.path.join(work, "cache")
+xdg_state = os.path.join(work, "xdg-state")
+sock_path = os.path.join(work, "sock", "cua.sock")
+os.makedirs(os.path.join(state_dir, ".git"), exist_ok=True)
+os.makedirs(cache_dir, exist_ok=True)
+os.environ["AGENT_SKILLS_STATE"] = state_dir
+os.environ["COMPUTER_USE_BENCHMARK_CACHE"] = cache_dir
+os.environ["COMPUTER_USE_BENCHMARK_SOCKET"] = sock_path
+os.environ["XDG_STATE_HOME"] = xdg_state
+os.environ.pop("GEMINI_HOME", None)
+
+loader = importlib.machinery.SourceFileLoader("bench_mod", bench_path)
+spec = importlib.util.spec_from_loader("bench_mod", loader)
+bench = importlib.util.module_from_spec(spec)
+loader.exec_module(bench)
+
+SAMPLE_CODEX = os.path.join(work, "sample-codex.toml")
+with open(SAMPLE_CODEX, "w", encoding="utf-8") as f:
+    f.write(
+        '[mcp_servers.node_repl]\ncommand = "x"\n'
+        '[mcp_servers.computer-use]\ncommand = "x"\nenabled = false\n'
+        '[mcp_servers.notes]\ncommand = "x"\n'
+        '[mcp_servers.reader]\ncommand = "x"\n'
+        '[mcp_servers.cua]\ncommand = "x"\n'
+        '[mcp_servers.cua-driver]\ncommand = "x"\n'
+        '[mcp_servers.search]\ncommand = "x"\n'
+    )
+bench.CODEX_CONFIG = SAMPLE_CODEX
+
+
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def iso(epoch):
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def write_rollout(root, relpath, *, session_id, cwd, created, prompt=None, tools=(), extra_lines=(), mtime=None):
+    path = os.path.join(root, relpath)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    lines = [
+        json.dumps(
+            {
+                "timestamp": iso(created),
+                "ordinal": 0,
+                "type": "session_meta",
+                "payload": {"id": session_id, "session_id": session_id, "cwd": cwd, "timestamp": iso(created)},
+            }
+        )
+    ]
+    if prompt is not None:
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": iso(created + 0.1),
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": prompt}],
+                    },
+                }
+            )
+        )
+    for kind, name in tools:
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": iso(created + 0.5),
+                    "type": "response_item",
+                    "payload": {"type": kind, "name": name},
+                }
+            )
+        )
+    lines.extend(extra_lines)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    stamp = mtime if mtime is not None else created + 1.0
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+class CodexRolloutTests(unittest.TestCase):
+    def test_parses_session_id_from_tui_exit_screen(self):
+        screen = "Done.\nTo continue this session, run codex resume 01a202e0-d5b0-7aa2-ba62-217cce0024fa\n"
+        self.assertEqual(bench.codex_session_id(screen), "01a202e0-d5b0-7aa2-ba62-217cce0024fa")
+        self.assertIsNone(bench.codex_session_id("No session id printed"))
+
+    def test_ignores_newer_unrelated_session_by_session_id(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            t0 = time.time() - 60
+            ours_id = "11111111-1111-1111-1111-111111111111"
+            other_id = "22222222-2222-2222-2222-222222222222"
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-2026-11-22T12-00-00-{ours_id}.jsonl",
+                session_id=ours_id,
+                cwd=home,
+                created=t0 + 1,
+                prompt="Task: fill form",
+                tools=[("custom_tool_call", "computer"), ("custom_tool_call", "computer")],
+                mtime=t0 + 5,
+            )
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-2026-11-22T12-00-05-{other_id}.jsonl",
+                session_id=other_id,
+                cwd="/tmp/unrelated-project",
+                created=t0 + 2,
+                prompt="Fix something else",
+                tools=[("function_call", "shell_command")] * 7,
+                mtime=t0 + 20,
+            )
+            tools = bench.rollout_tools(t0, session_id=ours_id, cwd=home, prompt="Task: fill form", root=root)
+            self.assertEqual(tools, {"computer": 2})
+
+    def test_ignores_newer_unrelated_session_by_cwd_and_prompt_when_no_session_id(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            t0 = time.time() - 60
+            ours_id = "33333333-3333-3333-3333-333333333333"
+            other_id = "44444444-4444-4444-4444-444444444444"
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-a-{ours_id}.jsonl",
+                session_id=ours_id,
+                cwd=home,
+                created=t0 + 1,
+                prompt="You are operating Harbor Desk.\n\nTask: click menu item 3",
+                tools=[("custom_tool_call", "computer"), ("function_call", "screenshot")],
+                mtime=t0 + 4,
+            )
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-b-{other_id}.jsonl",
+                session_id=other_id,
+                cwd="/tmp/other-repo",
+                created=t0 + 2,
+                prompt="Work on another repo",
+                tools=[("function_call", "exec_command")] * 5,
+                mtime=t0 + 30,
+            )
+            tools = bench.rollout_tools(
+                t0, cwd=home, prompt="You are operating Harbor Desk.\n\nTask: click menu item 3", root=root
+            )
+            self.assertEqual(tools, {"computer": 1, "screenshot": 1})
+
+    def test_no_matching_session_returns_empty_and_triggers_retry(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            t0 = time.time() - 60
+            other_id = "55555555-5555-5555-5555-555555555555"
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-{other_id}.jsonl",
+                session_id=other_id,
+                cwd="/tmp/unrelated-session",
+                created=t0 + 2,
+                prompt="Unrelated work",
+                tools=[("function_call", "shell_command")] * 4,
+                mtime=t0 + 25,
+            )
+            attempts = []
+            sleeps = []
+
+            def fake_drive():
+                attempts.append(len(attempts) + 1)
+                if len(attempts) == 1:
+                    tools = bench.rollout_tools(t0, cwd=home, prompt="Task: drag board", root=root)
+                else:
+                    ours_id = "66666666-6666-6666-6666-666666666666"
+                    write_rollout(
+                        root,
+                        f"2026/11/22/rollout-{ours_id}.jsonl",
+                        session_id=ours_id,
+                        cwd=home,
+                        created=t0 + 15,
+                        prompt="Task: drag board",
+                        tools=[("custom_tool_call", "computer")],
+                        mtime=t0 + 20,
+                    )
+                    tools = bench.rollout_tools(t0 + 14, cwd=home, prompt="Task: drag board", root=root)
+                return dict(tools=tools, notes=[])
+
+            report = bench.run_attempts(fake_drive, attempts=3, pause=10, sleep=sleeps.append)
+            self.assertEqual(attempts, [1, 2])
+            self.assertEqual(sleeps, [10])
+            self.assertEqual(report["tools"], {"computer": 1})
+
+    def test_rejects_earlier_session_with_same_cwd_and_prompt(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            t0 = time.time() - 60
+            older_id = "77777777-7777-7777-7777-777777777777"
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-{older_id}.jsonl",
+                session_id=older_id,
+                cwd=home,
+                created=t0 - 20,
+                prompt="Task: slider 42",
+                tools=[("custom_tool_call", "computer")] * 3,
+                mtime=t0 + 5,
+            )
+            self.assertEqual(bench.rollout_tools(t0, cwd=home, prompt="Task: slider 42", root=root), {})
+
+    def test_ignores_missing_session_id_and_quoted_tool_strings(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            t0 = time.time() - 60
+            ours_id = "88888888-8888-8888-8888-888888888888"
+            write_rollout(
+                root,
+                f"2026/11/22/rollout-{ours_id}.jsonl",
+                session_id=ours_id,
+                cwd=home,
+                created=t0 + 1,
+                prompt="Task: web form",
+                tools=[("custom_tool_call", "computer")],
+                extra_lines=[
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": '{"type":"function_call","name":"fake"}'}],
+                            },
+                        }
+                    )
+                ],
+            )
+            self.assertEqual(
+                bench.rollout_tools(t0, session_id="99999999-9999-9999-9999-999999999999", cwd=home, prompt="Task: web form", root=root),
+                {},
+            )
+            self.assertEqual(
+                bench.rollout_tools(t0, session_id=ours_id, cwd=home, prompt="Task: web form", root=root),
+                {"computer": 1},
+            )
+            self.assertEqual(
+                bench.rollout_tools(t0, session_id=ours_id, cwd="/tmp/different-attempt-dir", prompt="Task: web form", root=root),
+                {},
+            )
+            self.assertEqual(bench.rollout_tools(t0, root=root), {})
+
+    def test_concurrent_same_task_and_seed_failed_startup_never_borrows_other_attempt(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as out_a, tempfile.TemporaryDirectory() as out_b:
+            prompt = "You are operating Harbor Desk.\n\nTask: form seed 1"
+            seen_cwds = []
+
+            class FakeScreen:
+                def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                    seen_cwds.append(cwd)
+                    self.cwd = cwd
+                    self.closed = False
+                    self.is_b = len(seen_cwds) == 1
+                    if self.is_b:
+                        write_rollout(
+                            root,
+                            "2026/11/22/rollout-b-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl",
+                            session_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                            cwd=cwd,
+                            created=time.time(),
+                            prompt=prompt,
+                            tools=[("custom_tool_call", "computer")] * 3,
+                        )
+
+                def pump(self, seconds):
+                    return True
+
+                def show(self):
+                    if self.is_b:
+                        return "DONE\n" + (
+                            "To continue this session, run codex resume bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n"
+                            if self.closed
+                            else ""
+                        )
+                    return "FAILED\n"
+
+                def paste(self, text):
+                    pass
+
+                def send(self, text):
+                    if text == "\x03":
+                        self.closed = True
+
+                def close(self):
+                    self.closed = True
+
+            orig_screen, orig_sessions, orig_home = bench._screen, bench.CODEX_SESSIONS, bench.HOME
+            try:
+                bench._screen = lambda: FakeScreen
+                bench.HOME = fake_home
+                bench.CODEX_SESSIONS = root
+                report_b = bench.drive_codex_tui(prompt, 5, out_b, "codex-native-form-1")
+                report_a = bench.drive_codex_tui(prompt, 5, out_a, "codex-native-form-1")
+            finally:
+                bench._screen, bench.HOME, bench.CODEX_SESSIONS = orig_screen, orig_home, orig_sessions
+
+            self.assertEqual(len(seen_cwds), 2)
+            self.assertNotEqual(seen_cwds[0], seen_cwds[1])
+            for cwd in seen_cwds:
+                self.assertTrue(os.path.realpath(cwd).startswith(os.path.realpath(fake_home) + os.sep))
+            self.assertEqual(report_b["tools"], {"computer": 3})
+            self.assertEqual(report_b["session"], "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+            self.assertEqual(report_a["tools"], {})
+            self.assertIsNone(report_a["session"])
+            sleeps, tries = [], []
+
+            def retry_drive():
+                tries.append(1)
+                return dict(tools=report_a["tools"], notes=[])
+
+            bench.run_attempts(retry_drive, attempts=2, pause=1, sleep=sleeps.append)
+            self.assertEqual(len(tries), 2)
+            self.assertEqual(sleeps, [1])
+
+
+class RelativeCodexHomeTests(unittest.TestCase):
+    def test_relative_codex_home_resolves_once_and_passes_absolute_to_both_launchers(self):
+        with tempfile.TemporaryDirectory() as caller_cwd, tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as out:
+            rel = ".codex-rel"
+            expected_abs = os.path.realpath(os.path.join(caller_cwd, rel))
+            os.makedirs(expected_abs, exist_ok=True)
+            cfg = os.path.join(expected_abs, "config.toml")
+            with open(cfg, "w", encoding="utf-8") as f:
+                f.write('[mcp_servers.cua-driver]\ncommand = "x"\n[mcp_servers.extra]\ncommand = "y"\n')
+
+            resolved = bench.resolve_codex_home(rel, cwd=caller_cwd)
+            self.assertEqual(os.path.realpath(resolved), expected_abs)
+            self.assertTrue(os.path.isabs(resolved))
+
+            seen_popen = {}
+
+            class FakeProc:
+                returncode = 0
+
+                def wait(self, timeout=None):
+                    return 0
+
+            def fake_popen(argv, **kw):
+                seen_popen["cwd"] = kw.get("cwd")
+                seen_popen["env"] = kw.get("env")
+                return FakeProc()
+
+            seen_tui = {}
+
+            class FakeScreen:
+                def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                    seen_tui["cwd"] = cwd
+                    seen_tui["env"] = env
+
+                def pump(self, seconds):
+                    return True
+
+                def show(self):
+                    return "DONE\n"
+
+                def paste(self, text):
+                    pass
+
+                def send(self, text):
+                    pass
+
+                def close(self):
+                    pass
+
+            saved = (bench.CODEX_HOME, bench.CODEX_CONFIG, bench.CODEX_SESSIONS, bench.HOME, bench._screen)
+            try:
+                bench.CODEX_HOME = resolved
+                bench.CODEX_CONFIG = os.path.join(resolved, "config.toml")
+                bench.CODEX_SESSIONS = os.path.join(resolved, "sessions")
+                bench.HOME = fake_home
+                bench._screen = lambda: FakeScreen
+
+                with mock.patch.dict(os.environ, {"CODEX_HOME": rel}), mock.patch("subprocess.Popen", side_effect=fake_popen):
+                    bench.drive_codex("codex-cua", "P", 5, out, "c-form-1")
+                    self.assertEqual(os.path.realpath(seen_popen["env"]["CODEX_HOME"]), expected_abs)
+                    self.assertNotEqual(os.path.realpath(seen_popen["cwd"]), expected_abs)
+
+                    bench.drive_codex_tui("P", 5, out, "t-form-1")
+                    self.assertEqual(os.path.realpath(seen_tui["env"]["CODEX_HOME"]), expected_abs)
+                    self.assertTrue(os.path.realpath(seen_tui["cwd"]).startswith(os.path.realpath(fake_home)))
+            finally:
+                bench.CODEX_HOME, bench.CODEX_CONFIG, bench.CODEX_SESSIONS, bench.HOME, bench._screen = saved
+
+    def test_tui_screen_preserves_passed_env_and_strips_claude_vars(self):
+        fake_pyte = types.SimpleNamespace(Screen=lambda cols, rows: None, ByteStream=lambda s: None)
+        tui_path = os.path.join(skill_dir, "scripts", "tui.py")
+        tui_loader = importlib.machinery.SourceFileLoader("tui_test_mod", tui_path)
+        tui_spec = importlib.util.spec_from_loader("tui_test_mod", tui_loader)
+        tui_mod = importlib.util.module_from_spec(tui_spec)
+        with mock.patch.dict(sys.modules, {"pyte": fake_pyte}):
+            tui_loader.exec_module(tui_mod)
+        captured = {}
+
+        def fake_fork():
+            return 0, 99
+
+        def fake_execvpe(cmd, argv, env):
+            captured["cmd"] = cmd
+            captured["env"] = env
+            raise RuntimeError("stop child")
+
+        with mock.patch.object(tui_mod.pty, "fork", side_effect=fake_fork), mock.patch.object(tui_mod.os, "chdir"), mock.patch.object(tui_mod.os, "execvpe", side_effect=fake_execvpe):
+            with self.assertRaises(RuntimeError):
+                tui_mod.Screen(
+                    ["codex"],
+                    work,
+                    env={"CODEX_HOME": "/abs/codex", "CLAUDECODE": "1", "ANTHROPIC_API_KEY": "secret"},
+                )
+        self.assertEqual(captured["env"]["CODEX_HOME"], "/abs/codex")
+        self.assertEqual(captured["env"]["TERM"], "xterm-256color")
+        self.assertNotIn("CLAUDECODE", captured["env"])
+        self.assertNotIn("ANTHROPIC_API_KEY", captured["env"])
+
+
+class RecoveredCodexRateLimitTests(unittest.TestCase):
+    def test_recovered_429_followed_by_turn_completed_is_not_redoable(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "recovered.jsonl")
+            events = [
+                {"type": "error", "message": "HTTP 429 rate limit exceeded, retrying..."},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "FAILED"}},
+                {"type": "turn.completed", "usage": {"input_tokens": 120, "cached_input_tokens": 20, "output_tokens": 15}},
+            ]
+            with open(log, "w", encoding="utf-8") as f:
+                f.write("\n".join(json.dumps(e) for e in events) + "\n")
+            report = bench.codex_report(log)
+            self.assertNotIn("codex limit", report["notes"])
+            self.assertIn("codex rate limit recovered", report["notes"])
+            self.assertEqual(report["final"], "FAILED")
+            row = dict(arm="codex-cua", setup="codex-cua", model="gpt-6.1-terra", task="form", seed=1, passed=False, started=100.0, **report)
+            self.assertFalse(bench.usage_limited(row))
+            later_pass = dict(row, passed=True, started=200.0, notes=[])
+            self.assertEqual(len(bench.latest_runs([row, later_pass])), 1)
+            # Without folder/usage_limited replacement, later started replaces earlier; with earlier order, kept as latest.
+            kept = bench.latest_runs([dict(row, started=200.0), dict(row, started=100.0, passed=True, notes=[])])
+            self.assertFalse(kept[0]["passed"])
+
+    def test_terminal_rate_limit_after_earlier_turn_is_still_caught(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "terminal.jsonl")
+            events = [
+                {"type": "turn.completed", "usage": {"input_tokens": 50, "cached_input_tokens": 0, "output_tokens": 5}},
+                {"type": "error", "message": "You've hit your usage limit. Try again later."},
+                {"type": "turn.failed", "error": {"message": "aborted"}},
+            ]
+            with open(log, "w", encoding="utf-8") as f:
+                f.write("\n".join(json.dumps(e) for e in events) + "\n")
+            report = bench.codex_report(log)
+            self.assertIn("codex limit", report["notes"])
+            self.assertTrue(bench.usage_limited(dict(passed=False, notes=report["notes"])))
+
+    def test_rollout_recovered_rate_limit_clears_limit_reached(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            t0 = time.time() - 60
+            sid = "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd"
+            def tok(inp, cached, out, reached=None):
+                return json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {"total_token_usage": {"input_tokens": inp, "cached_input_tokens": cached, "output_tokens": out}},
+                            "rate_limits": {"rate_limit_reached_type": reached},
+                        },
+                    }
+                )
+
+            write_rollout(
+                root,
+                f"r-{sid}.jsonl",
+                session_id=sid,
+                cwd=home,
+                created=t0 + 1,
+                prompt="P",
+                extra_lines=[tok(10, 0, 1, "primary"), tok(50, 10, 5, None)],
+            )
+            _, info = bench.find_rollout(t0, session_id=sid, cwd=home, root=root)
+            self.assertFalse(info["limit_reached"])
+
+
+class SetupTests(unittest.TestCase):
+    def test_parse_setup_defaults_and_labels(self):
+        self.assertEqual(bench.parse_setup("claude-cua"), ("claude-cua", "claude-sonnet-5-5", None, "claude-cua"))
+        self.assertEqual(
+            bench.parse_setup("claude-cua:claude-opus-5-5@high"),
+            ("claude-cua", "claude-opus-5-5", "high", "claude-cua-claude-opus-5-5-high"),
+        )
+        self.assertEqual(bench.parse_setup("codex-native"), ("codex-native", "gpt-6.1-terra", "high", "codex-native"))
+        self.assertEqual(
+            bench.parse_setup("codex-native:gpt-6.1-sol@medium"),
+            ("codex-native", "gpt-6.1-sol", "medium", "codex-native-gpt-6.1-sol-medium"),
+        )
+        self.assertEqual(bench.parse_setup("antigravity-cua"), ("antigravity-cua", "gemini-4-neon-high", None, "antigravity-cua"))
+        self.assertEqual(
+            bench.parse_setup("antigravity-cua:gemini-4-hydrogen-high")[1:],
+            ("gemini-4-hydrogen-high", None, "antigravity-cua-gemini-4-hydrogen-high"),
+        )
+        self.assertEqual(bench.provider("antigravity-cua"), "antigravity")
+        self.assertEqual(bench.provider("codex-native"), "codex")
+
+    def test_levels_only_where_harness_takes_one_and_every_arm_gets_model(self):
+        self.assertEqual(bench.parse_setup("antigravity-cua:gemini-4-neon@high")[1:3], ("gemini-4-neon", "high"))
+        with tempfile.TemporaryDirectory() as gemini:
+            original, bench.GEMINI_HOME = bench.GEMINI_HOME, gemini
+            home, bench.HOME = bench.HOME, gemini
+            try:
+                argv = bench.agy_argv("gemini-4-neon", "P", "high")
+                self.assertEqual(argv[argv.index("--effort") + 1], "high")
+                self.assertNotIn("--effort", bench.agy_argv("gemini-4-neon-high", "P"))
+            finally:
+                bench.GEMINI_HOME, bench.HOME = original, home
+        with self.assertRaises(SystemExit):
+            bench.parse_setup("opencode-cua:opencode/x@high")
+        self.assertEqual(bench.parse_setup("opencode-cua:opencode/glm")[1], "opencode/glm")
+        argv = bench.codex_exec_argv("codex-cua", "gpt-6.1-sol", "medium")
+        self.assertEqual(argv[argv.index("-m") + 1], "gpt-6.1-sol")
+        self.assertIn('model_reasoning_effort="medium"', argv)
+        launched = {}
+        for arm, model, effort in (
+            ("opencode-cua", "opencode/glm", None),
+            ("codex-cua", "gpt-6.1-sol", "medium"),
+            ("codex-native", "gpt-6.1-sol", "medium"),
+            ("antigravity-cua", "gemini-4-hydrogen", "high"),
+            ("claude-cua", "claude-opus-5-5", "high"),
+        ):
+            names = {
+                "opencode-cua": "drive_opencode",
+                "codex-cua": "drive_codex",
+                "codex-native": "drive_codex_tui",
+                "antigravity-cua": "drive_agy",
+                "claude-cua": "drive_claude",
+            }
+            orig = getattr(bench, names[arm])
+            setattr(bench, names[arm], lambda *a, **kw: launched.__setitem__(arm, a))
+            try:
+                bench.driver(arm, model, effort, "P", 1, "out", "n")()
+            finally:
+                setattr(bench, names[arm], orig)
+            self.assertIn(model, launched[arm], arm)
+            if effort:
+                self.assertIn(effort, launched[arm], arm)
+
+    def test_misspelled_arm_and_codex_argv_isolation(self):
+        for spec in ("codex-nativ", "claude-cu", "agy-cua", "codex-native2:gpt"):
+            with self.assertRaises(SystemExit, msg=spec):
+                bench.parse_setup(spec)
+        argv = bench.codex_exec_argv("codex-cua")
+        self.assertIn("search", " ".join(argv))
+        self.assertIn(f'mcp_servers.cua-driver.args=["mcp", "--socket", "{bench.SOCKET}"]', argv)
+        self.assertIn(f"mcp_servers.cua-driver.command={json.dumps(bench.DRIVER)}", argv)
+        self.assertNotIn("mcp_servers.cua-driver.args", " ".join(bench.codex_exec_argv("codex-native")))
+        self.assertIn("mcp_servers.node_repl.enabled=false", argv)
+        self.assertIn("mcp_servers.computer-use.enabled=false", argv)
+        self.assertNotIn("mcp_servers.cua_repl.enabled=false", argv)
+        self.assertIn("mcp_servers.cua-driver.enabled=true", argv)
+        self.assertEqual(bench.servers_off(["search", "cua_repl"], {"search"}), ["-c", "mcp_servers.search.enabled=false"])
+        self.assertEqual(bench.servers_off(["a.b"], {"a.b"}), ["-c", 'mcp_servers."a.b".enabled=false'])
+        native = bench.codex_exec_argv("codex-native")
+        for server in ("notes", "reader", "cua", "cua-driver", "search", "computer-use"):
+            self.assertIn(f"mcp_servers.{server}.enabled=false", native)
+        self.assertNotIn("mcp_servers.node_repl.enabled=false", native)
+        with tempfile.NamedTemporaryFile("w", suffix=".toml") as f:
+            f.write("[mcp_servers.x]\ncommand = 'y'\n")
+            f.flush()
+            self.assertEqual(bench.codex_servers(f.name), {"x"})
+            with self.assertRaises(SystemExit):
+                orig, bench.CODEX_CONFIG = bench.CODEX_CONFIG, f.name
+                try:
+                    bench.codex_exec_argv("codex-cua")
+                finally:
+                    bench.CODEX_CONFIG = orig
+
+    def test_timed_out_group_ignoring_sigterm_is_killed(self):
+        p = subprocess.Popen(["/bin/sh", "-c", "trap '' TERM; sleep 30"], start_new_session=True)
+        time.sleep(0.3)
+        started = time.time()
+        bench.end_group(p, wait=0.5)
+        self.assertEqual(p.returncode, -signal.SIGKILL)
+        self.assertLess(time.time() - started, 5)
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = os.path.join(d, "child")
+            p = subprocess.Popen(
+                ["/bin/sh", "-c", f"/bin/sh -c 'trap \"\" TERM; echo $$ > {pidfile}; exec sleep 30' & wait"],
+                start_new_session=True,
+            )
+            for _ in range(50):
+                if os.path.exists(pidfile) and read(pidfile).strip():
+                    break
+                time.sleep(0.05)
+            child = int(read(pidfile))
+            bench.end_group(p, wait=0.5)
+            for _ in range(50):
+                try:
+                    os.kill(child, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child, 0)
+
+    def test_prompts_name_each_route(self):
+        self.assertIn(f'bundle_id "{bench.BUNDLE_ID}"', run_p := bench.prompt_for("claude-cua", "Do it."))
+        self.assertIn("Harbor Desk", run_p)
+        agy = bench.prompt_for("antigravity-cua", "Do it.")
+        self.assertIn(bench.AGY_SERVER, agy)
+        self.assertIn(f'bundle_id "{bench.BUNDLE_ID}"', agy)
+        self.assertIn("built-in computer use", bench.prompt_for("codex-native", "Do it."))
+        self.assertNotIn("bundle_id", bench.prompt_for("codex-native", "Do it."))
+
+    def test_serve_argv_prefers_app_then_spaces_helper(self):
+        argv = bench.serve_argv(exists=lambda p: p == bench.DRIVER_APP)
+        self.assertEqual(argv[:4], ["open", "-n", "-g", bench.DRIVER_APP])
+        argv = bench.serve_argv(exists=lambda p: p == bench.DRIVER_HELPER)
+        self.assertEqual(argv[0], bench.DRIVER_HELPER)
+        for flag in ("bounded", "--capability-manifest", bench.SOCKET, "--embedded"):
+            self.assertIn(flag, argv)
+        self.assertIsNone(bench.serve_argv(exists=lambda p: False))
+
+
+class AntigravityTests(unittest.TestCase):
+    def _report(self, events, tail=""):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "a.jsonl")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(json.dumps(e) for e in events) + "\n" + tail)
+            return bench.agy_report(path)
+
+    def test_owner_servers_come_from_antigravity_configs_and_plugins(self):
+        with tempfile.TemporaryDirectory() as gemini:
+            os.makedirs(os.path.join(gemini, "config", "plugins", "bio"))
+            os.makedirs(os.path.join(gemini, "config", "plugins", "plain"))
+            with open(os.path.join(gemini, "config", "mcp_config.json"), "w", encoding="utf-8") as f:
+                f.write('{\n  // comment\n  /* block */ "mcpServers": {"my-cua": {"command": "x",},},\n}')
+            with open(os.path.join(gemini, "config", "plugins", "bio", "mcp_config.json"), "w", encoding="utf-8") as f:
+                json.dump({"mcpServers": {"viewer": {"command": "y"}}}, f)
+            names = bench.owner_servers(gemini, gemini)
+            self.assertIn("my-cua", names)
+            self.assertIn("bio_viewer", names)
+            self.assertNotIn("harbor-cua_cua", names)
+            self.assertIn("chrome-devtools", names)
+            deny = bench.agy_settings(names)["permissions"]["deny"]
+            self.assertIn("mcp(my-cua/*)", deny)
+            self.assertIn("mcp(bio_viewer/*)", deny)
+            with open(os.path.join(gemini, "config", "plugins", "plain", "mcp_config.json"), "w", encoding="utf-8") as f:
+                f.write("{ not json")
+            with self.assertRaises(SystemExit):
+                bench.owner_servers(gemini, gemini)
+        with tempfile.TemporaryDirectory() as gemini:
+            os.makedirs(os.path.join(gemini, "config"))
+            with open(os.path.join(gemini, "config", "mcp_config.json"), "w", encoding="utf-8") as f:
+                json.dump({"mcpServers": {"harbor-cua_cua": {"command": "owner's"}}}, f)
+            with self.assertRaises(SystemExit):
+                bench.owner_servers(gemini, gemini)
+
+    def test_agy_staging_handles_interrupted_writes_and_recovers(self):
+        with tempfile.TemporaryDirectory() as home:
+            staging = os.path.join(home, ".agy-staging")
+            os.makedirs(staging)
+            # Stale temp file left behind by an abruptly killed earlier run stays outside agy-ws.
+            stale = os.path.join(staging, ".plugin.json.stale123")
+            with open(stale, "w", encoding="utf-8") as f:
+                f.write('{"partial": ')
+            ws = bench.agy_workspace(home)
+            self.assertEqual(os.listdir(staging), [])
+            self.assertFalse(os.path.exists(stale))
+            self.assertTrue(os.path.isdir(ws))
+
+            # An ENOSPC error during os.replace cleans up the temp file and lets the next run succeed.
+            with mock.patch("os.replace", side_effect=OSError(errno.ENOSPC, "No space left on device")):
+                with self.assertRaises(OSError):
+                    bench.agy_workspace(home)
+            self.assertEqual(os.listdir(staging), [])
+            ws2 = bench.agy_workspace(home)
+            self.assertEqual(ws, ws2)
+
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
+            os.symlink(elsewhere, os.path.join(home, ".agy-staging"))
+            with self.assertRaises(SystemExit):
+                bench.agy_workspace(home)
+
+    def test_agy_workspace_rejects_links_and_extra_files(self):
+        with tempfile.TemporaryDirectory() as home:
+            bench.agy_workspace(home)
+            with open(os.path.join(home, "agy-ws", ".agents", "mcp_config.json"), "w", encoding="utf-8") as f:
+                f.write("{}")
+            with self.assertRaises(SystemExit):
+                bench.agy_workspace(home)
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
+            config = os.path.join(elsewhere, "mcp_config.json")
+            with open(config, "w", encoding="utf-8") as f:
+                f.write('{"mcpServers": {"owner": {}}}')
+            plugin = os.path.join(home, "agy-ws", ".agents", "plugins", "harbor-cua")
+            os.makedirs(plugin)
+            os.symlink(config, os.path.join(plugin, "mcp_config.json"))
+            with self.assertRaises(SystemExit):
+                bench.agy_workspace(home)
+
+    def test_only_real_rate_limit_and_other_server_calls_noted(self):
+        ok = self._report([{"event": "result", "result": {"status": "SUCCESS", "response": "DONE", "conversation_id": "x429y"}}])
+        self.assertEqual(ok["notes"], [])
+        self.assertTrue(any("agy limit" in n for n in self._report([], tail="Error: HTTP 429 Too Many Requests\n")["notes"]))
+        steps = [
+            {"event": "step_update", "step_update": {"state": "DONE", "step_type": "tool", "tool_name": "mcp_search_find"}},
+            {"event": "step_update", "step_update": {"state": "DONE", "step_type": "tool", "tool_name": "mcp_harbor-cua_cua_click"}},
+            {"event": "step_update", "step_update": {"state": "DONE", "step_type": "tool", "tool_name": "open_browser_url"}},
+        ]
+        rep = self._report(steps)
+        self.assertIn("another server called: mcp_search_find", rep["notes"])
+        self.assertIn("web tool called: open_browser_url", rep["notes"])
+        self.assertEqual(rep["tools"].get("click"), 1)
+
+    def test_gemini_home_and_plugins_json_guards(self):
+        with tempfile.TemporaryDirectory() as gemini, mock.patch.dict(os.environ, {"GEMINI_HOME": os.path.join(gemini, "other")}):
+            with self.assertRaises(SystemExit):
+                bench.owner_servers(gemini, gemini)
+        with tempfile.TemporaryDirectory() as gemini, tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(gemini, "config"))
+            with open(os.path.join(gemini, "config", "plugins.json"), "w", encoding="utf-8") as f:
+                json.dump({"inherits": ["../shared"]}, f)
+            with self.assertRaises(SystemExit):
+                bench.owner_servers(gemini, home)
+
+    def test_comments_in_strings_stay(self):
+        text = '{"a": ["/tmp/*"], // note\n "b": ["*/x", "//y", "q\\"/*"], /* z */ "c": {"d": 1,},}'
+        self.assertEqual(json.loads(bench.strip_jsonc(text)), {"a": ["/tmp/*"], "b": ["*/x", "//y", 'q"/*'], "c": {"d": 1}})
+
+
+class ManifestVerificationTests(unittest.TestCase):
+    def test_bundled_manifest_verifies_and_matches_cua_driver_sha256_domain(self):
+        manifest_file = os.path.join(skill_dir, "assets", "manifest.yaml")
+        raw = open(manifest_file, "rb").read()
+        expected = hashlib.sha256(b"cua-driver-capability-manifest-v3\0" + raw).hexdigest()
+        self.assertEqual(bench.verify_manifest_file(manifest_file), expected)
+
+    def test_manifest_rejects_broad_or_malformed_scopes(self):
+        base = open(os.path.join(skill_dir, "assets", "manifest.yaml"), encoding="utf-8").read()
+        bad_cases = [
+            base.replace("version: 3", "version: 2"),
+            base.replace("display: false", "display: true"),
+            base.replace("    - click\n", "    - click\n    - list_apps\n"),
+            base.replace("    - click\n", "    - click\n    - get_desktop_state\n"),
+            base.replace(
+                f"      windows: all\n",
+                f"      windows: all\n    - bundle_id: com.example.other\n      launch: true\n      windows: all\n",
+            ),
+            base.replace(bench.BUNDLE_ID, "com.example.wrong"),
+            base + "  readable_roots:\n    - /\n",
+            base + "browser_origins:\n  - https://example.com\n",
+            "version: 3\nallow:\n  tools: [click]\nresources:\n  apps:\n    - bundle_id: x\n  desktop:\n    display: false\n",
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            for i, content in enumerate(bad_cases):
+                p = os.path.join(d, f"bad-{i}.yaml")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(content)
+                with self.assertRaises(SystemExit, msg=f"case {i}"):
+                    bench.verify_manifest_file(p)
+            link_p = os.path.join(d, "link.yaml")
+            os.symlink(os.path.join(skill_dir, "assets", "manifest.yaml"), link_p)
+            with self.assertRaises(SystemExit):
+                bench.verify_manifest_file(link_p)
+
+    def test_daemon_ready_and_require_cua_daemon_verify_manifest_sha256(self):
+        sha = "a" * 64
+        good = (
+            "Cua Driver daemon is running\n"
+            "  socket: /tmp/x/cua.sock\n"
+            "  pid: 123\n"
+            "  tool calls: open\n"
+            "  permission mode: bounded (trusted_startup_configuration)\n"
+            "  capability manifest: configured=true, approved_at_startup=true, valid=true\n"
+            f"  capability manifest sha256: {sha}\n"
+        )
+        self.assertTrue(bench.daemon_ready(good, sha))
+        self.assertFalse(bench.daemon_ready(good, "b" * 64))
+        self.assertFalse(bench.daemon_ready(good.replace(sha, "c" * 64), sha))
+        self.assertFalse(bench.daemon_ready(good.replace("valid=true", "valid=false"), sha))
+        self.assertFalse(bench.daemon_ready(good.replace("approved_at_startup=true", "approved_at_startup=false"), sha))
+        self.assertFalse(bench.daemon_ready(good.replace("bounded", "standard"), sha))
+        self.assertFalse(bench.daemon_ready("\n".join(good.splitlines()[:-1]), sha))
+        self.assertFalse(bench.daemon_ready("Cua Driver daemon is not running", sha))
+
+    def test_run_batch_checks_cua_daemon_only_for_cua_arms(self):
+        manifest_file = os.path.join(skill_dir, "assets", "manifest.yaml")
+        with tempfile.TemporaryDirectory() as out:
+            checked = []
+
+            class FakeBench:
+                def __init__(self, *a):
+                    pass
+
+                def events(self):
+                    return [{"event": "success", "t": 2.0}]
+
+                def close(self):
+                    pass
+
+            def fake_check():
+                checked.append(True)
+                raise bench.Refused("wrong manifest sha256")
+
+            with self.assertRaises(SystemExit):
+                bench.run_batch(
+                    out,
+                    [bench.parse_setup("claude-cua")],
+                    ["form"],
+                    [1],
+                    quiet=True,
+                    check_cua=fake_check,
+                    describe_fn=lambda t, s: "desc",
+                    bench_cls=FakeBench,
+                )
+            self.assertEqual(checked, [True])
+
+            checked.clear()
+            bench.run_batch(
+                out,
+                [bench.parse_setup("codex-native")],
+                ["form"],
+                [1],
+                quiet=True,
+                check_cua=fake_check,
+                describe_fn=lambda t, s: "desc",
+                bench_cls=FakeBench,
+                driver_fn=lambda *a, **kw: lambda: dict(
+                    started=time.time(), wall=1.0, notes=[], tools={"js": 1}, usage={}, final="DONE", images=None
+                ),
+            )
+            self.assertEqual(checked, [])
+            self.assertTrue(os.path.exists(manifest_file))
+
+
+class BatchRecordAndTotalsTests(unittest.TestCase):
+    def test_run_batch_skips_recorded_and_redoes_usage_limited_into_r2(self):
+        with tempfile.TemporaryDirectory() as out:
+            attempts = []
+
+            class FakeBench:
+                def __init__(self, task, seed, log, quiet):
+                    self.log = log
+                    with open(log, "w", encoding="utf-8") as f:
+                        f.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
+                        if "-r2" in os.path.basename(log):
+                            f.write(json.dumps({"event": "success", "t": 3.0}) + "\n")
+
+                def events(self):
+                    return [json.loads(l) for l in open(self.log, encoding="utf-8")]
+
+                def close(self):
+                    pass
+
+            def fake_driver(*a, **kw):
+                def run_one():
+                    attempts.append(1)
+                    if len(attempts) == 1:
+                        return dict(started=10.0, wall=5.0, notes=["codex limit"], tools={}, usage={}, final=None, images=None)
+                    return dict(
+                        started=20.0,
+                        wall=4.0,
+                        notes=[],
+                        tools={"click": 2},
+                        usage={"input": 100, "cache_read": 50, "cache_write": 0, "output": 10},
+                        final="DONE",
+                        images=None,
+                    )
+
+                return run_one
+
+            bench.run_batch(
+                out,
+                [bench.parse_setup("codex-cua")],
+                ["form"],
+                [1],
+                quiet=True,
+                check_cua=lambda: "ok",
+                describe_fn=lambda t, s: "Fill form",
+                bench_cls=FakeBench,
+                driver_fn=fake_driver,
+            )
+            # Usage-limited run is eligible to redo into -r2; original events file stays intact.
+            bench.run_batch(
+                out,
+                [bench.parse_setup("codex-cua")],
+                ["form"],
+                [1],
+                quiet=True,
+                check_cua=lambda: "ok",
+                describe_fn=lambda t, s: "Fill form",
+                bench_cls=FakeBench,
+                driver_fn=fake_driver,
+            )
+            # Third run skips now that the latest run succeeded.
+            bench.run_batch(
+                out,
+                [bench.parse_setup("codex-cua")],
+                ["form"],
+                [1],
+                quiet=True,
+                check_cua=lambda: "ok",
+                describe_fn=lambda t, s: "Fill form",
+                bench_cls=FakeBench,
+                driver_fn=fake_driver,
+            )
+            self.assertEqual(len(attempts), 2)
+            self.assertTrue(os.path.exists(os.path.join(out, "codex-cua-form-1.events.jsonl")))
+            self.assertTrue(os.path.exists(os.path.join(out, "codex-cua-form-1-r2.events.jsonl")))
+            rows = [json.loads(l) for l in open(os.path.join(out, "results.jsonl"), encoding="utf-8")]
+            self.assertEqual(len(rows), 2)
+            totals = bench.totals_data(rows, {"version": "1.0", "tasks": ["form"], "seeds": 1})
+            self.assertEqual(totals["setups"][0]["passed"], 1)
+            self.assertEqual(totals["setups"][0]["runs"], 1)
+
+    def test_record_and_totals_and_cli_where(self):
+        with tempfile.TemporaryDirectory() as tmp_state, tempfile.TemporaryDirectory() as out:
+            os.makedirs(os.path.join(tmp_state, ".git"))
+            data = os.path.join(tmp_state, "computer-use-benchmark")
+            os.makedirs(data)
+            with open(os.path.join(data, "set.json"), "w", encoding="utf-8") as f:
+                json.dump({"version": "1.0", "tasks": ["form", "canvas"], "seeds": 1}, f)
+
+            legacy_row = {
+                "arm": "codex-cua",
+                "setup": "codex-cua",
+                "model": "gpt-6.1-terra",
+                "effort": "high",
+                "task": "form",
+                "seed": 1,
+                "passed": True,
+                "wrong": 0,
+                "seconds": 12.0,
+                "wall": 15.0,
+                "attempts": 2,
+                "tools": {"click": 4},
+                "usage": {"input": 300, "cache_read": 200, "cache_write": 0, "output": 10},
+                "started": bench.CODEX_UNCACHED_SINCE - 100,
+                "notes": [],
+            }
+            canvas_fail = {
+                "arm": "claude-cua",
+                "setup": "claude-cua",
+                "model": "claude-opus-5-5",
+                "effort": "high",
+                "task": "canvas",
+                "seed": 1,
+                "passed": False,
+                "wrong": 3,
+                "seconds": 25.0,
+                "wall": 30.0,
+                "attempts": 1,
+                "tools": {"run_steps": 1},
+                "usage": {"input": 50, "cache_read": 1000, "cache_write": 200, "output": 25},
+                "usage_basis": "uncached",
+                "started": bench.CODEX_UNCACHED_SINCE + 100,
+                "notes": [],
+            }
+            with open(os.path.join(out, "results.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps(legacy_row) + "\n" + json.dumps(canvas_fail) + "\n")
+            with open(os.path.join(out, "usage.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"when": "before", "provider": "codex", "snapshot": {}}) + "\n")
+            with open(os.path.join(out, "secret.screen.txt"), "w", encoding="utf-8") as f:
+                f.write("must not be copied")
+
+            env = dict(os.environ, AGENT_SKILLS_STATE=tmp_state)
+            where = subprocess.run([sys.executable, "-I", bench_path, "where"], capture_output=True, text=True, env=env)
+            self.assertEqual(where.returncode, 0)
+            self.assertIn("set: 1.0", where.stdout)
+
+            rec = subprocess.run(
+                [sys.executable, "-I", bench_path, "record", out, "--name", "2026-11-26-unit", "--note", "unit"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(rec.returncode, 0, rec.stderr)
+            dest = os.path.join(data, "runs", "2026-11-26-unit")
+            self.assertTrue(os.path.exists(os.path.join(dest, "results.jsonl")))
+            self.assertTrue(os.path.exists(os.path.join(dest, "usage.jsonl")))
+            self.assertFalse(os.path.exists(os.path.join(dest, "secret.screen.txt")))
+            recorded_rows = [json.loads(l) for l in open(os.path.join(dest, "results.jsonl"), encoding="utf-8")]
+            # Legacy Codex input normalized to uncached (300 - 200 = 100).
+            self.assertEqual(recorded_rows[0]["usage"]["input"], 100)
+            self.assertEqual(recorded_rows[0]["usage_basis"], "uncached")
+
+            # Refuses overwrite without --force and refuses path traversal names.
+            dup = subprocess.run(
+                [sys.executable, "-I", bench_path, "record", out, "--name", "2026-11-26-unit"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(dup.returncode, 64)
+            bad_name = subprocess.run(
+                [sys.executable, "-I", bench_path, "record", out, "--name", "../escape"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(bad_name.returncode, 64)
+
+            tot = subprocess.run([sys.executable, "-I", bench_path, "totals", "--json"], capture_output=True, text=True, env=env)
+            self.assertEqual(tot.returncode, 0, tot.stderr)
+            parsed = json.loads(tot.stdout)
+            by_setup = {s["setup"]: s for s in parsed["setups"]}
+            self.assertEqual(by_setup["codex-cua (gpt-6.1-terra@high)"]["passed"], 1)
+            self.assertEqual(by_setup["codex-cua (gpt-6.1-terra@high)"]["retries"], 1)
+            self.assertEqual(by_setup["codex-cua (gpt-6.1-terra@high)"]["med_tokens"], 110.0)
+            self.assertEqual(by_setup["claude-cua (claude-opus-5-5@high)"]["failures"], {"post-success-wrong": 1})
+
+            md = subprocess.run([sys.executable, "-I", bench_path, "totals"], capture_output=True, text=True, env=env)
+            self.assertEqual(md.returncode, 0, md.stderr)
+            self.assertIn("post-success-wrong", md.stdout)
+            self.assertIn("Partial sets:", md.stdout)
+
+
+class HarborDeskBuildAndSelftestTests(unittest.TestCase):
+    def test_build_describe_and_offscreen_selftest(self):
+        if not shutil.which("swiftc"):
+            self.skipTest("swiftc unavailable")
+        built = subprocess.run([sys.executable, "-I", bench_path, "build"], capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        self.assertTrue(os.path.exists(bench.BIN))
+        self.assertTrue(os.path.exists(bench.MANIFEST))
+        for task in bench.TASKS:
+            desc = subprocess.run([bench.BIN, "--describe", task, "--seed", "1"], capture_output=True, text=True)
+            self.assertEqual(desc.returncode, 0, task)
+            self.assertTrue(json.loads(desc.stdout)["prompt"])
+        st = subprocess.run([sys.executable, "-I", bench_path, "selftest", "form,canvas", "--seed", "1"], capture_output=True, text=True)
+        self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
+
+
+suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+sys.exit(0 if result.wasSuccessful() else 1)
+EOF

@@ -1,0 +1,36 @@
+# What Cua Driver may do in this benchmark: Harbor Desk and nothing else.
+version: 3
+expires_after: 8h
+idle_timeout: 2h
+allow:
+  tools:
+    - start_session
+    - end_session
+    - get_session
+    - launch_app
+    - get_window_state
+    - get_screen_size
+    - get_cursor_position
+    - get_guide
+    - click
+    - double_click
+    - right_click
+    - drag
+    - scroll
+    - move_cursor
+    - type_text
+    - set_value
+    - press_key
+    - hotkey
+    - invoke_menu
+    - zoom
+    - verify_state
+    - run_steps
+    - bring_to_front
+resources:
+  apps:
+    - bundle_id: local.computer-use-benchmark.harbor-desk
+      launch: true
+      windows: all
+  desktop:
+    display: false
