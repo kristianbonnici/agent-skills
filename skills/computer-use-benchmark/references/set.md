@@ -15,7 +15,7 @@
     ```
   - `runs/<run-id>/`: recorded compact results (`results.jsonl`, optional `usage.jsonl`, `meta.json`). `bench run` stamps `set_version` on every batch row and `bench record` preserves that version cleanly with crash-recoverable no-clobber publication; recorded folders under `<data>/runs/` lacking both `meta.json` and row `set_version` are labeled `legacy`. Large `.events.jsonl`, `.screen.txt`, and harness logs stay in scratch and are never committed here.
   - `results.md`: published per-version tables (`bench totals`), plan-window cost deltas, and failure notes.
-- **Cache folder (`<cache>`):** `${XDG_CACHE_HOME:-~/.cache}/agent-skills/computer-use-benchmark/` (override: `COMPUTER_USE_BENCHMARK_CACHE`). Holds compiled `Harbor Desk.app`, copied `manifest.yaml`, `agy-ws/`, `.agy-staging/`, `opencode-config/`, and `cua-serve.log`.
+- **Cache folder (`<cache>`):** `${XDG_CACHE_HOME:-~/.cache}/agent-skills/computer-use-benchmark/` (override: `COMPUTER_USE_BENCHMARK_CACHE`). Holds compiled `Harbor Desk.app`, `build.json` build stamp, copied `manifest.yaml`, `agy-ws/`, `.agy-staging/`, `opencode-config/`, and `cua-serve.log`.
 - **Socket:** `/tmp/cu-bench-<uid>/cua.sock` (override: `COMPUTER_USE_BENCHMARK_SOCKET`).
 
 ## The eight tasks
@@ -40,6 +40,7 @@ Each seed (`1..N`) deterministically generates targets for all eight tasks via a
 Failed runs are grouped into:
 
 - `usage-limit`: terminal provider quota/rate-limit error (eligible for redo in the same folder; a transient rate limit followed by a completed turn is **not** marked `usage-limit`).
+- `stopped`: interrupted between automatic retries by `<cache>/STOP`, a failing `--between` check, or a mid-batch daemon or launch failure (eligible to redo in the same folder; prior attempt costs fold into totals on resume).
 - `timeout`: reached `--limit` seconds (default `420`).
 - `approval-held`: interactive approval prompt named an unapproved app outside `allow_overlays`.
 - `permission`: macOS Accessibility or Screen Recording prompt blocked the harness.

@@ -30,7 +30,7 @@ flowchart TD
 | Med calls | Median tool calls per run. |
 | Med tokens | Median non-cache tokens per run (uncached input, cache writes, and output). |
 | Med cache | Median cache-read tokens per run. |
-| Failure kinds | Breakdown of failed runs (`post-success-wrong`, `wrong-answer`, `gave-up`, `timeout`, `usage-limit`, `approval-held`, `permission`, `harness-error`). |
+| Failure kinds | Breakdown of failed runs (`post-success-wrong`, `wrong-answer`, `gave-up`, `timeout`, `usage-limit`, `stopped`, `approval-held`, `permission`, `harness-error`, `other`). |
 
 ## Where things live
 

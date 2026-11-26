@@ -1248,7 +1248,7 @@ class ManifestVerificationTests(unittest.TestCase):
 
                 return go
 
-            with self.assertRaises(bench.Refused):
+            with self.assertRaises(SystemExit) as retry_ctx:
                 with mock.patch("time.sleep"):
                     bench.run_batch(
                         out,
@@ -1261,6 +1261,7 @@ class ManifestVerificationTests(unittest.TestCase):
                         bench_cls=FakeBench,
                         driver_fn=zero_tool_driver,
                     )
+            self.assertNotIsInstance(retry_ctx.exception, bench.Refused)
             self.assertEqual(len(checked), 3)
             self.assertEqual(attempt_n[0], 1)
             with open(os.path.join(out, "results.jsonl"), encoding="utf-8") as f:
@@ -1269,8 +1270,9 @@ class ManifestVerificationTests(unittest.TestCase):
             self.assertEqual(persisted[0]["wall"], 3.5)
             self.assertEqual(persisted[0]["usage"]["input"], 120)
             self.assertTrue(bench.retry_stopped(persisted[0]))
+            self.assertEqual(bench.failure_kind(persisted[0]), "stopped")
 
-            # Fixing the daemon allows resuming the interrupted cell into -r2 while keeping earlier row.
+            # Fixing the daemon allows resuming the interrupted cell into -r2 while keeping earlier row and folding costs.
             with mock.patch("time.sleep"):
                 bench.run_batch(
                     out,
@@ -1287,8 +1289,25 @@ class ManifestVerificationTests(unittest.TestCase):
             with open(os.path.join(out, "results.jsonl"), encoding="utf-8") as f:
                 after_resume = [json.loads(l) for l in f if l.strip()]
             self.assertEqual(len(after_resume), 2)
-            self.assertEqual(len(bench.latest_runs(after_resume)), 1)
-            self.assertTrue(bench.latest_runs(after_resume)[0]["passed"])
+            latest_after = bench.latest_runs(after_resume)
+            self.assertEqual(len(latest_after), 1)
+            self.assertTrue(latest_after[0]["passed"])
+            self.assertEqual(latest_after[0]["wall"], 5.5)
+            self.assertEqual(latest_after[0]["usage"]["input"], 200)
+            self.assertEqual(latest_after[0]["usage"]["output"], 25)
+            self.assertEqual(latest_after[0]["attempts"], 2)
+            tot_resumed = bench.totals_data(after_resume, {"version": "1.0", "tasks": ["form"], "seeds": 1})
+            self.assertEqual(tot_resumed["setups"][0]["runs"], 1)
+            self.assertEqual(tot_resumed["setups"][0]["passed"], 1)
+            self.assertEqual(tot_resumed["setups"][0]["retries"], 1)
+            self.assertEqual(tot_resumed["setups"][0]["minutes"], round(5.5 / 60.0, 1))
+            self.assertEqual(tot_resumed["setups"][0]["med_tokens"], 225.0)
+            sum_resumed = bench.summarize(after_resume)
+            self.assertEqual(sum_resumed[0]["runs"], 1)
+            self.assertEqual(sum_resumed[0]["passed"], 1)
+            self.assertEqual(sum_resumed[0]["retries"], 1)
+            self.assertEqual(sum_resumed[0]["wall"], 5.5)
+            self.assertEqual(sum_resumed[0]["tokens"], 225.0)
 
             checked.clear()
             bench.run_batch(
@@ -1645,19 +1664,27 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                     bench.record_run(out2, data, name="run-a", force=True)
             self.assertTrue(os.path.exists(os.path.join(data, "runs", "run-a", "usage.jsonl")))
 
-            # Crash left only hidden .run-a.backup: both totals and non-force record heal it instead of losing/clobbering it.
+            # Crash left journaled .run-a.tx.json + .run-a.backup: both totals and non-force record heal it instead of losing/clobbering it.
             run_a_dir = os.path.join(data, "runs", "run-a")
             backup_dir = os.path.join(data, "runs", ".run-a.backup")
+            tx_file = os.path.join(data, "runs", ".run-a.tx.json")
+            tx_payload = {"version": 1, "run_id": "run-a", "stage": ".run-a.stage.deadbeef", "backup": ".run-a.backup"}
             os.rename(run_a_dir, backup_dir)
+            with open(tx_file, "w", encoding="utf-8") as f:
+                json.dump(tx_payload, f)
             with self.assertRaises(bench.Refused):
                 bench.record_run(out2, data, name="run-a", force=False)
             self.assertTrue(os.path.exists(os.path.join(run_a_dir, "usage.jsonl")))
             self.assertFalse(os.path.exists(backup_dir))
+            self.assertFalse(os.path.exists(tx_file))
 
             os.rename(run_a_dir, backup_dir)
+            with open(tx_file, "w", encoding="utf-8") as f:
+                json.dump(tx_payload, f)
             healed = bench.load_folders([], data)
             self.assertEqual(len(healed), 1)
             self.assertTrue(os.path.exists(os.path.join(run_a_dir, "usage.jsonl")))
+            self.assertFalse(os.path.exists(tx_file))
 
             # Concurrent/interleaved non-force writers targeting the same name never clobber.
             conc_out = [tempfile.mkdtemp(dir=tmp_state), tempfile.mkdtemp(dir=tmp_state)]
@@ -1788,8 +1815,18 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                     json.dump({"version": "2.0", "tasks": ["form"], "seeds": 1}, f)
                 with self.assertRaises(bench.Refused):
                     bench.batch_set_version(s1_data)
-                with self.assertRaises(bench.Refused):
-                    bench.run_batch(s1_out, [bench.parse_setup("codex-native")], ["form"], [2], quiet=True, set_version="2.0", bench_cls=MiniBench)
+                with self.assertRaises(bench.Refused) as v2_err:
+                    bench.run_batch(
+                        s1_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [2],
+                        quiet=True,
+                        set_version="2.0",
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=MiniBench,
+                    )
+                self.assertIn("Set 1.0", v2_err.exception.message)
                 bench.record_run(s1_out, s1_data, name="old-s1-batch")
                 with open(os.path.join(s1_data, "runs", "old-s1-batch", "meta.json"), encoding="utf-8") as f:
                     self.assertEqual(json.load(f)["set_version"], "1.0")
@@ -1861,7 +1898,7 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                     )
                 self.assertEqual(launch_calls[0], 2)
 
-            # PermissionError securing socket directory exits 64 cleanly.
+            # PermissionError securing socket directory exits 64 cleanly on every host.
             saved_sock = bench.SOCKET
             saved_manifest = bench.MANIFEST
             try:
@@ -1869,13 +1906,323 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                 bench.MANIFEST = os.path.join(skill_dir, "assets", "manifest.yaml")
                 with (
                     mock.patch.object(bench, "_require_driver"),
+                    mock.patch.object(bench, "serve_argv", return_value=["/bin/true"]),
                     mock.patch("os.chmod", side_effect=PermissionError("operation not permitted")),
                 ):
-                    with self.assertRaises(bench.Refused):
+                    with self.assertRaises(bench.Refused) as sock_err:
                         bench.start_cua()
+                self.assertIn("cannot secure socket directory", sock_err.exception.message)
             finally:
                 bench.SOCKET = saved_sock
                 bench.MANIFEST = saved_manifest
+
+            # Dot-prefixed run names are refused, and unjournaled dot directories are never deleted.
+            with tempfile.TemporaryDirectory() as ns_state, tempfile.TemporaryDirectory() as ns_out:
+                os.makedirs(os.path.join(ns_state, ".git"))
+                ns_data_dir = os.path.join(ns_state, "computer-use-benchmark")
+                os.makedirs(os.path.join(ns_data_dir, "runs"), exist_ok=True)
+                with open(os.path.join(ns_out, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, True, 10.0)) + "\n")
+                for bad in (".trial.stage.saved", ".trial.backup", ".hidden"):
+                    with self.assertRaises(bench.Refused):
+                        bench.record_run(ns_out, ns_data_dir, name=bad)
+                unjournaled_stage = os.path.join(ns_data_dir, "runs", ".trial.stage.saved")
+                unjournaled_backup = os.path.join(ns_data_dir, "runs", ".trial.backup")
+                os.makedirs(unjournaled_stage)
+                os.makedirs(unjournaled_backup)
+                with open(os.path.join(unjournaled_stage, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write("keep\n")
+                with open(os.path.join(unjournaled_backup, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write("keep\n")
+                bench.record_run(ns_out, ns_data_dir, name="trial")
+                bench.load_folders([], ns_data_dir)
+                self.assertTrue(os.path.isdir(unjournaled_stage))
+                self.assertTrue(os.path.isdir(unjournaled_backup))
+                with self.assertRaises(bench.Refused):
+                    bench.record_run(ns_out, ns_data_dir, name="trial", force=True)
+
+            # Explicit totals/summarize do not touch active journaled transactions; cross-TMPDIR readers/writers serialize via directory flock.
+            with tempfile.TemporaryDirectory() as lk_state, tempfile.TemporaryDirectory() as lk_scratch, tempfile.TemporaryDirectory() as td1, tempfile.TemporaryDirectory() as td2:
+                os.makedirs(os.path.join(lk_state, ".git"))
+                lk_data = os.path.join(lk_state, "computer-use-benchmark")
+                lk_runs = os.path.join(lk_data, "runs")
+                os.makedirs(os.path.join(lk_runs, "live-batch"))
+                with open(os.path.join(lk_data, "set.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": "1.0", "tasks": ["form"], "seeds": 1}, f)
+                with open(os.path.join(lk_runs, "live-batch", "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, False, 10.0)) + "\n")
+                with open(os.path.join(lk_runs, "live-batch", "meta.json"), "w", encoding="utf-8") as f:
+                    json.dump({"id": "live-batch", "set_version": "1.0"}, f)
+                with open(os.path.join(lk_scratch, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, True, 20.0)) + "\n")
+                inflight_tx = os.path.join(lk_runs, ".live-batch.tx.json")
+                inflight_bk = os.path.join(lk_runs, ".live-batch.backup")
+                inflight_st = os.path.join(lk_runs, ".live-batch.stage.1234abcd")
+                os.rename(os.path.join(lk_runs, "live-batch"), inflight_bk)
+                os.makedirs(inflight_st)
+                with open(inflight_tx, "w", encoding="utf-8") as f:
+                    json.dump({"version": 1, "run_id": "live-batch", "stage": ".live-batch.stage.1234abcd", "backup": ".live-batch.backup"}, f)
+                # Explicit report on external scratch must leave in-flight replacement dirs intact.
+                scratch_rows = bench.load_folders([lk_scratch], lk_data)
+                self.assertEqual(len(scratch_rows), 1)
+                self.assertTrue(os.path.exists(inflight_tx))
+                self.assertTrue(os.path.isdir(inflight_bk))
+                self.assertTrue(os.path.isdir(inflight_st))
+                # Heal before cross-TMPDIR concurrency check.
+                self.assertEqual(len(bench.load_folders([], lk_data)), 1)
+                self.assertTrue(os.path.isdir(os.path.join(lk_runs, "live-batch")))
+
+                # Subprocess writer holding _record_lock with TMPDIR=td1 updates rows before meta.json;
+                # reader with TMPDIR=td2 must block until release and never see mixed generations.
+                ready_flag = os.path.join(work, "lk-ready")
+                writer_code = "\n".join([
+                    "import importlib.machinery, importlib.util, json, os, sys, time",
+                    "loader = importlib.machinery.SourceFileLoader('bench_mod', sys.argv[1])",
+                    "spec = importlib.util.spec_from_loader('bench_mod', loader)",
+                    "bench = importlib.util.module_from_spec(spec)",
+                    "loader.exec_module(bench)",
+                    "data, out, ready = sys.argv[2:5]",
+                    "runs_dir = os.path.join(data, 'runs')",
+                    "dest = os.path.join(runs_dir, 'live-batch')",
+                    "with bench._record_lock(runs_dir, exclusive=True):",
+                    "    with open(os.path.join(out, 'results.jsonl'), encoding='utf-8') as rf:",
+                    "        row = json.loads(rf.read().strip())",
+                    "    row['set_version'] = '2.0'",
+                    "    with open(os.path.join(dest, 'results.jsonl'), 'w', encoding='utf-8') as wf:",
+                    "        wf.write(json.dumps(row) + '\\n')",
+                    "    with open(ready, 'w', encoding='utf-8') as ff:",
+                    "        ff.write('1')",
+                    "    time.sleep(0.35)",
+                    "    with open(os.path.join(dest, 'meta.json'), 'w', encoding='utf-8') as mf:",
+                    "        json.dump({'id': 'live-batch', 'set_version': '2.0', 'rows': 1}, mf)",
+                ])
+                wp = subprocess.Popen(
+                    [sys.executable, "-I", "-c", writer_code, bench_path, lk_data, lk_scratch, ready_flag],
+                    env=dict(os.environ, AGENT_SKILLS_STATE=lk_state, TMPDIR=td1),
+                )
+                try:
+                    for _ in range(100):
+                        if os.path.exists(ready_flag):
+                            break
+                        time.sleep(0.02)
+                    self.assertTrue(os.path.exists(ready_flag))
+                    tot_proc = subprocess.run(
+                        [sys.executable, "-I", bench_path, "totals", "--set", "2.0", "--json"],
+                        capture_output=True,
+                        text=True,
+                        env=dict(os.environ, AGENT_SKILLS_STATE=lk_state, TMPDIR=td2),
+                    )
+                    self.assertEqual(tot_proc.returncode, 0, tot_proc.stderr)
+                    tot_json = json.loads(tot_proc.stdout)
+                    self.assertEqual(tot_json["set"], "2.0")
+                    self.assertEqual(tot_json["setups"][0]["passed"], 1)
+                finally:
+                    self.assertEqual(wp.wait(), 0)
+
+            # require_built_app detects missing stamp, source edit, or binary drift, and blocks run_batch before stamping rows.
+            with tempfile.TemporaryDirectory() as build_cache, tempfile.TemporaryDirectory() as build_out:
+                fake_app = os.path.join(build_cache, "Harbor Desk.app")
+                fake_bin = os.path.join(fake_app, "Contents", "MacOS", "HarborDesk")
+                os.makedirs(os.path.dirname(fake_bin))
+                with open(fake_bin, "wb") as f:
+                    f.write(b"fake-bin-v1")
+                fake_src = os.path.join(build_cache, "Bench.swift")
+                with open(fake_src, "w", encoding="utf-8") as f:
+                    f.write("// v1\n")
+                with self.assertRaises(bench.Refused):
+                    bench.require_built_app(app=fake_app, bin_path=fake_bin, source_path=fake_src)
+                with open(bench.build_stamp_path(fake_app), "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "set_version": bench.BENCH_SET_VERSION,
+                            "source_sha256": bench._file_sha256(fake_src),
+                            "binary_sha256": bench._file_sha256(fake_bin),
+                        },
+                        f,
+                    )
+                bench.require_built_app(app=fake_app, bin_path=fake_bin, source_path=fake_src)
+                with open(fake_src, "w", encoding="utf-8") as f:
+                    f.write("// stricter canvas grader\n")
+                with self.assertRaises(bench.Refused) as stale_err:
+                    bench.run_batch(
+                        build_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        describe_fn=lambda t, s: "desc",
+                        check_app=lambda: bench.require_built_app(app=fake_app, bin_path=fake_bin, source_path=fake_src),
+                        bench_cls=object,
+                    )
+                self.assertIn("does not match current Bench.swift", stale_err.exception.message)
+
+            # Unified version resolver across run_batch resume, record_run import, and load_folders reporting.
+            with tempfile.TemporaryDirectory() as vr_state, tempfile.TemporaryDirectory() as vr_out:
+                os.makedirs(os.path.join(vr_state, ".git"))
+                vr_data = os.path.join(vr_state, "computer-use-benchmark")
+                os.makedirs(vr_data)
+                with open(os.path.join(vr_data, "set.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": "1.0", "tasks": ["form"], "seeds": 2}, f)
+                unstamped = make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, True, 10.0)
+                with open(os.path.join(vr_out, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(unstamped) + "\n")
+                with open(os.path.join(vr_out, "meta.json"), "w", encoding="utf-8") as f:
+                    json.dump({"id": "v2-unstamped", "set_version": "2.0"}, f)
+                with self.assertRaises(bench.Refused) as vr_resume_err:
+                    bench.run_batch(
+                        vr_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [2],
+                        quiet=True,
+                        set_version="1.0",
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=object,
+                    )
+                self.assertIn("Set 2.0", vr_resume_err.exception.message)
+                bench.record_run(vr_out, vr_data, name="imported-v2")
+                with open(os.path.join(vr_data, "runs", "imported-v2", "meta.json"), encoding="utf-8") as f:
+                    self.assertEqual(json.load(f)["set_version"], "2.0")
+                self.assertEqual(bench.load_folders([vr_out], vr_data)[0]["set_version"], "2.0")
+                # Conflict between meta.json 2.0 and row 1.0 fails in resume, record, and load_folders.
+                with open(os.path.join(vr_out, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(dict(unstamped, set_version="1.0")) + "\n")
+                with self.assertRaises(bench.Refused):
+                    bench.load_folders([vr_out], vr_data)
+                with self.assertRaises(bench.Refused):
+                    bench.record_run(vr_out, vr_data, name="conflict-v2")
+                with self.assertRaises(bench.Refused):
+                    bench.run_batch(
+                        vr_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [2],
+                        quiet=True,
+                        set_version="1.0",
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=object,
+                    )
+
+            # Launch Services open -n error triggers BenchLaunchError retry cleanly; persistent launch failures write no row and exit 1.
+            with tempfile.TemporaryDirectory() as lo_out:
+                open_calls = [0]
+
+                def flaky_open(*args, **kwargs):
+                    open_calls[0] += 1
+                    if open_calls[0] == 1:
+                        return types.SimpleNamespace(returncode=1, stdout="", stderr="LSOpenURLsWithRole failed: -10810")
+                    return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                log_file = os.path.join(lo_out, "open-flaky.events.jsonl")
+
+                def write_ready_log(argv, **kwargs):
+                    res = flaky_open(argv, **kwargs)
+                    if res.returncode == 0:
+                        with open(log_file, "w", encoding="utf-8") as lf:
+                            lf.write(json.dumps({"event": "success", "t": 1.0}) + "\n")
+                    return res
+
+                with (
+                    mock.patch("subprocess.run", side_effect=write_ready_log),
+                    mock.patch.object(bench, "run_quiet", return_value=types.SimpleNamespace(stdout="99999\n")),
+                ):
+                    with self.assertRaises(bench.BenchLaunchError) as err1:
+                        bench.Bench("form", 1, log_file, True)
+                    self.assertIn("-10810", str(err1.exception))
+                    app_ok = bench.Bench("form", 1, log_file, True)
+                    app_ok.pid = None
+                self.assertEqual(open_calls[0], 2)
+
+            # Transient launch failure retries without counting agent attempts or "no tool calls"; persistent failure writes no row and exits 1.
+            with tempfile.TemporaryDirectory() as tr_out, tempfile.TemporaryDirectory() as per_out:
+                tr_calls = [0]
+
+                class TransientLaunchBench:
+                    def __init__(self, task, seed, log, quiet):
+                        tr_calls[0] += 1
+                        if tr_calls[0] == 1:
+                            raise bench.BenchLaunchError("LSOpenURLsWithRole failed")
+                        with open(log, "w", encoding="utf-8") as lf:
+                            lf.write(json.dumps({"event": "success", "t": 1.0}) + "\n")
+
+                    def events(self):
+                        return [{"event": "success", "t": 1.0}]
+
+                    def close(self):
+                        pass
+
+                with mock.patch("time.sleep"):
+                    bench.run_batch(
+                        tr_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=TransientLaunchBench,
+                        driver_fn=lambda *a, **kw: lambda: dict(
+                            started=time.time(), wall=1.0, notes=[], tools={"js": 1}, usage={"input": 50, "output": 5}, final="DONE", images=None
+                        ),
+                    )
+                with open(os.path.join(tr_out, "results.jsonl"), encoding="utf-8") as f:
+                    tr_row = json.loads(f.read().strip())
+                self.assertEqual(tr_row["attempts"], 1)
+                self.assertTrue(any(n.startswith("bench launch failed, attempt 1:") for n in tr_row["notes"]))
+                self.assertFalse(any("no tool calls" in n for n in tr_row["notes"]))
+
+                class AlwaysFailBench:
+                    def __init__(self, task, seed, log, quiet):
+                        raise bench.BenchLaunchError("LaunchServices down")
+
+                with mock.patch("time.sleep"), self.assertRaises(SystemExit) as per_exit:
+                    bench.run_batch(
+                        per_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=AlwaysFailBench,
+                    )
+                self.assertNotIsInstance(per_exit.exception, bench.Refused)
+                self.assertFalse(os.path.exists(os.path.join(per_out, "results.jsonl")))
+
+                # CLI main exits 1 (not 64) when a retry aborts after a mid-batch daemon refusal.
+                retry_cua_calls = [0]
+
+                def fail_on_retry():
+                    retry_cua_calls[0] += 1
+                    if retry_cua_calls[0] >= 3:
+                        raise bench.Refused("cua died mid-batch")
+
+                class OkBench:
+                    def __init__(self, task, seed, log, quiet):
+                        with open(log, "w", encoding="utf-8") as lf:
+                            lf.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
+
+                    def events(self):
+                        return [{"event": "shown", "t": 0.1}]
+
+                    def close(self):
+                        pass
+
+                with (
+                    mock.patch.object(bench, "require_built_app"),
+                    mock.patch.object(bench, "require_cua_daemon", side_effect=fail_on_retry),
+                    mock.patch.object(bench, "idle_seconds", return_value=300.0),
+                    mock.patch.object(bench, "Bench", OkBench),
+                    mock.patch.object(bench, "driver", return_value=lambda: dict(started=time.time(), wall=1.2, notes=[], tools={}, usage={}, final=None, images=None)),
+                    mock.patch("time.sleep"),
+                    mock.patch.object(bench, "run_quiet", return_value=types.SimpleNamespace(returncode=0, stdout=json.dumps({"prompt": "desc"}), stderr="")),
+                ):
+                    with tempfile.TemporaryDirectory() as exit1_out:
+                        with self.assertRaises(SystemExit) as main_exit:
+                            bench.main(["run", exit1_out, "codex-cua", "form", "--seed", "1"])
+                        self.assertNotIsInstance(main_exit.exception, bench.Refused)
+                        with open(os.path.join(exit1_out, "results.jsonl"), encoding="utf-8") as f:
+                            saved_stopped = json.loads(f.read().strip())
+                        self.assertEqual(bench.failure_kind(saved_stopped), "stopped")
+                        self.assertEqual(saved_stopped["wall"], 1.2)
 
             for bad_argv in (
                 ["selftest", "--seed", "abc"],

@@ -17,7 +17,7 @@ The private results (`runs/`, `results.md`, `set.json`, and `config.json`) live 
 - **Operate only when the screen is yours.** Live runs require an unlocked screen idle for at least 120 seconds (or `--force`), and must pass `--between` whenever a shared screen lease controls access. Never run unattended setups over other people's active windows.
 - **Verify Cua Driver's manifest scope before every Cua run.** `bench start-cua` and `bench run` refuse unless the daemon on the benchmark's own socket (`COMPUTER_USE_BENCHMARK_SOCKET`, never the user's default socket) runs in `bounded` mode with an approved `version: 3` manifest whose SHA-256 matches `assets/manifest.yaml` (Harbor Desk alone, `desktop.display: false`, no desktop-wide listing tools).
 - **Per-run isolated harness configs only.** Never mutate the user's global `~/.claude`, `~/.codex`, `~/.config/opencode`, or `~/.gemini` configs, and never run `cua-driver mcp-config --client` into live folders.
-- **Timeouts and real failures are results.** Only runs cut short by a provider usage limit (`claude limit`, `codex limit`, `agy limit` as the terminal outcome) are eligible to redo in the same output folder; a recovered rate limit that ends in a completed turn stays recorded as-is.
+- **Timeouts and real failures are results.** Only runs cut short by a provider usage limit (`claude limit`, `codex limit`, `agy limit` as the terminal outcome) or stopped between automatic retries (`stopped`) are eligible to redo in the same output folder; a recovered rate limit that ends in a completed turn stays recorded as-is.
 - **Evidence, not a routing decision.** Output tables inform routing updates (for example via `skill-evolution` on the owner's word) and never modify orchestrator routing on their own.
 
 ## 1. Check folders and build
@@ -55,7 +55,7 @@ Run in chunks (`--seed n`) or full batches (`--seeds 3`) into a scratch or tempo
 ```
 
 - Pass `--quiet` only when testing background behavior while the screen is in use (note that `pointer` and `front` counts then include user activity).
-- `touch <cache>/STOP` stops a batch cleanly between runs without leaving partial rows; remove `<cache>/STOP` before starting the next batch.
+- `touch <cache>/STOP` stops a batch cleanly between runs (or before an automatic retry, saving any spent attempt as an incomplete `stopped` row that can be resumed in the same folder); remove `<cache>/STOP` before starting the next batch.
 - Pass `--allow-overlay <App>` (or configure `allow_overlays` in `<data>/config.json`) for user-approved overlay windows when testing native computer-use approval prompts.
 
 ## 4. Record and report
