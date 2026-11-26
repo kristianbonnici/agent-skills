@@ -2167,7 +2167,7 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                 with open(os.path.join(tr_out, "results.jsonl"), encoding="utf-8") as f:
                     tr_row = json.loads(f.read().strip())
                 self.assertEqual(tr_row["attempts"], 1)
-                self.assertTrue(any(n.startswith("bench launch failed, attempt 1:") for n in tr_row["notes"]))
+                self.assertTrue(any(n.startswith("launch retried, attempt 1:") for n in tr_row["notes"]))
                 self.assertFalse(any("no tool calls" in n for n in tr_row["notes"]))
 
                 class AlwaysFailBench:
@@ -2223,6 +2223,249 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                             saved_stopped = json.loads(f.read().strip())
                         self.assertEqual(bench.failure_kind(saved_stopped), "stopped")
                         self.assertEqual(saved_stopped["wall"], 1.2)
+
+            # Force-record with absent dest and pre-existing .backup leaves that backup untouched on post-publish recovery,
+            # and refuses when an unresolved journal still exists after failed recovery.
+            with tempfile.TemporaryDirectory() as jb_state, tempfile.TemporaryDirectory() as jb_out:
+                os.makedirs(os.path.join(jb_state, ".git"))
+                jb_data = os.path.join(jb_state, "computer-use-benchmark")
+                jb_runs = os.path.join(jb_data, "runs")
+                os.makedirs(jb_runs)
+                with open(os.path.join(jb_out, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, True, 10.0)) + "\n")
+                stale_bk = os.path.join(jb_runs, ".trial.backup")
+                os.makedirs(stale_bk)
+                with open(os.path.join(stale_bk, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write("must-survive\n")
+                bench.record_run(jb_out, jb_data, name="trial", force=True)
+                self.assertTrue(os.path.isdir(stale_bk))
+                # Even if a crash happens right after publishing trial before unlinking the tx journal:
+                with open(os.path.join(jb_runs, ".trial.tx.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": 1, "run_id": "trial", "stage": ".trial.stage.deadbeef", "backup": None}, f)
+                self.assertEqual(len(bench.load_folders([], jb_data)), 1)
+                self.assertTrue(os.path.isdir(stale_bk))
+                # An unresolved journal where rename failed must refuse rather than overwrite the journal.
+                locked_bk = os.path.join(jb_runs, ".locked.backup")
+                os.makedirs(locked_bk)
+                with open(os.path.join(locked_bk, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, True, 9.0)) + "\n")
+                with open(os.path.join(jb_runs, ".locked.tx.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": 1, "run_id": "locked", "stage": ".locked.stage.1234", "backup": ".locked.backup"}, f)
+                real_rename = os.rename
+
+                def fail_locked_rename(src, dst):
+                    if os.path.basename(src) == ".locked.backup":
+                        raise OSError(errno.EACCES, "simulated rename failure")
+                    return real_rename(src, dst)
+
+                with mock.patch("os.rename", side_effect=fail_locked_rename):
+                    with self.assertRaises(bench.Refused) as tx_err:
+                        bench.record_run(jb_out, jb_data, name="locked", force=True)
+                self.assertIn("unresolved transaction journal", tx_err.exception.message)
+                self.assertTrue(os.path.isdir(locked_bk))
+
+            # OSError while reading under _read_runs_snapshot with a pending journal propagates the real OSError, never RuntimeError.
+            with tempfile.TemporaryDirectory() as ro_state:
+                os.makedirs(os.path.join(ro_state, ".git"))
+                ro_data = os.path.join(ro_state, "computer-use-benchmark")
+                ro_runs = os.path.join(ro_data, "runs")
+                os.makedirs(os.path.join(ro_runs, "b1"))
+                bad_res = os.path.join(ro_runs, "b1", "results.jsonl")
+                with open(bad_res, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-native", "codex-native", "gpt-6.1-terra", "form", 1, True, 10.0)) + "\n")
+                os.makedirs(os.path.join(ro_runs, ".orphan.stage.abcd"))
+                with open(os.path.join(ro_runs, ".orphan.tx.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": 1, "run_id": "orphan", "stage": ".orphan.stage.abcd", "backup": None}, f)
+                real_open = open
+
+                def deny_results(path, *args, **kwargs):
+                    if os.path.abspath(str(path)) == os.path.abspath(bad_res):
+                        raise PermissionError(errno.EACCES, "unreadable results", path)
+                    return real_open(path, *args, **kwargs)
+
+                with mock.patch("builtins.open", side_effect=deny_results):
+                    with self.assertRaises(PermissionError):
+                        bench.load_folders([], ro_data)
+
+            # Attempt-chain scoping, dedupe across snapshots, and stopped -> usage-limit -> pass cost preservation.
+            with tempfile.TemporaryDirectory() as ch_state, tempfile.TemporaryDirectory() as ch_out_a, tempfile.TemporaryDirectory() as ch_out_b:
+                os.makedirs(os.path.join(ch_state, ".git"))
+                ch_data = os.path.join(ch_state, "computer-use-benchmark")
+                os.makedirs(ch_data)
+                with open(os.path.join(ch_data, "set.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": "1.0", "tasks": ["form"], "seeds": 1}, f)
+
+                class ChainBench:
+                    def __init__(self, task, seed, log, quiet):
+                        self.log = log
+                        ev = [{"event": "shown", "t": 0.1}]
+                        if "-r3" in os.path.basename(log):
+                            ev.append({"event": "success", "t": 2.0})
+                        with open(log, "w", encoding="utf-8") as lf:
+                            for item in ev:
+                                lf.write(json.dumps(item) + "\n")
+
+                    def events(self):
+                        with open(self.log, encoding="utf-8") as lf:
+                            return [json.loads(l) for l in lf if l.strip()]
+
+                    def close(self):
+                        pass
+
+                ch_cua_calls = [0]
+
+                def cua_stop_on_first():
+                    ch_cua_calls[0] += 1
+                    if ch_cua_calls[0] == 3:
+                        raise bench.Refused("cua paused mid-retry")
+
+                ch_step = [0]
+
+                def seq_driver(*a, **kw):
+                    def run_one():
+                        ch_step[0] += 1
+                        if ch_step[0] == 1:
+                            return dict(started=100.0, wall=3.0, notes=[], tools={}, usage={"input": 100, "cache_read": 0, "cache_write": 0, "output": 10}, final=None, images=None)
+                        if ch_step[0] == 2:
+                            return dict(started=200.0, wall=4.0, notes=["codex limit"], tools={}, usage={}, final=None, images=None)
+                        return dict(started=300.0, wall=2.0, notes=[], tools={"click": 1}, usage={"input": 60, "cache_read": 0, "cache_write": 0, "output": 5}, final="DONE", images=None)
+
+                    return run_one
+
+                # Step 1: stopped row recorded as snapshot 1.
+                with mock.patch("time.sleep"), self.assertRaises(SystemExit):
+                    bench.run_batch(ch_out_a, [bench.parse_setup("codex-cua")], ["form"], [1], quiet=True, check_cua=cua_stop_on_first, describe_fn=lambda t, s: "desc", bench_cls=ChainBench, driver_fn=seq_driver)
+                bench.record_run(ch_out_a, ch_data, name="snap-stopped")
+
+                # Step 2: usage-limit row in the same folder.
+                bench.run_batch(ch_out_a, [bench.parse_setup("codex-cua")], ["form"], [1], quiet=True, check_cua=lambda: "ok", describe_fn=lambda t, s: "desc", bench_cls=ChainBench, driver_fn=seq_driver)
+
+                # Step 3: final pass in the same folder, recorded as snapshot 2.
+                bench.run_batch(ch_out_a, [bench.parse_setup("codex-cua")], ["form"], [1], quiet=True, check_cua=lambda: "ok", describe_fn=lambda t, s: "desc", bench_cls=ChainBench, driver_fn=seq_driver)
+                bench.record_run(ch_out_a, ch_data, name="snap-resumed")
+
+                # Loading both snap-stopped and snap-resumed folds stopped cost ONCE across the intermediate usage-limit row.
+                combined_rows = bench.load_folders([], ch_data)
+                combined_latest = bench.latest_runs(combined_rows)
+                self.assertEqual(len(combined_latest), 1)
+                self.assertTrue(combined_latest[0]["passed"])
+                self.assertEqual(combined_latest[0]["wall"], 5.0)
+                self.assertEqual(combined_latest[0]["usage"]["input"], 160)
+                self.assertEqual(combined_latest[0]["attempts"], 2)
+
+                # Independent batch B passing the same cell must NOT inherit batch A's stopped cost.
+                bench.run_batch(
+                    ch_out_b,
+                    [bench.parse_setup("codex-cua")],
+                    ["form"],
+                    [1],
+                    quiet=True,
+                    check_cua=lambda: "ok",
+                    describe_fn=lambda t, s: "desc",
+                    bench_cls=ChainBench,
+                    driver_fn=lambda *a, **kw: lambda: dict(started=400.0, wall=1.5, notes=[], tools={"click": 1}, usage={"input": 40, "cache_read": 0, "cache_write": 0, "output": 5}, final="DONE", images=None),
+                )
+                cross_rows = bench.load_folders([os.path.join(ch_data, "runs", "snap-stopped"), ch_out_b], ch_data)
+                cross_latest = bench.latest_runs(cross_rows)
+                self.assertEqual(len(cross_latest), 1)
+                self.assertEqual(cross_latest[0]["wall"], 1.5)
+                self.assertEqual(cross_latest[0]["usage"]["input"], 40)
+                self.assertEqual(cross_latest[0]["attempts"], 1)
+
+            # Recovered launch error followed by wrong answer classifies as wrong-answer; STOP/daemon abort after launch failure blames STOP/daemon.
+            with tempfile.TemporaryDirectory() as lf_out, tempfile.TemporaryDirectory() as sa_out:
+                lf_calls = [0]
+
+                class WrongAfterLaunchFailBench:
+                    def __init__(self, task, seed, log, quiet):
+                        lf_calls[0] += 1
+                        if lf_calls[0] == 1:
+                            raise bench.BenchLaunchError("transient open err")
+                        with open(log, "w", encoding="utf-8") as lf:
+                            lf.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
+                            lf.write(json.dumps({"event": "wrong", "t": 1.2}) + "\n")
+
+                    def events(self):
+                        return [{"event": "shown", "t": 0.1}, {"event": "wrong", "t": 1.2}]
+
+                    def close(self):
+                        pass
+
+                with mock.patch("time.sleep"):
+                    bench.run_batch(
+                        lf_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=WrongAfterLaunchFailBench,
+                        driver_fn=lambda *a, **kw: lambda: dict(started=time.time(), wall=1.0, notes=[], tools={"click": 1}, usage={}, final="DONE", images=None),
+                    )
+                with open(os.path.join(lf_out, "results.jsonl"), encoding="utf-8") as f:
+                    wrong_row = json.loads(f.read().strip())
+                self.assertEqual(bench.failure_kind(wrong_row), "wrong-answer")
+                self.assertTrue(any(n.startswith("launch retried, attempt 1:") for n in wrong_row["notes"]))
+
+                cua_drop_calls = [0]
+
+                def cua_dies_after_launch():
+                    cua_drop_calls[0] += 1
+                    if cua_drop_calls[0] >= 3:
+                        raise bench.Refused("daemon stopped")
+
+                class LaunchAlwaysFailBench:
+                    def __init__(self, task, seed, log, quiet):
+                        raise bench.BenchLaunchError("initial launch err")
+
+                with mock.patch("time.sleep"), self.assertRaises(SystemExit) as stop_msg:
+                    bench.run_batch(
+                        sa_out,
+                        [bench.parse_setup("codex-cua")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        check_cua=cua_dies_after_launch,
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=LaunchAlwaysFailBench,
+                    )
+                self.assertIn("stopped before a retry: daemon stopped", str(stop_msg.exception))
+                self.assertFalse(os.path.exists(os.path.join(sa_out, "results.jsonl")))
+
+            # build() compiles from an immutable source snapshot and stamps those compiled bytes even if Bench.swift changes mid-compile.
+            with tempfile.TemporaryDirectory() as snap_cache, tempfile.TemporaryDirectory() as snap_src_dir:
+                snap_app = os.path.join(snap_cache, "Harbor Desk.app")
+                snap_bin = os.path.join(snap_app, "Contents", "MacOS", "HarborDesk")
+                snap_manifest = os.path.join(snap_cache, "manifest.yaml")
+                mut_swift = os.path.join(snap_src_dir, "Bench.swift")
+                with open(mut_swift, "wb") as f:
+                    f.write(b"// original swift source\n")
+                expected_orig_sha = hashlib.sha256(b"// original swift source\n").hexdigest()
+                saved_globals = (bench.APP, bench.BIN, bench.MANIFEST, bench.BENCH_SOURCE)
+                try:
+                    bench.APP, bench.BIN, bench.MANIFEST, bench.BENCH_SOURCE = snap_app, snap_bin, snap_manifest, mut_swift
+
+                    def fake_subproc_run(argv, **kwargs):
+                        if argv[0] == "swiftc":
+                            with open(argv[-1], "rb") as sf:
+                                compiled_bytes = sf.read()
+                            # Simulate Bench.swift mutating after swiftc read starts.
+                            with open(mut_swift, "wb") as mf:
+                                mf.write(b"// edited mid-compile\n")
+                            with open(argv[argv.index("-o") + 1], "wb") as bf:
+                                bf.write(b"compiled:" + compiled_bytes)
+                        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                    with mock.patch("subprocess.run", side_effect=fake_subproc_run):
+                        bench.build()
+                    with open(bench.build_stamp_path(snap_app), encoding="utf-8") as f:
+                        built_stamp = json.load(f)
+                    self.assertEqual(built_stamp["source_sha256"], expected_orig_sha)
+                    with self.assertRaises(bench.Refused) as drift_err:
+                        bench.require_built_app()
+                    self.assertIn("does not match current Bench.swift", drift_err.exception.message)
+                finally:
+                    bench.APP, bench.BIN, bench.MANIFEST, bench.BENCH_SOURCE = saved_globals
 
             for bad_argv in (
                 ["selftest", "--seed", "abc"],

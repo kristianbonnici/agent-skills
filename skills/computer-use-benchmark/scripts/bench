@@ -664,9 +664,16 @@ def require_built_app(app=None, bin_path=None, source_path=None):
 
 
 def build():
+    with open(BENCH_SOURCE, "rb") as f:
+        source_bytes = f.read()
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
     contents = os.path.join(APP, "Contents")
     os.makedirs(os.path.join(contents, "MacOS"), exist_ok=True)
-    subprocess.run(["swiftc", "-O", "-o", BIN, BENCH_SOURCE], check=True)
+    with tempfile.TemporaryDirectory(prefix="cu-bench-build-") as build_tmp:
+        snap_swift = os.path.join(build_tmp, "Bench.swift")
+        with open(snap_swift, "wb") as f:
+            f.write(source_bytes)
+        subprocess.run(["swiftc", "-O", "-o", BIN, snap_swift], check=True)
     with open(os.path.join(contents, "Info.plist"), "w", encoding="utf-8") as f:
         f.write(
             '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>'
@@ -683,7 +690,7 @@ def build():
     shutil.copyfile(src_manifest, MANIFEST)
     stamp = {
         "set_version": BENCH_SET_VERSION,
-        "source_sha256": _file_sha256(BENCH_SOURCE),
+        "source_sha256": source_sha256,
         "binary_sha256": _file_sha256(BIN),
     }
     with open(build_stamp_path(), "w", encoding="utf-8") as f:
@@ -1829,7 +1836,7 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
         if attempt and not ready():
             msg = "the check between runs failed"
             if agent_attempts == 0:
-                report["_launch_abort"] = msg
+                report["_stop_abort"] = msg
             else:
                 report["notes"].append(f"retry stopped: {msg}")
             break
@@ -1841,7 +1848,7 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
                     before_attempt()
                 except Refused as err:
                     if agent_attempts == 0:
-                        report["_launch_abort"] = err.message
+                        report["_stop_abort"] = err.message
                     else:
                         report["notes"].append(f"retry stopped: {err.message}")
                         report["_retry_abort_msg"] = err.message
@@ -1852,7 +1859,7 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
         if launch_failed:
             ended_on_launch_failure = True
             last_launch_error = launch_err or "Harbor Desk failed to launch"
-            note = f"bench launch failed, attempt {attempt + 1}: {last_launch_error}"
+            note = f"launch retried, attempt {attempt + 1}: {last_launch_error}"
             prior_notes.append(note)
             report["notes"] = list(prior_notes)
             report["attempts"] = agent_attempts
@@ -1887,7 +1894,13 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
         report["notes"].append(note)
         if attempt + 1 < attempts:
             sleep_fn(pause)
-    if ended_on_launch_failure and report is not None and "_launch_abort" not in report and "_retry_abort_msg" not in report:
+    if (
+        ended_on_launch_failure
+        and report is not None
+        and "_stop_abort" not in report
+        and "_launch_abort" not in report
+        and "_retry_abort_msg" not in report
+    ):
         if agent_attempts == 0:
             report["_launch_abort"] = last_launch_error
         else:
@@ -2021,6 +2034,19 @@ def _fold_stopped_costs(winner, prior_stopped):
     return merged
 
 
+def _row_dedup_key(row):
+    if row.get("row_id"):
+        return ("id", row["row_id"])
+    return (
+        "sig",
+        row.get("files"),
+        row.get("started"),
+        row.get("wall"),
+        row.get("attempts"),
+        tuple(row.get("notes") or ()),
+    )
+
+
 def latest_runs(rows):
     grouped = collections.defaultdict(list)
     for idx, row in enumerate(rows):
@@ -2045,21 +2071,37 @@ def latest_runs(rows):
                 win_idx, winner = idx, row
 
         win_started = winner.get("started") or 0
+        win_chain = winner.get("chain_id")
+        win_folder = winner.get("folder")
+        same_chain = (
+            (lambda r: r.get("chain_id") == win_chain)
+            if win_chain
+            else (lambda r: r.get("folder") == win_folder)
+        )
         prior = []
-        latest_non_stopped = None
+        latest_complete = None
         for idx, row in entries:
+            if not same_chain(row):
+                continue
             rs = row.get("started") or 0
             if (rs < win_started) or (rs == win_started and idx < win_idx):
                 prior.append((idx, row))
-                if not retry_stopped(row):
+                if not _incomplete_run(row):
                     k = (rs, idx)
-                    if latest_non_stopped is None or k > latest_non_stopped:
-                        latest_non_stopped = k
-        prior_stopped = [
-            row
-            for idx, row in prior
-            if retry_stopped(row) and (latest_non_stopped is None or ((row.get("started") or 0), idx) > latest_non_stopped)
-        ]
+                    if latest_complete is None or k > latest_complete:
+                        latest_complete = k
+        prior_stopped = []
+        seen_stopped = set()
+        for idx, row in prior:
+            if not retry_stopped(row):
+                continue
+            if latest_complete is not None and ((row.get("started") or 0), idx) <= latest_complete:
+                continue
+            dkey = _row_dedup_key(row)
+            if dkey in seen_stopped:
+                continue
+            seen_stopped.add(dkey)
+            prior_stopped.append(row)
         out.append(_fold_stopped_costs(winner, prior_stopped))
     return out
 
@@ -2329,7 +2371,42 @@ def _record_lock(runs_dir, *, exclusive=True):
 
 
 def _has_pending_tx(runs_dir):
-    return any(entry.startswith(".") and entry.endswith(".tx.json") for entry in os.listdir(runs_dir))
+    return any(_valid_tx_journal(runs_dir, entry) is not None for entry in os.listdir(runs_dir))
+
+
+def _write_tx_journal_exclusive(runs_dir, tx_path, payload):
+    tx_tmp = os.path.join(runs_dir, f".{payload['run_id']}.tx.tmp.{uuid.uuid4().hex[:12]}")
+    try:
+        with open(tx_tmp, "w", encoding="utf-8") as tf:
+            json.dump(payload, tf)
+            tf.write("\n")
+            tf.flush()
+            os.fsync(tf.fileno())
+        try:
+            os.link(tx_tmp, tx_path)
+        except FileExistsError:
+            raise Refused(
+                f"unresolved transaction journal {tx_path}; inspect {runs_dir} before recording {payload['run_id']}"
+            )
+        except OSError as e:
+            if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
+                raise
+            try:
+                fd = os.open(tx_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                raise Refused(
+                    f"unresolved transaction journal {tx_path}; inspect {runs_dir} before recording {payload['run_id']}"
+                )
+            with os.fdopen(fd, "w", encoding="utf-8") as ef:
+                json.dump(payload, ef)
+                ef.write("\n")
+                ef.flush()
+                os.fsync(ef.fileno())
+    finally:
+        try:
+            os.unlink(tx_tmp)
+        except OSError:
+            pass
 
 
 def _valid_tx_journal(runs_dir, entry):
@@ -2432,9 +2509,10 @@ def _read_runs_snapshot(runs_dir):
             return
     with _record_lock(runs_dir, exclusive=True):
         try:
-            yield _recover_runs(runs_dir, repair=True)
+            fallback_backups = _recover_runs(runs_dir, repair=True)
         except OSError:
-            yield _recover_runs(runs_dir, repair=False)
+            fallback_backups = _recover_runs(runs_dir, repair=False)
+        yield fallback_backups
 
 
 def _batch_row_version(rows, path_desc):
@@ -2614,25 +2692,29 @@ def record_run(out, data, name=None, note="", force=False):
     os.makedirs(runs_dir, exist_ok=True)
     with _record_lock(runs_dir, exclusive=True):
         _recover_runs(runs_dir, repair=True)
+        tx_path = os.path.join(runs_dir, f".{run_id}.tx.json")
+        if os.path.lexists(tx_path):
+            raise Refused(f"unresolved transaction journal {tx_path}; inspect {runs_dir} before recording {run_id}")
         if os.path.lexists(dest) and not force:
             raise Refused(f"{dest} already exists (pass --force to replace)")
 
-        backup_name = f".{run_id}.backup" if force else None
+        replacing = force and os.path.lexists(dest)
+        backup_name = f".{run_id}.backup" if replacing else None
         backup = os.path.join(runs_dir, backup_name) if backup_name else None
-        if backup and os.path.lexists(dest) and os.path.lexists(backup):
+        if backup and os.path.lexists(backup):
             raise Refused(f"unexpected unjournaled backup directory {backup}; remove or move it before replacing {dest}")
         stage_name = f".{run_id}.stage.{uuid.uuid4().hex[:12]}"
         staged = os.path.join(runs_dir, stage_name)
-        tx_path = os.path.join(runs_dir, f".{run_id}.tx.json")
         backed_up = False
         rollback_ok = True
+        tx_created = False
         try:
-            with open(tx_path, "w", encoding="utf-8") as tf:
-                json.dump(
-                    {"version": 1, "run_id": run_id, "stage": stage_name, "backup": backup_name},
-                    tf,
-                )
-                tf.write("\n")
+            _write_tx_journal_exclusive(
+                runs_dir,
+                tx_path,
+                {"version": 1, "run_id": run_id, "stage": stage_name, "backup": backup_name},
+            )
+            tx_created = True
             os.mkdir(staged, 0o700)
             with open(os.path.join(staged, "results.jsonl"), "w", encoding="utf-8") as f:
                 for row in normalized:
@@ -2653,7 +2735,7 @@ def record_run(out, data, name=None, note="", force=False):
                 json.dump(meta, f, indent=1)
                 f.write("\n")
 
-            if not force:
+            if not replacing:
                 try:
                     os.rename(staged, dest)
                 except OSError as e:
@@ -2662,9 +2744,8 @@ def record_run(out, data, name=None, note="", force=False):
                     raise
                 staged = None
             else:
-                if os.path.lexists(dest):
-                    os.rename(dest, backup)
-                    backed_up = True
+                os.rename(dest, backup)
+                backed_up = True
                 os.rename(staged, dest)
                 staged = None
         except BaseException:
@@ -2678,7 +2759,12 @@ def record_run(out, data, name=None, note="", force=False):
                     shutil.rmtree(staged)
                 except OSError:
                     rollback_ok = False
-            if rollback_ok and not (backed_up and os.path.exists(backup)) and not (staged and os.path.exists(staged)):
+            if (
+                tx_created
+                and rollback_ok
+                and not (backed_up and os.path.exists(backup))
+                and not (staged and os.path.exists(staged))
+            ):
                 try:
                     if os.path.exists(tx_path):
                         os.unlink(tx_path)
@@ -2827,14 +2913,27 @@ def run_batch(
                         if arm.endswith("-cua"):
                             check_cua()
 
+                    active_chain = None
+                    for er in earlier:
+                        if (er.get("setup") or er["arm"], er["task"], er["seed"]) != (label, task, seed):
+                            continue
+                        if _incomplete_run(er):
+                            active_chain = er.get("chain_id") or active_chain
+                        else:
+                            active_chain = None
+                    cell_chain_id = active_chain or uuid.uuid4().hex[:12]
+
                     ready = lambda: not os.path.exists(stop_file) and between_ok(between)
                     report = run_attempts(
                         run_one_attempt,
                         ready=ready,
                         before_attempt=(cell_before_attempt if (app_check is not None or arm.endswith("-cua")) else None),
                     )
+                    stop_abort = report.pop("_stop_abort", None)
                     launch_abort = report.pop("_launch_abort", None)
                     retry_abort_msg = report.pop("_retry_abort_msg", None)
+                    if stop_abort is not None:
+                        raise SystemExit(f"stopped before a retry: {stop_abort}")
                     if launch_abort is not None:
                         raise SystemExit(f"Harbor Desk failed to launch: {launch_abort}")
                     was_retry_stopped = retry_abort_msg is not None or any(
@@ -2849,10 +2948,13 @@ def run_batch(
                         seed=seed,
                         set_version=active_ver,
                         usage_basis="uncached",
+                        chain_id=cell_chain_id,
+                        row_id=uuid.uuid4().hex[:12],
                         **report,
                     )
                     with open(results, "a", encoding="utf-8") as f:
                         f.write(json.dumps(row) + "\n")
+                    earlier.append(row)
                     if retry_abort_msg is not None:
                         raise SystemExit(f"stopped before a retry: {retry_abort_msg}")
                     if was_retry_stopped:
