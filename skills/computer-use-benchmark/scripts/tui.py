@@ -19,6 +19,7 @@ class Screen:
                 del child_env[key]
         child_env["TERM"] = "xterm-256color"
         self.pid = None
+        self.pgid = None
         self.fd = None
         self._closed = False
         self.screen = None
@@ -31,7 +32,7 @@ class Screen:
             except BaseException:
                 pass
             os._exit(127)
-        self.pid, self.fd = pid, fd
+        self.pid, self.pgid, self.fd = pid, pid, fd
         try:
             fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             self.screen = pyte.Screen(cols, rows)
@@ -91,34 +92,48 @@ class Screen:
             self.stream.feed(data)
 
     def _signal(self, sig):
-        if self.pid is None:
+        target = self.pgid if self.pgid is not None else self.pid
+        if target is None:
             return
         try:
-            os.killpg(self.pid, sig)
+            os.killpg(target, sig)
         except ProcessLookupError:
             pass
         except PermissionError:
-            try:
-                os.kill(self.pid, sig)
-            except ProcessLookupError:
-                pass
+            if self.pid is not None:
+                try:
+                    os.kill(self.pid, sig)
+                except ProcessLookupError:
+                    pass
+
+    def _group_alive(self):
+        if self.pgid is None:
+            return False
+        try:
+            os.killpg(self.pgid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return self.pid is not None
 
     def close(self, wait=3.0):
         if self._closed:
             return
         try:
-            if self.pid is not None:
+            if self.pid is not None or self.pgid is not None:
                 self._signal(signal.SIGTERM)
                 deadline = time.time() + wait
                 while time.time() < deadline:
-                    try:
-                        pid, _ = os.waitpid(self.pid, os.WNOHANG)
-                    except ChildProcessError:
-                        self.pid = None
-                        self._drain_nonblocking()
-                        break
-                    if pid == self.pid:
-                        self.pid = None
+                    if self.pid is not None:
+                        try:
+                            pid, _ = os.waitpid(self.pid, os.WNOHANG)
+                        except ChildProcessError:
+                            self.pid = None
+                        else:
+                            if pid == self.pid:
+                                self.pid = None
+                    if not self._group_alive() and self.pid is None:
                         self._drain_nonblocking()
                         break
                     if self.fd is not None and self.stream is not None:
@@ -135,8 +150,9 @@ class Screen:
                                 self.stream.feed(data)
                     else:
                         time.sleep(0.05)
-                if self.pid is not None:
+                if self.pid is not None or self._group_alive():
                     self._signal(signal.SIGKILL)
+                if self.pid is not None:
                     while True:
                         try:
                             os.waitpid(self.pid, 0)
@@ -147,6 +163,7 @@ class Screen:
                             break
                     self.pid = None
         finally:
+            self.pgid = None
             if self.fd is not None:
                 fd, self.fd = self.fd, None
                 try:

@@ -358,7 +358,6 @@ final class BoardView: NSView, TaskView {
 final class ChartView: NSView, TaskView {
     let plan: Plan, log: Log
     var reached = 0
-    var spoiled = false
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 720, height: 420) }
 
@@ -382,12 +381,11 @@ final class ChartView: NSView, TaskView {
     override func mouseDown(with event: NSEvent) { click(convert(event.locationInWindow, from: nil)) }
     func click(_ p: NSPoint) {
         let hit = (plan.dots + plan.decoys).firstIndex { hypot($0.x - p.x, $0.y - p.y) <= 20 }
-        if !spoiled && reached < plan.dots.count && hit == reached {
+        if reached < plan.dots.count && hit == reached {
             reached += 1
             log.event("dot", ["reached": reached])
             if reached == plan.dots.count { log.graded(true) }
         } else {
-            spoiled = true
             log.graded(false, ["hit": hit ?? -1])
         }
         needsDisplay = true
@@ -397,9 +395,7 @@ final class ChartView: NSView, TaskView {
     func runSelftest(completion: @escaping () -> Void) {
         wrong()
         right()
-        let postSuccess = ChartView(plan: plan, log: log)
-        postSuccess.right()
-        postSuccess.click(plan.decoys[0])
+        click(plan.decoys[0])
         let clean = ChartView(plan: plan, log: log)
         clean.right()
         completion()

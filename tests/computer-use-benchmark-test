@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -486,6 +487,40 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
             os.kill(pid, 0)
         scr.close()
 
+    def test_tui_screen_close_kills_surviving_descendant_when_leader_exits_sigterm(self):
+        fake_pyte = types.SimpleNamespace(
+            Screen=lambda cols, rows: types.SimpleNamespace(display=[""] * rows),
+            ByteStream=lambda s: types.SimpleNamespace(feed=lambda data: None),
+        )
+        tui_path = os.path.join(skill_dir, "scripts", "tui.py")
+        tui_loader = importlib.machinery.SourceFileLoader("tui_desc_mod", tui_path)
+        tui_spec = importlib.util.spec_from_loader("tui_desc_mod", tui_loader)
+        tui_mod = importlib.util.module_from_spec(tui_spec)
+        with mock.patch.dict(sys.modules, {"pyte": fake_pyte}):
+            tui_loader.exec_module(tui_mod)
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = os.path.join(d, "helper.pid")
+            cmd = (
+                f"/bin/sh -c 'trap \"\" TERM; echo $$ > {pidfile}; exec sleep 30' "
+                "</dev/null >/dev/null 2>&1 & while [ ! -s "
+                f"{pidfile} ]; do sleep 0.05; done; exec cat"
+            )
+            scr = tui_mod.Screen(["/bin/sh", "-c", cmd], work, rows=10, cols=40)
+            for _ in range(60):
+                if os.path.exists(pidfile) and read(pidfile).strip():
+                    break
+                time.sleep(0.05)
+            helper_pid = int(read(pidfile).strip())
+            scr.close(wait=0.25)
+            for _ in range(40):
+                try:
+                    os.kill(helper_pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(helper_pid, 0)
+
     def test_claude_transcript_encodes_dots_and_underscores_and_survives_partial_line(self):
         with tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as claude_home:
             dotted = os.path.join(fake_home, ".cache", "agent_skills", "cu.bench")
@@ -611,10 +646,12 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                     if self.step <= 4:
                         return "OpenAI Codex"
                     if self.step == 5:
-                        return 'Allow Computer Use to use "Harbor Desk"?'
+                        return 'Allow Computer Use to use "Harbor'
                     if self.step == 6:
-                        return 'Allow Computer Use to use "Harbor Desk"?\n› 1. Allow once\n  2. Allow for this session'
+                        return 'Allow Computer Use to use "Harbor Desk"?'
                     if self.step == 7:
+                        return 'Allow Computer Use to use "Harbor Desk"?\n› 1. Allow once\n  2. Allow for this session'
+                    if self.step == 8:
                         return 'Allow Computer Use to use "Harbor Desk"?\n  1. Allow once\n› 2. Allow for this session'
                     return "DONE\n"
 
@@ -626,6 +663,12 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
 
                 def close(self):
                     self.closed = True
+
+            class OtherAppScreen(PartialApprovalScreen):
+                def show(self):
+                    if self.step <= 4:
+                        return "OpenAI Codex"
+                    return 'Allow Computer Use to use "Safari"?\n› 1. Allow once'
 
             class InterruptScreen(PartialApprovalScreen):
                 def pump(self, seconds):
@@ -642,6 +685,10 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                 self.assertIn("allowed for this session: Harbor Desk", rep["notes"])
                 self.assertNotIn("held: another app", rep["notes"])
                 self.assertEqual(rep["final"], "DONE")
+
+                bench._screen = lambda: OtherAppScreen
+                rep_other = bench.drive_codex_tui("P", 10, out, "c-other")
+                self.assertIn("held: another app", rep_other["notes"])
 
                 created = []
 
@@ -1139,11 +1186,14 @@ class ManifestVerificationTests(unittest.TestCase):
 
             class FakeBench:
                 def __init__(self, task, seed, log, quiet):
+                    self.log = log
                     with open(log, "w", encoding="utf-8") as f:
                         f.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
 
                 def events(self):
-                    return [{"event": "success", "t": 2.0}]
+                    if "-r2" in os.path.basename(self.log):
+                        return [{"event": "shown", "t": 0.1}, {"event": "success", "t": 2.0}]
+                    return [{"event": "shown", "t": 0.1}]
 
                 def close(self):
                     pass
@@ -1176,7 +1226,25 @@ class ManifestVerificationTests(unittest.TestCase):
             def zero_tool_driver(*a, **kw):
                 def go():
                     attempt_n[0] += 1
-                    return dict(started=time.time(), wall=1.0, notes=[], tools={}, usage={}, final=None, images=None)
+                    if attempt_n[0] == 1:
+                        return dict(
+                            started=time.time(),
+                            wall=3.5,
+                            notes=[],
+                            tools={},
+                            usage={"input": 120, "cache_read": 0, "cache_write": 0, "output": 15},
+                            final=None,
+                            images=None,
+                        )
+                    return dict(
+                        started=time.time(),
+                        wall=2.0,
+                        notes=[],
+                        tools={"click": 1},
+                        usage={"input": 80, "cache_read": 0, "cache_write": 0, "output": 10},
+                        final="DONE",
+                        images=None,
+                    )
 
                 return go
 
@@ -1195,6 +1263,32 @@ class ManifestVerificationTests(unittest.TestCase):
                     )
             self.assertEqual(len(checked), 3)
             self.assertEqual(attempt_n[0], 1)
+            with open(os.path.join(out, "results.jsonl"), encoding="utf-8") as f:
+                persisted = [json.loads(l) for l in f if l.strip()]
+            self.assertEqual(len(persisted), 1)
+            self.assertEqual(persisted[0]["wall"], 3.5)
+            self.assertEqual(persisted[0]["usage"]["input"], 120)
+            self.assertTrue(bench.retry_stopped(persisted[0]))
+
+            # Fixing the daemon allows resuming the interrupted cell into -r2 while keeping earlier row.
+            with mock.patch("time.sleep"):
+                bench.run_batch(
+                    out,
+                    [bench.parse_setup("codex-cua")],
+                    ["form"],
+                    [1],
+                    quiet=True,
+                    check_cua=lambda: "ok",
+                    describe_fn=lambda t, s: "desc",
+                    bench_cls=FakeBench,
+                    driver_fn=zero_tool_driver,
+                )
+            self.assertEqual(attempt_n[0], 2)
+            with open(os.path.join(out, "results.jsonl"), encoding="utf-8") as f:
+                after_resume = [json.loads(l) for l in f if l.strip()]
+            self.assertEqual(len(after_resume), 2)
+            self.assertEqual(len(bench.latest_runs(after_resume)), 1)
+            self.assertTrue(bench.latest_runs(after_resume)[0]["passed"])
 
             checked.clear()
             bench.run_batch(
@@ -1534,13 +1628,63 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
             bench.record_run(out1, data, name="run-a")
             self.assertTrue(os.path.exists(os.path.join(data, "runs", "run-a", "usage.jsonl")))
 
-            # Staging failure during --force preserves existing run-a cleanly.
+            # Staging / first-rename / second-rename failures during --force preserve existing run-a cleanly.
             with open(os.path.join(out2, "results.jsonl"), "w", encoding="utf-8") as f:
                 f.write(json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 1, True, 200.0)) + "\n")
-            with mock.patch("os.replace", side_effect=OSError("disk error")):
+            real_rename = os.rename
+            rename_calls = [0]
+
+            def fail_second_rename(src, dst):
+                rename_calls[0] += 1
+                if rename_calls[0] == 2:
+                    raise OSError(errno.EIO, "simulated second rename crash")
+                return real_rename(src, dst)
+
+            with mock.patch("os.rename", side_effect=fail_second_rename):
                 with self.assertRaises(OSError):
                     bench.record_run(out2, data, name="run-a", force=True)
             self.assertTrue(os.path.exists(os.path.join(data, "runs", "run-a", "usage.jsonl")))
+
+            # Crash left only hidden .run-a.backup: both totals and non-force record heal it instead of losing/clobbering it.
+            run_a_dir = os.path.join(data, "runs", "run-a")
+            backup_dir = os.path.join(data, "runs", ".run-a.backup")
+            os.rename(run_a_dir, backup_dir)
+            with self.assertRaises(bench.Refused):
+                bench.record_run(out2, data, name="run-a", force=False)
+            self.assertTrue(os.path.exists(os.path.join(run_a_dir, "usage.jsonl")))
+            self.assertFalse(os.path.exists(backup_dir))
+
+            os.rename(run_a_dir, backup_dir)
+            healed = bench.load_folders([], data)
+            self.assertEqual(len(healed), 1)
+            self.assertTrue(os.path.exists(os.path.join(run_a_dir, "usage.jsonl")))
+
+            # Concurrent/interleaved non-force writers targeting the same name never clobber.
+            conc_out = [tempfile.mkdtemp(dir=tmp_state), tempfile.mkdtemp(dir=tmp_state)]
+            for idx, co in enumerate(conc_out):
+                with open(os.path.join(co, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 1, idx == 0, 150.0 + idx)) + "\n")
+            barrier = threading.Barrier(2)
+            conc_results = []
+
+            def worker(idx):
+                barrier.wait()
+                try:
+                    bench.record_run(conc_out[idx], data, name="run-race")
+                    conc_results.append(("ok", idx))
+                except bench.Refused:
+                    conc_results.append(("refused", idx))
+
+            threads = [threading.Thread(target=worker, args=(i,)) for i in (0, 1)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+            self.assertEqual(sorted(r[0] for r in conc_results), ["ok", "refused"])
+            winner = next(idx for st, idx in conc_results if st == "ok")
+            with open(os.path.join(data, "runs", "run-race", "results.jsonl"), encoding="utf-8") as f:
+                self.assertEqual(json.loads(f.read().strip())["passed"], winner == 0)
+            shutil.rmtree(os.path.join(data, "runs", "run-race"))
 
             # Successful --force without usage.jsonl removes stale usage.jsonl.
             bench.record_run(out2, data, name="run-a", force=True)
@@ -1600,6 +1744,138 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                 env=env,
             )
             self.assertEqual(t_mixed_err.returncode, 64)
+
+            # summarize --set all --json uses the same {"sets": [...]} structure as totals --set all --json.
+            s_all = subprocess.run([sys.executable, "-I", bench_path, "summarize", "--set", "all", "--json"], capture_output=True, text=True, env=env)
+            self.assertEqual(s_all.returncode, 0, s_all.stderr)
+            s_all_data = json.loads(s_all.stdout)
+            self.assertIn("sets", s_all_data)
+            self.assertEqual([item["set"] for item in s_all_data["sets"]], ["1.0", "2.0", "legacy"])
+
+            # Running a batch under Set 1.0 stamps set_version on rows, rejects incompatible resume under 2.0, and preserves 1.0 on record after 2.0 upgrade.
+            with tempfile.TemporaryDirectory() as s1_state, tempfile.TemporaryDirectory() as s1_out:
+                os.makedirs(os.path.join(s1_state, ".git"))
+                s1_data = os.path.join(s1_state, "computer-use-benchmark")
+                os.makedirs(s1_data)
+                with open(os.path.join(s1_data, "set.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": "1.0", "tasks": ["form"], "seeds": 1}, f)
+
+                class MiniBench:
+                    def __init__(self, task, seed, log, quiet):
+                        with open(log, "w", encoding="utf-8") as fh:
+                            fh.write(json.dumps({"event": "success", "t": 1.0}) + "\n")
+
+                    def events(self):
+                        return [{"event": "success", "t": 1.0}]
+
+                    def close(self):
+                        pass
+
+                bench.run_batch(
+                    s1_out,
+                    [bench.parse_setup("codex-native")],
+                    ["form"],
+                    [1],
+                    quiet=True,
+                    set_version=bench.batch_set_version(s1_data),
+                    describe_fn=lambda t, s: "desc",
+                    bench_cls=MiniBench,
+                    driver_fn=lambda *a, **kw: lambda: dict(started=time.time(), wall=1.0, notes=[], tools={"js": 1}, usage={}, final="DONE", images=None),
+                )
+                with open(os.path.join(s1_out, "results.jsonl"), encoding="utf-8") as f:
+                    self.assertEqual(json.loads(f.read().strip())["set_version"], "1.0")
+                with open(os.path.join(s1_data, "set.json"), "w", encoding="utf-8") as f:
+                    json.dump({"version": "2.0", "tasks": ["form"], "seeds": 1}, f)
+                with self.assertRaises(bench.Refused):
+                    bench.batch_set_version(s1_data)
+                with self.assertRaises(bench.Refused):
+                    bench.run_batch(s1_out, [bench.parse_setup("codex-native")], ["form"], [2], quiet=True, set_version="2.0", bench_cls=MiniBench)
+                bench.record_run(s1_out, s1_data, name="old-s1-batch")
+                with open(os.path.join(s1_data, "runs", "old-s1-batch", "meta.json"), encoding="utf-8") as f:
+                    self.assertEqual(json.load(f)["set_version"], "1.0")
+
+            # Missing meta.json defaults scratch folders cleanly without set.json while recorded runs keep legacy consistently.
+            with tempfile.TemporaryDirectory() as no_set_state, tempfile.TemporaryDirectory() as scratch_out:
+                os.makedirs(os.path.join(no_set_state, ".git"))
+                ns_data = os.path.join(no_set_state, "computer-use-benchmark")
+                os.makedirs(os.path.join(ns_data, "runs", "rec-v1"))
+                os.makedirs(os.path.join(ns_data, "runs", "old-leg"))
+                base_row = json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 1, True, 10.0)) + "\n"
+                with open(os.path.join(scratch_out, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(base_row)
+                with open(os.path.join(ns_data, "runs", "rec-v1", "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(base_row)
+                with open(os.path.join(ns_data, "runs", "rec-v1", "meta.json"), "w", encoding="utf-8") as f:
+                    json.dump({"id": "rec-v1", "set_version": "1.0"}, f)
+                with open(os.path.join(ns_data, "runs", "old-leg", "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(base_row)
+                ns_env = dict(os.environ, AGENT_SKILLS_STATE=no_set_state)
+                t_scratch = subprocess.run([sys.executable, "-I", bench_path, "totals", scratch_out, "--json"], capture_output=True, text=True, env=ns_env)
+                self.assertEqual(t_scratch.returncode, 0, t_scratch.stderr)
+                self.assertEqual(json.loads(t_scratch.stdout)["set"], "1.0")
+                t_both = subprocess.run(
+                    [sys.executable, "-I", bench_path, "totals", os.path.join(ns_data, "runs", "rec-v1"), scratch_out, "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=ns_env,
+                )
+                self.assertEqual(t_both.returncode, 0, t_both.stderr)
+                self.assertEqual(json.loads(t_both.stdout)["set"], "1.0")
+                t_leg_explicit = subprocess.run(
+                    [sys.executable, "-I", bench_path, "totals", os.path.join(ns_data, "runs", "old-leg"), "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=ns_env,
+                )
+                self.assertEqual(t_leg_explicit.returncode, 0, t_leg_explicit.stderr)
+                self.assertEqual(json.loads(t_leg_explicit.stdout)["set"], "legacy")
+
+            # BenchLaunchError triggers retry rather than aborting batch.
+            with tempfile.TemporaryDirectory() as launch_out:
+                launch_calls = [0]
+
+                class FlakyBench:
+                    def __init__(self, task, seed, log, quiet):
+                        launch_calls[0] += 1
+                        if launch_calls[0] == 1:
+                            raise bench.BenchLaunchError("slow launch")
+                        with open(log, "w", encoding="utf-8") as fh:
+                            fh.write(json.dumps({"event": "success", "t": 1.0}) + "\n")
+
+                    def events(self):
+                        return [{"event": "success", "t": 1.0}]
+
+                    def close(self):
+                        pass
+
+                with mock.patch("time.sleep"):
+                    bench.run_batch(
+                        launch_out,
+                        [bench.parse_setup("codex-native")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=FlakyBench,
+                        driver_fn=lambda *a, **kw: lambda: dict(started=time.time(), wall=1.0, notes=[], tools={"js": 1}, usage={}, final="DONE", images=None),
+                    )
+                self.assertEqual(launch_calls[0], 2)
+
+            # PermissionError securing socket directory exits 64 cleanly.
+            saved_sock = bench.SOCKET
+            saved_manifest = bench.MANIFEST
+            try:
+                bench.SOCKET = "/tmp/cua-denied.sock"
+                bench.MANIFEST = os.path.join(skill_dir, "assets", "manifest.yaml")
+                with (
+                    mock.patch.object(bench, "_require_driver"),
+                    mock.patch("os.chmod", side_effect=PermissionError("operation not permitted")),
+                ):
+                    with self.assertRaises(bench.Refused):
+                        bench.start_cua()
+            finally:
+                bench.SOCKET = saved_sock
+                bench.MANIFEST = saved_manifest
 
             for bad_argv in (
                 ["selftest", "--seed", "abc"],

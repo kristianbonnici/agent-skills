@@ -13,7 +13,7 @@
       "extra_deny_servers": ["private-mcp"]
     }
     ```
-  - `runs/<run-id>/`: recorded compact results (`results.jsonl`, optional `usage.jsonl`, `meta.json`). Large `.events.jsonl`, `.screen.txt`, and harness logs stay in scratch and are never committed here.
+  - `runs/<run-id>/`: recorded compact results (`results.jsonl`, optional `usage.jsonl`, `meta.json`). `bench run` stamps `set_version` on every batch row and `bench record` preserves that version cleanly with crash-recoverable no-clobber publication; recorded folders under `<data>/runs/` lacking both `meta.json` and row `set_version` are labeled `legacy`. Large `.events.jsonl`, `.screen.txt`, and harness logs stay in scratch and are never committed here.
   - `results.md`: published per-version tables (`bench totals`), plan-window cost deltas, and failure notes.
 - **Cache folder (`<cache>`):** `${XDG_CACHE_HOME:-~/.cache}/agent-skills/computer-use-benchmark/` (override: `COMPUTER_USE_BENCHMARK_CACHE`). Holds compiled `Harbor Desk.app`, copied `manifest.yaml`, `agy-ws/`, `.agy-staging/`, `opencode-config/`, and `cua-serve.log`.
 - **Socket:** `/tmp/cu-bench-<uid>/cua.sock` (override: `COMPUTER_USE_BENCHMARK_SOCKET`).
@@ -28,7 +28,7 @@ Each seed (`1..N`) deterministically generates targets for all eight tasks via a
 | `menu` | Native main-menu submenu (`Format > Emphasis > <style>`) | Target style chosen |
 | `list` | Scrolling a 5,000-row `NSTableView` and clicking Open | Exact `Stop NNNN` row selected when Open pressed |
 | `drag` | Drawn `NSView` board with zero accessibility children | Target card moved to target column; all other cards stay in `To do` |
-| `canvas` | Drawn `NSView` with blue numbered dots (1–3) and grey decoy dots (4–9) | Dots 1, 2, 3 clicked in order with zero off-target or out-of-order clicks |
+| `canvas` | Drawn `NSView` with blue numbered dots (1–3) and grey decoy dots (4–9) | Dots 1, 2, 3 clicked in order with no wrong click after dot 3 (earlier misses are counted in `wrong`) |
 | `slider` | Setting an `NSSlider` to an exact integer and clicking Apply | Rounded slider value matches target on Apply |
 | `web` | `WKWebView` HTML form (radios, `<select>`, checkbox, input, submit) | Exact form fields posted through `WKScriptMessageHandler` |
 | `code` | Visual OCR of drawn monospaced 6-char code, typing, modal `NSAlert` sheet | Exact code submitted on Confirm sheet `Send` |

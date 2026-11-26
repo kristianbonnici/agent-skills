@@ -16,7 +16,10 @@ Usage:
 Exit 0: done; 64: a mistake in the command, config or manifest; 1: a run stopped or selftest failed.
 """
 import collections
+import contextlib
 from datetime import datetime, timezone
+import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -52,8 +55,13 @@ class Refused(SystemExit):
         super().__init__(message)
 
 
+class BenchLaunchError(RuntimeError):
+    """Harbor Desk failed to write its initial event log or expose its PID in time."""
+
+
 STARTUP_CWD = os.getcwd()
 BUNDLE_ID = "local.computer-use-benchmark.harbor-desk"
+BENCH_SET_VERSION = "1.0"
 TASKS = ["form", "menu", "list", "drag", "canvas", "slider", "web", "code"]
 MODEL = "claude-sonnet-5-5"
 OPENCODE_MODEL = os.environ.get("CU_OPENCODE_MODEL", "opencode/deepseek-v4.1-flash-free")
@@ -661,7 +669,7 @@ def selftest(tasks=None, seed=1):
             grade_names = [g["event"] for g in grades]
             ok = len(grades) >= 2 and grades[0]["event"] == "wrong" and grades[-1]["event"] == "success"
             if ok and t == "canvas":
-                ok = grade_names == ["wrong", "wrong", "wrong", "wrong", "success", "wrong", "success"]
+                ok = grade_names == ["wrong", "success", "wrong", "success"]
             if not ok:
                 print(f"FAIL {t}: unexpected selftest events {grades}", file=sys.stderr)
                 return 1
@@ -754,11 +762,20 @@ def start_cua():
     if not argv:
         raise Refused("no Cua Driver: neither CuaDriver.app nor Cua Spaces' helper")
     sock_dir = os.path.dirname(SOCKET)
-    os.makedirs(sock_dir, mode=0o700, exist_ok=True)
-    os.chmod(sock_dir, 0o700)
+    try:
+        os.makedirs(sock_dir, mode=0o700, exist_ok=True)
+        os.chmod(sock_dir, 0o700)
+    except OSError as e:
+        raise Refused(
+            f"cannot secure socket directory {sock_dir} ({e}); use a private subdirectory for COMPUTER_USE_BENCHMARK_SOCKET"
+        )
     os.makedirs(HOME, exist_ok=True)
     stop_cua()
-    if "is running" in run_quiet(DRIVER, "status", "--socket", SOCKET).stdout:
+    for _ in range(25):
+        if "is running" not in run_quiet(DRIVER, "status", "--socket", SOCKET).stdout:
+            break
+        time.sleep(0.2)
+    else:
         raise SystemExit(f"existing Cua Driver daemon on {SOCKET} did not stop")
     with open(os.path.join(HOME, "cua-serve.log"), "a", encoding="utf-8") as log:
         p = subprocess.Popen(
@@ -816,14 +833,14 @@ class Bench:
         if quiet:
             argv.append("--quiet")
         subprocess.run(argv, check=True)
-        for _ in range(50):
+        for _ in range(200):
             if os.path.exists(self.log) and os.path.getsize(self.log):
                 break
             time.sleep(0.1)
         self.pid = next((int(p) for p in run_quiet("pgrep", "-f", re.escape(self.log)).stdout.split()), None)
         if not (os.path.exists(self.log) and os.path.getsize(self.log)) or self.pid is None:
             self.close()
-            raise SystemExit(f"Harbor Desk failed to launch or write {self.log}")
+            raise BenchLaunchError(f"Harbor Desk failed to launch or write {self.log}")
 
     def events(self):
         try:
@@ -1419,37 +1436,49 @@ def drive_codex_tui(prompt, limit, out, name, model=CODEX_MODEL, effort=None):
                     screen = tui.show()
                     if not frames or frames[-1] != screen:
                         frames.append(screen)
-                    if re.search(r'Allow Computer Use to use "Harbor Desk"\?', screen):
-                        if not re.search(r"Allow for this session", screen):
+                    if re.search(r"Allow Computer Use to use", screen):
+                        if not re.search(r'Allow Computer Use to use "[^"]+"\?', screen):
                             for _ in range(6):
                                 if not tui.pump(0.5):
                                     pumped = False
                                     break
                                 screen = tui.show()
-                                if re.search(r"Allow for this session", screen):
+                                if re.search(r'Allow Computer Use to use "[^"]+"\?', screen):
                                     break
-                        if re.search(r"Allow for this session", screen):
-                            try:
-                                for _ in range(5):
-                                    if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
-                                        break
-                                    tui.send("\x1b[B")
+                        if re.search(r'Allow Computer Use to use "Harbor Desk"\?', screen):
+                            if not re.search(r"Allow for this session", screen):
+                                for _ in range(6):
                                     if not tui.pump(0.5):
                                         pumped = False
                                         break
-                                if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
-                                    tui.send("\r")
-                                    if not tui.pump(1):
-                                        pumped = False
-                                    notes.append("allowed for this session: Harbor Desk")
-                            except OSError:
-                                pumped = False
-                        else:
-                            notes.append("approval held: Harbor Desk")
+                                    screen = tui.show()
+                                    if re.search(r"Allow for this session", screen):
+                                        break
+                            if re.search(r"Allow for this session", screen):
+                                try:
+                                    for _ in range(5):
+                                        if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
+                                            break
+                                        tui.send("\x1b[B")
+                                        if not tui.pump(0.5):
+                                            pumped = False
+                                            break
+                                    if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
+                                        tui.send("\r")
+                                        if not tui.pump(1):
+                                            pumped = False
+                                        notes.append("allowed for this session: Harbor Desk")
+                                except OSError:
+                                    pumped = False
+                            else:
+                                notes.append("approval held: Harbor Desk")
+                                break
+                        elif re.search(r'Allow Computer Use to use "[^"]+"\?', screen):
+                            notes.append("held: another app")
                             break
-                    elif re.search(r"Allow Computer Use to use", screen):
-                        notes.append("held: another app")
-                        break
+                        else:
+                            notes.append("approval held: incomplete prompt")
+                            break
                     if re.search(r"^\W*(DONE|FAILED)\s*$", screen, re.M):
                         break
                     if not pumped:
@@ -1730,7 +1759,8 @@ def grade(events, delay=0):
     )
 
 
-def run_attempts(drive, attempts=3, pause=10, sleep=time.sleep, ready=lambda: True):
+def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, before_attempt=None):
+    sleep_fn = time.sleep if sleep is None else sleep
     report = None
     total_wall = 0.0
     has_wall = False
@@ -1741,6 +1771,16 @@ def run_attempts(drive, attempts=3, pause=10, sleep=time.sleep, ready=lambda: Tr
         if attempt and not ready():
             report["notes"].append("retry stopped: the check between runs failed")
             break
+        if before_attempt is not None:
+            if attempt == 0:
+                before_attempt()
+            else:
+                try:
+                    before_attempt()
+                except Refused as err:
+                    report["notes"].append(f"retry stopped: {err.message}")
+                    report["_retry_abort"] = err
+                    break
         report = drive()
         if report.get("wall") is not None:
             total_wall += report["wall"]
@@ -1763,7 +1803,7 @@ def run_attempts(drive, attempts=3, pause=10, sleep=time.sleep, ready=lambda: Tr
         prior_notes.append(note)
         report["notes"].append(note)
         if attempt + 1 < attempts:
-            sleep(pause)
+            sleep_fn(pause)
     return report
 
 
@@ -1863,6 +1903,14 @@ def usage_limited(row):
     return not row.get("passed") and any(re.search(r"\b(claude|codex|agy) limit\b", n) for n in row.get("notes", []))
 
 
+def retry_stopped(row):
+    return not row.get("passed") and any(n.startswith("retry stopped") for n in row.get("notes", []))
+
+
+def _incomplete_run(row):
+    return usage_limited(row) or retry_stopped(row)
+
+
 def latest_runs(rows):
     latest = {}
     for row in rows:
@@ -1878,8 +1926,8 @@ def latest_runs(rows):
         prev = latest.get(key)
         if (
             prev is None
-            or (usage_limited(prev) and not usage_limited(row))
-            or (usage_limited(prev) == usage_limited(row) and (row.get("started") or 0) >= (prev.get("started") or 0))
+            or (_incomplete_run(prev) and not _incomplete_run(row))
+            or (_incomplete_run(prev) == _incomplete_run(row) and (row.get("started") or 0) >= (prev.get("started") or 0))
         ):
             latest[key] = row
     return list(latest.values())
@@ -1947,6 +1995,7 @@ def failure_kind(row):
     if any(
         n.startswith(
             (
+                "bench launch failed",
                 "claude exited",
                 "codex exited",
                 "codex turn failed",
@@ -2109,21 +2158,131 @@ def read_set(data):
     return found
 
 
+def batch_set_version(data=None):
+    """Return the active set version verified against Bench.swift's Set major."""
+    set_info = read_set(data) if data else None
+    if set_info is None:
+        return BENCH_SET_VERSION
+    ver = set_info["version"]
+    if major_version(ver) != major_version(BENCH_SET_VERSION):
+        raise Refused(
+            f"set.json is Set {ver}, but Bench.swift implements Set {BENCH_SET_VERSION}; update BENCH_SET_VERSION or set.json"
+        )
+    return ver
+
+
+def _is_under(path, parent):
+    try:
+        rp_path = os.path.realpath(path)
+        rp_parent = os.path.realpath(parent)
+        return rp_path != rp_parent and os.path.commonpath([rp_path, rp_parent]) == rp_parent
+    except ValueError:
+        return False
+
+
+@contextlib.contextmanager
+def _record_lock(runs_dir):
+    os.makedirs(runs_dir, exist_ok=True)
+    digest = hashlib.sha256(os.path.realpath(runs_dir).encode("utf-8")).hexdigest()[:16]
+    lock_path = os.path.join(tempfile.gettempdir(), f"cu-bench-record-{os.getuid()}-{digest}.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _recover_runs(runs_dir, *, repair=True):
+    """Recover or surface interrupted replacements (.id.backup) and stage dirs in runs_dir."""
+    if not os.path.isdir(runs_dir):
+        return []
+    fallback_backups = []
+    for entry in sorted(os.listdir(runs_dir)):
+        if not entry.startswith("."):
+            continue
+        entry_path = os.path.join(runs_dir, entry)
+        if not os.path.isdir(entry_path) or os.path.islink(entry_path):
+            continue
+        if entry.endswith(".backup"):
+            run_id = entry[1 : -len(".backup")]
+            if not plain_name(run_id):
+                continue
+            dest = os.path.join(runs_dir, run_id)
+            if not os.path.lexists(dest):
+                if repair:
+                    try:
+                        os.rename(entry_path, dest)
+                        print(f"bench: restored interrupted batch {run_id} from backup", file=sys.stderr)
+                        continue
+                    except OSError as e:
+                        print(
+                            f"bench: interrupted replacement backup for {run_id} at {entry_path} ({e})",
+                            file=sys.stderr,
+                        )
+                else:
+                    print(f"bench: found interrupted replacement backup for {run_id} at {entry_path}", file=sys.stderr)
+                if os.path.isfile(os.path.join(entry_path, "results.jsonl")):
+                    fallback_backups.append((run_id, entry_path))
+            else:
+                if repair:
+                    shutil.rmtree(entry_path, ignore_errors=True)
+                else:
+                    print(f"bench: leftover backup directory {entry_path}", file=sys.stderr)
+        elif ".stage." in entry:
+            print(
+                f"bench: {'removing' if repair else 'found'} incomplete staging directory {entry_path}",
+                file=sys.stderr,
+            )
+            if repair:
+                shutil.rmtree(entry_path, ignore_errors=True)
+    return fallback_backups
+
+
+def _batch_row_version(rows, path_desc):
+    versions = {r.get("set_version") for r in rows if isinstance(r.get("set_version"), str) and r.get("set_version")}
+    if not versions:
+        return None
+    majors = {major_version(v) for v in versions}
+    if len(majors) > 1:
+        raise Refused(f"{path_desc} mixes incompatible set versions ({', '.join(sorted(versions))})")
+    return max(versions, key=_version_tuple)
+
+
 def load_folders(folders, data):
     explicit = bool(folders)
+    runs_dir = os.path.join(data, "runs")
+    fallback_backups = []
+    if os.path.isdir(runs_dir):
+        if not explicit:
+            try:
+                with _record_lock(runs_dir):
+                    fallback_backups = _recover_runs(runs_dir, repair=True)
+            except OSError:
+                fallback_backups = _recover_runs(runs_dir, repair=False)
+        else:
+            try:
+                fallback_backups = _recover_runs(runs_dir, repair=True)
+            except OSError:
+                fallback_backups = _recover_runs(runs_dir, repair=False)
     if not folders:
-        runs_dir = os.path.join(data, "runs")
         if not os.path.isdir(runs_dir):
             raise Refused(f"no recorded runs in {runs_dir}")
-        folders = [
-            os.path.join(runs_dir, name)
+        present = {
+            name: os.path.join(runs_dir, name)
             for name in sorted(os.listdir(runs_dir))
             if not name.startswith(".") and os.path.isfile(os.path.join(runs_dir, name, "results.jsonl"))
-        ]
+        }
+        for run_id, backup_path in fallback_backups:
+            present.setdefault(run_id, backup_path)
+        folders = [present[k] for k in sorted(present)]
         if not folders:
             raise Refused(f"no results.jsonl under {runs_dir}")
     set_info = read_set(data)
-    default_explicit_ver = set_info["version"] if set_info else None
+    non_recorded_default = set_info["version"] if set_info else BENCH_SET_VERSION
     rows = []
     for folder_idx, out in enumerate(folders):
         out_abs = os.path.abspath(out)
@@ -2131,7 +2290,7 @@ def load_folders(folders, data):
         if not os.path.isfile(res_path):
             raise Refused(f"missing {res_path}")
         meta_path = os.path.join(out_abs, "meta.json")
-        batch_ver = None
+        meta_ver = None
         if os.path.isfile(meta_path):
             try:
                 with open(meta_path, encoding="utf-8") as mf:
@@ -2142,22 +2301,28 @@ def load_folders(folders, data):
                 raise Refused(f"{meta_path} must be a JSON object")
             sv = meta.get("set_version")
             if isinstance(sv, str) and sv:
-                batch_ver = sv
-        if batch_ver is None:
-            batch_ver = default_explicit_ver if (explicit and default_explicit_ver) else "legacy"
-        batch_major = major_version(batch_ver)
+                meta_ver = sv
         with open(res_path, encoding="utf-8") as f:
-            rows += [
-                dict(json.loads(l), folder=folder_idx, set_version=batch_ver, set_major=batch_major)
-                for l in f
-                if l.strip()
-            ]
+            loaded_rows = [json.loads(l) for l in f if l.strip()]
+        row_ver = _batch_row_version(loaded_rows, res_path)
+        if meta_ver and row_ver and major_version(meta_ver) != major_version(row_ver):
+            raise Refused(f"{out_abs}: meta.json set_version ({meta_ver}) disagrees with results ({row_ver})")
+        if meta_ver is not None:
+            batch_ver = meta_ver
+        elif row_ver is not None:
+            batch_ver = row_ver
+        elif _is_under(out_abs, runs_dir):
+            batch_ver = "legacy"
+        else:
+            batch_ver = non_recorded_default
+        batch_major = major_version(batch_ver)
+        rows.extend(dict(r, folder=folder_idx, set_version=batch_ver, set_major=batch_major) for r in loaded_rows)
     return rows
 
 
 def partition_by_set(rows, set_info=None, selected_set=None, explicit=False):
     """Split loaded rows by set MAJOR so incompatible set versions are never mixed."""
-    default_ver = (set_info or {}).get("version") or "1.0"
+    default_ver = (set_info or {}).get("version") or BENCH_SET_VERSION
     groups = collections.defaultdict(list)
     for row in rows:
         groups[row.get("set_major") or major_version(default_ver)].append(row)
@@ -2214,10 +2379,6 @@ def record_run(out, data, name=None, note="", force=False):
         raise Refused(f"bad run name {run_id!r}: use letters, digits, '.', '_' or '-'")
     runs_dir = os.path.join(data, "runs")
     dest = os.path.join(runs_dir, run_id)
-    if os.path.exists(dest) and not force:
-        raise Refused(f"{dest} already exists (pass --force to replace)")
-    set_info = read_set(data)
-    set_version = set_info["version"] if set_info else "1.0"
 
     normalized = []
     with open(res_src, encoding="utf-8") as f:
@@ -2234,46 +2395,76 @@ def record_run(out, data, name=None, note="", force=False):
             row["usage_basis"] = "uncached"
             normalized.append(row)
 
+    row_ver = _batch_row_version(normalized, res_src)
+    meta_src = os.path.join(out, "meta.json")
+    src_meta_ver = None
+    if os.path.isfile(meta_src):
+        try:
+            with open(meta_src, encoding="utf-8") as mf:
+                src_meta = json.load(mf)
+            if isinstance(src_meta, dict) and isinstance(src_meta.get("set_version"), str) and src_meta["set_version"]:
+                src_meta_ver = src_meta["set_version"]
+        except (OSError, ValueError) as e:
+            raise Refused(f"{meta_src} isn't valid JSON ({e})")
+    set_info = read_set(data)
+    set_version = row_ver or src_meta_ver or (set_info["version"] if set_info else BENCH_SET_VERSION)
+
     os.makedirs(runs_dir, exist_ok=True)
-    staged = tempfile.mkdtemp(dir=runs_dir, prefix=f".{run_id}.stage.")
-    backup = None
-    try:
-        with open(os.path.join(staged, "results.jsonl"), "w", encoding="utf-8") as f:
-            for row in normalized:
-                f.write(json.dumps(row) + "\n")
+    with _record_lock(runs_dir):
+        _recover_runs(runs_dir, repair=True)
+        if os.path.lexists(dest) and not force:
+            raise Refused(f"{dest} already exists (pass --force to replace)")
 
-        usage_src = os.path.join(out, "usage.jsonl")
-        if os.path.isfile(usage_src):
-            shutil.copyfile(usage_src, os.path.join(staged, "usage.jsonl"))
+        staged = tempfile.mkdtemp(dir=runs_dir, prefix=f".{run_id}.stage.")
+        backup = os.path.join(runs_dir, f".{run_id}.backup")
+        backed_up = False
+        try:
+            with open(os.path.join(staged, "results.jsonl"), "w", encoding="utf-8") as f:
+                for row in normalized:
+                    f.write(json.dumps(row) + "\n")
 
-        meta = {
-            "id": run_id,
-            "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "set_version": set_version,
-            "rows": len(normalized),
-            "note": note,
-        }
-        with open(os.path.join(staged, "meta.json"), "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=1)
-            f.write("\n")
+            usage_src = os.path.join(out, "usage.jsonl")
+            if os.path.isfile(usage_src):
+                shutil.copyfile(usage_src, os.path.join(staged, "usage.jsonl"))
 
-        if os.path.lexists(dest):
-            backup = tempfile.mkdtemp(dir=runs_dir, prefix=f".{run_id}.old.")
-            os.rmdir(backup)
-            os.replace(dest, backup)
-        os.replace(staged, dest)
-        staged = None
-    except BaseException:
-        if backup and os.path.exists(backup) and not os.path.lexists(dest):
-            try:
-                os.replace(backup, dest)
-            except OSError:
-                pass
-        if staged and os.path.exists(staged):
-            shutil.rmtree(staged, ignore_errors=True)
-        raise
-    if backup and os.path.exists(backup):
-        shutil.rmtree(backup, ignore_errors=True)
+            meta = {
+                "id": run_id,
+                "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "set_version": set_version,
+                "rows": len(normalized),
+                "note": note,
+            }
+            with open(os.path.join(staged, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=1)
+                f.write("\n")
+
+            if not force:
+                try:
+                    os.rename(staged, dest)
+                except OSError as e:
+                    if e.errno in (errno.EEXIST, errno.ENOTEMPTY):
+                        raise Refused(f"{dest} already exists (pass --force to replace)")
+                    raise
+                staged = None
+            else:
+                if os.path.lexists(dest):
+                    if os.path.lexists(backup):
+                        shutil.rmtree(backup, ignore_errors=True)
+                    os.rename(dest, backup)
+                    backed_up = True
+                os.rename(staged, dest)
+                staged = None
+        except BaseException:
+            if backed_up and os.path.exists(backup) and not os.path.lexists(dest):
+                try:
+                    os.rename(backup, dest)
+                except OSError:
+                    pass
+            if staged and os.path.exists(staged):
+                shutil.rmtree(staged, ignore_errors=True)
+            raise
+        if backed_up and os.path.exists(backup):
+            shutil.rmtree(backup, ignore_errors=True)
     print(f"recorded {len(normalized)} rows to {dest}")
     return 0
 
@@ -2290,6 +2481,7 @@ def run_batch(
     between=None,
     usage=None,
     overlays=None,
+    set_version=None,
     describe_fn=None,
     bench_cls=Bench,
     driver_fn=driver,
@@ -2297,6 +2489,7 @@ def run_batch(
     idle_fn=idle_seconds,
 ):
     out = os.path.abspath(out)
+    active_ver = set_version or BENCH_SET_VERSION
     has_cua = any(arm.endswith("-cua") for arm, *_ in setups)
     if has_cua:
         check_cua()
@@ -2310,10 +2503,19 @@ def run_batch(
             earlier = [json.loads(l) for l in f if l.strip()]
     except OSError:
         earlier = []
+    earlier_ver = _batch_row_version(earlier, results)
+    if earlier_ver and major_version(earlier_ver) != major_version(active_ver):
+        raise Refused(
+            f"{results} holds Set {earlier_ver} rows, incompatible with Set {active_ver}: use another output folder"
+        )
     clash = label_clash(setups, earlier)
     if clash:
         raise Refused(clash)
-    recorded = {(r.get("setup") or r["arm"], r["task"], r["seed"]) for r in earlier if not usage_limited(r)}
+    recorded = {
+        (r.get("setup") or r["arm"], r["task"], r["seed"])
+        for r in earlier
+        if not usage_limited(r) and not retry_stopped(r)
+    }
     usage_snapshot(usage, providers, out, "before")
     stop_file = os.path.join(HOME, "STOP")
     try:
@@ -2349,11 +2551,26 @@ def run_batch(
                     def run_one_attempt():
                         attempt_counter[0] += 1
                         idx = attempt_counter[0]
-                        if arm.endswith("-cua"):
-                            check_cua()
                         attempt_name = name if idx == 1 else f"{name}-a{idx}"
                         opened = time.time()
-                        bench_app = bench_cls(task, seed, os.path.join(out, attempt_name + ".events.jsonl"), quiet)
+                        try:
+                            bench_app = bench_cls(task, seed, os.path.join(out, attempt_name + ".events.jsonl"), quiet)
+                        except BenchLaunchError as err:
+                            return dict(
+                                passed=False,
+                                wrong=0,
+                                seconds=None,
+                                pointer=0,
+                                front=0,
+                                files=attempt_name,
+                                started=opened,
+                                wall=round(time.time() - opened, 3),
+                                tools={},
+                                usage={},
+                                final=None,
+                                images=None,
+                                notes=[f"bench launch failed: {err}"],
+                            )
                         try:
                             rep = driver_fn(arm, model, effort, prompt, limit, out, attempt_name, overlays=overlays)()
                         finally:
@@ -2362,9 +2579,15 @@ def run_batch(
                         return dict(**graded, files=attempt_name, **rep)
 
                     ready = lambda: not os.path.exists(stop_file) and between_ok(between)
-                    report = run_attempts(run_one_attempt, ready=ready)
-                    if any(n.startswith("retry stopped") for n in report["notes"]):
-                        raise SystemExit(f"stopped before a retry: {stop_file}, or the check between runs failed")
+                    report = run_attempts(
+                        run_one_attempt,
+                        ready=ready,
+                        before_attempt=(check_cua if arm.endswith("-cua") else None),
+                    )
+                    retry_abort = report.pop("_retry_abort", None)
+                    was_retry_stopped = retry_abort is not None or any(
+                        n.startswith("retry stopped") for n in report["notes"]
+                    )
                     row = dict(
                         arm=arm,
                         setup=label,
@@ -2372,11 +2595,16 @@ def run_batch(
                         effort=effort,
                         task=task,
                         seed=seed,
+                        set_version=active_ver,
                         usage_basis="uncached",
                         **report,
                     )
                     with open(results, "a", encoding="utf-8") as f:
                         f.write(json.dumps(row) + "\n")
+                    if retry_abort is not None:
+                        raise retry_abort
+                    if was_retry_stopped:
+                        raise SystemExit(f"stopped before a retry: {stop_file}, or the check between runs failed")
                     recorded.add((label, task, seed))
                     print(
                         json.dumps(
@@ -2489,7 +2717,11 @@ def main(argv=None):
             parts = partition_by_set(rows, set_info, selected_set=selected_set, explicit=bool(rest))
             if as_json:
                 if selected_set == "all" or len(parts) > 1:
-                    json.dump({ver: summarize(prows) for ver, prows, _ in parts}, sys.stdout, indent=1)
+                    json.dump(
+                        {"sets": [{"set": ver, "rows": summarize(prows)} for ver, prows, _ in parts]},
+                        sys.stdout,
+                        indent=1,
+                    )
                 else:
                     json.dump(summarize(parts[0][1]), sys.stdout, indent=1)
                 print()
@@ -2574,6 +2806,7 @@ def main(argv=None):
                 between=between,
                 usage=usage,
                 overlays=allowed_overlays(extra_overlays, data=data),
+                set_version=batch_set_version(data),
             )
         print(__doc__, file=sys.stderr)
         return 64
