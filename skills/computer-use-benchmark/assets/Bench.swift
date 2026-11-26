@@ -83,8 +83,12 @@ final class Log {
     let handle: FileHandle
     let start = Date()
     init(_ path: String) {
-        FileManager.default.createFile(atPath: path, contents: nil)
-        handle = FileHandle(forWritingAtPath: path)!
+        guard FileManager.default.createFile(atPath: path, contents: nil),
+              let h = FileHandle(forWritingAtPath: path) else {
+            fputs("Harbor Desk: cannot open log file \(path)\n", stderr)
+            exit(2)
+        }
+        handle = h
     }
     func event(_ name: String, _ fields: [String: Any] = [:]) {
         var line = fields
@@ -129,6 +133,15 @@ func button(_ title: String, _ action: @escaping () -> Void) -> NSButton {
 protocol TaskView: NSView {
     func wrong()
     func right()
+    func runSelftest(completion: @escaping () -> Void)
+}
+
+extension TaskView {
+    func runSelftest(completion: @escaping () -> Void) {
+        wrong()
+        right()
+        completion()
+    }
 }
 
 final class FormView: NSStackView, TaskView {
@@ -345,6 +358,7 @@ final class BoardView: NSView, TaskView {
 final class ChartView: NSView, TaskView {
     let plan: Plan, log: Log
     var reached = 0
+    var spoiled = false
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 720, height: 420) }
 
@@ -368,17 +382,28 @@ final class ChartView: NSView, TaskView {
     override func mouseDown(with event: NSEvent) { click(convert(event.locationInWindow, from: nil)) }
     func click(_ p: NSPoint) {
         let hit = (plan.dots + plan.decoys).firstIndex { hypot($0.x - p.x, $0.y - p.y) <= 20 }
-        if hit == reached {
+        if !spoiled && reached < plan.dots.count && hit == reached {
             reached += 1
             log.event("dot", ["reached": reached])
-            if reached == 3 { log.graded(true) }
+            if reached == plan.dots.count { log.graded(true) }
         } else {
+            spoiled = true
             log.graded(false, ["hit": hit ?? -1])
         }
         needsDisplay = true
     }
     func wrong() { click(plan.decoys[0]) }
     func right() { plan.dots.forEach(click) }
+    func runSelftest(completion: @escaping () -> Void) {
+        wrong()
+        right()
+        let postSuccess = ChartView(plan: plan, log: log)
+        postSuccess.right()
+        postSuccess.click(plan.decoys[0])
+        let clean = ChartView(plan: plan, log: log)
+        clean.right()
+        completion()
+    }
 }
 
 final class SliderView: NSStackView, TaskView {
@@ -405,13 +430,19 @@ final class SliderView: NSStackView, TaskView {
         let level = Int(slider.doubleValue.rounded())
         log.graded(level == plan.sliderValue, ["level": level])
     }
-    func wrong() { apply.performClick(nil) }
+    func wrong() {
+        slider.doubleValue = Double(plan.sliderValue == 50 ? 49 : 50)
+        apply.performClick(nil)
+    }
     func right() { slider.doubleValue = Double(plan.sliderValue); apply.performClick(nil) }
 }
 
-final class WebView: NSView, TaskView, WKScriptMessageHandler {
+final class WebView: NSView, TaskView, WKScriptMessageHandler, WKNavigationDelegate {
     let plan: Plan, log: Log
     var page: WKWebView!
+    private var loaded = false
+    private var onLoad: (() -> Void)?
+    private var onGraded: (() -> Void)?
     override var intrinsicContentSize: NSSize { NSSize(width: 720, height: 420) }
 
     init(plan: Plan, log: Log) {
@@ -420,6 +451,7 @@ final class WebView: NSView, TaskView, WKScriptMessageHandler {
         let setup = WKWebViewConfiguration()
         setup.userContentController.add(self, name: "bench")
         page = WKWebView(frame: bounds, configuration: setup)
+        page.navigationDelegate = self
         page.autoresizingMask = [.width, .height]
         addSubview(page)
         let regions = plan.rooms.map { "<option>\($0)</option>" }.joined()
@@ -446,6 +478,18 @@ final class WebView: NSView, TaskView, WKScriptMessageHandler {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loaded = true
+        let cb = onLoad
+        onLoad = nil
+        cb?()
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        fputs("Harbor Desk: WebView failed: \(error)\n", stderr)
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        fputs("Harbor Desk: WebView provisional failure: \(error)\n", stderr)
+    }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? String,
               let v = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else { return }
@@ -453,6 +497,9 @@ final class WebView: NSView, TaskView, WKScriptMessageHandler {
             && v["billing"] as? String == "Yearly" && v["receipts"] as? Bool == true
             && v["name"] as? String == plan.name
         log.graded(ok, v)
+        let cb = onGraded
+        onGraded = nil
+        cb?()
     }
     func wrong() { page.evaluateJavaScript("send()") }
     func right() {
@@ -463,6 +510,22 @@ final class WebView: NSView, TaskView, WKScriptMessageHandler {
         document.getElementById('receipts').checked=true;
         document.getElementById('name').value=\(json(plan.name));send()
         """)
+    }
+    func runSelftest(completion: @escaping () -> Void) {
+        let start = { [weak self] in
+            guard let self else { return }
+            self.onGraded = { [weak self] in
+                guard let self else { return }
+                self.onGraded = completion
+                self.right()
+            }
+            self.wrong()
+        }
+        if loaded {
+            start()
+        } else {
+            onLoad = start
+        }
     }
     func json(_ s: String) -> String { "\"\(s)\"" }
 }
@@ -550,12 +613,12 @@ final class Delegate: NSObject, NSApplicationDelegate {
         if !selftest { watchDesktop() }
         if selftest {
             // Off screen: no window is ordered in, and every step is the view's own action.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                self.view.wrong()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    self.view.right()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) {
+                fputs("Harbor Desk selftest timed out for task \(self.task)\n", stderr)
+                exit(3)
+            }
+            self.view.runSelftest {
+                DispatchQueue.main.async { NSApp.terminate(nil) }
             }
         } else {
             window.setFrameTopLeftPoint(NSPoint(x: 240, y: (NSScreen.main?.visibleFrame.maxY ?? 900) - 60))

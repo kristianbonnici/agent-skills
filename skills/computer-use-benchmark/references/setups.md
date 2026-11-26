@@ -35,4 +35,4 @@ python3 -m venv /path/to/scratch/venv
 
 ## Provider usage snapshots
 
-Passing `--usage <script>` calls `<script> --only <provider>` before the batch starts and in a `finally` block when it ends (skipping `opencode_go` when unsupported), appending snapshots to `<out>/usage.jsonl`. Remember that concurrent tasks or sessions on the same account share those windows.
+Passing `--usage <script>` splits `<script>` with `shlex` and calls `<cmd> --only <provider>` before the batch starts and in a `finally` block when it ends (including `opencode_go`, warning on stderr if a snapshot fails), appending snapshots to `<out>/usage.jsonl`. Remember that concurrent tasks or sessions on the same account share those windows.

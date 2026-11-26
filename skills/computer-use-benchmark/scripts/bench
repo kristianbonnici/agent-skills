@@ -10,8 +10,8 @@ Usage:
             [--quiet] [--force] [--between '<command>'] [--usage <provider-usage>]
             [--allow-overlay <App>]...
   bench record <out> [--name <run-id>] [--note <text>] [--force]
-  bench summarize [<out> ...] [--json]
-  bench totals [<out> ...] [--json]
+  bench summarize [<out> ...] [--set <version|all>] [--json]
+  bench totals [<out> ...] [--set <version|all>] [--json]
 
 Exit 0: done; 64: a mistake in the command, config or manifest; 1: a run stopped or selftest failed.
 """
@@ -34,6 +34,7 @@ import uuid
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 SKILL_DIR = os.path.dirname(SCRIPT_DIR)
 ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
+BUNDLED_MANIFEST = os.path.join(ASSETS_DIR, "manifest.yaml")
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
@@ -58,10 +59,31 @@ MODEL = "claude-sonnet-5-5"
 OPENCODE_MODEL = os.environ.get("CU_OPENCODE_MODEL", "opencode/deepseek-v4.1-flash-free")
 DRIVER_APP = "/Applications/CuaDriver.app"
 DRIVER_HELPER = "/Applications/Cua Spaces.app/Contents/Helpers/cua-driver"
-DRIVER = next(
-    (p for p in (os.path.expanduser("~/.local/bin/cua-driver"), DRIVER_HELPER) if os.path.exists(p)),
-    os.path.expanduser("~/.local/bin/cua-driver"),
-)
+
+
+def find_driver():
+    """Locate the Cua Driver binary in standard install paths or on PATH."""
+    candidates = [
+        os.path.expanduser("~/.local/bin/cua-driver"),
+        shutil.which("cua-driver"),
+        DRIVER_HELPER,
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return candidates[0]
+
+
+def _require_driver(driver=None):
+    path = DRIVER if driver is None else driver
+    if not (path and os.path.isfile(path) and os.access(path, os.X_OK)):
+        raise Refused(
+            "no Cua Driver binary found: install Cua Spaces or CuaDriver.app, or put `cua-driver` on PATH"
+        )
+    return path
+
+
+DRIVER = find_driver()
 
 PROMPT = """You are operating the Mac app "Harbor Desk", which is already open with a window of the same name. \
 Use only your computer-use tools, and only on Harbor Desk: don't open or touch any other app.
@@ -365,7 +387,7 @@ def parse_setup(spec):
     model, _, effort = rest.partition("@")
     default_model, default_effort = DEFAULT_MODELS.get(arm.split("-")[0], (None, None))
     model = model or default_model
-    effort = effort or (default_effort if not rest else None)
+    effort = effort or default_effort
     if arm == "opencode-cua":
         model = model or OPENCODE_MODEL
     if effort and arm == "opencode-cua":
@@ -385,19 +407,24 @@ def run_quiet(*argv):
 
 
 def end_group(p, wait=10):
-    """End a timed-out harness and what it started: SIGTERM to its group, then SIGKILL if it stays."""
-    try:
-        os.killpg(p.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
+    """End a timed-out or interrupted harness and its process group: SIGTERM then SIGKILL."""
+    def _signal_group(sig):
+        try:
+            os.killpg(p.pid, sig)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            try:
+                p.terminate() if sig == signal.SIGTERM else p.kill()
+            except ProcessLookupError:
+                pass
+
+    _signal_group(signal.SIGTERM)
     try:
         p.wait(wait)
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(p.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    _signal_group(signal.SIGKILL)
     p.wait()
 
 
@@ -579,7 +606,8 @@ def verify_manifest_file(path, expected_bundle_id=BUNDLE_ID):
         raise Refused(
             f"{path}: resources.apps[0] must admit only {expected_bundle_id}, got {app_entry!r}"
         )
-    if resources.get("desktop") != {"display": False}:
+    desktop = resources.get("desktop")
+    if not isinstance(desktop, dict) or set(desktop) != {"display"} or desktop.get("display") is not False:
         raise Refused(f"{path}: resources.desktop must be {{display: false}}")
 
     digest = hashlib.sha256(f"cua-driver-capability-manifest-v{version}\0".encode("utf-8") + raw_bytes).hexdigest()
@@ -600,7 +628,7 @@ def build():
             "<key>NSHighResolutionCapable</key><true/></dict></plist>"
         )
     subprocess.run(["codesign", "-s", "-", "--force", APP], check=True, capture_output=True)
-    src_manifest = os.path.join(ASSETS_DIR, "manifest.yaml")
+    src_manifest = BUNDLED_MANIFEST
     verify_manifest_file(src_manifest)
     os.makedirs(os.path.dirname(MANIFEST), exist_ok=True)
     shutil.copyfile(src_manifest, MANIFEST)
@@ -627,9 +655,14 @@ def selftest(tasks=None, seed=1):
             if done.returncode != 0:
                 print(f"FAIL {t}: exited {done.returncode}\n{done.stderr}", file=sys.stderr)
                 return 1
-            events = [json.loads(line) for line in open(log, encoding="utf-8") if line.strip()]
+            with open(log, encoding="utf-8") as f:
+                events = [json.loads(line) for line in f if line.strip()]
             grades = [e for e in events if e.get("event") in ("success", "wrong")]
-            if not (len(grades) >= 2 and grades[0]["event"] == "wrong" and grades[-1]["event"] == "success"):
+            grade_names = [g["event"] for g in grades]
+            ok = len(grades) >= 2 and grades[0]["event"] == "wrong" and grades[-1]["event"] == "success"
+            if ok and t == "canvas":
+                ok = grade_names == ["wrong", "wrong", "wrong", "wrong", "success", "wrong", "success"]
+            if not ok:
                 print(f"FAIL {t}: unexpected selftest events {grades}", file=sys.stderr)
                 return 1
             print(f"PASS {t} (seed {seed})")
@@ -655,6 +688,11 @@ def serve_argv(app=DRIVER_APP, helper=DRIVER_HELPER, exists=os.path.exists):
     return None
 
 
+def _status_manifest_sha256(status_text):
+    m = re.search(r"^\s*capability manifest sha256:\s*([0-9a-f]{64})\s*$", status_text or "", re.M)
+    return m.group(1) if m else None
+
+
 def daemon_ready(status_text, expected_sha256=None):
     """Verify the daemon runs in bounded mode with an approved, valid manifest matching expected_sha256."""
     if "is running" not in status_text:
@@ -673,27 +711,55 @@ def daemon_ready(status_text, expected_sha256=None):
 
 
 def require_cua_daemon(manifest_path=None, run_status=None):
-    """Verify the bounded Cua Driver daemon is running with the verified Harbor Desk manifest."""
-    expected_sha256 = verify_manifest_file(manifest_path or MANIFEST)
+    """Verify the bounded Cua Driver daemon is running with the verified bundled Harbor Desk manifest."""
+    expected_sha256 = verify_manifest_file(manifest_path or BUNDLED_MANIFEST)
+    if manifest_path is None:
+        if not os.path.lexists(MANIFEST):
+            raise Refused(f"missing cached manifest {MANIFEST}: run `bench build` and `bench start-cua`")
+        cached_sha256 = verify_manifest_file(MANIFEST)
+        if cached_sha256 != expected_sha256:
+            raise Refused(
+                f"cached manifest {MANIFEST} ({cached_sha256[:12]}...) differs from {BUNDLED_MANIFEST} "
+                f"({expected_sha256[:12]}...): run `bench build` and `bench start-cua`"
+            )
+    if run_status is None:
+        _require_driver()
     status_out = (run_status or run_quiet)(DRIVER, "status", "--socket", SOCKET).stdout
     if not daemon_ready(status_out, expected_sha256):
+        actual_sha = _status_manifest_sha256(status_out)
+        mismatch = (
+            f" (daemon sha256 {actual_sha[:12]}..., expected {expected_sha256[:12]}...)"
+            if actual_sha and actual_sha != expected_sha256
+            else ""
+        )
         raise Refused(
             f"Cua Driver daemon on {SOCKET} is not running with the verified Harbor Desk manifest "
-            f"({expected_sha256[:12]}...); run `bench start-cua`.\n{status_out.strip()}"
+            f"({expected_sha256[:12]}...){mismatch}; run `bench start-cua`.\n{status_out.strip()}"
         )
     return expected_sha256
 
 
 def start_cua():
+    _require_driver()
+    expected_sha256 = verify_manifest_file(BUNDLED_MANIFEST)
     if not os.path.exists(MANIFEST):
         raise Refused(f"no {MANIFEST}: run `bench build` first")
-    expected_sha256 = verify_manifest_file(MANIFEST)
+    cached_sha256 = verify_manifest_file(MANIFEST)
+    if cached_sha256 != expected_sha256:
+        raise Refused(
+            f"cached manifest {MANIFEST} ({cached_sha256[:12]}...) differs from {BUNDLED_MANIFEST} "
+            f"({expected_sha256[:12]}...): run `bench build` first"
+        )
     argv = serve_argv()
     if not argv:
         raise Refused("no Cua Driver: neither CuaDriver.app nor Cua Spaces' helper")
-    os.makedirs(os.path.dirname(SOCKET), mode=0o700, exist_ok=True)
+    sock_dir = os.path.dirname(SOCKET)
+    os.makedirs(sock_dir, mode=0o700, exist_ok=True)
+    os.chmod(sock_dir, 0o700)
     os.makedirs(HOME, exist_ok=True)
     stop_cua()
+    if "is running" in run_quiet(DRIVER, "status", "--socket", SOCKET).stdout:
+        raise SystemExit(f"existing Cua Driver daemon on {SOCKET} did not stop")
     with open(os.path.join(HOME, "cua-serve.log"), "a", encoding="utf-8") as log:
         p = subprocess.Popen(
             argv,
@@ -710,36 +776,54 @@ def start_cua():
         time.sleep(0.2)
     if argv[0] != "open" and p.poll() is None:
         p.terminate()
+    status_out = run_quiet(DRIVER, "status", "--socket", SOCKET).stdout
+    actual_sha = _status_manifest_sha256(status_out)
+    detail = (
+        f" (daemon reported sha256 {actual_sha}, expected {expected_sha256})"
+        if actual_sha and actual_sha != expected_sha256
+        else ""
+    )
     raise SystemExit(
-        "Cua Driver's bounded daemon didn't start or failed manifest check; its status said:\n"
-        + run_quiet(DRIVER, "status", "--socket", SOCKET).stdout
+        f"Cua Driver's bounded daemon didn't start or failed manifest check{detail}; its status said:\n"
+        + status_out
     )
 
 
 def stop_cua():
-    out = run_quiet(DRIVER, "stop", "--socket", SOCKET).stdout.strip()
+    _require_driver()
+    res = run_quiet(DRIVER, "stop", "--socket", SOCKET)
+    out = res.stdout.strip()
     if out:
         print(out)
+    if res.returncode != 0 and res.stderr.strip() and "not running" not in (out + "\n" + res.stderr).lower():
+        print(res.stderr.strip(), file=sys.stderr)
     return 0
 
 
 def idle_seconds():
     out = run_quiet("ioreg", "-c", "IOHIDSystem").stdout
-    return int(re.search(r'HIDIdleTime" = (\d+)', out).group(1)) / 1e9
+    match = re.search(r'HIDIdleTime"\s*=\s*(\d+)', out)
+    if not match:
+        raise SystemExit("could not read HIDIdleTime from ioreg")
+    return int(match.group(1)) / 1e9
 
 
 class Bench:
     def __init__(self, task, seed, log, quiet):
-        self.log = log
-        argv = ["open", "-n"] + (["-g"] if quiet else []) + [APP, "--args", "--task", task, "--seed", str(seed), "--log", log]
+        self.log = os.path.abspath(log)
+        os.makedirs(os.path.dirname(self.log), exist_ok=True)
+        argv = ["open", "-n"] + (["-g"] if quiet else []) + [APP, "--args", "--task", task, "--seed", str(seed), "--log", self.log]
         if quiet:
             argv.append("--quiet")
         subprocess.run(argv, check=True)
         for _ in range(50):
-            if os.path.exists(log) and os.path.getsize(log):
+            if os.path.exists(self.log) and os.path.getsize(self.log):
                 break
             time.sleep(0.1)
-        self.pid = next((int(p) for p in run_quiet("pgrep", "-f", re.escape(log)).stdout.split()), None)
+        self.pid = next((int(p) for p in run_quiet("pgrep", "-f", re.escape(self.log)).stdout.split()), None)
+        if not (os.path.exists(self.log) and os.path.getsize(self.log)) or self.pid is None:
+            self.close()
+            raise SystemExit(f"Harbor Desk failed to launch or write {self.log}")
 
     def events(self):
         try:
@@ -755,10 +839,23 @@ class Bench:
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
+            return
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        if self.log in run_quiet("ps", "-o", "args=", "-p", str(pid)).stdout:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def claude_argv(arm, session, out, model=MODEL, effort=None):
+    out = os.path.abspath(out)
     argv = (
         ["claude", "--model", model or MODEL]
         + (["--effort", effort] if effort else [])
@@ -766,7 +863,8 @@ def claude_argv(arm, session, out, model=MODEL, effort=None):
     )
     off = ["mcp__claude-in-chrome__*", "mcp__claude-artifacts__*"]
     if arm == "claude-cua":
-        config = os.path.join(out, "claude-cua.json")
+        config = os.path.abspath(os.path.join(out, "claude-cua.json"))
+        os.makedirs(out, exist_ok=True)
         with open(config, "w", encoding="utf-8") as f:
             json.dump({"mcpServers": {"cua": {"command": DRIVER, "args": ["mcp", "--socket", SOCKET]}}}, f)
         return argv[:-2] + [
@@ -782,18 +880,29 @@ def claude_argv(arm, session, out, model=MODEL, effort=None):
 
 
 def transcript(session):
-    return os.path.join(os.path.expanduser("~/.claude/projects"), os.path.realpath(HOME).replace("/", "-"), session + ".jsonl")
+    encoded = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(HOME))
+    return os.path.join(os.path.expanduser("~/.claude/projects"), encoded, session + ".jsonl")
 
 
 def claude_report(session):
     calls, usage, final, images = {}, dict(input=0, cache_read=0, cache_write=0, output=0), None, 0
     try:
-        with open(transcript(session), encoding="utf-8") as f:
-            lines = [json.loads(l) for l in f if l.strip()]
+        with open(transcript(session), encoding="utf-8", errors="replace") as f:
+            raw_lines = f.readlines()
     except OSError:
         return dict(tools={}, usage=usage, final=None, images=0)
-    for entry in lines:
-        message = entry.get("message") or {}
+    for raw in raw_lines:
+        if not raw.strip():
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue
         if entry.get("type") == "assistant":
             u = message.get("usage") or {}
             usage["input"] += u.get("input_tokens", 0)
@@ -801,71 +910,102 @@ def claude_report(session):
             usage["cache_read"] += u.get("cache_read_input_tokens", 0)
             usage["cache_write"] += u.get("cache_creation_input_tokens", 0)
             for block in message.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
                 if block.get("type") == "tool_use":
                     name = block["name"].split("__")[-1]
                     calls[name] = calls.get(name, 0) + 1
                 if block.get("type") == "text" and message.get("stop_reason") == "end_turn":
-                    final = block["text"].strip()
+                    final = (block.get("text") or "").strip()
         elif isinstance(message.get("content"), list):
             for block in message["content"]:
-                if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
-                    images += sum(1 for c in block["content"] if c.get("type") == "image")
+                if isinstance(block, dict) and block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                    images += sum(1 for c in block["content"] if isinstance(c, dict) and c.get("type") == "image")
     return dict(tools=calls, usage=usage, final=final, images=images)
 
 
 def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overlays=None):
     """A real interactive session, for both arms: native computer use exists only there."""
     allowed = overlays if overlays is not None else allowed_overlays()
+    out = os.path.abspath(out)
+    os.makedirs(out, exist_ok=True)
     session = str(uuid.uuid4())
     os.makedirs(HOME, exist_ok=True)
     tui = _screen()(claude_argv(arm, session, out, model, effort), HOME)
-    tui.pump(14)
-    tui.paste(prompt)
-    tui.pump(0.6)
-    tui.send("\r")
     started = time.time()
     notes = []
-    while time.time() - started < limit:
-        tui.pump(0.5)
-        screen = tui.show()
-        if re.search(r"Allow for this session", screen):
-            apps = [l.strip(" ◉◯○●").strip() for l in screen.splitlines() if re.match(r"\s*[◉◯○●]\s", l)]
-            if "Harbor Desk" in apps and set(apps) <= allowed:
-                for _ in range(6):
-                    tui.pump(0.7)
-                    if re.search(r"❯\s*Allow for this session", tui.show()):
-                        break
-                    tui.send("\x1b[B")
-                if re.search(r"❯\s*Allow for this session", tui.show()):
-                    notes.append("approved: " + ", ".join(apps))
+    try:
+        alive = tui.pump(14)
+        if alive:
+            try:
+                tui.paste(prompt)
+                alive = tui.pump(0.6)
+                if alive:
                     tui.send("\r")
-                    tui.pump(1.5)
-                    continue
-            notes.append("approval held: " + ", ".join(apps)[:200])
-            break
-        if re.search(r"Accessibility|Screen Recording", screen) and re.search(r"Try again|System Settings", screen):
-            notes.append("macOS permission needed")
-            break
-        if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
-            notes.append("claude limit")
-            CLAUDE_LIMIT.append(1)
-            break
-        final = claude_report(session)["final"]
-        if final in ("DONE", "FAILED"):
-            break
-    else:
-        notes.append("limit reached")
-    wall = time.time() - started
-    with open(os.path.join(out, name + ".screen.txt"), "w", encoding="utf-8") as f:
-        f.write(tui.show())
-    tui.close()
-    tui.pump(0.5)
+            except OSError:
+                alive = False
+        started = time.time()
+        if not alive:
+            screen = tui.show()
+            if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
+                notes.append("claude limit")
+                CLAUDE_LIMIT.append(1)
+            elif re.search(r"Accessibility|Screen Recording", screen) and re.search(r"Try again|System Settings", screen):
+                notes.append("macOS permission needed")
+            elif claude_report(session)["final"] not in ("DONE", "FAILED"):
+                notes.append("claude exited")
+        else:
+            while time.time() - started < limit:
+                pumped = tui.pump(0.5)
+                screen = tui.show()
+                if re.search(r"Allow for this session", screen):
+                    apps = [l.strip(" ◉◯○●").strip() for l in screen.splitlines() if re.match(r"\s*[◉◯○●]\s", l)]
+                    if "Harbor Desk" in apps and set(apps) <= allowed:
+                        try:
+                            for _ in range(6):
+                                if not tui.pump(0.7):
+                                    break
+                                if re.search(r"❯\s*Allow for this session", tui.show()):
+                                    break
+                                tui.send("\x1b[B")
+                            if re.search(r"❯\s*Allow for this session", tui.show()):
+                                notes.append("approved: " + ", ".join(apps))
+                                tui.send("\r")
+                                tui.pump(1.5)
+                                continue
+                        except OSError:
+                            notes.append("claude exited")
+                            break
+                    notes.append("approval held: " + ", ".join(apps)[:200])
+                    break
+                if re.search(r"Accessibility|Screen Recording", screen) and re.search(r"Try again|System Settings", screen):
+                    notes.append("macOS permission needed")
+                    break
+                if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
+                    notes.append("claude limit")
+                    CLAUDE_LIMIT.append(1)
+                    break
+                final = claude_report(session)["final"]
+                if final in ("DONE", "FAILED"):
+                    break
+                if not pumped:
+                    notes.append("claude exited")
+                    break
+            else:
+                notes.append("limit reached")
+        wall = time.time() - started
+        with open(os.path.join(out, name + ".screen.txt"), "w", encoding="utf-8") as f:
+            f.write(tui.show())
+    finally:
+        tui.close()
     report = claude_report(session)
     report.update(wall=wall, started=started, notes=notes, session=session)
     return report
 
 
 def drive_opencode(prompt, limit, out, name, model=None):
+    out = os.path.abspath(out)
+    os.makedirs(out, exist_ok=True)
     model = model or OPENCODE_MODEL
     config = dict(
         model=model,
@@ -909,7 +1049,13 @@ def drive_opencode(prompt, limit, out, name, model=None):
         except subprocess.TimeoutExpired:
             notes.append("limit reached")
             end_group(p)
-    return dict(wall=time.time() - started, started=started, notes=notes, **opencode_report(log))
+        except BaseException:
+            end_group(p)
+            raise
+    report = opencode_report(log)
+    if p.returncode and "limit reached" not in notes:
+        notes.append(f"opencode exited {p.returncode}")
+    return dict(wall=time.time() - started, started=started, notes=notes, **report)
 
 
 def agy_workspace(home=None):
@@ -1011,6 +1157,8 @@ def agy_argv(model, prompt, effort=None):
 
 
 def drive_agy(prompt, limit, out, name, model="gemini-4-neon-high", effort=None):
+    out = os.path.abspath(out)
+    os.makedirs(out, exist_ok=True)
     workspace = agy_workspace()
     log = os.path.join(out, name + ".agy.jsonl")
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANTIGRAVITY_")}
@@ -1032,6 +1180,9 @@ def drive_agy(prompt, limit, out, name, model="gemini-4-neon-high", effort=None)
         except subprocess.TimeoutExpired:
             notes.append("limit reached")
             end_group(p)
+        except BaseException:
+            end_group(p)
+            raise
     report = agy_report(log)
     notes += report.pop("notes")
     notes += agy_exit_note(log, p.returncode, notes)
@@ -1048,6 +1199,8 @@ def agy_exit_note(log, returncode, notes):
 
 def agy_report(log):
     calls, usage, final, notes, text = {}, dict(input=0, cache_read=0, cache_write=0, output=0), None, [], ""
+    limit_active, saw_limit, limit_msg = False, False, ""
+    terminal_success = False
     with open(log, errors="replace") as f:
         lines = f.readlines()
     for line in lines:
@@ -1055,7 +1208,9 @@ def agy_report(log):
             e = json.loads(line)
         except ValueError:
             if AGY_LIMIT.search(line):
-                notes.append("agy limit: " + line.strip()[:160])
+                limit_active = True
+                saw_limit = True
+                limit_msg = line.strip()[:160]
             continue
         if not isinstance(e, dict):
             continue
@@ -1083,6 +1238,7 @@ def agy_report(log):
                 notes.append(f"web tool called: {name}")
             calls[name] = calls.get(name, 0) + 1
         if step.get("state") == "DONE" and step.get("step_type") == "agent_response":
+            limit_active = False
             u = step.get("usage") or {}
             usage["input"] += u.get("input_tokens", 0)
             usage["cache_read"] += u.get("cache_read_tokens", 0)
@@ -1091,10 +1247,20 @@ def agy_report(log):
         result = e.get("result") or {}
         if result:
             final = (result.get("response") or "").strip() or None
-            if result.get("status") not in (None, "SUCCESS"):
+            if result.get("status") == "SUCCESS":
+                limit_active = False
+                terminal_success = True
+            elif result.get("status") is not None:
+                terminal_success = False
                 notes.append(f"agy status {result.get('status')}: {str(result.get('error') or '')[:160]}")
                 if AGY_LIMIT.search(json.dumps(result)):
-                    notes.append("agy limit")
+                    limit_active = True
+                    saw_limit = True
+                    limit_msg = ""
+    if limit_active and not terminal_success:
+        notes.append(f"agy limit: {limit_msg}" if limit_msg else "agy limit")
+    elif saw_limit:
+        notes.append("agy rate limit recovered")
     if final is None and text.strip():
         final = text.strip().splitlines()[-1].strip()
     return dict(tools=calls, usage=usage, final=final, images=None, notes=notes)
@@ -1150,6 +1316,8 @@ def codex_exec_argv(arm, model=None, effort=None):
 
 def drive_codex(arm, prompt, limit, out, name, model=None, effort=None):
     """`codex exec` with per-run settings only: one computer-use route, no other servers, no hooks."""
+    out = os.path.abspath(out)
+    os.makedirs(out, exist_ok=True)
     os.makedirs(HOME, exist_ok=True)
     argv = codex_exec_argv(arm, model, effort)
     log = os.path.join(out, name + ".codex.jsonl")
@@ -1170,8 +1338,15 @@ def drive_codex(arm, prompt, limit, out, name, model=None, effort=None):
         except subprocess.TimeoutExpired:
             notes.append("limit reached")
             end_group(p)
+        except BaseException:
+            end_group(p)
+            raise
     report = codex_report(log)
     notes += report.pop("notes")
+    if p.returncode and "limit reached" not in notes and not any(
+        n == "codex limit" or n.startswith("codex turn failed") for n in notes
+    ):
+        notes.append(f"codex exited {p.returncode}")
     return dict(wall=time.time() - started, started=started, notes=notes, **report)
 
 
@@ -1188,6 +1363,7 @@ def codex_tui_argv(model=CODEX_MODEL, effort=None):
 def drive_codex_tui(prompt, limit, out, name, model=CODEX_MODEL, effort=None):
     """Codex's computer use asks for each app in a form only an interactive session shows."""
     argv = codex_tui_argv(model, effort)
+    out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     os.makedirs(HOME, exist_ok=True)
     env = codex_env()
@@ -1195,63 +1371,109 @@ def drive_codex_tui(prompt, limit, out, name, model=CODEX_MODEL, effort=None):
         attempt_cwd = os.path.realpath(attempt_dir)
         before = time.time()
         tui = _screen()(argv, attempt_cwd, rows=50, cols=130, env=env)
-        tui.pump(5)
-        for _ in range(4):
-            screen = tui.show()
-            if re.search(r"Continue without trusting", screen):
-                tui.send("3")
-                tui.pump(0.5)
-                if re.search(r"Continue without trusting", tui.show()):
-                    tui.send("\r")
-                tui.pump(3)
-            elif re.search(r"trust this|do you trust", screen, re.I):
-                tui.send("\r")
-                tui.pump(3)
-            else:
-                break
-        tui.pump(3)
-        with open(os.path.join(out, name + ".start.txt"), "w", encoding="utf-8") as f:
-            f.write(tui.show())
-        tui.paste(prompt)
-        tui.pump(0.8)
-        tui.send("\r")
-        started = time.time()
+        started = before
         notes = []
         frames = []
-        while time.time() - started < limit:
-            tui.pump(0.5)
-            screen = tui.show()
-            if not frames or frames[-1] != screen:
-                frames.append(screen)
-            if re.search(r'Allow Computer Use to use "Harbor Desk"\?', screen) and re.search(r"Allow for this session", screen):
-                for _ in range(5):
-                    if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
+        final = []
+        exit_screen = ""
+        try:
+            alive = tui.pump(5)
+            for _ in range(4):
+                if not alive:
+                    break
+                screen = tui.show()
+                try:
+                    if re.search(r"Continue without trusting", screen):
+                        tui.send("3")
+                        alive = tui.pump(0.5)
+                        if alive and re.search(r"Continue without trusting", tui.show()):
+                            tui.send("\r")
+                        if alive:
+                            alive = tui.pump(3)
+                    elif re.search(r"trust this|do you trust", screen, re.I):
+                        tui.send("\r")
+                        alive = tui.pump(3)
+                    else:
                         break
-                    tui.send("\x1b[B")
-                    tui.pump(0.5)
-                if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
-                    tui.send("\r")
-                    tui.pump(1)
-                    notes.append("allowed for this session: Harbor Desk")
-            elif re.search(r"Allow Computer Use to use", screen):
-                notes.append("held: another app")
-                break
-            if re.search(r"^\W*(DONE|FAILED)\s*$", screen, re.M):
-                break
-        else:
-            notes.append("limit reached")
-        wall = time.time() - started
-        with open(os.path.join(out, name + ".screen.txt"), "w", encoding="utf-8") as f:
-            f.write("\n\n=====\n\n".join(frames[-40:]))
-        final = re.findall(r"^\W*(DONE|FAILED)\s*$", tui.show(), re.M)
-        tui.send("\x03")
-        tui.pump(0.5)
-        tui.send("\x03")
-        tui.pump(1)
-        exit_screen = tui.show()
-        tui.close()
-        tui.pump(0.3)
-        exit_screen += "\n" + tui.show()
+                except OSError:
+                    alive = False
+                    break
+            if alive:
+                alive = tui.pump(3)
+            with open(os.path.join(out, name + ".start.txt"), "w", encoding="utf-8") as f:
+                f.write(tui.show())
+            if alive:
+                try:
+                    tui.paste(prompt)
+                    alive = tui.pump(0.8)
+                    if alive:
+                        tui.send("\r")
+                except OSError:
+                    alive = False
+            started = time.time()
+            if not alive:
+                notes.append("codex exited")
+            else:
+                while time.time() - started < limit:
+                    pumped = tui.pump(0.5)
+                    screen = tui.show()
+                    if not frames or frames[-1] != screen:
+                        frames.append(screen)
+                    if re.search(r'Allow Computer Use to use "Harbor Desk"\?', screen):
+                        if not re.search(r"Allow for this session", screen):
+                            for _ in range(6):
+                                if not tui.pump(0.5):
+                                    pumped = False
+                                    break
+                                screen = tui.show()
+                                if re.search(r"Allow for this session", screen):
+                                    break
+                        if re.search(r"Allow for this session", screen):
+                            try:
+                                for _ in range(5):
+                                    if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
+                                        break
+                                    tui.send("\x1b[B")
+                                    if not tui.pump(0.5):
+                                        pumped = False
+                                        break
+                                if re.search(r"›\s*2\.\s*Allow for this session", tui.show()):
+                                    tui.send("\r")
+                                    if not tui.pump(1):
+                                        pumped = False
+                                    notes.append("allowed for this session: Harbor Desk")
+                            except OSError:
+                                pumped = False
+                        else:
+                            notes.append("approval held: Harbor Desk")
+                            break
+                    elif re.search(r"Allow Computer Use to use", screen):
+                        notes.append("held: another app")
+                        break
+                    if re.search(r"^\W*(DONE|FAILED)\s*$", screen, re.M):
+                        break
+                    if not pumped:
+                        notes.append("codex exited")
+                        break
+                else:
+                    notes.append("limit reached")
+            wall = time.time() - started
+            with open(os.path.join(out, name + ".screen.txt"), "w", encoding="utf-8") as f:
+                f.write("\n\n=====\n\n".join(frames[-40:]))
+            final = re.findall(r"^\W*(DONE|FAILED)\s*$", tui.show(), re.M)
+            if alive:
+                try:
+                    tui.send("\x03")
+                    if tui.pump(0.5):
+                        tui.send("\x03")
+                        tui.pump(1)
+                except OSError:
+                    pass
+            exit_screen = tui.show()
+            tui.close()
+            exit_screen += "\n" + tui.show()
+        finally:
+            tui.close()
         session_id = codex_session_id(exit_screen)
         found = find_rollout(before, session_id=session_id, cwd=attempt_cwd, prompt=prompt)
     info = found[1] if found else {}
@@ -1441,9 +1663,14 @@ def codex_report(log):
         if not isinstance(e, dict):
             continue
         etype = e.get("type")
-        if etype in ("error", "turn.failed") and CODEX_LIMIT.search(json.dumps(e)):
-            limit_active = True
-            saw_limit = True
+        if etype in ("error", "turn.failed"):
+            raw_msg = json.dumps(e)
+            if CODEX_LIMIT.search(raw_msg):
+                limit_active = True
+                saw_limit = True
+            elif etype == "turn.failed" and not limit_active:
+                msg = (e.get("error") or {}).get("message") if isinstance(e.get("error"), dict) else e.get("message")
+                notes.append(f"codex turn failed: {str(msg or raw_msg)[:160]}")
         item = e.get("item") or {}
         if etype == "item.completed":
             kind = item.get("type")
@@ -1473,17 +1700,21 @@ def opencode_report(log):
                 e = json.loads(line)
             except ValueError:
                 continue
-            part = e.get("part") or {}
+            if not isinstance(e, dict):
+                continue
+            raw_part = e.get("part")
+            part = raw_part if isinstance(raw_part, dict) else {}
             if part.get("type") in ("tool", "tool-call") or e.get("type") in ("tool_use", "tool-call"):
                 name = (part.get("tool") or e.get("tool") or "tool").split("_", 1)[-1]
                 calls[name] = calls.get(name, 0) + 1
-            if part.get("type") == "text" and part.get("text"):
+            if part.get("type") == "text" and isinstance(part.get("text"), str) and part.get("text"):
                 final = part["text"].strip()
-            t = part.get("tokens") or e.get("tokens")
+            t = part.get("tokens") if isinstance(part.get("tokens"), dict) else e.get("tokens")
             if isinstance(t, dict):
                 usage["input"] += t.get("input", 0)
                 usage["output"] += t.get("output", 0)
-                usage["cache_read"] += (t.get("cache") or {}).get("read", 0)
+                cache = t.get("cache") if isinstance(t.get("cache"), dict) else {}
+                usage["cache_read"] += cache.get("read", 0)
     return dict(tools=calls, usage=usage, final=final, images=None)
 
 
@@ -1493,7 +1724,7 @@ def grade(events, delay=0):
     return dict(
         passed=bool(grades) and grades[-1]["event"] == "success",
         wrong=sum(1 for e in grades if e["event"] == "wrong"),
-        seconds=round(success["t"] - delay, 1) if success else None,
+        seconds=max(0.0, round(success["t"] - delay, 1)) if success else None,
         pointer=sum(1 for e in events if e["event"] == "pointer-moved"),
         front=sum(1 for e in events if e["event"] == "front-changed"),
     )
@@ -1501,15 +1732,36 @@ def grade(events, delay=0):
 
 def run_attempts(drive, attempts=3, pause=10, sleep=time.sleep, ready=lambda: True):
     report = None
+    total_wall = 0.0
+    has_wall = False
+    total_usage = dict(input=0, cache_read=0, cache_write=0, output=0)
+    has_usage = False
+    prior_notes = []
     for attempt in range(attempts):
         if attempt and not ready():
             report["notes"].append("retry stopped: the check between runs failed")
             break
         report = drive()
+        if report.get("wall") is not None:
+            total_wall += report["wall"]
+            has_wall = True
+        u = report.get("usage")
+        if isinstance(u, dict) and u:
+            for k in total_usage:
+                total_usage[k] += u.get(k, 0)
+            has_usage = True
+        report_notes = list(prior_notes) + list(report.get("notes") or [])
+        report["notes"] = report_notes
         report["attempts"] = attempt + 1
-        if sum(report["tools"].values()) or any(LIMIT_NOTE.search(n) for n in report["notes"]):
+        if has_wall:
+            report["wall"] = round(total_wall, 3)
+        if has_usage:
+            report["usage"] = dict(total_usage)
+        if sum((report.get("tools") or {}).values()) or any(LIMIT_NOTE.search(n) for n in report["notes"]):
             break
-        report["notes"].append(f"no tool calls, attempt {attempt + 1}")
+        note = f"no tool calls, attempt {attempt + 1}"
+        prior_notes.append(note)
+        report["notes"].append(note)
         if attempt + 1 < attempts:
             sleep(pause)
     return report
@@ -1539,12 +1791,6 @@ def driver(arm, model, effort, prompt, limit, out, name, overlays=None):
     raise Refused(f"unknown arm {arm}")
 
 
-def seed_list(argv):
-    if "--seed" in argv:
-        return [int(argv[argv.index("--seed") + 1])]
-    return list(range(1, int(argv[argv.index("--seeds") + 1] if "--seeds" in argv else 1) + 1))
-
-
 def between_ok(command, run=subprocess.run):
     if command is None:
         return True
@@ -1565,17 +1811,36 @@ def between_ok(command, run=subprocess.run):
 def usage_snapshot(script, providers, out, when, run=run_quiet):
     if not script:
         return
+    try:
+        cmd = [os.path.expanduser(a) for a in shlex.split(script)]
+        if not cmd:
+            raise ValueError("an empty command")
+    except ValueError as e:
+        print(f"bench: --usage: {e}", file=sys.stderr)
+        return
+    os.makedirs(out, exist_ok=True)
     for name in sorted(providers):
-        if name == "opencode_go":
-            continue
         result = None
+        data = None
+        err_msg = None
         try:
-            result = run(os.path.expanduser(script), "--only", name)
-            data = json.loads(result.stdout)["providers"].get(name)
+            result = run(*cmd, "--only", name)
+            if result.returncode != 0:
+                err_msg = ((result.stderr or result.stdout) or f"exited {result.returncode}").strip()[-300:]
+                data = dict(error=err_msg)
+            else:
+                parsed = json.loads(result.stdout)
+                data = parsed["providers"].get(name)
+                if not data or (isinstance(data, dict) and data.get("error")):
+                    err_msg = str((data or {}).get("error") or f"missing provider {name!r} in snapshot")
         except OSError as e:
-            data = dict(error=str(e))
-        except (ValueError, KeyError, TypeError, AttributeError):
-            data = dict(error=(((result.stderr or result.stdout) if result else "") or "")[-300:])
+            err_msg = str(e)
+            data = dict(error=err_msg)
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            err_msg = (((result.stderr or result.stdout) if result else "") or str(e)).strip()[-300:]
+            data = dict(error=err_msg)
+        if err_msg:
+            print(f"bench: --usage ({name}): {err_msg}", file=sys.stderr)
         with open(os.path.join(out, "usage.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(dict(when=when, at=time.time(), provider=name, snapshot=data)) + "\n")
 
@@ -1601,7 +1866,14 @@ def usage_limited(row):
 def latest_runs(rows):
     latest = {}
     for row in rows:
-        run = (row.get("folder"), row.get("setup") or row["arm"], row.get("model"), row.get("effort"), row["task"], row.get("seed"))
+        run = (
+            row.get("set_major"),
+            row.get("setup") or row["arm"],
+            row.get("model"),
+            row.get("effort"),
+            row["task"],
+            row.get("seed"),
+        )
         key = run if row.get("seed") is not None else id(row)
         prev = latest.get(key)
         if (
@@ -1611,6 +1883,24 @@ def latest_runs(rows):
         ):
             latest[key] = row
     return list(latest.values())
+
+
+def major_version(ver):
+    if not ver or ver == "legacy":
+        return "legacy"
+    return str(ver).split(".", 1)[0]
+
+
+def _version_tuple(ver):
+    if not ver or ver == "legacy":
+        return (-1,)
+    parts = []
+    for part in str(ver).split("."):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
 
 
 def usage_uncached(row):
@@ -1654,7 +1944,21 @@ def failure_kind(row):
         return "approval-held"
     if any(n == "macOS permission needed" for n in notes):
         return "permission"
-    if any(n.startswith(("agy status", "agy exited", "another server called", "web tool called")) for n in notes):
+    if any(
+        n.startswith(
+            (
+                "claude exited",
+                "codex exited",
+                "codex turn failed",
+                "opencode exited",
+                "agy status",
+                "agy exited",
+                "another server called",
+                "web tool called",
+            )
+        )
+        for n in notes
+    ):
         return "harness-error"
     if row.get("seconds") is not None and (row.get("wrong") or 0) > 0:
         return "post-success-wrong"
@@ -1713,11 +2017,13 @@ def markdown(lines):
     )
 
 
-def totals_data(rows, set_info=None):
+def totals_data(rows, set_info=None, set_version=None, other_sets=None):
     """Aggregate one benchmark table per setup across all runs."""
     set_info = set_info or {}
-    expected_tasks = set_info.get("tasks") or TASKS
-    expected_seeds = set_info.get("seeds") or 3
+    version_label = set_version or set_info.get("version") or "1.0"
+    active_match = set_version is None or major_version(version_label) == major_version(set_info.get("version"))
+    expected_tasks = (set_info.get("tasks") if active_match else None) or TASKS
+    expected_seeds = (set_info.get("seeds") if active_match else None) or 3
     full_runs = len(expected_tasks) * expected_seeds
     med = lambda xs: round(statistics.median(xs), 1) if xs else None
 
@@ -1742,13 +2048,16 @@ def totals_data(rows, set_info=None):
             )
         )
     out_rows.sort(key=lambda r: (-r["passed"], -(r["passed"] / r["runs"]) if r["runs"] else 0, r["minutes"], r["setup"]))
-    return dict(
-        set=set_info.get("version") or "1.0",
+    res = dict(
+        set=version_label,
         tasks=len(expected_tasks),
         seeds=expected_seeds,
         full_runs=full_runs,
         setups=out_rows,
     )
+    if other_sets:
+        res["other_sets"] = other_sets
+    return res
 
 
 def format_totals(result):
@@ -1760,6 +2069,7 @@ def format_totals(result):
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     partial = []
+    extra = []
     for row in result["setups"]:
         fmap = row["failures"]
         f_text = ", ".join(f"{n} {k}" for k, n in sorted(fmap.items(), key=lambda kv: (-kv[1], kv[0]))) if fmap else "–"
@@ -1769,9 +2079,19 @@ def format_totals(result):
         )
         if row["runs"] < result["full_runs"]:
             partial.append(f"{row['setup']} ({row['runs']} of {result['full_runs']})")
+        elif row["runs"] > result["full_runs"]:
+            extra.append(f"{row['setup']} ({row['runs']} vs {result['full_runs']})")
+    notes_out = []
     if partial:
+        notes_out.append("Partial sets: " + ", ".join(partial) + ".")
+    if extra:
+        notes_out.append("Extra runs: " + ", ".join(extra) + ".")
+    if result.get("other_sets"):
+        others = ", ".join(f"{v} ({n} runs)" for v, n in result["other_sets"].items())
+        notes_out.append("Other recorded sets (pass --set <version> or --set all): " + others + ".")
+    if notes_out:
         lines.append("")
-        lines.append("Partial sets: " + ", ".join(partial) + ".")
+        lines.extend(notes_out)
     return "\n".join(lines) + "\n"
 
 
@@ -1790,6 +2110,7 @@ def read_set(data):
 
 
 def load_folders(folders, data):
+    explicit = bool(folders)
     if not folders:
         runs_dir = os.path.join(data, "runs")
         if not os.path.isdir(runs_dir):
@@ -1797,18 +2118,79 @@ def load_folders(folders, data):
         folders = [
             os.path.join(runs_dir, name)
             for name in sorted(os.listdir(runs_dir))
-            if os.path.isfile(os.path.join(runs_dir, name, "results.jsonl"))
+            if not name.startswith(".") and os.path.isfile(os.path.join(runs_dir, name, "results.jsonl"))
         ]
         if not folders:
             raise Refused(f"no results.jsonl under {runs_dir}")
+    set_info = read_set(data)
+    default_explicit_ver = set_info["version"] if set_info else None
     rows = []
     for folder_idx, out in enumerate(folders):
-        res_path = os.path.join(out, "results.jsonl")
+        out_abs = os.path.abspath(out)
+        res_path = os.path.join(out_abs, "results.jsonl")
         if not os.path.isfile(res_path):
             raise Refused(f"missing {res_path}")
+        meta_path = os.path.join(out_abs, "meta.json")
+        batch_ver = None
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path, encoding="utf-8") as mf:
+                    meta = json.load(mf)
+            except (OSError, ValueError) as e:
+                raise Refused(f"{meta_path} isn't valid JSON ({e})")
+            if not isinstance(meta, dict):
+                raise Refused(f"{meta_path} must be a JSON object")
+            sv = meta.get("set_version")
+            if isinstance(sv, str) and sv:
+                batch_ver = sv
+        if batch_ver is None:
+            batch_ver = default_explicit_ver if (explicit and default_explicit_ver) else "legacy"
+        batch_major = major_version(batch_ver)
         with open(res_path, encoding="utf-8") as f:
-            rows += [dict(json.loads(l), folder=folder_idx) for l in f if l.strip()]
+            rows += [
+                dict(json.loads(l), folder=folder_idx, set_version=batch_ver, set_major=batch_major)
+                for l in f
+                if l.strip()
+            ]
     return rows
+
+
+def partition_by_set(rows, set_info=None, selected_set=None, explicit=False):
+    """Split loaded rows by set MAJOR so incompatible set versions are never mixed."""
+    default_ver = (set_info or {}).get("version") or "1.0"
+    groups = collections.defaultdict(list)
+    for row in rows:
+        groups[row.get("set_major") or major_version(default_ver)].append(row)
+    ordered = []
+    for maj, prows in groups.items():
+        versions = {r.get("set_version") for r in prows if r.get("set_version")}
+        label = "legacy" if maj == "legacy" else (max(versions, key=_version_tuple) if versions else default_ver)
+        sort_k = (1, (0,)) if maj == "legacy" else (0, _version_tuple(label))
+        ordered.append((sort_k, maj, label, prows))
+    ordered.sort(key=lambda item: item[0])
+
+    if selected_set == "all":
+        return [(label, prows, {}) for _, _, label, prows in ordered]
+    if selected_set is not None:
+        target_maj = major_version(selected_set)
+        for _, maj, label, prows in ordered:
+            if maj == target_maj or label == selected_set:
+                return [(label, prows, {})]
+        avail = ", ".join(label for _, _, label, _ in ordered)
+        raise Refused(f"no runs for set {selected_set!r} (available: {avail})")
+
+    if len(ordered) == 1:
+        _, _, label, prows = ordered[0]
+        return [(label, prows, {})]
+    avail = ", ".join(label for _, _, label, _ in ordered)
+    if explicit:
+        raise Refused(f"folders span multiple set versions ({avail}); pass --set <version> or --set all")
+    active_maj = major_version(default_ver)
+    for _, maj, label, prows in ordered:
+        if maj == active_maj:
+            other_sets = {olabel: len(latest_runs(oprows)) for _, omaj, olabel, oprows in ordered if omaj != active_maj}
+            return [(label, prows, other_sets)]
+    raise Refused(f"no recorded runs for Set {default_ver} (found: {avail}; pass --set <version> or --set all)")
 
 
 def plain_name(name):
@@ -1822,14 +2204,16 @@ def plain_name(name):
 
 
 def record_run(out, data, name=None, note="", force=False):
-    """Copy compact results.jsonl (+ optional usage.jsonl) into the private data folder, never screen logs."""
+    """Copy compact results.jsonl (+ optional usage.jsonl) into the private data folder atomically."""
+    out = os.path.abspath(out)
     res_src = os.path.join(out, "results.jsonl")
     if not os.path.isfile(res_src):
         raise Refused(f"missing {res_src}")
-    run_id = name or f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{os.path.basename(os.path.abspath(out))}"
+    run_id = name or f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{os.path.basename(out)}"
     if not plain_name(run_id):
         raise Refused(f"bad run name {run_id!r}: use letters, digits, '.', '_' or '-'")
-    dest = os.path.join(data, "runs", run_id)
+    runs_dir = os.path.join(data, "runs")
+    dest = os.path.join(runs_dir, run_id)
     if os.path.exists(dest) and not force:
         raise Refused(f"{dest} already exists (pass --force to replace)")
     set_info = read_set(data)
@@ -1837,37 +2221,59 @@ def record_run(out, data, name=None, note="", force=False):
 
     normalized = []
     with open(res_src, encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except ValueError as e:
+                raise Refused(f"{res_src}:{lineno} isn't valid JSON ({e})")
+            if not isinstance(row, dict):
+                raise Refused(f"{res_src}:{lineno} must be a JSON object")
             row["usage"] = usage_uncached(row)
             row["usage_basis"] = "uncached"
             normalized.append(row)
 
-    os.makedirs(dest, exist_ok=True)
-    part_res = os.path.join(dest, "results.jsonl.part")
-    with open(part_res, "w", encoding="utf-8") as f:
-        for row in normalized:
-            f.write(json.dumps(row) + "\n")
-    os.replace(part_res, os.path.join(dest, "results.jsonl"))
+    os.makedirs(runs_dir, exist_ok=True)
+    staged = tempfile.mkdtemp(dir=runs_dir, prefix=f".{run_id}.stage.")
+    backup = None
+    try:
+        with open(os.path.join(staged, "results.jsonl"), "w", encoding="utf-8") as f:
+            for row in normalized:
+                f.write(json.dumps(row) + "\n")
 
-    usage_src = os.path.join(out, "usage.jsonl")
-    if os.path.isfile(usage_src):
-        shutil.copyfile(usage_src, os.path.join(dest, "usage.jsonl"))
+        usage_src = os.path.join(out, "usage.jsonl")
+        if os.path.isfile(usage_src):
+            shutil.copyfile(usage_src, os.path.join(staged, "usage.jsonl"))
 
-    meta = {
-        "id": run_id,
-        "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "set_version": set_version,
-        "rows": len(normalized),
-        "note": note,
-    }
-    part_meta = os.path.join(dest, "meta.json.part")
-    with open(part_meta, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=1)
-        f.write("\n")
-    os.replace(part_meta, os.path.join(dest, "meta.json"))
+        meta = {
+            "id": run_id,
+            "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "set_version": set_version,
+            "rows": len(normalized),
+            "note": note,
+        }
+        with open(os.path.join(staged, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1)
+            f.write("\n")
+
+        if os.path.lexists(dest):
+            backup = tempfile.mkdtemp(dir=runs_dir, prefix=f".{run_id}.old.")
+            os.rmdir(backup)
+            os.replace(dest, backup)
+        os.replace(staged, dest)
+        staged = None
+    except BaseException:
+        if backup and os.path.exists(backup) and not os.path.lexists(dest):
+            try:
+                os.replace(backup, dest)
+            except OSError:
+                pass
+        if staged and os.path.exists(staged):
+            shutil.rmtree(staged, ignore_errors=True)
+        raise
+    if backup and os.path.exists(backup):
+        shutil.rmtree(backup, ignore_errors=True)
     print(f"recorded {len(normalized)} rows to {dest}")
     return 0
 
@@ -1890,7 +2296,9 @@ def run_batch(
     check_cua=require_cua_daemon,
     idle_fn=idle_seconds,
 ):
-    if any(arm.endswith("-cua") for arm, *_ in setups):
+    out = os.path.abspath(out)
+    has_cua = any(arm.endswith("-cua") for arm, *_ in setups)
+    if has_cua:
         check_cua()
     if not quiet and not force and idle_fn() < 120:
         raise SystemExit(f"the Mac was used {idle_fn():.0f} s ago: this run takes the screen")
@@ -1907,15 +2315,17 @@ def run_batch(
         raise Refused(clash)
     recorded = {(r.get("setup") or r["arm"], r["task"], r["seed"]) for r in earlier if not usage_limited(r)}
     usage_snapshot(usage, providers, out, "before")
+    stop_file = os.path.join(HOME, "STOP")
     try:
         for seed in seeds:
             for task in tasks:
                 for arm, model, effort, label in setups:
-                    if os.path.exists(os.path.join(HOME, "STOP")):
-                        raise SystemExit("stopped by STOP")
+                    if os.path.exists(stop_file):
+                        raise SystemExit(f"stopped by {stop_file} (remove it before starting the next batch)")
                     if not between_ok(between):
                         raise SystemExit("stopped: the check between runs failed")
                     if CLAUDE_LIMIT and arm.startswith("claude"):
+                        print(f"{label}-{task}-{seed}: skipped (claude limit)", flush=True)
                         continue
                     name = f"{label}-{task}-{seed}"
                     if (label, task, seed) in recorded:
@@ -1933,15 +2343,28 @@ def run_batch(
                             raise Refused(f"no {BIN}: run `bench build` first")
                         description = json.loads(run_quiet(BIN, "--describe", task, "--seed", str(seed)).stdout)["prompt"]
                     prompt = prompt_for(arm, description)
-                    opened = time.time()
-                    bench_app = bench_cls(task, seed, os.path.join(out, name + ".events.jsonl"), quiet)
-                    try:
-                        ready = lambda: not os.path.exists(os.path.join(HOME, "STOP")) and between_ok(between)
-                        report = run_attempts(driver_fn(arm, model, effort, prompt, limit, out, name, overlays=overlays), ready=ready)
-                    finally:
-                        bench_app.close()
+
+                    attempt_counter = [0]
+
+                    def run_one_attempt():
+                        attempt_counter[0] += 1
+                        idx = attempt_counter[0]
+                        if arm.endswith("-cua"):
+                            check_cua()
+                        attempt_name = name if idx == 1 else f"{name}-a{idx}"
+                        opened = time.time()
+                        bench_app = bench_cls(task, seed, os.path.join(out, attempt_name + ".events.jsonl"), quiet)
+                        try:
+                            rep = driver_fn(arm, model, effort, prompt, limit, out, attempt_name, overlays=overlays)()
+                        finally:
+                            bench_app.close()
+                        graded = grade(bench_app.events(), max(0.0, rep["started"] - opened))
+                        return dict(**graded, files=attempt_name, **rep)
+
+                    ready = lambda: not os.path.exists(stop_file) and between_ok(between)
+                    report = run_attempts(run_one_attempt, ready=ready)
                     if any(n.startswith("retry stopped") for n in report["notes"]):
-                        raise SystemExit("stopped before a retry: STOP, or the check between runs failed")
+                        raise SystemExit(f"stopped before a retry: {stop_file}, or the check between runs failed")
                     row = dict(
                         arm=arm,
                         setup=label,
@@ -1950,8 +2373,6 @@ def run_batch(
                         task=task,
                         seed=seed,
                         usage_basis="uncached",
-                        files=name,
-                        **grade(bench_app.events(), report["started"] - opened),
                         **report,
                     )
                     with open(results, "a", encoding="utf-8") as f:
@@ -1998,6 +2419,22 @@ def _pop_opt_values(argv, name):
     return vals, rest
 
 
+def _single_opt(vals, name):
+    if len(vals) > 1:
+        raise Refused(f"{name} takes a single value")
+    return vals[0] if vals else None
+
+
+def _int_opt(flag, raw, minimum=1):
+    try:
+        val = int(raw)
+    except ValueError:
+        raise Refused(f"{flag} needs an integer, got {raw!r}")
+    if val < minimum:
+        raise Refused(f"{flag} must be >= {minimum}, got {val}")
+    return val
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     data = data_folder()
@@ -2015,9 +2452,11 @@ def main(argv=None):
             return build()
         if command == "selftest":
             seed_vals, rest = _pop_opt_values(argv[1:], "--seed")
-            if len(rest) > 1 or len(seed_vals) > 1:
+            unknown = [a for a in rest if a.startswith("-")]
+            if unknown or len(rest) > 1 or len(seed_vals) > 1:
                 raise Refused("usage: bench selftest [<task,task|all>] [--seed N]")
-            return selftest(rest[0] if rest else "all", int(seed_vals[0]) if seed_vals else 1)
+            seed = _int_opt("--seed", seed_vals[0], minimum=0) if seed_vals else 1
+            return selftest(rest[0] if rest else "all", seed)
         if command == "start-cua" and len(argv) == 1:
             return start_cua()
         if command == "stop-cua" and len(argv) == 1:
@@ -2027,35 +2466,71 @@ def main(argv=None):
             note_vals, rest = _pop_opt_values(rest, "--note")
             force = "--force" in rest
             rest = [a for a in rest if a != "--force"]
-            if len(rest) != 1 or len(name_vals) > 1 or len(note_vals) > 1:
+            unknown = [a for a in rest if a.startswith("-")]
+            if unknown or len(rest) != 1 or len(name_vals) > 1 or len(note_vals) > 1:
                 raise Refused("usage: bench record <out> [--name <run-id>] [--note <text>] [--force]")
             return record_run(
                 rest[0],
                 data,
-                name=name_vals[0] if name_vals else None,
-                note=note_vals[0] if note_vals else "",
+                name=_single_opt(name_vals, "--name"),
+                note=_single_opt(note_vals, "--note") or "",
                 force=force,
             )
         if command == "summarize":
-            as_json = "--json" in argv[1:]
-            folders = [a for a in argv[1:] if a != "--json"]
-            lines = summarize(load_folders(folders, data))
+            set_vals, rest = _pop_opt_values(argv[1:], "--set")
+            selected_set = _single_opt(set_vals, "--set")
+            as_json = "--json" in rest
+            rest = [a for a in rest if a != "--json"]
+            unknown = [a for a in rest if a.startswith("-")]
+            if unknown:
+                raise Refused(f"unknown option(s): {' '.join(unknown)}")
+            rows = load_folders(rest, data)
+            set_info = read_set(data)
+            parts = partition_by_set(rows, set_info, selected_set=selected_set, explicit=bool(rest))
             if as_json:
-                json.dump(lines, sys.stdout, indent=1)
+                if selected_set == "all" or len(parts) > 1:
+                    json.dump({ver: summarize(prows) for ver, prows, _ in parts}, sys.stdout, indent=1)
+                else:
+                    json.dump(summarize(parts[0][1]), sys.stdout, indent=1)
                 print()
             else:
-                print(markdown(lines), end="")
+                for idx, (ver, prows, other_sets) in enumerate(parts):
+                    if idx:
+                        print()
+                    if selected_set == "all" or len(parts) > 1 or other_sets:
+                        print(f"Set {ver}\n")
+                    print(markdown(summarize(prows)), end="")
+                    if other_sets:
+                        others = ", ".join(f"{v} ({n} runs)" for v, n in other_sets.items())
+                        print(f"\nOther recorded sets (pass --set <version> or --set all): {others}.")
             return 0
         if command == "totals":
-            as_json = "--json" in argv[1:]
-            folders = [a for a in argv[1:] if a != "--json"]
-            rows = load_folders(folders, data)
-            res = totals_data(rows, read_set(data))
+            set_vals, rest = _pop_opt_values(argv[1:], "--set")
+            selected_set = _single_opt(set_vals, "--set")
+            as_json = "--json" in rest
+            rest = [a for a in rest if a != "--json"]
+            unknown = [a for a in rest if a.startswith("-")]
+            if unknown:
+                raise Refused(f"unknown option(s): {' '.join(unknown)}")
+            rows = load_folders(rest, data)
+            set_info = read_set(data)
+            parts = partition_by_set(rows, set_info, selected_set=selected_set, explicit=bool(rest))
             if as_json:
-                json.dump(res, sys.stdout, indent=1)
+                if selected_set == "all" or len(parts) > 1:
+                    json.dump(
+                        {"sets": [totals_data(prows, set_info, set_version=ver, other_sets=others) for ver, prows, others in parts]},
+                        sys.stdout,
+                        indent=1,
+                    )
+                else:
+                    ver, prows, others = parts[0]
+                    json.dump(totals_data(prows, set_info, set_version=ver, other_sets=others), sys.stdout, indent=1)
                 print()
             else:
-                print(format_totals(res), end="")
+                for idx, (ver, prows, others) in enumerate(parts):
+                    if idx:
+                        print()
+                    print(format_totals(totals_data(prows, set_info, set_version=ver, other_sets=others)), end="")
             return 0
         if command == "run":
             if len(argv) < 4:
@@ -2078,19 +2553,26 @@ def main(argv=None):
             unknown = [a for a in rest if a not in ("--quiet", "--force")]
             if unknown:
                 raise Refused(f"unknown option(s): {' '.join(unknown)}")
-            if seed_vals and seeds_vals:
+            between = _single_opt(between_vals, "--between")
+            usage = _single_opt(usage_vals, "--usage")
+            limit = _int_opt("--limit", _single_opt(limit_vals, "--limit"), minimum=1) if limit_vals else 420
+            seed_raw = _single_opt(seed_vals, "--seed")
+            seeds_raw = _single_opt(seeds_vals, "--seeds")
+            if seed_raw is not None and seeds_raw is not None:
                 raise Refused("pass either --seed or --seeds, not both")
-            seeds = [int(seed_vals[0])] if seed_vals else list(range(1, int(seeds_vals[0] if seeds_vals else 1) + 1))
+            seeds = [_int_opt("--seed", seed_raw, minimum=0)] if seed_raw is not None else list(
+                range(1, (_int_opt("--seeds", seeds_raw, minimum=1) if seeds_raw is not None else 1) + 1)
+            )
             return run_batch(
                 out,
                 setups,
                 tasks,
                 seeds,
-                limit=int(limit_vals[0]) if limit_vals else 420,
+                limit=limit,
                 quiet=quiet,
                 force=force,
-                between=between_vals[0] if between_vals else None,
-                usage=usage_vals[0] if usage_vals else None,
+                between=between,
+                usage=usage,
                 overlays=allowed_overlays(extra_overlays, data=data),
             )
         print(__doc__, file=sys.stderr)

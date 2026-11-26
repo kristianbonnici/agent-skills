@@ -435,17 +435,260 @@ class RelativeCodexHomeTests(unittest.TestCase):
             captured["env"] = env
             raise RuntimeError("stop child")
 
-        with mock.patch.object(tui_mod.pty, "fork", side_effect=fake_fork), mock.patch.object(tui_mod.os, "chdir"), mock.patch.object(tui_mod.os, "execvpe", side_effect=fake_execvpe):
-            with self.assertRaises(RuntimeError):
+        exited = []
+
+        def fake_exit(code):
+            exited.append(code)
+            raise SystemExit(code)
+
+        with (
+            mock.patch.object(tui_mod.pty, "fork", side_effect=fake_fork),
+            mock.patch.object(tui_mod.os, "chdir"),
+            mock.patch.object(tui_mod.os, "execvpe", side_effect=fake_execvpe),
+            mock.patch.object(tui_mod.os, "_exit", side_effect=fake_exit),
+        ):
+            with self.assertRaises(SystemExit) as cm:
                 tui_mod.Screen(
                     ["codex"],
                     work,
                     env={"CODEX_HOME": "/abs/codex", "CLAUDECODE": "1", "ANTHROPIC_API_KEY": "secret"},
                 )
+        self.assertEqual(exited, [127])
+        self.assertEqual(cm.exception.code, 127)
         self.assertEqual(captured["env"]["CODEX_HOME"], "/abs/codex")
         self.assertEqual(captured["env"]["TERM"], "xterm-256color")
         self.assertNotIn("CLAUDECODE", captured["env"])
         self.assertNotIn("ANTHROPIC_API_KEY", captured["env"])
+
+
+class TuiLifecycleAndTranscriptTests(unittest.TestCase):
+    def test_tui_screen_close_kills_sigterm_ignoring_child_reaps_and_closes_fd(self):
+        fake_pyte = types.SimpleNamespace(
+            Screen=lambda cols, rows: types.SimpleNamespace(display=[""] * rows),
+            ByteStream=lambda s: types.SimpleNamespace(feed=lambda data: None),
+        )
+        tui_path = os.path.join(skill_dir, "scripts", "tui.py")
+        tui_loader = importlib.machinery.SourceFileLoader("tui_live_mod", tui_path)
+        tui_spec = importlib.util.spec_from_loader("tui_live_mod", tui_loader)
+        tui_mod = importlib.util.module_from_spec(tui_spec)
+        with mock.patch.dict(sys.modules, {"pyte": fake_pyte}):
+            tui_loader.exec_module(tui_mod)
+        scr = tui_mod.Screen(["/bin/sh", "-c", "trap '' TERM; sleep 30"], work, rows=10, cols=40)
+        pid, fd = scr.pid, scr.fd
+        scr.close(wait=0.2)
+        self.assertIsNone(scr.pid)
+        self.assertIsNone(scr.fd)
+        self.assertFalse(scr.pump(0.1))
+        with self.assertRaises(OSError) as cm:
+            os.fstat(fd)
+        self.assertEqual(cm.exception.errno, errno.EBADF)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        scr.close()
+
+    def test_claude_transcript_encodes_dots_and_underscores_and_survives_partial_line(self):
+        with tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as claude_home:
+            dotted = os.path.join(fake_home, ".cache", "agent_skills", "cu.bench")
+            os.makedirs(dotted)
+            saved_home = bench.HOME
+            try:
+                bench.HOME = dotted
+                with mock.patch.dict(os.environ, {"HOME": claude_home}):
+                    path = bench.transcript("sess-123")
+                    self.assertIn("--cache-agent-skills-cu-bench", path.replace("_", "-"))
+                    self.assertNotIn(".cache", os.path.basename(os.path.dirname(path)))
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(
+                            json.dumps(
+                                {
+                                    "type": "assistant",
+                                    "message": {
+                                        "stop_reason": "end_turn",
+                                        "usage": {"input_tokens": 11, "output_tokens": 7},
+                                        "content": [
+                                            {"type": "tool_use", "name": "mcp__cua__click"},
+                                            {"type": "text", "text": "DONE"},
+                                        ],
+                                    },
+                                }
+                            )
+                            + "\n"
+                            + '{"type":"assistant","message":{"partial":'
+                        )
+                    rep = bench.claude_report("sess-123")
+                    self.assertEqual(rep["final"], "DONE")
+                    self.assertEqual(rep["tools"], {"click": 1})
+                    self.assertEqual(rep["usage"]["input"], 11)
+            finally:
+                bench.HOME = saved_home
+
+    def test_drive_claude_and_codex_tui_exit_immediately_on_pty_eof_and_interrupt_closes(self):
+        with tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as out:
+            instances = []
+
+            class DeadScreen:
+                def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                    self.closed = False
+                    self.pumps = 0
+                    instances.append(self)
+
+                def pump(self, seconds):
+                    self.pumps += 1
+                    return False
+
+                def show(self):
+                    return ""
+
+                def paste(self, text):
+                    raise AssertionError("paste must not be called on dead PTY")
+
+                def send(self, text):
+                    raise AssertionError("send must not be called on dead PTY")
+
+                def close(self):
+                    self.closed = True
+
+            saved = (bench._screen, bench.HOME)
+            try:
+                bench._screen = lambda: DeadScreen
+                bench.HOME = fake_home
+                rep = bench.drive_claude("claude-native", "P", 420, out, "c-eof", overlays=set())
+                self.assertIn("claude exited", rep["notes"])
+                self.assertNotIn("limit reached", rep["notes"])
+                self.assertTrue(instances[-1].closed)
+                self.assertEqual(
+                    bench.failure_kind(dict(passed=False, notes=rep["notes"], wrong=0, seconds=None, final=None)),
+                    "harness-error",
+                )
+
+                rep2 = bench.drive_codex_tui("P", 420, out, "x-eof")
+                self.assertIn("codex exited", rep2["notes"])
+                self.assertNotIn("limit reached", rep2["notes"])
+                self.assertTrue(instances[-1].closed)
+                self.assertEqual(
+                    bench.failure_kind(dict(passed=False, notes=rep2["notes"], wrong=0, seconds=None, final=None)),
+                    "harness-error",
+                )
+
+                class InterruptClaudeScreen(DeadScreen):
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        super().__init__(argv, cwd, rows=rows, cols=cols, env=env)
+                        self.n = 0
+
+                    def pump(self, seconds):
+                        self.n += 1
+                        if self.n >= 2:
+                            raise KeyboardInterrupt()
+                        return True
+
+                    def paste(self, text):
+                        pass
+
+                    def send(self, text):
+                        pass
+
+                bench._screen = lambda: InterruptClaudeScreen
+                with self.assertRaises(KeyboardInterrupt):
+                    bench.drive_claude("claude-native", "P", 10, out, "c-int", overlays=set())
+                self.assertTrue(instances[-1].closed)
+            finally:
+                bench._screen, bench.HOME = saved
+
+    def test_drive_codex_tui_handles_partial_harbor_desk_approval_and_interrupt(self):
+        with tempfile.TemporaryDirectory() as fake_home, tempfile.TemporaryDirectory() as out:
+            class PartialApprovalScreen:
+                def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                    self.step = 0
+                    self.closed = False
+                    self.sent = []
+
+                def pump(self, seconds):
+                    self.step += 1
+                    return True
+
+                def show(self):
+                    if self.step <= 4:
+                        return "OpenAI Codex"
+                    if self.step == 5:
+                        return 'Allow Computer Use to use "Harbor Desk"?'
+                    if self.step == 6:
+                        return 'Allow Computer Use to use "Harbor Desk"?\n› 1. Allow once\n  2. Allow for this session'
+                    if self.step == 7:
+                        return 'Allow Computer Use to use "Harbor Desk"?\n  1. Allow once\n› 2. Allow for this session'
+                    return "DONE\n"
+
+                def paste(self, text):
+                    pass
+
+                def send(self, text):
+                    self.sent.append(text)
+
+                def close(self):
+                    self.closed = True
+
+            class InterruptScreen(PartialApprovalScreen):
+                def pump(self, seconds):
+                    self.step += 1
+                    if self.step >= 4:
+                        raise KeyboardInterrupt()
+                    return True
+
+            saved = (bench._screen, bench.HOME)
+            try:
+                bench.HOME = fake_home
+                bench._screen = lambda: PartialApprovalScreen
+                rep = bench.drive_codex_tui("P", 10, out, "c-partial")
+                self.assertIn("allowed for this session: Harbor Desk", rep["notes"])
+                self.assertNotIn("held: another app", rep["notes"])
+                self.assertEqual(rep["final"], "DONE")
+
+                created = []
+
+                def make_int(*a, **kw):
+                    s = InterruptScreen(*a, **kw)
+                    created.append(s)
+                    return s
+
+                bench._screen = lambda: make_int
+                with self.assertRaises(KeyboardInterrupt):
+                    bench.drive_codex_tui("P", 10, out, "c-int")
+                self.assertTrue(created[0].closed)
+            finally:
+                bench._screen, bench.HOME = saved
+
+    def test_noninteractive_drivers_end_group_on_keyboard_interrupt(self):
+        with tempfile.TemporaryDirectory() as out, tempfile.TemporaryDirectory() as fake_home:
+            class FakeProc:
+                pid = 424242
+                returncode = None
+
+                def wait(self, timeout=None):
+                    raise KeyboardInterrupt()
+
+                def poll(self):
+                    return None
+
+            killed = []
+            saved_home = bench.HOME
+            try:
+                bench.HOME = fake_home
+                with (
+                    mock.patch("subprocess.Popen", return_value=FakeProc()),
+                    mock.patch.object(bench, "end_group", side_effect=lambda p: killed.append(p.pid)),
+                    mock.patch.object(bench, "agy_workspace", return_value=fake_home),
+                    mock.patch.object(bench, "agy_settings", return_value={"permissions": {}}),
+                ):
+                    for fn in (
+                        lambda: bench.drive_codex("codex-cua", "P", 5, out, "codex-int"),
+                        lambda: bench.drive_opencode("P", 5, out, "oc-int"),
+                        lambda: bench.drive_agy("P", 5, out, "agy-int"),
+                    ):
+                        with self.assertRaises(KeyboardInterrupt):
+                            fn()
+                self.assertEqual(killed, [424242, 424242, 424242])
+            finally:
+                bench.HOME = saved_home
 
 
 class RecoveredCodexRateLimitTests(unittest.TestCase):
@@ -470,6 +713,15 @@ class RecoveredCodexRateLimitTests(unittest.TestCase):
             # Without folder/usage_limited replacement, later started replaces earlier; with earlier order, kept as latest.
             kept = bench.latest_runs([dict(row, started=200.0), dict(row, started=100.0, passed=True, notes=[])])
             self.assertFalse(kept[0]["passed"])
+
+    def test_codex_non_limit_turn_failed_sets_harness_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "fail.jsonl")
+            with open(log, "w", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "turn.failed", "error": {"message": "auth expired"}}) + "\n")
+            rep = bench.codex_report(log)
+            self.assertTrue(any(n.startswith("codex turn failed") for n in rep["notes"]))
+            self.assertEqual(bench.failure_kind(dict(passed=False, notes=rep["notes"], wrong=0, seconds=None, final=None)), "harness-error")
 
     def test_terminal_rate_limit_after_earlier_turn_is_still_caught(self):
         with tempfile.TemporaryDirectory() as d:
@@ -525,6 +777,10 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(
             bench.parse_setup("codex-native:gpt-6.1-sol@medium"),
             ("codex-native", "gpt-6.1-sol", "medium", "codex-native-gpt-6.1-sol-medium"),
+        )
+        self.assertEqual(
+            bench.parse_setup("codex-cua:gpt-6.1-sol"),
+            ("codex-cua", "gpt-6.1-sol", "high", "codex-cua-gpt-6.1-sol"),
         )
         self.assertEqual(bench.parse_setup("antigravity-cua"), ("antigravity-cua", "gemini-4-neon-high", None, "antigravity-cua"))
         self.assertEqual(
@@ -745,6 +1001,31 @@ class AntigravityTests(unittest.TestCase):
         self.assertIn("web tool called: open_browser_url", rep["notes"])
         self.assertEqual(rep["tools"].get("click"), 1)
 
+        recovered = self._report(
+            [{"event": "result", "result": {"status": "SUCCESS", "response": "FAILED"}}],
+            tail="HTTP 429 rate limit exceeded, retrying...\n",
+        )
+        self.assertNotIn("agy limit", " ".join(recovered["notes"]))
+        self.assertIn("agy rate limit recovered", recovered["notes"])
+        self.assertFalse(bench.usage_limited(dict(passed=False, notes=recovered["notes"])))
+
+        with tempfile.TemporaryDirectory() as d:
+            p2 = os.path.join(d, "ordered.jsonl")
+            with open(p2, "w", encoding="utf-8") as f:
+                f.write("HTTP 429 rate limit exceeded, retrying...\n")
+                f.write(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "FAILED"}}) + "\n")
+            rep_ord = bench.agy_report(p2)
+            self.assertIn("agy rate limit recovered", rep_ord["notes"])
+            self.assertFalse(bench.usage_limited(dict(passed=False, notes=rep_ord["notes"])))
+
+    def test_opencode_report_survives_non_dict_json_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "oc.jsonl")
+            with open(log, "w", encoding="utf-8") as f:
+                f.write('null\n404\n[]\n{"part": "plain"}\n{"part": {"type": "text", "text": "DONE"}}\n')
+            rep = bench.opencode_report(log)
+            self.assertEqual(rep["final"], "DONE")
+
     def test_gemini_home_and_plugins_json_guards(self):
         with tempfile.TemporaryDirectory() as gemini, mock.patch.dict(os.environ, {"GEMINI_HOME": os.path.join(gemini, "other")}):
             with self.assertRaises(SystemExit):
@@ -783,6 +1064,7 @@ class ManifestVerificationTests(unittest.TestCase):
             base + "  readable_roots:\n    - /\n",
             base + "browser_origins:\n  - https://example.com\n",
             "version: 3\nallow:\n  tools: [click]\nresources:\n  apps:\n    - bundle_id: x\n  desktop:\n    display: false\n",
+            base.replace("display: false", "display: 0"),
         ]
         with tempfile.TemporaryDirectory() as d:
             for i, content in enumerate(bad_cases):
@@ -797,13 +1079,18 @@ class ManifestVerificationTests(unittest.TestCase):
                 bench.verify_manifest_file(link_p)
 
     def test_daemon_ready_and_require_cua_daemon_verify_manifest_sha256(self):
-        sha = "a" * 64
+        manifest_file = os.path.join(skill_dir, "assets", "manifest.yaml")
+        sha = bench.verify_manifest_file(manifest_file)
+        # Observed output shape from Cua Driver 0.61.2 status.
         good = (
             "Cua Driver daemon is running\n"
-            "  socket: /tmp/x/cua.sock\n"
-            "  pid: 123\n"
+            f"  socket: {bench.SOCKET}\n"
+            "  pid: 67057\n"
             "  tool calls: open\n"
             "  permission mode: bounded (trusted_startup_configuration)\n"
+            "  user policy: configured=false, active=false, valid=true\n"
+            "  managed policy: configured=false, active=false, valid=true\n"
+            "  authorization host: unavailable (unavailable)\n"
             "  capability manifest: configured=true, approved_at_startup=true, valid=true\n"
             f"  capability manifest sha256: {sha}\n"
         )
@@ -816,14 +1103,44 @@ class ManifestVerificationTests(unittest.TestCase):
         self.assertFalse(bench.daemon_ready("\n".join(good.splitlines()[:-1]), sha))
         self.assertFalse(bench.daemon_ready("Cua Driver daemon is not running", sha))
 
-    def test_run_batch_checks_cua_daemon_only_for_cua_arms(self):
+        stale_manifest = manifest_file
+        saved_manifest = bench.MANIFEST
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                cached = os.path.join(d, "manifest.yaml")
+                with open(manifest_file, encoding="utf-8") as src, open(cached, "w", encoding="utf-8") as dst:
+                    dst.write(src.read().replace("  desktop:", "  # stale\n  desktop:"))
+                bench.MANIFEST = cached
+                stale_sha = bench.verify_manifest_file(cached)
+                fake_res = types.SimpleNamespace(stdout=good.replace(sha, stale_sha), stderr="", returncode=0)
+                with self.assertRaises(bench.Refused):
+                    bench.require_cua_daemon(run_status=lambda *a: fake_res)
+                shutil.copyfile(stale_manifest, cached)
+                good_res = types.SimpleNamespace(stdout=good, stderr="", returncode=0)
+                self.assertEqual(bench.require_cua_daemon(run_status=lambda *a: good_res), sha)
+        finally:
+            bench.MANIFEST = saved_manifest
+
+    def test_missing_driver_exits_64_cleanly(self):
+        saved_driver = bench.DRIVER
+        try:
+            bench.DRIVER = os.path.join(work, "no-such-cua-driver")
+            with self.assertRaises(bench.Refused):
+                bench.require_cua_daemon(manifest_path=os.path.join(skill_dir, "assets", "manifest.yaml"))
+            with self.assertRaises(bench.Refused):
+                bench.stop_cua()
+        finally:
+            bench.DRIVER = saved_driver
+
+    def test_run_batch_checks_cua_daemon_before_every_attempt_including_retries(self):
         manifest_file = os.path.join(skill_dir, "assets", "manifest.yaml")
         with tempfile.TemporaryDirectory() as out:
             checked = []
 
             class FakeBench:
-                def __init__(self, *a):
-                    pass
+                def __init__(self, task, seed, log, quiet):
+                    with open(log, "w", encoding="utf-8") as f:
+                        f.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
 
                 def events(self):
                     return [{"event": "success", "t": 2.0}]
@@ -847,6 +1164,37 @@ class ManifestVerificationTests(unittest.TestCase):
                     bench_cls=FakeBench,
                 )
             self.assertEqual(checked, [True])
+
+            checked.clear()
+            attempt_n = [0]
+
+            def check_fails_on_retry():
+                checked.append(len(checked) + 1)
+                if len(checked) >= 3:
+                    raise bench.Refused("daemon changed mid-batch")
+
+            def zero_tool_driver(*a, **kw):
+                def go():
+                    attempt_n[0] += 1
+                    return dict(started=time.time(), wall=1.0, notes=[], tools={}, usage={}, final=None, images=None)
+
+                return go
+
+            with self.assertRaises(bench.Refused):
+                with mock.patch("time.sleep"):
+                    bench.run_batch(
+                        out,
+                        [bench.parse_setup("codex-cua")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        check_cua=check_fails_on_retry,
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=FakeBench,
+                        driver_fn=zero_tool_driver,
+                    )
+            self.assertEqual(len(checked), 3)
+            self.assertEqual(attempt_n[0], 1)
 
             checked.clear()
             bench.run_batch(
@@ -1047,6 +1395,220 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
             self.assertIn("post-success-wrong", md.stdout)
             self.assertIn("Partial sets:", md.stdout)
 
+    def test_relative_out_and_fresh_retry_app_cost_aggregation(self):
+        with tempfile.TemporaryDirectory() as caller, tempfile.TemporaryDirectory() as fake_home:
+            rel_out = "rel-batch/out"
+            abs_out = os.path.abspath(os.path.join(caller, rel_out))
+            seen_logs = []
+            seen_configs = []
+
+            class FakeRetryBench:
+                def __init__(self, task, seed, log, quiet):
+                    self.log = log
+                    seen_logs.append(log)
+                    with open(log, "w", encoding="utf-8") as f:
+                        f.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
+                        # Attempt 1 leaves a bogus success without tool calls; attempt 2 cleanly succeeds later.
+                        f.write(json.dumps({"event": "success", "t": 2.0 if "-a2" not in log else 5.0}) + "\n")
+
+                def events(self):
+                    with open(self.log, encoding="utf-8") as f:
+                        return [json.loads(l) for l in f if l.strip()]
+
+                def close(self):
+                    pass
+
+            n = [0]
+
+            def fake_driver(arm, model, effort, prompt, limit, out, name, overlays=None):
+                def run_one():
+                    n[0] += 1
+                    argv = bench.claude_argv(arm, "s-" + str(n[0]), out, model, effort)
+                    seen_configs.append(argv[argv.index("--mcp-config") + 1])
+                    if n[0] == 1:
+                        return dict(
+                            started=time.time() + 1.0,
+                            wall=4.0,
+                            notes=[],
+                            tools={},
+                            usage={"input": 100, "cache_read": 0, "cache_write": 0, "output": 10},
+                            final=None,
+                            images=None,
+                        )
+                    return dict(
+                        started=time.time() + 1.0,
+                        wall=6.0,
+                        notes=[],
+                        tools={"click": 2},
+                        usage={"input": 250, "cache_read": 30, "cache_write": 0, "output": 20},
+                        final="DONE",
+                        images=None,
+                    )
+
+                return run_one
+
+            orig_cwd = os.getcwd()
+            orig_home = bench.HOME
+            try:
+                os.chdir(caller)
+                bench.HOME = fake_home
+                with mock.patch("time.sleep"):
+                    bench.run_batch(
+                        rel_out,
+                        [bench.parse_setup("claude-cua")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        check_cua=lambda: "ok",
+                        describe_fn=lambda t, s: "desc",
+                        bench_cls=FakeRetryBench,
+                        driver_fn=fake_driver,
+                    )
+            finally:
+                os.chdir(orig_cwd)
+                bench.HOME = orig_home
+
+            self.assertEqual(len(seen_logs), 2)
+            for p in seen_logs + seen_configs:
+                self.assertTrue(os.path.isabs(p), p)
+                self.assertTrue(os.path.realpath(p).startswith(os.path.realpath(abs_out) + os.sep))
+            self.assertNotEqual(seen_logs[0], seen_logs[1])
+            with open(os.path.join(abs_out, "results.jsonl"), encoding="utf-8") as f:
+                row = json.loads(f.read().strip())
+            self.assertEqual(row["attempts"], 2)
+            self.assertEqual(row["wall"], 10.0)
+            self.assertGreaterEqual(row["seconds"], 0.0)
+            self.assertEqual(row["usage"]["input"], 350)
+            self.assertEqual(row["usage"]["output"], 30)
+            self.assertIn("no tool calls, attempt 1", row["notes"])
+
+    def test_usage_snapshot_shlex_opencode_go_and_record_force_atomic_totals_versions(self):
+        with tempfile.TemporaryDirectory() as tmp_state, tempfile.TemporaryDirectory() as out1, tempfile.TemporaryDirectory() as out2:
+            os.makedirs(os.path.join(tmp_state, ".git"))
+            data = os.path.join(tmp_state, "computer-use-benchmark")
+            os.makedirs(data)
+            with open(os.path.join(data, "set.json"), "w", encoding="utf-8") as f:
+                json.dump({"version": "1.0", "tasks": ["form"], "seeds": 1}, f)
+
+            seen_cmds = []
+
+            def fake_run(*argv):
+                seen_cmds.append(argv)
+                if "codex" in argv:
+                    return types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
+                return types.SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"providers": {argv[-1]: {"ok": True}}}),
+                    stderr="",
+                )
+
+            bench.usage_snapshot("python3 /opt/fake/usage.py --fast", {"opencode_go", "codex"}, out1, "before", run=fake_run)
+            self.assertEqual(seen_cmds[0][:3], ("python3", "/opt/fake/usage.py", "--fast"))
+            self.assertTrue(any("opencode_go" in c for c in seen_cmds))
+            with open(os.path.join(out1, "usage.jsonl"), encoding="utf-8") as f:
+                self.assertEqual(len(f.read().splitlines()), 2)
+
+            def make_row(setup, arm, model, task, seed, passed, started, notes=()):
+                return {
+                    "arm": arm,
+                    "setup": setup,
+                    "model": model,
+                    "effort": None,
+                    "task": task,
+                    "seed": seed,
+                    "passed": passed,
+                    "wrong": 0,
+                    "seconds": 5.0 if passed else None,
+                    "wall": 10.0,
+                    "attempts": 1,
+                    "tools": {"click": 1},
+                    "usage": {"input": 100, "cache_read": 0, "cache_write": 0, "output": 10},
+                    "usage_basis": "uncached",
+                    "started": started,
+                    "notes": list(notes),
+                }
+
+            # Initial batch with usage.jsonl and a codex limit row.
+            with open(os.path.join(out1, "results.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 1, False, 100.0, ["codex limit"])) + "\n")
+            bench.record_run(out1, data, name="run-a")
+            self.assertTrue(os.path.exists(os.path.join(data, "runs", "run-a", "usage.jsonl")))
+
+            # Staging failure during --force preserves existing run-a cleanly.
+            with open(os.path.join(out2, "results.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 1, True, 200.0)) + "\n")
+            with mock.patch("os.replace", side_effect=OSError("disk error")):
+                with self.assertRaises(OSError):
+                    bench.record_run(out2, data, name="run-a", force=True)
+            self.assertTrue(os.path.exists(os.path.join(data, "runs", "run-a", "usage.jsonl")))
+
+            # Successful --force without usage.jsonl removes stale usage.jsonl.
+            bench.record_run(out2, data, name="run-a", force=True)
+            self.assertFalse(os.path.exists(os.path.join(data, "runs", "run-a", "usage.jsonl")))
+
+            # Re-record run-a (usage-limit) alongside run-b (redo pass) + another batch in Set 2.0 + legacy (no meta.json).
+            bench.record_run(out1, data, name="run-a", force=True)
+            bench.record_run(out2, data, name="run-b")
+            # Dedupes across run-a & run-b within Set 1.0: pass replaces usage-limit, runs == 1 (not 2!).
+            with open(os.path.join(data, "set.json"), "w", encoding="utf-8") as f:
+                json.dump({"version": "2.0", "tasks": ["form"], "seeds": 1}, f)
+            with tempfile.TemporaryDirectory() as out3, tempfile.TemporaryDirectory() as leg:
+                with open(os.path.join(out3, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 1, False, 300.0)) + "\n")
+                    # Seed 2 produces extra runs (> full_runs = 1) to test Extra runs flag.
+                    f.write(json.dumps(make_row("codex-cua", "codex-cua", "gpt-6.1-terra", "form", 2, False, 301.0)) + "\n")
+                bench.record_run(out3, data, name="run-v2")
+                os.makedirs(os.path.join(data, "runs", "legacy-batch"))
+                with open(os.path.join(leg, "results.jsonl"), "w", encoding="utf-8") as f:
+                    f.write(json.dumps(make_row("claude-cua", "claude-cua", "claude-opus-5-5", "form", 1, True, 50.0)) + "\n")
+                shutil.copyfile(os.path.join(leg, "results.jsonl"), os.path.join(data, "runs", "legacy-batch", "results.jsonl"))
+
+            env = dict(os.environ, AGENT_SKILLS_STATE=tmp_state)
+            t_active = subprocess.run([sys.executable, "-I", bench_path, "totals", "--json"], capture_output=True, text=True, env=env)
+            self.assertEqual(t_active.returncode, 0, t_active.stderr)
+            d_active = json.loads(t_active.stdout)
+            self.assertEqual(d_active["set"], "2.0")
+            self.assertEqual(d_active["setups"][0]["passed"], 0)
+            self.assertEqual(d_active["setups"][0]["runs"], 2)
+            self.assertIn("1.0", d_active["other_sets"])
+            self.assertIn("legacy", d_active["other_sets"])
+
+            t_v1 = subprocess.run([sys.executable, "-I", bench_path, "totals", "--set", "1.0", "--json"], capture_output=True, text=True, env=env)
+            self.assertEqual(t_v1.returncode, 0, t_v1.stderr)
+            d_v1 = json.loads(t_v1.stdout)
+            self.assertEqual(d_v1["set"], "1.0")
+            self.assertEqual(d_v1["setups"][0]["runs"], 1)
+            self.assertEqual(d_v1["setups"][0]["passed"], 1)
+
+            s_v1 = subprocess.run([sys.executable, "-I", bench_path, "summarize", "--set", "1.0", "--json"], capture_output=True, text=True, env=env)
+            self.assertEqual(s_v1.returncode, 0, s_v1.stderr)
+            ds_v1 = json.loads(s_v1.stdout)
+            self.assertEqual(ds_v1[0]["runs"], 1)
+            self.assertEqual(ds_v1[0]["passed"], 1)
+
+            t_all = subprocess.run([sys.executable, "-I", bench_path, "totals", "--set", "all"], capture_output=True, text=True, env=env)
+            self.assertEqual(t_all.returncode, 0, t_all.stderr)
+            self.assertIn("Set 1.0:", t_all.stdout)
+            self.assertIn("Set 2.0:", t_all.stdout)
+            self.assertIn("Set legacy:", t_all.stdout)
+            self.assertIn("Extra runs:", t_all.stdout)
+
+            t_mixed_err = subprocess.run(
+                [sys.executable, "-I", bench_path, "totals", os.path.join(data, "runs", "run-a"), os.path.join(data, "runs", "run-v2")],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(t_mixed_err.returncode, 64)
+
+            for bad_argv in (
+                ["selftest", "--seed", "abc"],
+                ["run", out1, "codex-cua", "form", "--limit", "0"],
+                ["run", out1, "codex-cua", "form", "--seed", "1", "--seed", "2"],
+            ):
+                res = subprocess.run([sys.executable, "-I", bench_path] + bad_argv, capture_output=True, text=True, env=env)
+                self.assertEqual(res.returncode, 64, bad_argv)
+
 
 class HarborDeskBuildAndSelftestTests(unittest.TestCase):
     def test_build_describe_and_offscreen_selftest(self):
@@ -1060,8 +1622,18 @@ class HarborDeskBuildAndSelftestTests(unittest.TestCase):
             desc = subprocess.run([bench.BIN, "--describe", task, "--seed", "1"], capture_output=True, text=True)
             self.assertEqual(desc.returncode, 0, task)
             self.assertTrue(json.loads(desc.stdout)["prompt"])
-        st = subprocess.run([sys.executable, "-I", bench_path, "selftest", "form,canvas", "--seed", "1"], capture_output=True, text=True)
+        st = subprocess.run([sys.executable, "-I", bench_path, "selftest", "all", "--seed", "1"], capture_output=True, text=True)
         self.assertEqual(st.returncode, 0, st.stdout + st.stderr)
+        # Seed 66 sets slider target == 50 (the slider's initial position).
+        st66 = subprocess.run([sys.executable, "-I", bench_path, "selftest", "slider", "--seed", "66"], capture_output=True, text=True)
+        self.assertEqual(st66.returncode, 0, st66.stdout + st66.stderr)
+        bad_log = subprocess.run(
+            [bench.BIN, "--selftest", "form", "--seed", "1", "--log", os.path.join(work, "missing-dir", "x.jsonl")],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(bad_log.returncode, 2)
+        self.assertIn("cannot open log file", bad_log.stderr)
 
 
 suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])

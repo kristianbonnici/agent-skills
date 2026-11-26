@@ -13,7 +13,7 @@ The private results (`runs/`, `results.md`, `set.json`, and `config.json`) live 
 
 ## Rules that never bend
 
-- **Graded by the app, never the agent's word.** Harbor Desk writes `shown`, `dot`, `press`, `success`, `wrong`, `pointer-moved`, and `front-changed` to its own log. Any `wrong` after `success` fails the run (catching stray clicks).
+- **Graded by the app, never the agent's word.** Harbor Desk writes `shown`, `dot`, `press`, `success`, `wrong`, `pointer-moved`, and `front-changed` to its own log. A run passes only when its last grade event is `success`, so a stray click after `success` fails the run (and on `canvas`, any decoy or out-of-order click spoils the attempt).
 - **Operate only when the screen is yours.** Live runs require an unlocked screen idle for at least 120 seconds (or `--force`), and must pass `--between` whenever a shared screen lease controls access. Never run unattended setups over other people's active windows.
 - **Verify Cua Driver's manifest scope before every Cua run.** `bench start-cua` and `bench run` refuse unless the daemon on the benchmark's own socket (`COMPUTER_USE_BENCHMARK_SOCKET`, never the user's default socket) runs in `bounded` mode with an approved `version: 3` manifest whose SHA-256 matches `assets/manifest.yaml` (Harbor Desk alone, `desktop.display: false`, no desktop-wide listing tools).
 - **Per-run isolated harness configs only.** Never mutate the user's global `~/.claude`, `~/.codex`, `~/.config/opencode`, or `~/.gemini` configs, and never run `cua-driver mcp-config --client` into live folders.
@@ -55,7 +55,7 @@ Run in chunks (`--seed n`) or full batches (`--seeds 3`) into a scratch or tempo
 ```
 
 - Pass `--quiet` only when testing background behavior while the screen is in use (note that `pointer` and `front` counts then include user activity).
-- `touch <cache>/STOP` stops a batch cleanly between runs without leaving partial rows.
+- `touch <cache>/STOP` stops a batch cleanly between runs without leaving partial rows; remove `<cache>/STOP` before starting the next batch.
 - Pass `--allow-overlay <App>` (or configure `allow_overlays` in `<data>/config.json`) for user-approved overlay windows when testing native computer-use approval prompts.
 
 ## 4. Record and report
@@ -64,8 +64,8 @@ Record only compact JSONL results and usage snapshots (never screenshots, `.scre
 
 ```sh
 scripts/bench record <out> --name <YYYY-MM-DD-label> --note "<summary>"
-scripts/bench totals
-scripts/bench summarize
+scripts/bench totals [--set <version|all>]
+scripts/bench summarize [--set <version|all>]
 ```
 
 Update `results.md` in `<data>` with the `bench totals` table, the set version, date, plan-window deltas from `usage.jsonl` (noting any concurrent work on the computer), failure breakdown, and any blind spots outside Harbor Desk (such as non-activating panels). Commit `runs/`, `set.json`, and `results.md` in the private state repository; push only when asked.
