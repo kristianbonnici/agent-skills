@@ -5168,6 +5168,21 @@ case "$out" in *"nothing to act on"*"antigravity gemini_models_five_hour 20%"*) 
 printf '%s\n' '{"generated_at": "2026-11-27T01:40:00+02:00", "providers": {"antigravity": {"observed_at": "2026-11-27T01:40:00+02:00", "windows": {"gemini_models_five_hour": {"used_percent": 90.0, "resets_at": "2026-11-27T05:00:00+02:00"}}}}}' > "$work/hb-stale-live.json"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-stale-live" "$scripts/heartbeat" "$hb_stale" --no-ledger --live)
 case "$out" in *"act on the lines below"*"usage: antigravity gemini_models_five_hour at 90%"*) ;; *) echo "hb stale live 3 after recovery: $out"; exit 1;; esac
+# Older 96% sample replayed after a newer live 20% recovery stays quiet; a later genuine crossing wakes.
+hb_replay="$work/hb-stale-replay"
+mkdir -p "$hb_replay/usage"
+printf '%s\n' '{"tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}' > "$hb_replay/watch.json"
+printf '%s\n' '{"t": "2026-11-27T00:30:00+02:00", "providers": {"antigravity": {"observed_at": "2026-11-27T00:30:00+02:00", "windows": {"gemini_models_five_hour": {"used": 96.0, "resets_at": "2026-11-27T05:00:00+02:00"}}}}}' > "$hb_replay/usage/providers.jsonl"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb_replay" --no-ledger --no-live)
+case "$out" in *"act on the lines below"*"usage: antigravity gemini_models_five_hour at 96%: schedule the resume wake"*) ;; *) echo "hb replay initial 96: $out"; exit 1;; esac
+printf '%s\n' '{"generated_at": "2026-11-27T01:00:00+02:00", "providers": {"antigravity": {"observed_at": "2026-11-27T01:00:00+02:00", "windows": {"gemini_models_five_hour": {"used_percent": 20.0, "resets_at": "2026-11-27T06:00:00+02:00"}}}}}' > "$work/hb-stale-live.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-stale-live" "$scripts/heartbeat" "$hb_replay" --no-ledger --live)
+case "$out" in *"nothing to act on"*"antigravity gemini_models_five_hour 20%"*) ;; *) echo "hb replay live recovery: $out"; exit 1;; esac
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb_replay" --no-ledger --no-live)
+case "$out" in *"nothing to act on"*"antigravity gemini_models_five_hour 96%"*) ;; *) echo "hb replay old 96 stays quiet: $out"; exit 1;; esac
+printf '%s\n' '{"generated_at": "2026-11-27T01:30:00+02:00", "providers": {"antigravity": {"observed_at": "2026-11-27T01:30:00+02:00", "windows": {"gemini_models_five_hour": {"used_percent": 96.0, "resets_at": "2026-11-27T06:00:00+02:00"}}}}}' > "$work/hb-stale-live.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" HEARTBEAT_PROVIDER_USAGE="$work/hb-stale-live" "$scripts/heartbeat" "$hb_replay" --no-ledger --live)
+case "$out" in *"act on the lines below"*"usage: antigravity gemini_models_five_hour at 96%: schedule the resume wake"*) ;; *) echo "hb replay newer 96 wakes: $out"; exit 1;; esac
 # Heartbeat usage state transitions: built-in 85% -> suppressed -> built-in 95% (never suppressed on first crossing) ->
 # suppressed at 100% -> jittered resets_at stays suppressed -> real resets_at jump re-fires -> reset:true clears -> recovery below threshold clears and re-fires.
 hb_u="$work/hb-usage-dedup"
@@ -5448,8 +5463,10 @@ test "$status" -eq 2
 unset WATCH_WAIT_HEARTBEAT
 # End-to-end watch-wait + real heartbeat + 5.20.0 backward-compatibility check:
 # Seed a 5.20.0-format run directory (watch.json, run-watch.state.json, flat watch-wait.seen.json with a legacy usage
-# key and no heartbeat.state.json or watch-wait.state.json): legacy warnings tied to the current window stay suppressed,
-# while legacy warnings from before the current window began wake on the new window's crossing.
+# key and a non-usage quiet key, and no heartbeat.state.json or watch-wait.state.json): 5.20.0 seen.json lacks reading
+# and reset identity (e.g. a 04:55 pre-reset sample delivered at 05:05 after a 05:00 reset), so watch-wait preserves
+# non-usage keys, delivers any active usage warning once with fresh window metadata, suppresses repeats thereafter,
+# ignores commit-only ticks and flushes carried commits on the next real wake.
 compat="$work/compat-520"
 mkdir -p "$compat/usage"
 printf '# ledger\n' > "$compat.md"
@@ -5460,20 +5477,24 @@ import json, sys, time
 from datetime import datetime, timezone
 now = time.time()
 iso = lambda t: datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds")
+# Simulate 5.20.0 delivering a 04:55 pre-reset sample at 05:05 (after 05:00 reset), now at 05:30 in the 05:00-10:00 window.
 json.dump({
-    "usage: codex five_hour at #%, at or past the run's mark of 60%: its budget is used": now - 60,
+    "usage: codex five_hour at #%, at or past the run's mark of 60%: its budget is used": now - 1500,
     "quiet A: nothing changed for # min": now - 60,
 }, open(sys.argv[1], "w"))
 open(sys.argv[2], "w").write(json.dumps({
     "t": iso(now),
-    "providers": {"codex": {"windows": {"five_hour": {"used": 64.0, "resets_at": iso(now + 3 * 3600)}}}},
+    "providers": {"codex": {"windows": {"five_hour": {"used": 64.0, "resets_at": iso(now + 4.5 * 3600)}}}},
 }) + "\n")
 EOF
-# Legacy delivery inside the current 5h window (now - 60s, resets_at now + 3h) -> suppressed cleanly, seen.json stays flat.
+# First check after upgrade delivers the active warning cleanly (never hidden by a legacy delivery timestamp), purges the
+# legacy usage key from watch-wait.seen.json while preserving non-usage keys, and keeps watch-wait.seen.json flat.
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$compat" --every 0.15 --max 5 --now)
+case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"usage: codex five_hour at 64%, at or past the run's mark of 60%"*) ;; *) echo "compat 5.20.0 upgrade delivers active usage: $out"; exit 1;; esac
+python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); assert all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in d.values()) and "quiet A: nothing changed for # min" in d and not any(k.startswith("usage: codex") for k in d), d' "$compat/watch-wait.seen.json"
+# Subsequent unchanged check stays quiet, commit-only tick stays quiet, and a resets_at jump wakes and flushes the commit!
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$compat" --every 0.15 --max 0.5 --now)
-case "$out" in *"nothing new to act on"*) ;; *) echo "compat 5.20.0 in-window legacy usage suppressed: $out"; exit 1;; esac
-python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); assert all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in d.values()), d' "$compat/watch-wait.seen.json"
-# Commit-only tick via real heartbeat stays quiet in watch-wait; next real event (resets_at jump) wakes and flushes the commit!
+case "$out" in *"nothing new to act on"*) ;; *) echo "compat 5.20.0 repeat suppressed: $out"; exit 1;; esac
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-commit" "$scripts/watch-wait" "$compat" --every 0.15 --max 0.5 --now)
 case "$out" in *"nothing new to act on"*) ;; *) echo "compat e2e commit-only quiet: $out"; exit 1;; esac
 python3 -I - "$compat/usage/providers.jsonl" <<'EOF'
@@ -5483,31 +5504,11 @@ now = time.time()
 iso = lambda t: datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds")
 open(sys.argv[1], "w").write(json.dumps({
     "t": iso(now + 60),
-    "providers": {"codex": {"windows": {"five_hour": {"used": 66.0, "resets_at": iso(now + 8 * 3600)}}}},
+    "providers": {"codex": {"windows": {"five_hour": {"used": 66.0, "resets_at": iso(now + 9.5 * 3600)}}}},
 }) + "\n")
 EOF
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$compat" --every 0.15 --max 5 --now)
 case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"usage: codex five_hour at 66%, at or past the run's mark of 60%"*"commit A 2026-11-11T01:50:00+02:00 abc fix"*) ;; *) echo "compat e2e reset wakes and flushes commit: $out"; exit 1;; esac
-# Legacy delivery from BEFORE the current 5h window began (delivered 3h ago, current window started 1h ago) MUST wake!
-compat_r="$work/compat-520-reset"
-mkdir -p "$compat_r/usage"
-printf '# ledger\n' > "$compat_r.md"
-printf '%s\n' '{"usage_marks": {"codex.five_hour": 60}, "tasks": {"A": {"worktree": "/nowhere", "status": "running", "model": "claude-opus-5-5"}}}' > "$compat_r/watch.json"
-python3 -I - "$compat_r/watch-wait.seen.json" "$compat_r/usage/providers.jsonl" <<'EOF'
-import json, sys, time
-from datetime import datetime, timezone
-now = time.time()
-iso = lambda t: datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds")
-json.dump({
-    "usage: codex five_hour at #%, at or past the run's mark of 60%: its budget is used": now - 3 * 3600,
-}, open(sys.argv[1], "w"))
-open(sys.argv[2], "w").write(json.dumps({
-    "t": iso(now),
-    "providers": {"codex": {"windows": {"five_hour": {"used": 64.0, "resets_at": iso(now + 4 * 3600)}}}},
-}) + "\n")
-EOF
-out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$compat_r" --every 0.15 --max 5 --now)
-case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"usage: codex five_hour at 64%, at or past the run's mark of 60%"*) ;; *) echo "compat 5.20.0 pre-reset legacy must wake: $out"; exit 1;; esac
 # watch-wait end-to-end with real heartbeat: live 90% -> older sampled 82% -> live 90% does NOT re-wake; newer recovery sample re-arms.
 ww_stale="$work/ww-stale-e2e"
 mkdir -p "$ww_stale/usage"
