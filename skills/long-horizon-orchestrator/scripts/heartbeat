@@ -591,7 +591,9 @@ def main(argv):
             next_carried = all_commits[-CARRIED_CAP:]
             emit_lines = []
         else:
-            next_carried = []
+            # Under watch-wait (HEARTBEAT_DEFER_ACK), keep carried_commits in heartbeat.state.json until watch-wait
+            # has printed or persisted them and clears them under heartbeat.lock.
+            next_carried = list(carried_commits) if caller_defer else []
             emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + all_commits
         state_changed = (next_carried, usage_delivered, usage_observed) != hb_state_before
         hb_saved = True

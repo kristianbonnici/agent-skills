@@ -275,6 +275,37 @@ def ack_once(run_dir: str, ids: list) -> None:
         pass
 
 
+def clear_hb_carried(run_dir: str, delivered: list) -> None:
+    """Remove commits watch-wait has printed or buffered from heartbeat.state.json under heartbeat.lock."""
+    if not delivered:
+        return
+    hb_state_path = os.path.join(run_dir, "heartbeat.state.json")
+    if not os.path.isfile(hb_state_path):
+        return
+    done_set = set(delivered)
+    hb_lock = None
+    try:
+        hb_lock = open(os.path.join(run_dir, "heartbeat.lock"), "a+")
+        fcntl.flock(hb_lock, fcntl.LOCK_EX)
+    except OSError:
+        if hb_lock is not None:
+            hb_lock.close()
+            hb_lock = None
+    try:
+        raw = load_json(hb_state_path)
+        prev = raw.get("carried_commits")
+        if not isinstance(prev, list) or not prev:
+            return
+        remaining = [c for c in prev if c not in done_set]
+        if len(remaining) == len(prev):
+            return
+        raw["carried_commits"] = remaining
+        save_json_atomic(hb_state_path, raw)
+    finally:
+        if hb_lock is not None:
+            hb_lock.close()
+
+
 def ledger_line(run_dir: str, text: str) -> None:
     ledger = run_dir.rstrip("/") + ".md"
     if os.path.isfile(ledger):
@@ -493,6 +524,7 @@ def main(argv: list) -> int:
                             pass
                 emit_set = set(emit)
                 ack_once(run_dir, [oid for oid, line in pending_ack if line in emit_set or COMMIT.match(line)])
+                clear_hb_carried(run_dir, all_commits)
                 ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
                 return 0
             if commits:
@@ -514,8 +546,11 @@ def main(argv: list) -> int:
                         return 1
                     STOP["exiting"] = True
                     ack_once(run_dir, [oid for oid, line in pending_ack if COMMIT.match(line)])
+                    clear_hb_carried(run_dir, carried)
                     ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
                     return 0
+                if saved and commits:
+                    clear_hb_carried(run_dir, commits)
             # Commits buffered by heartbeat or watch-wait are now durable; never ack undelivered non-commit one-time lines.
             ack_once(run_dir, [oid for oid, line in pending_ack if COMMIT.match(line)])
             left = deadline - time.time()

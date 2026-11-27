@@ -1126,7 +1126,12 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
                     alive = tui.pump(0.2)
                     if not alive:
                         break
-                    if not _claude_prompt_ready(tui.show()):
+                    cleared_screen = tui.show()
+                    if not _claude_prompt_ready(cleared_screen):
+                        prompt_ready = False
+                        break
+                    first_line = next((ln.strip() for ln in prompt.splitlines() if ln.strip()), "")
+                    if (first_line and first_line[:40] in cleared_screen) or "[Pasted text" in cleared_screen:
                         prompt_ready = False
                         break
                     need_clear_before_paste = False
@@ -3188,6 +3193,11 @@ def run_batch(
                         f.write(json.dumps(row) + "\n")
                     earlier.append(row)
                     if retry_abort_msg is not None:
+                        if retry_abort_msg in CLAUDE_SETUP_NOTES:
+                            raise SystemExit(
+                                f"stopped before a retry: {retry_abort_msg} "
+                                f"(run 'claude' once in {HOME}, accept workspace trust if prompted, and rerun with the same output folder)"
+                            )
                         raise SystemExit(f"stopped before a retry: {retry_abort_msg}")
                     if was_retry_stopped:
                         raise SystemExit(f"stopped before a retry: {stop_file}, or the check between runs failed")

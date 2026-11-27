@@ -5584,7 +5584,14 @@ for _ in $(seq 1 150); do test -e "$work/id34-rw-saved" && break; sleep 0.1; don
 test -e "$work/id34-rw-saved" || { echo "id34 marker not created"; exit 1; }
 kill "$id34_pid"
 wait "$id34_pid" 2>/dev/null || true
-# Even if a failing run-watch leaves a stale ack file, heartbeat removes it so watch-wait never acks undelivered alerts.
+# Even if a failing run-watch leaves a stale ack file containing a commit, heartbeat removes it so watch-wait never acks undelivered alerts.
+python3 -I - "$ww_lost/run-watch.state.json" <<'EOF'
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+s.setdefault("local_once", []).append(["1700000000-99", "commit A 2026-11-26T01:05:00+02:00 deadbeef pending-commit"])
+json.dump(s, open(p, "w"))
+EOF
 cat > "$work/id34-fail-rw" <<EOF
 #!/bin/sh
 if [ -n "\${RUN_WATCH_DEFER_ACK:-}" ]; then
@@ -5596,11 +5603,25 @@ EOF
 chmod +x "$work/id34-fail-rw"
 out=$(HEARTBEAT_RUN_WATCH="$work/id34-fail-rw" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
 case "$out" in *"note: run-watch failed"*) ;; *) echo "id34 fail-rw note missing: $out"; exit 1;; esac
-# Next real watch-wait still delivers the unacknowledged settings alert once, then stays quiet after ack.
+python3 -I -c 'import json, sys; ids = [p[0] for p in json.load(open(sys.argv[1])).get("local_once", [])]; assert "1700000000-99" in ids, ids' "$ww_lost/run-watch.state.json"
+# Next real watch-wait delivers both the unacknowledged settings alert and the pending commit once, then stays quiet after ack.
 out=$(RUN_WATCH_PS="$work/hb-ps" RUN_WATCH_PMSET=/usr/bin/true RUN_WATCH_IOREG=/usr/bin/true RUN_WATCH_DISK_FREE_GB=100 RUN_WATCH_SWAP_GB=0 RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
-case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"settings com.example.app: readingSpeed 1.4→1.1"*) ;; *) echo "id34 replay failed: $out"; exit 1;; esac
+case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"settings com.example.app: readingSpeed 1.4→1.1"*"commit A 2026-11-26T01:05:00+02:00 deadbeef pending-commit"*) ;; *) echo "id34 replay failed: $out"; exit 1;; esac
 out=$(RUN_WATCH_PS="$work/hb-ps" RUN_WATCH_PMSET=/usr/bin/true RUN_WATCH_IOREG=/usr/bin/true RUN_WATCH_DISK_FREE_GB=100 RUN_WATCH_SWAP_GB=0 RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 0.5 --now)
 case "$out" in *"nothing new to act on"*) ;; *) echo "id34 post-ack quiet failed: $out"; exit 1;; esac
+# Under HEARTBEAT_DEFER_ACK, heartbeat keeps carried_commits in heartbeat.state.json on non-idle output until watch-wait prints/persists and clears them.
+python3 -I -c 'import json, sys; json.dump({"carried_commits": ["commit A 2026-11-26T01:09:00+02:00 feedcafe carried-hb"], "usage_delivered": {}, "usage_observed": {}}, open(sys.argv[1], "w"))' "$ww_lost/heartbeat.state.json"
+cat > "$work/id34-quiet-flag" <<'EOF'
+#!/bin/sh
+echo "quiet A: nothing changed for 25 min"
+EOF
+chmod +x "$work/id34-quiet-flag"
+out=$(HEARTBEAT_DEFER_ACK="$work/id34-unused-ack.json" HEARTBEAT_RUN_WATCH="$work/id34-quiet-flag" "$scripts/heartbeat" "$ww_lost" --no-ledger)
+case "$out" in *"commit A 2026-11-26T01:09:00+02:00 feedcafe carried-hb"*) ;; *) echo "id34 hb emit carried: $out"; exit 1;; esac
+python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1])).get("carried_commits", []); assert "commit A 2026-11-26T01:09:00+02:00 feedcafe carried-hb" in c, c' "$ww_lost/heartbeat.state.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/id34-quiet-flag" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
+case "$out" in *"commit A 2026-11-26T01:09:00+02:00 feedcafe carried-hb"*) ;; *) echo "id34 ww deliver carried: $out"; exit 1;; esac
+python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1])).get("carried_commits", []); assert c == [], c' "$ww_lost/heartbeat.state.json"
 # Unwritable temp dir (mkdtemp OSError) degrades cleanly with a note instead of crashing heartbeat or watch-wait.
 python3 -I - "$scripts/heartbeat" "$scripts/watch-wait" "$ww_lost" "$work/hb-watch-quiet" <<'EOF'
 import contextlib, importlib.machinery, importlib.util, io, os, sys

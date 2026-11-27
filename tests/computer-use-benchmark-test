@@ -880,6 +880,36 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                 self.assertIn(("send", "\x15"), late_ok_instances[-1].events)
                 self.assertTrue(late_ok_instances[-1].closed)
 
+                # 2c-multiline. If Ctrl+U only clears the last line of a literal multi-line paste, refuse to double-paste and return claude prompt not ready.
+                ml_instances = []
+
+                class LateTrustMultilinePartialClearScreen(LateTrustAcceptScreen):
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        super().__init__(argv, cwd, rows=rows, cols=cols, env=env)
+                        ml_instances.append(self)
+
+                    def send(self, text):
+                        if text == "\x15" and self.state == "ready":
+                            self.events.append(("send", text))
+                            # Realistic line-only kill: drops only characters after the last newline.
+                            self.input_buf = self.input_buf.rsplit("\n", 1)[0] + "\n" if "\n" in self.input_buf else ""
+                            return
+                        super().send(text)
+
+                bench._screen = lambda: LateTrustMultilinePartialClearScreen
+                rep_ml = bench.drive_claude(
+                    "claude-native",
+                    "You are operating Harbor Desk.\nTask: click Apply.\nReply DONE.",
+                    10,
+                    out,
+                    "c-late-ml",
+                    overlays=set(),
+                )
+                self.assertIn("claude prompt not ready", rep_ml["notes"])
+                self.assertEqual(len(ml_instances[-1].pasted), 1)
+                self.assertIsNone(ml_instances[-1].submitted_text)
+                self.assertTrue(ml_instances[-1].closed)
+
                 # 2d. Unready/loading screen and interactive startup menus are never pasted into or submitted.
                 unready_instances = []
 
@@ -1908,6 +1938,7 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                         driver_fn=fake_driver2,
                     )
             self.assertIn("claude workspace trust prompt unresolved", str(err2.exception))
+            self.assertIn(bench.HOME, str(err2.exception))
             rows2 = [json.loads(l) for l in open(os.path.join(out2, "results.jsonl"), encoding="utf-8")]
             self.assertEqual(len(rows2), 1)
             self.assertEqual(bench.failure_kind(rows2[0]), "stopped")
