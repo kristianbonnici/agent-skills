@@ -2,7 +2,7 @@
 name: computer-use-benchmark
 description: Measure how well a computer-use setup (harness, driver, model and reasoning level) operates a real macOS desktop app on seeded GUI tasks, graded from the app's own state log. Run setups across seeds, record compact results in private state, and report one table per set version with passes, minutes, retries, cost and failure kinds. Use when benchmarking or comparing computer-use models, drivers, or harnesses; it never changes routing.
 metadata:
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Computer Use Benchmark

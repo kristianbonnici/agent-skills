@@ -1003,6 +1003,30 @@ def claude_report(session):
     return dict(tools=calls, usage=usage, final=final, images=images)
 
 
+def _is_claude_trust_dialog(screen):
+    return bool(
+        re.search(r"Yes,\s*(?:I trust this folder|proceed)", screen, re.I)
+        or (
+            re.search(r"Quick safety check|trust this folder|Is this a project you created", screen, re.I)
+            and re.search(r"No,\s*exit|trust|safety check", screen, re.I)
+        )
+    )
+
+
+def _claude_prompt_ready(screen):
+    if not screen or not screen.strip():
+        return False
+    if _is_claude_trust_dialog(screen):
+        return False
+    if re.search(r"Allow for this session", screen):
+        return False
+    if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
+        return False
+    if re.search(r"Accessibility|Screen Recording", screen) and re.search(r"Try again|System Settings", screen):
+        return False
+    return bool(re.search(r"^\s*(?:│\s*)?[❯›>](?:\s|$)|(?:\? for shortcuts|shift\+tab)", screen, re.M | re.I))
+
+
 def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overlays=None):
     """A real interactive session, for both arms: native computer use exists only there."""
     allowed = overlays if overlays is not None else allowed_overlays()
@@ -1018,44 +1042,96 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
     started = time.time()
     notes = []
     try:
-        trust_option = re.compile(r"Yes,\s*(?:I trust this folder|proceed)", re.I)
         trust_selected = re.compile(r"[❯›>]\s*(?:\d+\.\s*)?Yes,\s*(?:I trust this folder|proceed)", re.I)
         alive = True
         trust_unresolved = False
-        for wait_s in (4, 4, 6):
+        prompt_ready = False
+
+        def resolve_trust():
+            nonlocal alive, trust_unresolved, prompt_ready
+            try:
+                for _ in range(4):
+                    if trust_selected.search(tui.show()):
+                        break
+                    tui.send("\x1b[B")
+                    if not tui.pump(0.5):
+                        alive = False
+                        return False
+                if alive and trust_selected.search(tui.show()):
+                    tui.send("\r")
+                    for wait_after in (2, 2, 4, 4):
+                        alive = tui.pump(wait_after)
+                        if not alive:
+                            return False
+                        cur = tui.show()
+                        if _claude_prompt_ready(cur):
+                            prompt_ready = True
+                            return True
+                    cur = tui.show()
+                    if _claude_prompt_ready(cur):
+                        prompt_ready = True
+                        return True
+                    if _is_claude_trust_dialog(cur):
+                        trust_unresolved = True
+                    return False
+                if alive:
+                    trust_unresolved = True
+                return False
+            except OSError:
+                alive = False
+                return False
+
+        for wait_s in (2, 2, 2, 4, 4):
             if not alive:
                 break
             alive = tui.pump(wait_s)
             if not alive:
                 break
             screen = tui.show()
-            if trust_option.search(screen) and re.search(r"trust|safety check", screen, re.I):
-                try:
-                    for _ in range(4):
-                        if trust_selected.search(tui.show()):
-                            break
-                        tui.send("\x1b[B")
-                        if not tui.pump(0.5):
-                            alive = False
-                            break
-                    if alive and trust_selected.search(tui.show()):
-                        tui.send("\r")
-                        alive = tui.pump(12)
-                        if alive and trust_option.search(tui.show()):
-                            trust_unresolved = True
-                    else:
-                        trust_unresolved = True
-                except OSError:
-                    alive = False
+            if _is_claude_trust_dialog(screen):
+                resolve_trust()
                 break
-        if alive and not trust_unresolved:
+            if _claude_prompt_ready(screen):
+                prompt_ready = True
+                break
+            if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I) or (
+                re.search(r"Accessibility|Screen Recording", screen) and re.search(r"Try again|System Settings", screen)
+            ):
+                break
+
+        submitted = False
+        for _ in range(2):
+            if not alive or trust_unresolved or not prompt_ready:
+                break
             try:
+                pre_screen = tui.show()
+                if _is_claude_trust_dialog(pre_screen):
+                    prompt_ready = False
+                    if not resolve_trust():
+                        break
+                    continue
+                if not _claude_prompt_ready(pre_screen):
+                    prompt_ready = False
+                    break
                 tui.paste(prompt)
                 alive = tui.pump(0.6)
-                if alive:
-                    tui.send("\r")
+                if not alive:
+                    break
+                post_screen = tui.show()
+                if _is_claude_trust_dialog(post_screen):
+                    prompt_ready = False
+                    if not resolve_trust():
+                        break
+                    continue
+                if not _claude_prompt_ready(post_screen):
+                    prompt_ready = False
+                    break
+                tui.send("\r")
+                submitted = True
+                break
             except OSError:
                 alive = False
+                break
         started = time.time()
         if trust_unresolved:
             notes.append("claude workspace trust prompt unresolved")
@@ -1068,6 +1144,17 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
                 notes.append("macOS permission needed")
             elif claude_report(session)["final"] not in ("DONE", "FAILED"):
                 notes.append("claude exited")
+        elif not submitted:
+            screen = tui.show()
+            if _is_claude_trust_dialog(screen):
+                notes.append("claude workspace trust prompt unresolved")
+            elif re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
+                notes.append("claude limit")
+                CLAUDE_LIMIT.append(1)
+            elif re.search(r"Accessibility|Screen Recording", screen) and re.search(r"Try again|System Settings", screen):
+                notes.append("macOS permission needed")
+            else:
+                notes.append("claude prompt not ready")
         else:
             while time.time() - started < limit:
                 pumped = tui.pump(0.5)
@@ -1865,16 +1952,15 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
     has_usage = False
     prior_notes = []
     agent_attempts = 0
-    ended_on_launch_failure = False
-    last_launch_error = None
+    ended_on_setup = None
     for attempt in range(attempts):
         if attempt:
             reason = stop_reason() if stop_reason is not None else (None if ready() else "the check between runs failed")
             if reason:
                 if agent_attempts == 0:
-                    report["_stop_abort"] = (
-                        f"{reason} (after launch failure: {last_launch_error})" if last_launch_error else reason
-                    )
+                    last_err = ended_on_setup[1] if ended_on_setup else None
+                    prefix = "after launch failure" if (ended_on_setup and ended_on_setup[0] == "launch") else "after setup failure"
+                    report["_stop_abort"] = f"{reason} ({prefix}: {last_err})" if last_err else reason
                 else:
                     report["notes"].append(f"retry stopped: {reason}")
                     report["_retry_abort_msg"] = reason
@@ -1887,11 +1973,9 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
                     before_attempt()
                 except Refused as err:
                     if agent_attempts == 0:
-                        report["_stop_abort"] = (
-                            f"{err.message} (after launch failure: {last_launch_error})"
-                            if last_launch_error
-                            else err.message
-                        )
+                        last_err = ended_on_setup[1] if ended_on_setup else None
+                        prefix = "after launch failure" if (ended_on_setup and ended_on_setup[0] == "launch") else "after setup failure"
+                        report["_stop_abort"] = f"{err.message} ({prefix}: {last_err})" if last_err else err.message
                     else:
                         report["notes"].append(f"retry stopped: {err.message}")
                         report["_retry_abort_msg"] = err.message
@@ -1900,8 +1984,8 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
         launch_failed = bool(report.pop("_launch_failed", False))
         launch_err = report.pop("_launch_error", None)
         if launch_failed:
-            ended_on_launch_failure = True
             last_launch_error = launch_err or "Harbor Desk failed to launch"
+            ended_on_setup = ("launch", last_launch_error)
             note = f"launch retried, attempt {attempt + 1}: {last_launch_error}"
             prior_notes.append(note)
             report["notes"] = list(prior_notes)
@@ -1913,7 +1997,24 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
             if attempt + 1 < attempts:
                 sleep_fn(pause)
             continue
-        ended_on_launch_failure = False
+        trust_setup_failed = (
+            not sum((report.get("tools") or {}).values())
+            and "claude workspace trust prompt unresolved" in (report.get("notes") or [])
+        )
+        if trust_setup_failed:
+            ended_on_setup = ("setup", "claude workspace trust prompt unresolved")
+            note = f"setup retried, attempt {attempt + 1}: claude workspace trust prompt unresolved"
+            prior_notes.append(note)
+            report["notes"] = list(prior_notes)
+            report["attempts"] = agent_attempts
+            if has_wall:
+                report["wall"] = round(total_wall, 3)
+            if has_usage:
+                report["usage"] = dict(total_usage)
+            if attempt + 1 < attempts:
+                sleep_fn(pause)
+            continue
+        ended_on_setup = None
         agent_attempts += 1
         if report.get("wall") is not None:
             total_wall += report["wall"]
@@ -1938,17 +2039,26 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
         if attempt + 1 < attempts:
             sleep_fn(pause)
     if (
-        ended_on_launch_failure
+        ended_on_setup is not None
         and report is not None
         and "_stop_abort" not in report
         and "_launch_abort" not in report
+        and "_setup_abort" not in report
         and "_retry_abort_msg" not in report
     ):
+        kind, msg = ended_on_setup
         if agent_attempts == 0:
-            report["_launch_abort"] = last_launch_error
+            if kind == "launch":
+                report["_launch_abort"] = msg
+            else:
+                report["_setup_abort"] = msg
         else:
-            report["notes"].append(f"retry stopped: bench launch failed: {last_launch_error}")
-            report["_retry_abort_msg"] = f"Harbor Desk failed to launch: {last_launch_error}"
+            if kind == "launch":
+                report["notes"].append(f"retry stopped: bench launch failed: {msg}")
+                report["_retry_abort_msg"] = f"Harbor Desk failed to launch: {msg}"
+            else:
+                report["notes"].append(f"retry stopped: {msg}")
+                report["_retry_abort_msg"] = msg
     return report
 
 
@@ -2052,8 +2162,12 @@ def retry_stopped(row):
     return not row.get("passed") and any(n.startswith("retry stopped") for n in row.get("notes", []))
 
 
+def trust_unresolved_row(row):
+    return not row.get("passed") and "claude workspace trust prompt unresolved" in (row.get("notes") or [])
+
+
 def _incomplete_run(row):
-    return usage_limited(row) or retry_stopped(row)
+    return usage_limited(row) or retry_stopped(row) or trust_unresolved_row(row)
 
 
 def _fold_stopped_costs(winner, prior_stopped):
@@ -2241,6 +2355,8 @@ def failure_kind(row):
             (
                 "bench launch failed",
                 "claude exited",
+                "claude prompt not ready",
+                "claude workspace trust prompt unresolved",
                 "codex exited",
                 "codex turn failed",
                 "opencode exited",
@@ -2922,7 +3038,7 @@ def run_batch(
     recorded = {
         (r.get("setup") or r["arm"], r["task"], r["seed"])
         for r in earlier
-        if not usage_limited(r) and not retry_stopped(r)
+        if not _incomplete_run(r)
     }
     usage_snapshot(usage, providers, out, "before")
     stop_file = os.path.join(HOME, "STOP")
@@ -3020,11 +3136,14 @@ def run_batch(
                     )
                     stop_abort = report.pop("_stop_abort", None)
                     launch_abort = report.pop("_launch_abort", None)
+                    setup_abort = report.pop("_setup_abort", None)
                     retry_abort_msg = report.pop("_retry_abort_msg", None)
                     if stop_abort is not None:
                         raise SystemExit(f"stopped before a retry: {stop_abort}")
                     if launch_abort is not None:
                         raise SystemExit(f"Harbor Desk failed to launch: {launch_abort}")
+                    if setup_abort is not None:
+                        raise SystemExit(f"stopped on setup failure: {setup_abort}")
                     was_retry_stopped = retry_abort_msg is not None or any(
                         n.startswith("retry stopped") for n in report["notes"]
                     )

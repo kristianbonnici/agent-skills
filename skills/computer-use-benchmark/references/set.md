@@ -40,7 +40,7 @@ Each seed (`1..N`) deterministically generates targets for all eight tasks via a
 Failed runs are grouped into:
 
 - `usage-limit`: terminal provider quota/rate-limit error (eligible for redo in the same folder; a transient rate limit followed by a completed turn is **not** marked `usage-limit`).
-- `stopped`: interrupted between automatic retries by `<cache>/STOP`, a failing `--between` check, or a mid-batch daemon or launch failure (eligible to redo in the same folder; prior attempt costs fold into totals on resume).
+- `stopped`: interrupted between automatic retries by `<cache>/STOP`, a failing `--between` check, a mid-batch daemon or launch failure, or an unresolved Claude workspace trust prompt (eligible to redo in the same folder; prior attempt costs fold into totals on resume).
 - `timeout`: reached `--limit` seconds (default `420`).
 - `approval-held`: interactive approval prompt named an unapproved app outside `allow_overlays`.
 - `permission`: macOS Accessibility or Screen Recording prompt blocked the harness.

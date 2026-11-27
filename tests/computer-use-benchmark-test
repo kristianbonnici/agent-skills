@@ -627,6 +627,32 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     bench.drive_claude("claude-native", "P", 10, out, "c-int", overlays=set())
                 self.assertTrue(instances[-1].closed)
+
+                class PostPasteInterruptClaudeScreen(DeadScreen):
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        super().__init__(argv, cwd, rows=rows, cols=cols, env=env)
+                        self.pasted = []
+
+                    def show(self):
+                        return "Claude Code\n❯ \n? for shortcuts\n"
+
+                    def paste(self, text):
+                        self.pasted.append(text)
+
+                    def send(self, text):
+                        pass
+
+                    def pump(self, seconds):
+                        self.pumps += 1
+                        if self.pasted:
+                            raise KeyboardInterrupt()
+                        return True
+
+                bench._screen = lambda: PostPasteInterruptClaudeScreen
+                with self.assertRaises(KeyboardInterrupt):
+                    bench.drive_claude("claude-native", "P", 10, out, "c-int-post", overlays=set())
+                self.assertEqual(instances[-1].pasted, ["P"])
+                self.assertTrue(instances[-1].closed)
             finally:
                 bench._screen, bench.HOME = saved
 
@@ -664,7 +690,7 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                                 "   No, exit\n"
                                 " ❯ Yes, I trust this folder\n"
                             )
-                        return "Claude ready\n"
+                        return "Claude Code\n❯ \n? for shortcuts\n"
 
                     def send(self, text):
                         self.events.append(("send", text))
@@ -736,6 +762,147 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                 self.assertIn("claude workspace trust prompt unresolved", rep_stuck["notes"])
                 self.assertEqual(stuck_instances[-1].pasted, [])
                 self.assertTrue(stuck_instances[-1].closed)
+
+                # 2b. Late workspace trust prompt appearing during post-paste 0.6s pump must never receive Enter on "No, exit".
+                late_stuck_instances = []
+
+                class LateTrustStuckScreen:
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        self.state = "ready"
+                        self.closed = False
+                        self.pasted = []
+                        self.events = []
+                        late_stuck_instances.append(self)
+
+                    def pump(self, seconds):
+                        if self.pasted and self.state == "ready":
+                            self.state = "no_exit"
+                        return True
+
+                    def show(self):
+                        if self.state == "no_exit":
+                            return (
+                                "Quick safety check: Is this a project you created or one you trust?\n"
+                                " ❯ No, exit\n"
+                                "   Yes, I trust this folder\n"
+                            )
+                        return "Claude Code\n❯ \n? for shortcuts\n"
+
+                    def paste(self, text):
+                        self.events.append(("paste", text))
+                        self.pasted.append(text)
+
+                    def send(self, text):
+                        if text == "\r" and self.state == "no_exit":
+                            raise AssertionError("Enter must never be sent to 'No, exit'")
+                        self.events.append(("send", text))
+
+                    def close(self):
+                        self.closed = True
+
+                bench._screen = lambda: LateTrustStuckScreen
+                rep_late_stuck = bench.drive_claude("claude-native", "P", 10, out, "c-late-stuck", overlays=set())
+                self.assertIn("claude workspace trust prompt unresolved", rep_late_stuck["notes"])
+                self.assertNotIn(("send", "\r"), late_stuck_instances[-1].events)
+                self.assertTrue(late_stuck_instances[-1].closed)
+
+                # 2c. Late workspace trust prompt during post-paste pump that accepts Yes recovers and submits once ready.
+                late_ok_instances = []
+                late_done = [False]
+
+                class LateTrustAcceptScreen:
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        self.state = "ready"
+                        self.closed = False
+                        self.pasted = []
+                        self.events = []
+                        self.resolved_once = False
+                        late_ok_instances.append(self)
+
+                    def pump(self, seconds):
+                        if self.pasted and not self.resolved_once and self.state == "ready":
+                            self.state = "no_exit"
+                        return True
+
+                    def show(self):
+                        if self.state == "no_exit":
+                            return (
+                                "Quick safety check: Is this a project you created or one you trust?\n"
+                                " ❯ No, exit\n"
+                                "   Yes, I trust this folder\n"
+                            )
+                        if self.state == "yes_selected":
+                            return (
+                                "Quick safety check: Is this a project you created or one you trust?\n"
+                                "   No, exit\n"
+                                " ❯ Yes, I trust this folder\n"
+                            )
+                        return "Claude Code\n❯ \n? for shortcuts\n"
+
+                    def paste(self, text):
+                        self.events.append(("paste", text))
+                        self.pasted.append(text)
+
+                    def send(self, text):
+                        if text == "\r" and self.state == "no_exit":
+                            raise AssertionError("Enter must never be sent to 'No, exit'")
+                        self.events.append(("send", text))
+                        if text == "\x1b[B" and self.state == "no_exit":
+                            self.state = "yes_selected"
+                        elif text == "\r" and self.state == "yes_selected":
+                            self.state = "ready"
+                            self.resolved_once = True
+                        elif text == "\r" and self.state == "ready" and self.resolved_once:
+                            late_done[0] = True
+
+                    def close(self):
+                        self.closed = True
+
+                bench._screen = lambda: LateTrustAcceptScreen
+                with mock.patch.object(
+                    bench,
+                    "claude_report",
+                    side_effect=lambda s: dict(
+                        tools={}, usage=dict(input=0, cache_read=0, cache_write=0, output=0),
+                        final=("DONE" if late_done[0] else None), images=0,
+                    ),
+                ):
+                    rep_late_ok = bench.drive_claude("claude-native", "P", 10, out, "c-late-ok", overlays=set())
+                self.assertEqual(rep_late_ok["final"], "DONE")
+                self.assertEqual(rep_late_ok["notes"], [])
+                self.assertTrue(late_ok_instances[-1].closed)
+
+                # 2d. Unready/loading screen is never pasted into or submitted.
+                unready_instances = []
+
+                class UnreadyClaudeScreen:
+                    def __init__(self, argv, cwd, rows=50, cols=130, env=None):
+                        self.closed = False
+                        unready_instances.append(self)
+
+                    def pump(self, seconds):
+                        return True
+
+                    def show(self):
+                        return "Starting Claude Code...\n"
+
+                    def paste(self, text):
+                        raise AssertionError("paste must not be called before prompt is ready")
+
+                    def send(self, text):
+                        raise AssertionError("send must not be called before prompt is ready")
+
+                    def close(self):
+                        self.closed = True
+
+                bench._screen = lambda: UnreadyClaudeScreen
+                rep_unready = bench.drive_claude("claude-native", "P", 10, out, "c-unready", overlays=set())
+                self.assertIn("claude prompt not ready", rep_unready["notes"])
+                self.assertEqual(
+                    bench.failure_kind(dict(passed=False, notes=rep_unready["notes"], wrong=0, seconds=None, final=None)),
+                    "harness-error",
+                )
+                self.assertTrue(unready_instances[-1].closed)
 
                 # 3. Dirty cache containing Claude project files refuses before spawning _screen().
                 def forbid_screen():
@@ -1533,6 +1700,202 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
             totals = bench.totals_data(rows, {"version": "1.0", "tasks": ["form"], "seeds": 1})
             self.assertEqual(totals["setups"][0]["passed"], 1)
             self.assertEqual(totals["setups"][0]["runs"], 1)
+
+    def test_run_batch_unresolved_workspace_trust_is_resumable_setup_failure(self):
+        with tempfile.TemporaryDirectory() as out:
+            trust_fixed = [False]
+            calls = []
+
+            class FakeBench:
+                def __init__(self, task, seed, log, quiet):
+                    self.log = log
+                    with open(log, "w", encoding="utf-8") as f:
+                        f.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
+                        if trust_fixed[0]:
+                            f.write(json.dumps({"event": "success", "t": 2.5}) + "\n")
+
+                def events(self):
+                    return [json.loads(l) for l in open(self.log, encoding="utf-8")]
+
+                def close(self):
+                    pass
+
+            def fake_driver(*a, **kw):
+                def run_one():
+                    calls.append(trust_fixed[0])
+                    if not trust_fixed[0]:
+                        return dict(
+                            started=10.0,
+                            wall=1.0,
+                            notes=["claude workspace trust prompt unresolved"],
+                            tools={},
+                            usage={},
+                            final=None,
+                            images=0,
+                        )
+                    return dict(
+                        started=30.0,
+                        wall=3.0,
+                        notes=[],
+                        tools={"click": 2},
+                        usage={"input": 80, "cache_read": 20, "cache_write": 0, "output": 10},
+                        final="DONE",
+                        images=0,
+                    )
+
+                return run_one
+
+            with mock.patch.object(bench.time, "sleep", return_value=None):
+                with self.assertRaises(SystemExit) as err:
+                    bench.run_batch(
+                        out,
+                        [bench.parse_setup("claude-cua")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        check_cua=lambda: "ok",
+                        describe_fn=lambda t, s: "Fill form",
+                        bench_cls=FakeBench,
+                        driver_fn=fake_driver,
+                    )
+            self.assertIn("claude workspace trust prompt unresolved", str(err.exception))
+            self.assertEqual(len(calls), 3)
+            # Cell was NOT recorded as an 'other' failure, so resuming after fixing trust runs it cleanly.
+            self.assertFalse(os.path.exists(os.path.join(out, "results.jsonl")))
+
+            trust_fixed[0] = True
+            with mock.patch.object(bench.time, "sleep", return_value=None):
+                bench.run_batch(
+                    out,
+                    [bench.parse_setup("claude-cua")],
+                    ["form"],
+                    [1],
+                    quiet=True,
+                    check_cua=lambda: "ok",
+                    describe_fn=lambda t, s: "Fill form",
+                    bench_cls=FakeBench,
+                    driver_fn=fake_driver,
+                )
+            self.assertEqual(len(calls), 4)
+            rows = [json.loads(l) for l in open(os.path.join(out, "results.jsonl"), encoding="utf-8")]
+            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows[0]["passed"])
+            self.assertEqual(rows[0]["attempts"], 1)
+
+        # Mid-retry unresolved trust (after an earlier real attempt) writes a retry_stopped row and resumes with folded cost.
+        with tempfile.TemporaryDirectory() as out2:
+            stage = [0]
+
+            class FakeBench2:
+                def __init__(self, task, seed, log, quiet):
+                    self.log = log
+                    with open(log, "w", encoding="utf-8") as f:
+                        f.write(json.dumps({"event": "shown", "t": 0.1}) + "\n")
+                        if stage[0] >= 3:
+                            f.write(json.dumps({"event": "success", "t": 2.0}) + "\n")
+
+                def events(self):
+                    return [json.loads(l) for l in open(self.log, encoding="utf-8")]
+
+                def close(self):
+                    pass
+
+            def fake_driver2(*a, **kw):
+                def run_one():
+                    stage[0] += 1
+                    if stage[0] == 1:
+                        return dict(
+                            started=10.0,
+                            wall=5.0,
+                            notes=["claude exited"],
+                            tools={},
+                            usage={"input": 40, "cache_read": 0, "cache_write": 0, "output": 5},
+                            final=None,
+                            images=0,
+                        )
+                    if stage[0] in (2, 3):
+                        return dict(
+                            started=20.0,
+                            wall=1.0,
+                            notes=["claude workspace trust prompt unresolved"],
+                            tools={},
+                            usage={},
+                            final=None,
+                            images=0,
+                        )
+                    return dict(
+                        started=40.0,
+                        wall=4.0,
+                        notes=[],
+                        tools={"click": 1},
+                        usage={"input": 60, "cache_read": 10, "cache_write": 0, "output": 8},
+                        final="DONE",
+                        images=0,
+                    )
+
+                return run_one
+
+            with mock.patch.object(bench.time, "sleep", return_value=None):
+                with self.assertRaises(SystemExit) as err2:
+                    bench.run_batch(
+                        out2,
+                        [bench.parse_setup("claude-cua")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        check_cua=lambda: "ok",
+                        describe_fn=lambda t, s: "Fill form",
+                        bench_cls=FakeBench2,
+                        driver_fn=fake_driver2,
+                    )
+            self.assertIn("claude workspace trust prompt unresolved", str(err2.exception))
+            rows2 = [json.loads(l) for l in open(os.path.join(out2, "results.jsonl"), encoding="utf-8")]
+            self.assertEqual(len(rows2), 1)
+            self.assertEqual(bench.failure_kind(rows2[0]), "stopped")
+            self.assertTrue(bench.retry_stopped(rows2[0]))
+
+            with mock.patch.object(bench.time, "sleep", return_value=None):
+                bench.run_batch(
+                    out2,
+                    [bench.parse_setup("claude-cua")],
+                    ["form"],
+                    [1],
+                    quiet=True,
+                    check_cua=lambda: "ok",
+                    describe_fn=lambda t, s: "Fill form",
+                    bench_cls=FakeBench2,
+                    driver_fn=fake_driver2,
+                )
+            rows2 = [json.loads(l) for l in open(os.path.join(out2, "results.jsonl"), encoding="utf-8")]
+            self.assertEqual(len(rows2), 2)
+            latest = bench.latest_runs(rows2)
+            self.assertEqual(len(latest), 1)
+            self.assertTrue(latest[0]["passed"])
+            self.assertEqual(latest[0]["wall"], 9.0)
+            self.assertEqual(latest[0]["attempts"], 2)
+
+        # Legacy 1.0.0 row with unresolved trust note is not classified as 'other' and remains redoable on resume.
+        legacy_row = dict(
+            arm="claude-cua",
+            setup="claude-cua",
+            model=bench.MODEL,
+            effort=None,
+            task="form",
+            seed=1,
+            set_version="1.0",
+            passed=False,
+            wrong=0,
+            seconds=None,
+            wall=3.0,
+            attempts=3,
+            started=10.0,
+            tools={},
+            usage={},
+            final=None,
+            notes=["claude workspace trust prompt unresolved", "no tool calls, attempt 3"],
+        )
+        self.assertNotEqual(bench.failure_kind(legacy_row), "other")
+        self.assertTrue(bench._incomplete_run(legacy_row))
 
     def test_record_and_totals_and_cli_where(self):
         with tempfile.TemporaryDirectory() as tmp_state, tempfile.TemporaryDirectory() as out:
