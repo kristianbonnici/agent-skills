@@ -77,7 +77,7 @@ paid models the review gate uses, as references. Its numbers are in
   as the measure, and usefulness of the other findings counted apart from it.*
 - **Zhang et al., [CodeReviewBench: An Automated Benchmark for Evaluating the Software Factory](https://arxiv.org/abs/2611.26942)**
   (Martian, Greptile, Augment and the University of Oxford; arXiv 2611.26942 v1, 20 November 2026,
-  preprint): review bots scored by whether the PR's developers acted on their suggestions, over 500K+ judged
+  preprint): review bots scored by whether the PR's developers acted on their suggestions, on 500K+ judged
   PRs and 18 tools, beside a 50-PR offline gold set of 136 expert-labeled issues. On that set, "41 clusters
   of concerns flagged by ≥3 tools are absent from the gold set entirely" ("roughly 30% of the gold set
   size"), many of them on inspection "genuine bugs", while "6 golden issues were caught by zero of 20

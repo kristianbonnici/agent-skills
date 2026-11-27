@@ -654,8 +654,8 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
   on 354 tasks from four long-horizon benchmarks and SWE-bench Verified, 2,124 runs:
   - Turning it on moved task success "from an 11.9 percentage point decrease to a 2.3 point increase" overall,
     while token use reached "1.41 to 3.31 times" that of sequential runs, and runtime rose "in 14 of the 15
-    agent-benchmark combinations". The gains came on the longest tasks (Claude Code +14.3 points on
-    LoopsBench) and none on bounded ones (Claude Code 83.0% to 59.0% on SWE-bench Verified); pooled, the
+    agent-benchmark combinations". The gains came on long-horizon tasks, broadest on the longest (Claude Code +14.3
+    points on LoopsBench), and none on bounded ones (Claude Code 83.0% to 59.0% on SWE-bench Verified); pooled, the
     declines for Claude Code and Kimi Code were significant.
   - Of 804 failure instances in 650 concurrent runs, concurrent writes to shared files were 26.5% and shared
     environment contamination 6.7%; "Fan-out Budget Exhaustion" 19.2% and "Early Sub-Agent Termination"
