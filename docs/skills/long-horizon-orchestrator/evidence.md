@@ -647,6 +647,27 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
   we expect of Epoch employees on any task." One run per model per task, on research and analysis rather than
   coding. → *Opus 5.5 by default and Fable 5.2 per task where quality is worth the time and cost; review by
   agents that didn't write the work.*
+- **Li, Li, Jiang and Lou, [When Sub-Agents Work in Parallel: The Promises and Pitfalls of Dynamic Concurrency in Long-Horizon Coding Tasks](https://arxiv.org/abs/2610.10263)**
+  (Nanjing University, Central University of Finance and Economics and University of Illinois
+  Urbana-Champaign; arXiv 2610.10263 v1, 7 October 2026, preprint): Codex (GPT-5.4), Claude Code (Opus 5,
+  `ultracode`'s Dynamic Workflow) and Kimi Code (Kimi K3), each with its native multi-agent mode on and off,
+  on 354 tasks from four long-horizon benchmarks and SWE-bench Verified, 2,124 runs:
+  - Turning it on moved task success "from an 11.9 percentage point decrease to a 2.3 point increase" overall,
+    while token use reached "1.41 to 3.31 times" that of sequential runs, and runtime rose "in 14 of the 15
+    agent-benchmark combinations". The gains came on the longest tasks (Claude Code +14.3 points on
+    LoopsBench) and none on bounded ones (Claude Code 83.0% to 59.0% on SWE-bench Verified); pooled, the
+    declines for Claude Code and Kimi Code were significant.
+  - Of 804 failure instances in 650 concurrent runs, concurrent writes to shared files were 26.5% and shared
+    environment contamination 6.7%; "Fan-out Budget Exhaustion" 19.2% and "Early Sub-Agent Termination"
+    15.9%; an incomplete sub-agent brief 2.9% and a retry that repeated earlier work with the same brief 3.1%.
+  - It helped when sub-agents did "complementary work, explore alternative solutions, or independently
+    validate" the main agent's work; the authors advise it "should be enabled selectively rather than by
+    default".
+
+  One run per agent per task and setting.
+  → *a harness's multi-agent mode used sparingly, only where a task clearly gains from it, with the gain
+  named and a lane cap; isolation by default (a worktree, ports and folders per writing task); a relaunch
+  that starts fresh only when the task made no progress.*
 
 - **Gemini 4 Hydrogen** (Google, 12 November 2026; [Google Cloud's model page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-hydrogen),
   [SiliconANGLE](https://siliconangle.com/2026/11/12/google-releases-gemini-4-hydrogen-a-lower-cost-model-said-to-outscore-argon/),
@@ -781,5 +802,3 @@ Weighed and not cited, so later checks don't weigh them again unless they change
 - [Who May Overrule the Agent?](https://arxiv.org/abs/2611.05390) (2026): a single author.
 - [Loop Engineering](https://arxiv.org/abs/2611.18571) (2026): one production setting that the authors say "is
   not a controlled benchmark".
-- [When Sub-Agents Work in Parallel: The Promises and Pitfalls of Dynamic Concurrency in Long-Horizon Coding Tasks](https://arxiv.org/abs/2610.10263) (7 October 2026) (not yet read: only its abstract was read in the
-  2026-11-20 run).

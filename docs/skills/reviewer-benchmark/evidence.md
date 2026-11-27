@@ -2,7 +2,7 @@
 
 The skill states its rules without their reasons, to keep the model's context for the work. The reasons are here.
 
-Last checked: new work 2026-11-15; sources 2026-11-15.
+Last checked: new work 2026-11-27; sources 2026-11-15.
 
 ## The first run (2026-11-15)
 
@@ -75,10 +75,27 @@ paid models the review gate uses, as references. Its numbers are in
   of known defects", and a reviewer whose comments were judged useful 78.0% of the time found 8.1% of the
   defects. Both runs here landed in the same range (16% to 38% of 143 known defects). → *known defects
   as the measure, and usefulness of the other findings counted apart from it.*
+- **Zhang et al., [CodeReviewBench: An Automated Benchmark for Evaluating the Software Factory](https://arxiv.org/abs/2611.26942)**
+  (Martian, Greptile, Augment and the University of Oxford; arXiv 2611.26942 v1, 20 November 2026,
+  preprint): review bots scored by whether the PR's developers acted on their suggestions, over 500K+ judged
+  PRs and 18 tools, beside a 50-PR offline gold set of 136 expert-labeled issues. On that set, "41 clusters
+  of concerns flagged by ≥3 tools are absent from the gold set entirely" ("roughly 30% of the gold set
+  size"), many of them on inspection "genuine bugs", while "6 golden issues were caught by zero of 20
+  tracked tools"; curated again, the same PRs "each find real issues the previous pass missed with no
+  evidence of convergence". So "precision is underestimated (real finds scored as false positives) and
+  recall is overestimated". F1 "drops nearly 28 pp from small (≤50 lines) to extra-large (≥1,000 lines)
+  PRs, driven almost entirely by recall collapse", for every tool alike. Two of its authors work for review
+  vendors the benchmark scores, which the paper declares. → *confirmed findings join the key and every saved
+  report is scored for them; a limit of about 2,500 added lines.*
 
 ## Left out
 
-Weighed and not cited, so later checks don't weigh them again unless they change:
+Weighed and not cited, so later checks don't weigh them again unless they change; a line marked "(not yet read: <why>)" wasn't weighed yet, and the next check weighs it first:
+
+- [(When) Should a Software Factory be Lights-off? Benchmarking Code Review Agents on Bug Detection](https://arxiv.org/abs/2610.13668), 9 October 2026 (not yet read: found in the 2026-11-27 run, dated before the file's last check, and not opened).
+- [Can Agentic Code Review Catch Vulnerabilities Before They Are Merged?](https://arxiv.org/abs/2610.33509), 24 October 2026 (not yet read: found in the 2026-11-27 run, dated before the file's last check, and not opened).
+- [Do Coding Agents Catch Their Own Bugs? (They Don't.)](https://arxiv.org/abs/2611.01181), 31 October 2026 (not yet read: found in the 2026-11-27 run, dated before the file's last check, and not opened).
+- [GitHub: ReviewBench: An open benchmark for AI code review](https://github.blog/ai-and-ml/github-copilot/reviewbench-an-open-benchmark-for-ai-code-review/), 5 October 2026 (not yet read: found in the 2026-11-27 run, dated before the file's last check, and not opened).
 
 - **Vendors' own review benchmarks** ([Kodus](https://www.codereviewbench.com/leaderboard),
   [Qodo](https://www.qodo.ai/blog/which-llm-should-review-your-code/)): each sells a review product, their
