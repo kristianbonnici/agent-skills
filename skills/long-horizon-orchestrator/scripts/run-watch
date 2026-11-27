@@ -157,7 +157,9 @@ RUN_WATCH_QUIET_MINUTES, RUN_WATCH_HOG_MINUTES, RUN_WATCH_SAMPLE_SECONDS, RUN_WA
 RUN_WATCH_SWAP_GB, RUN_WATCH_PMSET, RUN_WATCH_DISK_FREE_GB, RUN_WATCH_DISK_BUDGET_SECONDS, RUN_WATCH_RESIZE_SECONDS and RUN_WATCH_GROWTH_MB change its thresholds and
 inputs, RUN_WATCH_SSH_SECONDS the SSH check's time limit, RUN_WATCH_COMPUTER this computer's name,
 RUN_WATCH_INVOCATION the heartbeat's ID for the run (kept with each other computer's reading),
-T3_USERDATA moves T3's state directory, and
+RUN_WATCH_DEFER_ACK a path where local pending one-time line IDs are written after stdout is flushed (those
+lines stay queued in run-watch.state.json's "local_once" until --ack-once removes their IDs, or a
+standalone run-watch prints and clears them), T3_USERDATA moves T3's state directory, and
 CLAUDE_CODE_TMPDIR moves Claude Code's temp folders, as it does for Claude Code. In --as mode it exits
 3 when this computer isn't the one named.
 """
@@ -1272,8 +1274,15 @@ def main(argv: list[str]) -> int:
             return 2
         ack_set = set(raw_ids)
         state_path = os.path.join(os.path.abspath(args[0]), "run-watch.state.json")
-        with open(os.path.join(os.path.abspath(args[0]), "run-watch.lock"), "a+") as state_lock:
+        state_lock = None
+        try:
+            state_lock = open(os.path.join(os.path.abspath(args[0]), "run-watch.lock"), "a+")
             fcntl.flock(state_lock, fcntl.LOCK_EX)
+        except OSError:
+            if state_lock is not None:
+                state_lock.close()
+                state_lock = None
+        try:
             state = load_json(state_path)
             if state is None and os.path.exists(state_path) or state is not None and not isinstance(state, dict):
                 print(f"run-watch: {state_path} can't be read: nothing changed", file=sys.stderr)
@@ -1288,7 +1297,14 @@ def main(argv: list[str]) -> int:
                 state["local_once"] = after
             else:
                 state.pop("local_once", None)
-            save_state(state_path, state)
+            try:
+                save_state(state_path, state)
+            except OSError as e:
+                print(f"run-watch: couldn't write {state_path}: {e}", file=sys.stderr)
+                return 1
+        finally:
+            if state_lock is not None:
+                state_lock.close()
         return 0
     if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or \
             (as_computer is not None and not SSH_ALIAS.fullmatch(as_computer)):
@@ -2052,25 +2068,29 @@ def main(argv: list[str]) -> int:
                 state["local_once"], state["local_once_seq"] = pending, seq
             else:
                 state.pop("local_once", None)
+            saved_ok = True
             try:
                 save_state(state_path, state)
             except OSError as e:
+                saved_ok = False
                 print(f"note: couldn't write {state_path}: {e}", file=sys.stderr)
-            else:
-                if pending:
-                    tmp_ack = f"{defer_ack_path}.{os.getpid()}.tmp"
+            try:
+                for line in out_lines:
+                    print(line)
+                sys.stdout.flush()
+            except OSError:
+                return 1
+            if saved_ok and pending:
+                tmp_ack = f"{defer_ack_path}.{os.getpid()}.tmp"
+                try:
+                    with open(tmp_ack, "w", encoding="utf-8") as fh:
+                        json.dump(pending, fh)
+                    os.replace(tmp_ack, defer_ack_path)
+                except OSError:
                     try:
-                        with open(tmp_ack, "w", encoding="utf-8") as fh:
-                            json.dump(pending, fh)
-                        os.replace(tmp_ack, defer_ack_path)
+                        os.remove(tmp_ack)
                     except OSError:
-                        try:
-                            os.remove(tmp_ack)
-                        except OSError:
-                            pass
-            for line in out_lines:
-                print(line)
-            sys.stdout.flush()
+                        pass
         else:
             try:
                 for line in out_lines:

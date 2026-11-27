@@ -1,6 +1,6 @@
 # What run-watch prints
 
-`scripts/run-watch` prints one line per finding, and `scripts/heartbeat` passes the same lines on. Each line starts with a word saying what it is. Do what this file says for that word:
+`scripts/run-watch` prints one line per finding, and `scripts/heartbeat` passes the same lines on. When `heartbeat` or `watch-wait` runs it, local one-time findings (`settings`, `hog`, `blind`, `commit`, `merged`, `report`, first `vm`/`leftover`, disk fall, completed sleep) stay pending in `run-watch.state.json` (`local_once`) until printed and acknowledged (`--ack-once`), so stopping a watcher never drops them; an ack timeout or an overlapping manual `run-watch` can replay a pending one-time line once more. Each line starts with a word saying what it is. Do what this file says for that word:
 
 A line about another computer, which run-watch checked over SSH, names it after its word and after the task or process it names: `hang B on den-mac: …`, `disk on den-mac: …`. A one-time line from there (a `hog`, a `blind`, a first `vm` or `leftover` line, a `slept`, a `commit` or `report`, a disk fall) that a lost result carried comes on a later wake instead, beside that wake's own lines (a leftover's "still running" too), with that computer's times in it. Its process IDs and paths are that computer's: run every command below for it there, over SSH through its login shell ([computers.md](computers.md#10-reaching-it-ssh-first-one-machine-thread-second)), never on yours, and tell its task through its thread with that computer's `environmentId`.
 

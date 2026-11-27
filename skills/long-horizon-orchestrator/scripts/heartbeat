@@ -58,7 +58,9 @@ provider-usage call (about 20 seconds, no model tokens); --no-live never reads l
 budget included. Without readings either way it says so.
 
 It appends "- HH:MM heartbeat: <the summary>" to the ledger (<run directory>.md) unless
---no-ledger. It exits 0, or 2 for a usage error. For tests, HEARTBEAT_RUN_WATCH and
+--no-ledger. It passes RUN_WATCH_DEFER_ACK to run-watch (using HEARTBEAT_DEFER_ACK when set by
+watch-wait, else a private temporary folder) so local one-time lines stay pending until printed and
+acknowledged. It exits 0, or 2 for a usage error. For tests, HEARTBEAT_RUN_WATCH and
 HEARTBEAT_PROVIDER_USAGE replace the two scripts it runs, and HEARTBEAT_PS the ps it lists processes with.
 """
 
@@ -423,22 +425,29 @@ def main(argv):
 
     invocation = uuid.uuid4().hex   # run-watch keeps it with each other computer's reading: this run's, no other's
     caller_defer = os.environ.get("HEARTBEAT_DEFER_ACK")
+    own_ack_dir = None
     own_ack_file = None
+    temp_note = None
     if caller_defer:
         rw_defer = caller_defer
     else:
-        fd, own_ack_file = tempfile.mkstemp(prefix="heartbeat-ack-", suffix=".json")
-        os.close(fd)
         try:
-            os.unlink(own_ack_file)
-        except OSError:
-            pass
-        rw_defer = own_ack_file
+            own_ack_dir = tempfile.mkdtemp(prefix="heartbeat-ack-")
+            own_ack_file = os.path.join(own_ack_dir, "ack.json")
+            rw_defer = own_ack_file
+        except OSError as e:
+            rw_defer = None
+            temp_note = f"note: couldn't create temp ack folder ({e}); continuing without deferred ack"
     rw_ok = False
+    rw_bin = os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch"))
     try:
         try:
-            rw_env = dict(os.environ, RUN_WATCH_INVOCATION=invocation, RUN_WATCH_DEFER_ACK=rw_defer)
-            done = subprocess.run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir],
+            rw_env = dict(os.environ, RUN_WATCH_INVOCATION=invocation)
+            if rw_defer:
+                rw_env["RUN_WATCH_DEFER_ACK"] = rw_defer
+            else:
+                rw_env.pop("RUN_WATCH_DEFER_ACK", None)
+            done = subprocess.run([rw_bin, run_dir],
                                   capture_output=True, text=True, timeout=180, env=rw_env)
             watch_lines = [l for l in done.stdout.splitlines() if l.strip()]
             rw_ok = done.returncode == 0
@@ -446,6 +455,13 @@ def main(argv):
                 watch_lines.append(f"note: run-watch failed (exit {done.returncode}): {done.stderr.strip()[-200:]}; run it yourself")
         except (OSError, subprocess.TimeoutExpired) as e:
             watch_lines = [f"note: run-watch didn't run ({e}); run it yourself"]
+        if not rw_ok and caller_defer:
+            try:
+                os.remove(caller_defer)
+            except OSError:
+                pass
+        if temp_note:
+            watch_lines.append(temp_note)
         flagged = [l for l in watch_lines if not EVENT.match(l) and not REMINDER.match(l)]
         reminders = {"vm": [], "leftover": []}
         for l in watch_lines:
@@ -577,19 +593,24 @@ def main(argv):
         else:
             next_carried = []
             emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + all_commits
-        if (next_carried, usage_delivered, usage_observed) != hb_state_before:
-            saved, save_err = save_json_atomic(
-                hb_state_path,
-                {"carried_commits": next_carried, "usage_delivered": usage_delivered, "usage_observed": usage_observed},
-            )
-            if not saved:
-                note = f"note: couldn't save heartbeat.state.json ({save_err})"
-                flagged.append(note)
-                if idle:
+        state_changed = (next_carried, usage_delivered, usage_observed) != hb_state_before
+        hb_saved = True
+        save_after_print = False
+        if state_changed:
+            if idle:
+                saved, save_err = save_json_atomic(
+                    hb_state_path,
+                    {"carried_commits": next_carried, "usage_delivered": usage_delivered, "usage_observed": usage_observed},
+                )
+                if not saved:
+                    hb_saved = False
+                    note = f"note: couldn't save heartbeat.state.json ({save_err})"
+                    flagged.append(note)
                     idle = False
                     emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + [note] + all_commits
-                else:
-                    emit_lines.append(note)
+            else:
+                # Non-idle wake: print and flush carried commits before clearing them from heartbeat.state.json.
+                save_after_print = True
         try:
             print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
             for l in emit_lines:
@@ -597,15 +618,28 @@ def main(argv):
             sys.stdout.flush()
         except OSError:
             return 1
+        if save_after_print:
+            saved, save_err = save_json_atomic(
+                hb_state_path,
+                {"carried_commits": next_carried, "usage_delivered": usage_delivered, "usage_observed": usage_observed},
+            )
+            if not saved:
+                hb_saved = False
+                try:
+                    print(f"note: couldn't save heartbeat.state.json ({save_err})", flush=True)
+                except OSError:
+                    pass
         if own_ack_file and rw_ok and os.path.isfile(own_ack_file):
             try:
                 raw_ack = json.load(open(own_ack_file, encoding="utf-8"))
-                ack_ids = [p[0] for p in raw_ack if isinstance(p, list) and len(p) == 2 and isinstance(p[0], str)] if isinstance(raw_ack, list) else []
+                pairs = [(p[0], p[1]) for p in raw_ack if isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p)] if isinstance(raw_ack, list) else []
             except (OSError, ValueError):
-                ack_ids = []
+                pairs = []
+            emitted_set = set(emit_lines)
+            ack_ids = [oid for oid, line in pairs if line in emitted_set or (idle and hb_saved and COMMIT.match(line))]
             if ack_ids:
                 try:
-                    subprocess.run([os.path.join(HERE, "run-watch"), run_dir, "--ack-once", ",".join(ack_ids)],
+                    subprocess.run([rw_bin, run_dir, "--ack-once", ",".join(ack_ids)],
                                    capture_output=True, text=True, timeout=15)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
@@ -620,11 +654,8 @@ def main(argv):
                     print(f"note: couldn't add to the ledger: {e}")
         return 0
     finally:
-        if own_ack_file:
-            try:
-                os.remove(own_ack_file)
-            except OSError:
-                pass
+        if own_ack_dir:
+            shutil.rmtree(own_ack_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

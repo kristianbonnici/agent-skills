@@ -806,7 +806,7 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                 self.assertNotIn(("send", "\r"), late_stuck_instances[-1].events)
                 self.assertTrue(late_stuck_instances[-1].closed)
 
-                # 2c. Late workspace trust prompt during post-paste pump that accepts Yes recovers and submits once ready.
+                # 2c. Late workspace trust prompt during post-paste pump that accepts Yes clears input (Ctrl+U) before re-pasting and submits exactly one copy.
                 late_ok_instances = []
                 late_done = [False]
 
@@ -816,6 +816,8 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                         self.closed = False
                         self.pasted = []
                         self.events = []
+                        self.input_buf = ""
+                        self.submitted_text = None
                         self.resolved_once = False
                         late_ok_instances.append(self)
 
@@ -837,22 +839,26 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                                 "   No, exit\n"
                                 " ❯ Yes, I trust this folder\n"
                             )
-                        return "Claude Code\n❯ \n? for shortcuts\n"
+                        return "Claude Code\n❯ " + self.input_buf + "\n? for shortcuts\n"
 
                     def paste(self, text):
                         self.events.append(("paste", text))
                         self.pasted.append(text)
+                        self.input_buf += text
 
                     def send(self, text):
                         if text == "\r" and self.state == "no_exit":
                             raise AssertionError("Enter must never be sent to 'No, exit'")
                         self.events.append(("send", text))
-                        if text == "\x1b[B" and self.state == "no_exit":
+                        if text == "\x15" and self.state == "ready":
+                            self.input_buf = ""
+                        elif text == "\x1b[B" and self.state == "no_exit":
                             self.state = "yes_selected"
                         elif text == "\r" and self.state == "yes_selected":
                             self.state = "ready"
                             self.resolved_once = True
                         elif text == "\r" and self.state == "ready" and self.resolved_once:
+                            self.submitted_text = self.input_buf
                             late_done[0] = True
 
                     def close(self):
@@ -870,9 +876,11 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                     rep_late_ok = bench.drive_claude("claude-native", "P", 10, out, "c-late-ok", overlays=set())
                 self.assertEqual(rep_late_ok["final"], "DONE")
                 self.assertEqual(rep_late_ok["notes"], [])
+                self.assertEqual(late_ok_instances[-1].submitted_text, "P")
+                self.assertIn(("send", "\x15"), late_ok_instances[-1].events)
                 self.assertTrue(late_ok_instances[-1].closed)
 
-                # 2d. Unready/loading screen is never pasted into or submitted.
+                # 2d. Unready/loading screen and interactive startup menus are never pasted into or submitted.
                 unready_instances = []
 
                 class UnreadyClaudeScreen:
@@ -900,9 +908,24 @@ class TuiLifecycleAndTranscriptTests(unittest.TestCase):
                 self.assertIn("claude prompt not ready", rep_unready["notes"])
                 self.assertEqual(
                     bench.failure_kind(dict(passed=False, notes=rep_unready["notes"], wrong=0, seconds=None, final=None)),
-                    "harness-error",
+                    "stopped",
                 )
                 self.assertTrue(unready_instances[-1].closed)
+
+                # 2e. Alternate trust phrasing ("Do you trust the files in this folder?" with "❯ 1. No, exit") and generic numbered select menus are rejected as ready prompts.
+                self.assertTrue(
+                    bench._is_claude_trust_dialog("Do you trust the files in this folder?\n ❯ 1. No, exit\n")
+                )
+                self.assertFalse(
+                    bench._claude_prompt_ready("Do you trust the files in this folder?\n ❯ 1. No, exit\n")
+                )
+                self.assertFalse(
+                    bench._claude_prompt_ready("Choose a theme:\n ❯ 1. Dark mode\n   2. Light mode\nEnter to confirm\n")
+                )
+                self.assertFalse(
+                    bench._claude_prompt_ready("Select account:\n ❯ 1. Claude account\n   2. API key\n")
+                )
+                self.assertTrue(bench._claude_prompt_ready("Claude Code\n❯ \n? for shortcuts\n"))
 
                 # 3. Dirty cache containing Claude project files refuses before spawning _screen().
                 def forbid_screen():
@@ -1759,8 +1782,44 @@ class BatchRecordAndTotalsTests(unittest.TestCase):
                         driver_fn=fake_driver,
                     )
             self.assertIn("claude workspace trust prompt unresolved", str(err.exception))
+            self.assertIn(bench.HOME, str(err.exception))
             self.assertEqual(len(calls), 3)
             # Cell was NOT recorded as an 'other' failure, so resuming after fixing trust runs it cleanly.
+            self.assertFalse(os.path.exists(os.path.join(out, "results.jsonl")))
+
+            # claude prompt not ready also routes through the resumable setup-failure path without consuming the cell.
+            not_ready_calls = []
+
+            def not_ready_driver(*a, **kw):
+                def run_one():
+                    not_ready_calls.append(1)
+                    return dict(
+                        started=15.0,
+                        wall=1.0,
+                        notes=["claude prompt not ready"],
+                        tools={},
+                        usage={},
+                        final=None,
+                        images=0,
+                    )
+
+                return run_one
+
+            with mock.patch.object(bench.time, "sleep", return_value=None):
+                with self.assertRaises(SystemExit) as nr_err:
+                    bench.run_batch(
+                        out,
+                        [bench.parse_setup("claude-cua")],
+                        ["form"],
+                        [1],
+                        quiet=True,
+                        check_cua=lambda: "ok",
+                        describe_fn=lambda t, s: "Fill form",
+                        bench_cls=FakeBench,
+                        driver_fn=not_ready_driver,
+                    )
+            self.assertIn("claude prompt not ready", str(nr_err.exception))
+            self.assertEqual(len(not_ready_calls), 3)
             self.assertFalse(os.path.exists(os.path.join(out, "results.jsonl")))
 
             trust_fixed[0] = True

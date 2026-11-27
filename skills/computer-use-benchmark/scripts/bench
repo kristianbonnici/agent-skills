@@ -1006,8 +1006,9 @@ def claude_report(session):
 def _is_claude_trust_dialog(screen):
     return bool(
         re.search(r"Yes,\s*(?:I trust this folder|proceed)", screen, re.I)
+        or re.search(r"[❯›>]\s*(?:\d+\.\s*)?No,\s*exit\b", screen, re.I)
         or (
-            re.search(r"Quick safety check|trust this folder|Is this a project you created", screen, re.I)
+            re.search(r"Quick safety check|trust (?:this|the files in this) folder|do you trust.*folder|Is this a project you created", screen, re.I)
             and re.search(r"No,\s*exit|trust|safety check", screen, re.I)
         )
     )
@@ -1018,7 +1019,9 @@ def _claude_prompt_ready(screen):
         return False
     if _is_claude_trust_dialog(screen):
         return False
-    if re.search(r"Allow for this session", screen):
+    if re.search(r"\bNo,\s*exit\b|Enter to confirm|Allow for this session", screen, re.I):
+        return False
+    if re.search(r"^\s*(?:│\s*)?[❯›>]\s*\d+\.\s", screen, re.M):
         return False
     if re.search(r"(hit|reached) your (weekly |usage |session )*limit", screen, re.I):
         return False
@@ -1081,10 +1084,14 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
                 alive = False
                 return False
 
-        for wait_s in (2, 2, 2, 4, 4):
-            if not alive:
+        startup_waited = 0.0
+        max_startup = min(30.0, float(limit)) if limit and limit > 0 else 30.0
+        for wait_s in (2, 2, 2, 4, 4, 5, 5, 6):
+            if not alive or startup_waited >= max_startup:
                 break
-            alive = tui.pump(wait_s)
+            step = min(float(wait_s), max_startup - startup_waited)
+            alive = tui.pump(step)
+            startup_waited += step
             if not alive:
                 break
             screen = tui.show()
@@ -1100,6 +1107,7 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
                 break
 
         submitted = False
+        need_clear_before_paste = False
         for _ in range(2):
             if not alive or trust_unresolved or not prompt_ready:
                 break
@@ -1113,6 +1121,15 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
                 if not _claude_prompt_ready(pre_screen):
                     prompt_ready = False
                     break
+                if need_clear_before_paste:
+                    tui.send("\x15")
+                    alive = tui.pump(0.2)
+                    if not alive:
+                        break
+                    if not _claude_prompt_ready(tui.show()):
+                        prompt_ready = False
+                        break
+                    need_clear_before_paste = False
                 tui.paste(prompt)
                 alive = tui.pump(0.6)
                 if not alive:
@@ -1120,6 +1137,7 @@ def drive_claude(arm, prompt, limit, out, name, model=MODEL, effort=None, overla
                 post_screen = tui.show()
                 if _is_claude_trust_dialog(post_screen):
                     prompt_ready = False
+                    need_clear_before_paste = True
                     if not resolve_trust():
                         break
                     continue
@@ -1997,13 +2015,13 @@ def run_attempts(drive, attempts=3, pause=10, sleep=None, ready=lambda: True, be
             if attempt + 1 < attempts:
                 sleep_fn(pause)
             continue
-        trust_setup_failed = (
-            not sum((report.get("tools") or {}).values())
-            and "claude workspace trust prompt unresolved" in (report.get("notes") or [])
+        setup_note = next(
+            (n for n in (report.get("notes") or []) if n in CLAUDE_SETUP_NOTES),
+            None,
         )
-        if trust_setup_failed:
-            ended_on_setup = ("setup", "claude workspace trust prompt unresolved")
-            note = f"setup retried, attempt {attempt + 1}: claude workspace trust prompt unresolved"
+        if not sum((report.get("tools") or {}).values()) and setup_note is not None:
+            ended_on_setup = ("setup", setup_note)
+            note = f"setup retried, attempt {attempt + 1}: {setup_note}"
             prior_notes.append(note)
             report["notes"] = list(prior_notes)
             report["attempts"] = agent_attempts
@@ -2158,16 +2176,19 @@ def usage_limited(row):
     return not row.get("passed") and any(re.search(r"\b(claude|codex|agy) limit\b", n) for n in row.get("notes", []))
 
 
+CLAUDE_SETUP_NOTES = ("claude workspace trust prompt unresolved", "claude prompt not ready")
+
+
 def retry_stopped(row):
     return not row.get("passed") and any(n.startswith("retry stopped") for n in row.get("notes", []))
 
 
-def trust_unresolved_row(row):
-    return not row.get("passed") and "claude workspace trust prompt unresolved" in (row.get("notes") or [])
+def setup_blocked(row):
+    return not row.get("passed") and any(n in CLAUDE_SETUP_NOTES for n in (row.get("notes") or []))
 
 
 def _incomplete_run(row):
-    return usage_limited(row) or retry_stopped(row) or trust_unresolved_row(row)
+    return usage_limited(row) or retry_stopped(row) or setup_blocked(row)
 
 
 def _fold_stopped_costs(winner, prior_stopped):
@@ -2342,7 +2363,7 @@ def failure_kind(row):
     notes = row.get("notes") or []
     if usage_limited(row):
         return "usage-limit"
-    if retry_stopped(row):
+    if retry_stopped(row) or setup_blocked(row):
         return "stopped"
     if any(n == "limit reached" for n in notes):
         return "timeout"
@@ -3143,7 +3164,10 @@ def run_batch(
                     if launch_abort is not None:
                         raise SystemExit(f"Harbor Desk failed to launch: {launch_abort}")
                     if setup_abort is not None:
-                        raise SystemExit(f"stopped on setup failure: {setup_abort}")
+                        raise SystemExit(
+                            f"stopped on setup failure: {setup_abort} "
+                            f"(run 'claude' once in {HOME}, accept workspace trust if prompted, and rerun with the same output folder)"
+                        )
                     was_retry_stopped = retry_abort_msg is not None or any(
                         n.startswith("retry stopped") for n in report["notes"]
                     )

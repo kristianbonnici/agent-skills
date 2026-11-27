@@ -5575,19 +5575,63 @@ touch "$work/id34-rw-saved"
 sleep 10
 EOF
 chmod +x "$work/id34-defaults" "$work/id34-slow-usage"
-printf '%s\n' '{"started": "2026-11-26T01:00:00+02:00", "owner_defaults": [{"domain": "com.example.app", "snapshot": "owner/app.plist"}], "tasks": {}}' > "$ww_lost/watch.json"
-RUN_WATCH_DEFAULTS="$work/id34-defaults" HEARTBEAT_PROVIDER_USAGE="$work/id34-slow-usage" "$scripts/watch-wait" "$ww_lost" --every 60 --max 600 --now --live > /dev/null &
+id34_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf '{"started": "%s", "owner_defaults": [{"domain": "com.example.app", "snapshot": "owner/app.plist"}], "tasks": {}}\n' "$id34_now" > "$ww_lost/watch.json"
+RUN_WATCH_PS="$work/hb-ps" RUN_WATCH_PMSET=/usr/bin/true RUN_WATCH_IOREG=/usr/bin/true RUN_WATCH_DISK_FREE_GB=100 RUN_WATCH_SWAP_GB=0 RUN_WATCH_DEFAULTS="$work/id34-defaults" HEARTBEAT_PROVIDER_USAGE="$work/id34-slow-usage" "$scripts/watch-wait" "$ww_lost" --every 60 --max 600 --now --live > /dev/null &
 id34_pid=$!
 background="$background $id34_pid"
 for _ in $(seq 1 150); do test -e "$work/id34-rw-saved" && break; sleep 0.1; done
 test -e "$work/id34-rw-saved" || { echo "id34 marker not created"; exit 1; }
 kill "$id34_pid"
 wait "$id34_pid" 2>/dev/null || true
-# Next watch-wait delivers the unacknowledged settings alert once, then stays quiet after ack.
-out=$(RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
+# Even if a failing run-watch leaves a stale ack file, heartbeat removes it so watch-wait never acks undelivered alerts.
+cat > "$work/id34-fail-rw" <<EOF
+#!/bin/sh
+if [ -n "\${RUN_WATCH_DEFER_ACK:-}" ]; then
+  python3 -I -c 'import json, sys; s = json.load(open(sys.argv[1])); json.dump(s.get("local_once", []), open(sys.argv[2], "w"))' "$ww_lost/run-watch.state.json" "\$RUN_WATCH_DEFER_ACK"
+fi
+echo "simulated rw crash" >&2
+exit 1
+EOF
+chmod +x "$work/id34-fail-rw"
+out=$(HEARTBEAT_RUN_WATCH="$work/id34-fail-rw" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
+case "$out" in *"note: run-watch failed"*) ;; *) echo "id34 fail-rw note missing: $out"; exit 1;; esac
+# Next real watch-wait still delivers the unacknowledged settings alert once, then stays quiet after ack.
+out=$(RUN_WATCH_PS="$work/hb-ps" RUN_WATCH_PMSET=/usr/bin/true RUN_WATCH_IOREG=/usr/bin/true RUN_WATCH_DISK_FREE_GB=100 RUN_WATCH_SWAP_GB=0 RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
 case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"settings com.example.app: readingSpeed 1.4→1.1"*) ;; *) echo "id34 replay failed: $out"; exit 1;; esac
-out=$(RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 0.5 --now)
+out=$(RUN_WATCH_PS="$work/hb-ps" RUN_WATCH_PMSET=/usr/bin/true RUN_WATCH_IOREG=/usr/bin/true RUN_WATCH_DISK_FREE_GB=100 RUN_WATCH_SWAP_GB=0 RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 0.5 --now)
 case "$out" in *"nothing new to act on"*) ;; *) echo "id34 post-ack quiet failed: $out"; exit 1;; esac
+# Unwritable temp dir (mkdtemp OSError) degrades cleanly with a note instead of crashing heartbeat or watch-wait.
+python3 -I - "$scripts/heartbeat" "$scripts/watch-wait" "$ww_lost" "$work/hb-watch-quiet" <<'EOF'
+import contextlib, importlib.machinery, importlib.util, io, os, sys
+hb_path, ww_path, run_dir, quiet_rw = sys.argv[1:5]
+
+def load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+def fail_mkdtemp(*a, **kw):
+    raise OSError("no temp space")
+
+os.environ["HEARTBEAT_RUN_WATCH"] = quiet_rw
+os.environ.pop("HEARTBEAT_DEFER_ACK", None)
+hb_mod = load("hb_tmp_err", hb_path)
+hb_mod.tempfile.mkdtemp = fail_mkdtemp
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    rc = hb_mod.main([run_dir, "--no-ledger"])
+assert rc == 0 and "note: couldn't create temp ack folder" in buf.getvalue(), (rc, buf.getvalue())
+
+ww_mod = load("ww_tmp_err", ww_path)
+ww_mod.tempfile.mkdtemp = fail_mkdtemp
+buf2 = io.StringIO()
+with contextlib.redirect_stdout(buf2):
+    rc2 = ww_mod.main([run_dir, "--every", "0.15", "--max", "5", "--now"])
+assert rc2 == 0 and "note: couldn't create temp ack folder" in buf2.getvalue(), (rc2, buf2.getvalue())
+EOF
 # End-to-end watch-wait + real heartbeat + 5.20.0 backward-compatibility check:
 # Seed a 5.20.0-format run directory (watch.json, run-watch.state.json, flat watch-wait.seen.json with a legacy usage
 # key and a non-usage quiet key, and no heartbeat.state.json or watch-wait.state.json): 5.20.0 seen.json lacks reading

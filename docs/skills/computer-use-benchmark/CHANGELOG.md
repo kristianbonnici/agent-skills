@@ -2,11 +2,11 @@
 
 ## 1.0.1 (2026-11-27)
 
-- **Guard against late Claude workspace-trust prompts and keep unresolved trust resumable** (1.0.0 review follow-ups):
-  - `drive_claude()` now requires a ready prompt screen before pasting or submitting and re-inspects `tui.show()` after the post-paste 0.6 s pump so a late workspace-trust dialog never receives `\r` on `No, exit` (recovering via `Yes, I trust this folder` when possible, or recording `claude workspace trust prompt unresolved` / `claude prompt not ready` without submitting).
-  - Unresolved workspace trust in `run_attempts()` / `run_batch()` now routes through the resumable setup-failure path (aborting without consuming the cell when no agent attempt ran, or recording a resumable `retry stopped` row when an earlier attempt ran, and keeping legacy unresolved-trust rows redoable and out of `other`).
-  - Documented in `references/setups.md` the `claude-native` `/mcp` prerequisite for the benchmark cache folder and three operating caveats (`agy` still starts configured user MCP servers while deny rules only refuse calls; `read_file` stays allowed for `agy`; Cua Spaces' `--embedded` helper inherits the starting terminal's Accessibility and Screen Recording permissions).
-  - Added tests in `tests/computer-use-benchmark-test` for late workspace-trust prompts, unready prompt screens, post-paste `KeyboardInterrupt` PTY cleanup, and resumable unresolved-trust batches.
+- **Guard against late Claude workspace-trust prompts and keep startup blocks resumable** (1.0.0 review follow-ups):
+  - `drive_claude()` now polls up to 30 s (within `--limit`) for a ready prompt screen (rejecting workspace-trust phrasing including `"Do you trust the files in this folder?"`, `No, exit`, `Enter to confirm`, and numbered Ink select menus), re-inspects `tui.show()` after the post-paste 0.6 s pump so a late workspace-trust dialog never receives `\r` on `No, exit`, and clears the input with Ctrl+U (`\x15`) before re-pasting if late trust recovery succeeded.
+  - Both unresolved workspace trust and `claude prompt not ready` (with 0 tool calls) now route through the resumable setup-failure path in `run_attempts()` / `run_batch()` (aborting with cache-folder recovery guidance without consuming the cell when no agent attempt ran, or recording a resumable `retry stopped` row when an earlier attempt ran, and classifying legacy/incomplete rows under `stopped` so they stay redoable).
+  - Documented in `references/setups.md` the `claude-native` `/mcp` prerequisite, cache-folder workspace-trust recovery, and three operating caveats (`agy` still starts configured user MCP servers while deny rules only refuse calls; `read_file` stays allowed for `agy`; Cua Spaces' `--embedded` helper inherits the starting terminal's Accessibility and Screen Recording permissions).
+  - Added tests in `tests/computer-use-benchmark-test` for late workspace-trust prompts (including single-paste recovery), alternate trust/menu rejection, unready prompt screens, post-paste `KeyboardInterrupt` PTY cleanup, and resumable setup-failure batches.
 
 ## 1.0.0 (2026-11-26)
 
