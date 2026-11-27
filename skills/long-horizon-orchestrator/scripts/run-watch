@@ -5,6 +5,7 @@ what to do with each line.
 
 Usage: run-watch <run directory> [--watch <file>|-] [--as <computer>]
        run-watch <run directory> --forget-session <task>   (a task moved to a new thread: forget its log, under the lock)
+       run-watch <run directory> --ack-once <id[,id...]>   (acknowledge delivered local one-time lines, under the lock)
 
 It reads <run directory>/watch.json (or --watch), which the orchestrator writes in Prepare and
 adds each task to at launch:
@@ -1205,6 +1206,18 @@ def one_time(line: str) -> bool:
     return bool(re.match(r"slept \S+ (?!- )\S+ \(", line))
 
 
+def local_one_time(line: str) -> bool:
+    """A line run-watch emits once locally (settings, hog, blind, commit, merged, report, first vm/leftover,
+    disk fall, completed sleep — locally or 'on <computer>')."""
+    if line.startswith(("settings ", "hog ", "blind ", "commit ", "merged ", "report ")):
+        return True
+    if re.match(r"^disk(?: on \S+)?: free disk fell ", line):
+        return True
+    if line.startswith(("vm ", "leftover ")):
+        return not re.search(r": still running(, [^:]*)?$", line)
+    return bool(re.match(r"^slept \S+(?: on \S+)? (?!- )\S+ \(", line))
+
+
 def on_computer(line: str, name: str) -> str:
     """Another computer's line, with " on <computer>" after its word, and after the task or process it
     names: "hang B on den-mac: …", "disk on den-mac: …"."""
@@ -1220,7 +1233,7 @@ def on_computer(line: str, name: str) -> str:
 def main(argv: list[str]) -> int:
     args = list(argv)
     options = {}
-    for flag in ("--watch", "--as", "--forget-session"):
+    for flag in ("--watch", "--as", "--forget-session", "--ack-once"):
         if flag in args:
             i = args.index(flag)
             if i + 1 >= len(args):
@@ -1231,7 +1244,8 @@ def main(argv: list[str]) -> int:
     watch_path, as_computer = options.get("--watch"), options.get("--as")
     if "--forget-session" in options:   # a task handed to a new thread: drop its remembered log, under the lock
         task = options["--forget-session"]
-        if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or watch_path or as_computer or not task:
+        if (len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0])
+                or watch_path is not None or as_computer is not None or "--ack-once" in options or not task):
             print(__doc__.split("\n\n")[1], file=sys.stderr)
             return 2
         state_path = os.path.join(os.path.abspath(args[0]), "run-watch.state.json")
@@ -1248,6 +1262,33 @@ def main(argv: list[str]) -> int:
             del sessions[task]
             save_state(state_path, state)
         print(f"forgot {task}'s session")
+        return 0
+    if "--ack-once" in options:   # caller delivered pending local one-time lines: drop those IDs, under the lock
+        raw_ids = [x for x in options["--ack-once"].split(",") if x]
+        if (len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0])
+                or watch_path is not None or as_computer is not None or not raw_ids
+                or not all(ONCE_ID.fullmatch(x) for x in raw_ids)):
+            print(__doc__.split("\n\n")[1], file=sys.stderr)
+            return 2
+        ack_set = set(raw_ids)
+        state_path = os.path.join(os.path.abspath(args[0]), "run-watch.state.json")
+        with open(os.path.join(os.path.abspath(args[0]), "run-watch.lock"), "a+") as state_lock:
+            fcntl.flock(state_lock, fcntl.LOCK_EX)
+            state = load_json(state_path)
+            if state is None and os.path.exists(state_path) or state is not None and not isinstance(state, dict):
+                print(f"run-watch: {state_path} can't be read: nothing changed", file=sys.stderr)
+                return 1
+            if not state or not isinstance(state.get("local_once"), list):
+                return 0
+            before = state["local_once"]
+            after = [p for p in before if not (isinstance(p, list) and len(p) == 2 and p[0] in ack_set)]
+            if len(after) == len(before):
+                return 0
+            if after:
+                state["local_once"] = after
+            else:
+                state.pop("local_once", None)
+            save_state(state_path, state)
         return 0
     if len(args) != 1 or args[0].startswith("-") or not os.path.isdir(args[0]) or \
             (as_computer is not None and not SSH_ALIAS.fullmatch(as_computer)):
@@ -1984,13 +2025,64 @@ def main(argv: list[str]) -> int:
         except OSError:
             return 0
         signal.alarm(0)   # it went out: the state is saved whatever the time
+        try:
+            save_state(state_path, state)
+        except OSError as e:
+            print(f"note: couldn't write {state_path}: {e}", file=sys.stderr)
     else:
-        for line in lines:
-            print(line)
-    try:
-        save_state(state_path, state)
-    except OSError as e:
-        print(f"note: couldn't write {state_path}: {e}", file=sys.stderr)
+        # Pending local one-time lines from an earlier interrupted heartbeat/watcher stay queued until delivered.
+        prev_once = [p for p in (state.get("local_once") if isinstance(state.get("local_once"), list) else [])
+                     if isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p) and ONCE_ID.fullmatch(p[0])]
+        out_lines = [line for _, line in prev_once] + lines
+        defer_ack_path = os.environ.get("RUN_WATCH_DEFER_ACK")
+        if defer_ack_path:
+            seq = state.get("local_once_seq")
+            seq = seq if isinstance(seq, int) and not isinstance(seq, bool) and 0 <= seq < 10 ** 8 else 0
+            pending = list(prev_once)
+            for line in lines:
+                if local_one_time(line):
+                    seq += 1
+                    pending.append([f"{int(t0)}-{seq}", line])
+            if len(pending) > ONCE_KEPT:
+                dropped = len(pending) - ONCE_KEPT
+                out_lines.append(f"note: {dropped} older one-time lines were dropped unread, since nothing acknowledged them for "
+                                 f"{ONCE_KEPT} lines: check {os.path.join(run_dir, TIMES_LOG)} and the tasks' threads")
+                pending = pending[-ONCE_KEPT:]
+            if pending:
+                state["local_once"], state["local_once_seq"] = pending, seq
+            else:
+                state.pop("local_once", None)
+            try:
+                save_state(state_path, state)
+            except OSError as e:
+                print(f"note: couldn't write {state_path}: {e}", file=sys.stderr)
+            else:
+                if pending:
+                    tmp_ack = f"{defer_ack_path}.{os.getpid()}.tmp"
+                    try:
+                        with open(tmp_ack, "w", encoding="utf-8") as fh:
+                            json.dump(pending, fh)
+                        os.replace(tmp_ack, defer_ack_path)
+                    except OSError:
+                        try:
+                            os.remove(tmp_ack)
+                        except OSError:
+                            pass
+            for line in out_lines:
+                print(line)
+            sys.stdout.flush()
+        else:
+            try:
+                for line in out_lines:
+                    print(line)
+                sys.stdout.flush()
+            except OSError:
+                return 0
+            state.pop("local_once", None)
+            try:
+                save_state(state_path, state)
+            except OSError as e:
+                print(f"note: couldn't write {state_path}: {e}", file=sys.stderr)
     return 0
 
 

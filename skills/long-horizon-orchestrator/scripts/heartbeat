@@ -32,8 +32,8 @@ In T3 (watch.json's "host" is "t3", or no "host" and the database exists) it als
 no thread needs a tool read to find an approval: each pending request on a running task's thread or on any
 thread under it (reviewers, helpers and theirs, by their parent links) is a line,
 
-  approval-task <task> <thread> <kind> since HH:MM:SS       on the task's own thread
-  approval-subagent <task> <thread> <kind> since HH:MM:SS   on a thread under it
+  approval-task <task> <thread> <kind> since HH:MM:SS (id <digest>)       on the task's own thread
+  approval-subagent <task> <thread> <kind> since HH:MM:SS (id <digest>)   on a thread under it
 
 and a database or table it can't read (missing while watch.json's "host" is "t3", locked past 5 seconds, a
 schema it doesn't know) is "t3-state unreadable: <why>", which is never idle: read the subagents with the tools then. A running
@@ -70,6 +70,7 @@ if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's 
     sys.exit(69)
 
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -79,6 +80,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime
@@ -344,8 +346,11 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
             if not {"thread_id", "payload_json"} <= thr:
                 return ["t3-state unreadable: T3's database has no threads table it knows (its schema changed): "
                         "read the running tasks' subagents with the tools"], bits
-            pending = con.execute("SELECT thread_id, " + ("kind" if "kind" in req else "''") + ", created_at FROM "
-                                  "orchestration_v2_projection_runtime_requests WHERE status = 'pending'").fetchall()
+            pending = con.execute(
+                "SELECT " + ("runtime_request_id" if "runtime_request_id" in req else "''") + ", thread_id, "
+                + ("kind" if "kind" in req else "''") + ", created_at FROM "
+                "orchestration_v2_projection_runtime_requests WHERE status = 'pending'"
+            ).fetchall()
             parent = {}
             if pending:
                 for child, up in con.execute("SELECT thread_id, json_extract(payload_json, '$.lineage.parentThreadId') FROM "
@@ -366,7 +371,7 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
     else:
         return [f"t3-state unreadable: {why[:120]}: read the running tasks' subagents with the tools"], bits
     out = []
-    for thread, kind, created in sorted(pending, key=lambda r: str(r[2])):
+    for req_id, thread, kind, created in sorted(pending, key=lambda r: (str(r[3]), str(r[0]))):
         task, seen, at = None, set(), thread
         while at and at not in seen and len(seen) < 50:
             if at in mine:
@@ -381,8 +386,10 @@ def t3_pending(watch: dict, running: list, here: str) -> tuple[list, list]:
         if t is not None and launched is not None and t < launched - 60:
             continue   # older than the task: another run's, left pending
         since = time.strftime("%H:%M:%S", time.localtime(t)) if t is not None else "?"   # to the second: one request
+        rid = (f" (id {hashlib.sha256(str(req_id).encode('utf-8')).hexdigest()[:16]})"
+               if req_id is not None and str(req_id) else "")
         out.append(f"approval-{'task' if thread == tasks[task]['thread'] else 'subagent'} {task} {thread} "
-                   f"{kind or 'request'} since {since}")
+                   f"{kind or 'request'} since {since}{rid}")
     return out, bits
 
 
@@ -415,171 +422,209 @@ def main(argv):
     fable = any(re.search(r"fable", str(tasks[t].get("model", "")), re.I) for t in running)
 
     invocation = uuid.uuid4().hex   # run-watch keeps it with each other computer's reading: this run's, no other's
-    try:
-        done = subprocess.run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir],
-                              capture_output=True, text=True, timeout=180, env=dict(os.environ, RUN_WATCH_INVOCATION=invocation))
-        watch_lines = [l for l in done.stdout.splitlines() if l.strip()]
-        if done.returncode != 0:
-            watch_lines.append(f"note: run-watch failed (exit {done.returncode}): {done.stderr.strip()[-200:]}; run it yourself")
-    except (OSError, subprocess.TimeoutExpired) as e:
-        watch_lines = [f"note: run-watch didn't run ({e}); run it yourself"]
-    flagged = [l for l in watch_lines if not EVENT.match(l) and not REMINDER.match(l)]
-    reminders = {"vm": [], "leftover": []}
-    for l in watch_lines:
-        if REMINDER.match(l):
-            reminders[l.split(" ", 1)[0]].append(l.split(":", 1)[0].split(" ", 1)[1] + l.split("still running", 1)[1])
-    # tasks run-watch can't read (it names each once): their threads need a look on every wake; and what
-    # its SSH check found on each other computer
-    try:
-        state = json.load(open(os.path.join(run_dir, "run-watch.state.json")))
-        state = state if isinstance(state, dict) else {}
-    except (OSError, ValueError):
-        state = {}
-    blind = set(state.get("blind") or []) if isinstance(state.get("blind"), list) else set()
-    machines = state.get("machines") if isinstance(state.get("machines"), dict) else {}
-    blind_running = sorted(t for t in running if t in blind)
-    events = {}
-    for l in watch_lines:
-        if EVENT.match(l):
-            parts = l.split()
-            word, who = parts[:2]
-            if word == "slept":   # a time, not a task: said as its clock time
-                who = (re.search(r"T(\d\d:\d\d)", who) or re.match("(.*)", who)).group(1)
-            if parts[2:3] == ["on"] and len(parts) > 3:   # another computer's, checked over SSH
-                who += f" on {parts[3]}"
-            events.setdefault(word, []).append(who)
-
-    repo, branch = watch.get("repo"), watch.get("integration_branch")
-    head = dirty = None
-    if repo and branch and os.path.isdir(repo):
-        head = run(["git", "-C", repo, "log", "-1", "--format=%h %s", branch]).strip()[:70]
-        dirty = len([l for l in run(["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"]).splitlines() if l.strip()])
-    free = shutil.disk_usage("/System/Volumes/Data" if os.path.isdir("/System/Volumes/Data") else "/").free / 1024 ** 3
-    swap = re.search(r"used = ([\d.]+)([MG])", run(["sysctl", "-n", "vm.swapusage"]))
-    swap_gb = (float(swap.group(1)) / (1024 if swap.group(2) == "M" else 1)) if swap else None
-    load = os.getloadavg()[0]
-    ps_cmd = os.environ.get("HEARTBEAT_PS", "ps")
-    ps = run([ps_cmd, "-axo", "pid=,comm="])
-    # only the system's own SecurityAgent, by its path: a test's stand-in elsewhere is no dialog
-    dialogs = len([l for l in ps.splitlines() if l.strip().split(None, 1)[1:] == [DIALOG_PATH]])
-    alive = []
-    for name in ("keep_awake_pid", "sampler_pid"):
-        pid = watch.get(name)
-        if isinstance(pid, int):
-            alive.append(f"{name.split('_pid')[0].replace('_', '-')} {'up' if run([ps_cmd, '-p', str(pid), '-o', 'pid=']).strip() else 'DOWN'}")
-
-    now = time.strftime("%H:%M")
-    bits = [f"running {', '.join(running) or 'none'}"]
-    if events:
-        bits.append("; ".join(f"{word} {' '.join(who)}" for word, who in sorted(events.items())))
-    if head:
-        bits.append(f"{branch} {head}" + (f", {dirty} tracked files changed in the checkout" if dirty else ""))
-    bits.append(f"disk {free:.0f} GB free, swap {swap_gb:.1f} GB, load {load:.1f}" if swap_gb is not None else f"disk {free:.0f} GB free, load {load:.1f}")
-    if dialogs:
-        bits.append(f"{dialogs} password dialog(s)")
-    if alive:
-        bits.append(", ".join(alive))
-    if reminders["vm"]:
-        bits.append("VMs still running: " + "; ".join(reminders["vm"]))
-    if reminders["leftover"]:
-        bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
-    # every computer watch.json reaches over SSH, so one this wake's run-watch never got to is still named
-    here = str(watch.get("computer") or os.environ.get("RUN_WATCH_COMPUTER")   # this computer, as run-watch names it
-               or run(["scutil", "--get", "LocalHostName"], timeout=10).strip() or socket.gethostname().split(".")[0]
-               ).casefold() if watch.get("machines") else ""
-    expected = {str(n) for n, e in (watch.get("machines") or {}).items() if isinstance(e, dict) and isinstance(e.get("reach"), str)
-                and e["reach"].split()[:1] == ["ssh"] and str(n).casefold() != here} if isinstance(watch.get("machines"), dict) else set()
-    for name in sorted(expected | set(machines)):
-        m = machines.get(name)
-        fresh = isinstance(m, dict) and m.get("invocation") == invocation   # written by this heartbeat's run-watch
-        if not isinstance(m, dict) or not fresh:   # an earlier wake's: this one's run-watch didn't finish
-            bits.append(f"{name} not checked this wake")
-            continue
-        if not m.get("reached"):
-            bits.append(f"{name} not reached over SSH")
-            continue
-        def number(k):   # a reading run-watch couldn't take or read there is "unknown", never left out
-            v = m.get(k)
-            return v if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e6 else None
-        there = [f"disk {number('disk_free_gb'):.0f} GB free" if number("disk_free_gb") is not None else "disk unknown",
-                 f"swap {number('swap_gb'):.1f} GB" if number("swap_gb") is not None else "swap unknown",
-                 f"load {number('load'):.1f}" if number("load") is not None else "load unknown"]
-        if isinstance(m.get("dialogs"), int) and m["dialogs"]:
-            there.append(f"{m['dialogs']} password dialog(s)")
-        there += [f"{word} {m.get(k) or 'unknown'}" for word, k in (("keep-awake", "keep_awake"), ("sampler", "sampler"))]
-        bits.append(f"{name}: " + ", ".join(there))
-    if blind_running:
-        bits.append(f"blind, read their threads: {', '.join(blind_running)}")
-    # T3's pending requests: an approval a reviewer, helper or Antigravity task waits on
-    away = [t for t in running if tasks[t].get("computer")]
-    here_name = str(watch.get("computer") or os.environ.get("RUN_WATCH_COMPUTER")
-                    or run(["scutil", "--get", "LocalHostName"], timeout=10).strip() or socket.gethostname().split(".")[0]
-                    ).casefold() if away else ""
-    pending, tool_reads = t3_pending(watch, running, here_name)
-    bits += tool_reads
-    marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
-    hb_state_path = os.path.join(run_dir, "heartbeat.state.json")
-    hb_state = load_json_dict(hb_state_path)
-    carried_commits = [l for l in (hb_state.get("carried_commits") if isinstance(hb_state.get("carried_commits"), list) else [])
-                       if isinstance(l, str) and COMMIT.match(l)][-CARRIED_CAP:]
-    usage_delivered = {
-        k: dict(v) for k, v in (hb_state.get("usage_delivered") if isinstance(hb_state.get("usage_delivered"), dict) else {}).items()
-        if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("state"), str)
-    }
-    usage_observed = {
-        k: float(v) for k, v in (hb_state.get("usage_observed") if isinstance(hb_state.get("usage_observed"), dict) else {}).items()
-        if isinstance(k, str) and finite_num(v)
-    }
-    hb_state_before = (list(carried_commits), {k: dict(v) for k, v in usage_delivered.items()}, dict(usage_observed))
-
-    live = "--live" in flags or (fable and "--no-live" not in flags)
-    usage_line, limits = usage(run_dir, live, marks, usage_delivered, usage_observed, fable and live)
-    bits.append(usage_line)
-    summary = ". ".join(bits) + "."
-    flagged += pending + limits
-    watch_lines += pending + limits
-    if dialogs and not any(l.startswith("dialog") for l in flagged):
-        flagged.append(f"dialog: {dialogs} password dialog(s) on the screen")
-        watch_lines.append(flagged[-1])
-    commit_lines = [l for l in watch_lines if COMMIT.match(l)]
-    action_events = {k: v for k, v in events.items() if k != "commit"}
-    idle = not flagged and not action_events and not blind_running and not tool_reads
-    all_commits = list(carried_commits)
-    for c in commit_lines:
-        if c not in all_commits:
-            all_commits.append(c)
-    if idle:
-        next_carried = all_commits[-CARRIED_CAP:]
-        emit_lines = []
+    caller_defer = os.environ.get("HEARTBEAT_DEFER_ACK")
+    own_ack_file = None
+    if caller_defer:
+        rw_defer = caller_defer
     else:
-        next_carried = []
-        emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + all_commits
-    if (next_carried, usage_delivered, usage_observed) != hb_state_before:
-        saved, save_err = save_json_atomic(
-            hb_state_path,
-            {"carried_commits": next_carried, "usage_delivered": usage_delivered, "usage_observed": usage_observed},
-        )
-        if not saved:
-            note = f"note: couldn't save heartbeat.state.json ({save_err})"
-            flagged.append(note)
-            if idle:
-                idle = False
-                emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + [note] + all_commits
-            else:
-                emit_lines.append(note)
-    print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
-    for l in emit_lines:
-        print(l)
-    if "--no-ledger" not in flags:
-        ledger = run_dir.rstrip("/") + ".md"
-        if os.path.isfile(ledger):
+        fd, own_ack_file = tempfile.mkstemp(prefix="heartbeat-ack-", suffix=".json")
+        os.close(fd)
+        try:
+            os.unlink(own_ack_file)
+        except OSError:
+            pass
+        rw_defer = own_ack_file
+    rw_ok = False
+    try:
+        try:
+            rw_env = dict(os.environ, RUN_WATCH_INVOCATION=invocation, RUN_WATCH_DEFER_ACK=rw_defer)
+            done = subprocess.run([os.environ.get("HEARTBEAT_RUN_WATCH", os.path.join(HERE, "run-watch")), run_dir],
+                                  capture_output=True, text=True, timeout=180, env=rw_env)
+            watch_lines = [l for l in done.stdout.splitlines() if l.strip()]
+            rw_ok = done.returncode == 0
+            if done.returncode != 0:
+                watch_lines.append(f"note: run-watch failed (exit {done.returncode}): {done.stderr.strip()[-200:]}; run it yourself")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            watch_lines = [f"note: run-watch didn't run ({e}); run it yourself"]
+        flagged = [l for l in watch_lines if not EVENT.match(l) and not REMINDER.match(l)]
+        reminders = {"vm": [], "leftover": []}
+        for l in watch_lines:
+            if REMINDER.match(l):
+                reminders[l.split(" ", 1)[0]].append(l.split(":", 1)[0].split(" ", 1)[1] + l.split("still running", 1)[1])
+        # tasks run-watch can't read (it names each once): their threads need a look on every wake; and what
+        # its SSH check found on each other computer
+        try:
+            state = json.load(open(os.path.join(run_dir, "run-watch.state.json")))
+            state = state if isinstance(state, dict) else {}
+        except (OSError, ValueError):
+            state = {}
+        blind = set(state.get("blind") or []) if isinstance(state.get("blind"), list) else set()
+        machines = state.get("machines") if isinstance(state.get("machines"), dict) else {}
+        blind_running = sorted(t for t in running if t in blind)
+        events = {}
+        for l in watch_lines:
+            if EVENT.match(l):
+                parts = l.split()
+                word, who = parts[:2]
+                if word == "slept":   # a time, not a task: said as its clock time
+                    who = (re.search(r"T(\d\d:\d\d)", who) or re.match("(.*)", who)).group(1)
+                if parts[2:3] == ["on"] and len(parts) > 3:   # another computer's, checked over SSH
+                    who += f" on {parts[3]}"
+                events.setdefault(word, []).append(who)
+
+        repo, branch = watch.get("repo"), watch.get("integration_branch")
+        head = dirty = None
+        if repo and branch and os.path.isdir(repo):
+            head = run(["git", "-C", repo, "log", "-1", "--format=%h %s", branch]).strip()[:70]
+            dirty = len([l for l in run(["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"]).splitlines() if l.strip()])
+        free = shutil.disk_usage("/System/Volumes/Data" if os.path.isdir("/System/Volumes/Data") else "/").free / 1024 ** 3
+        swap = re.search(r"used = ([\d.]+)([MG])", run(["sysctl", "-n", "vm.swapusage"]))
+        swap_gb = (float(swap.group(1)) / (1024 if swap.group(2) == "M" else 1)) if swap else None
+        load = os.getloadavg()[0]
+        ps_cmd = os.environ.get("HEARTBEAT_PS", "ps")
+        ps = run([ps_cmd, "-axo", "pid=,comm="])
+        # only the system's own SecurityAgent, by its path: a test's stand-in elsewhere is no dialog
+        dialogs = len([l for l in ps.splitlines() if l.strip().split(None, 1)[1:] == [DIALOG_PATH]])
+        alive = []
+        for name in ("keep_awake_pid", "sampler_pid"):
+            pid = watch.get(name)
+            if isinstance(pid, int):
+                alive.append(f"{name.split('_pid')[0].replace('_', '-')} {'up' if run([ps_cmd, '-p', str(pid), '-o', 'pid=']).strip() else 'DOWN'}")
+
+        now = time.strftime("%H:%M")
+        bits = [f"running {', '.join(running) or 'none'}"]
+        if events:
+            bits.append("; ".join(f"{word} {' '.join(who)}" for word, who in sorted(events.items())))
+        if head:
+            bits.append(f"{branch} {head}" + (f", {dirty} tracked files changed in the checkout" if dirty else ""))
+        bits.append(f"disk {free:.0f} GB free, swap {swap_gb:.1f} GB, load {load:.1f}" if swap_gb is not None else f"disk {free:.0f} GB free, load {load:.1f}")
+        if dialogs:
+            bits.append(f"{dialogs} password dialog(s)")
+        if alive:
+            bits.append(", ".join(alive))
+        if reminders["vm"]:
+            bits.append("VMs still running: " + "; ".join(reminders["vm"]))
+        if reminders["leftover"]:
+            bits.append("leftovers still running: " + "; ".join(reminders["leftover"]))
+        # every computer watch.json reaches over SSH, so one this wake's run-watch never got to is still named
+        here = str(watch.get("computer") or os.environ.get("RUN_WATCH_COMPUTER")   # this computer, as run-watch names it
+                   or run(["scutil", "--get", "LocalHostName"], timeout=10).strip() or socket.gethostname().split(".")[0]
+                   ).casefold() if watch.get("machines") else ""
+        expected = {str(n) for n, e in (watch.get("machines") or {}).items() if isinstance(e, dict) and isinstance(e.get("reach"), str)
+                    and e["reach"].split()[:1] == ["ssh"] and str(n).casefold() != here} if isinstance(watch.get("machines"), dict) else set()
+        for name in sorted(expected | set(machines)):
+            m = machines.get(name)
+            fresh = isinstance(m, dict) and m.get("invocation") == invocation   # written by this heartbeat's run-watch
+            if not isinstance(m, dict) or not fresh:   # an earlier wake's: this one's run-watch didn't finish
+                bits.append(f"{name} not checked this wake")
+                continue
+            if not m.get("reached"):
+                bits.append(f"{name} not reached over SSH")
+                continue
+            def number(k):   # a reading run-watch couldn't take or read there is "unknown", never left out
+                v = m.get(k)
+                return v if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e6 else None
+            there = [f"disk {number('disk_free_gb'):.0f} GB free" if number("disk_free_gb") is not None else "disk unknown",
+                     f"swap {number('swap_gb'):.1f} GB" if number("swap_gb") is not None else "swap unknown",
+                     f"load {number('load'):.1f}" if number("load") is not None else "load unknown"]
+            if isinstance(m.get("dialogs"), int) and m["dialogs"]:
+                there.append(f"{m['dialogs']} password dialog(s)")
+            there += [f"{word} {m.get(k) or 'unknown'}" for word, k in (("keep-awake", "keep_awake"), ("sampler", "sampler"))]
+            bits.append(f"{name}: " + ", ".join(there))
+        if blind_running:
+            bits.append(f"blind, read their threads: {', '.join(blind_running)}")
+        # T3's pending requests: an approval a reviewer, helper or Antigravity task waits on
+        away = [t for t in running if tasks[t].get("computer")]
+        here_name = str(watch.get("computer") or os.environ.get("RUN_WATCH_COMPUTER")
+                        or run(["scutil", "--get", "LocalHostName"], timeout=10).strip() or socket.gethostname().split(".")[0]
+                        ).casefold() if away else ""
+        pending, tool_reads = t3_pending(watch, running, here_name)
+        bits += tool_reads
+        marks = watch.get("usage_marks") if isinstance(watch.get("usage_marks"), dict) else {}
+        hb_state_path = os.path.join(run_dir, "heartbeat.state.json")
+        hb_state = load_json_dict(hb_state_path)
+        carried_commits = [l for l in (hb_state.get("carried_commits") if isinstance(hb_state.get("carried_commits"), list) else [])
+                           if isinstance(l, str) and COMMIT.match(l)][-CARRIED_CAP:]
+        usage_delivered = {
+            k: dict(v) for k, v in (hb_state.get("usage_delivered") if isinstance(hb_state.get("usage_delivered"), dict) else {}).items()
+            if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("state"), str)
+        }
+        usage_observed = {
+            k: float(v) for k, v in (hb_state.get("usage_observed") if isinstance(hb_state.get("usage_observed"), dict) else {}).items()
+            if isinstance(k, str) and finite_num(v)
+        }
+        hb_state_before = (list(carried_commits), {k: dict(v) for k, v in usage_delivered.items()}, dict(usage_observed))
+
+        live = "--live" in flags or (fable and "--no-live" not in flags)
+        usage_line, limits = usage(run_dir, live, marks, usage_delivered, usage_observed, fable and live)
+        bits.append(usage_line)
+        summary = ". ".join(bits) + "."
+        flagged += pending + limits
+        watch_lines += pending + limits
+        if dialogs and not any(l.startswith("dialog") for l in flagged):
+            flagged.append(f"dialog: {dialogs} password dialog(s) on the screen")
+            watch_lines.append(flagged[-1])
+        commit_lines = [l for l in watch_lines if COMMIT.match(l)]
+        action_events = {k: v for k, v in events.items() if k != "commit"}
+        idle = not flagged and not action_events and not blind_running and not tool_reads
+        all_commits = list(carried_commits)
+        for c in commit_lines:
+            if c not in all_commits:
+                all_commits.append(c)
+        if idle:
+            next_carried = all_commits[-CARRIED_CAP:]
+            emit_lines = []
+        else:
+            next_carried = []
+            emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + all_commits
+        if (next_carried, usage_delivered, usage_observed) != hb_state_before:
+            saved, save_err = save_json_atomic(
+                hb_state_path,
+                {"carried_commits": next_carried, "usage_delivered": usage_delivered, "usage_observed": usage_observed},
+            )
+            if not saved:
+                note = f"note: couldn't save heartbeat.state.json ({save_err})"
+                flagged.append(note)
+                if idle:
+                    idle = False
+                    emit_lines = [l for l in watch_lines if not COMMIT.match(l)] + [note] + all_commits
+                else:
+                    emit_lines.append(note)
+        try:
+            print(f"heartbeat {now}: {'nothing to act on' if idle else 'act on the lines below'}. {summary}")
+            for l in emit_lines:
+                print(l)
+            sys.stdout.flush()
+        except OSError:
+            return 1
+        if own_ack_file and rw_ok and os.path.isfile(own_ack_file):
             try:
-                with open(ledger, "a", encoding="utf-8") as fh:
-                    note = f" Flags: {len(flagged)}." if flagged else ""
-                    fh.write(f"- {now} heartbeat: {summary}{note}\n")
-            except OSError as e:
-                print(f"note: couldn't add to the ledger: {e}")
-    return 0
+                raw_ack = json.load(open(own_ack_file, encoding="utf-8"))
+                ack_ids = [p[0] for p in raw_ack if isinstance(p, list) and len(p) == 2 and isinstance(p[0], str)] if isinstance(raw_ack, list) else []
+            except (OSError, ValueError):
+                ack_ids = []
+            if ack_ids:
+                try:
+                    subprocess.run([os.path.join(HERE, "run-watch"), run_dir, "--ack-once", ",".join(ack_ids)],
+                                   capture_output=True, text=True, timeout=15)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+        if "--no-ledger" not in flags:
+            ledger = run_dir.rstrip("/") + ".md"
+            if os.path.isfile(ledger):
+                try:
+                    with open(ledger, "a", encoding="utf-8") as fh:
+                        note = f" Flags: {len(flagged)}." if flagged else ""
+                        fh.write(f"- {now} heartbeat: {summary}{note}\n")
+                except OSError as e:
+                    print(f"note: couldn't add to the ledger: {e}")
+        return 0
+    finally:
+        if own_ack_file:
+            try:
+                os.remove(own_ack_file)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

@@ -5256,13 +5256,22 @@ sums_before=$(cat "$T3_USERDATA/statev2.sqlite" "$T3_USERDATA/statev2.sqlite-wal
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 test "$(cat "$T3_USERDATA/statev2.sqlite" "$T3_USERDATA/statev2.sqlite-wal" 2>/dev/null | shasum)" = "$sums_before" || { echo "heartbeat wrote to T3's database"; exit 1; }
 case "$out" in *"act on the lines below"*) ;; *) echo "heartbeat t3 pending: $out"; exit 1;; esac
-printf '%s\n' "$out" | grep -q '^approval-subagent A rev-a-child command since [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$' || { echo "heartbeat subagent line: $out"; exit 1; }
-printf '%s\n' "$out" | grep -q '^approval-subagent A helper-only-in-subagents user_input since ' || { echo "heartbeat subagents table: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q '^approval-subagent A rev-a-child command since [0-9][0-9]:[0-9][0-9]:[0-9][0-9] (id [0-9a-f]\{16\})$' || { echo "heartbeat subagent line: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q '^approval-subagent A helper-only-in-subagents user_input since [0-9][0-9]:[0-9][0-9]:[0-9][0-9] (id [0-9a-f]\{16\})$' || { echo "heartbeat subagents table: $out"; exit 1; }
 test "$(printf '%s\n' "$out" | grep -c '^approval-')" -eq 2 || { echo "heartbeat t3 extra lines: $out"; exit 1; }
-python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id IN (?, ?)", ("resolved", "r1", "r2")); c.execute("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, ?, ?, ?, ?)", ("r7", "task-a", "user_input", "pending", "2026-11-26T01:20:00Z", "{}")); c.commit()' "$T3_USERDATA/statev2.sqlite"
+# id 50: two distinct runtime_request_ids on the same thread, kind and clock second get distinct IDs and wake watch-wait separately
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id IN (?, ?)", ("resolved", "r1", "r2")); c.execute("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, ?, ?, ?, ?)", ("r7", "task-a", "user_input", "pending", "2026-11-26T01:20:00.100Z", "{}")); c.commit()' "$T3_USERDATA/statev2.sqlite"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
-printf '%s\n' "$out" | grep -q '^approval-task A task-a user_input since ' || { echo "heartbeat task line: $out"; exit 1; }
-python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id = ?", ("resolved", "r7")); c.commit()' "$T3_USERDATA/statev2.sqlite"
+printf '%s\n' "$out" | grep -q '^approval-task A task-a user_input since [0-9][0-9]:[0-9][0-9]:[0-9][0-9] (id [0-9a-f]\{16\})$' || { echo "heartbeat task line: $out"; exit 1; }
+rm -f "$hb/watch-wait.seen.json" "$hb/watch-wait.state.json"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$hb" --every 0.15 --max 5 --now)
+case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"approval-task A task-a user_input since "*) ;; *) echo "watch-wait id50 first req: $out"; exit 1;; esac
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id = ?", ("resolved", "r7")); c.execute("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, ?, ?, ?, ?)", ("r8", "task-a", "user_input", "pending", "2026-11-26T01:20:00.800Z", "{}")); c.commit()' "$T3_USERDATA/statev2.sqlite"
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$hb" --every 0.15 --max 5 --now)
+case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"approval-task A task-a user_input since "*) ;; *) echo "watch-wait id50 second same-second req: $out"; exit 1;; esac
+out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/watch-wait" "$hb" --every 0.15 --max 0.5 --now)
+case "$out" in *"nothing new to act on"*) ;; *) echo "watch-wait id50 repeat same req suppressed: $out"; exit 1;; esac
+python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("UPDATE orchestration_v2_projection_runtime_requests SET status = ? WHERE runtime_request_id = ?", ("resolved", "r8")); c.commit()' "$T3_USERDATA/statev2.sqlite"
 out=$(HEARTBEAT_RUN_WATCH="$work/hb-watch-quiet" "$scripts/heartbeat" "$hb" --no-ledger)
 case "$out" in *"nothing to act on"*) ;; *) echo "heartbeat t3 none pending: $out"; exit 1;; esac
 test "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -eq 1
@@ -5383,6 +5392,9 @@ ww_line() {   # $1 the line, $2 "new" or "old"
 ww_line "approval-task A thread-a command since 01:10:05" new
 ww_line "approval-task A thread-a command since 01:10:05" old
 ww_line "approval-task A thread-a command since 01:10:40" new
+ww_line "approval-task A thread-a command since 01:10:05 (id 1111111111111111)" new
+ww_line "approval-task A thread-a command since 01:10:05 (id 1111111111111111)" old
+ww_line "approval-task A thread-a command since 01:10:05 (id 2222222222222222)" new
 ww_line "approval-subagent A a-review-rg-1-sol-2 command since 01:10:05" new
 ww_line "quiet T1: nothing changed for 21 min" new
 ww_line "quiet T1: nothing changed for 26 min" old
@@ -5454,6 +5466,89 @@ kill "$first"
 wait "$first" 2>/dev/null || true
 sleep 2.5
 test ! -e "$work/ww-orphan" || { echo "watch-wait left its heartbeat's child running"; exit 1; }
+# id 39: both narrow signal windows in watch-wait check() cleanup (clearing STOP["starting"] and a second stop during cleanup) still kill the detached heartbeat process group
+python3 -I - "$scripts/watch-wait" "$work" <<'EOF'
+import importlib.machinery, importlib.util, os, signal, sys, time
+ww_path, work = sys.argv[1], sys.argv[2]
+loader = importlib.machinery.SourceFileLoader("watch_wait_sig_test", ww_path)
+spec = importlib.util.spec_from_loader("watch_wait_sig_test", loader)
+mod = importlib.util.module_from_spec(spec)
+loader.exec_module(mod)
+
+# Window 1: signal fires right when STOP["starting"] is cleared after Popen returns
+orphan1 = os.path.join(work, "ww-win1-orphan")
+hb1 = os.path.join(work, "ww-win1-hb")
+open(hb1, "w").write(f"#!/bin/sh\nsh -c 'sleep 1.2; touch \"{orphan1}\"' & wait\n")
+os.chmod(hb1, 0o755)
+
+class TriggerOnClear(dict):
+    def __setitem__(self, k, v):
+        super().__setitem__(k, v)
+        if k == "starting" and v is False and not self.get("_fired"):
+            self["_fired"] = True
+            self["exiting"] = True
+            raise SystemExit(128 + signal.SIGTERM)
+
+orig_stop = mod.STOP
+mod.STOP = TriggerOnClear(starting=False, exiting=False, held=0)
+try:
+    try:
+        mod.check(hb1, work, False)
+        raise AssertionError("expected SystemExit")
+    except SystemExit:
+        pass
+finally:
+    mod.STOP = orig_stop
+time.sleep(1.5)
+assert not os.path.exists(orphan1), "window 1 left detached heartbeat running"
+
+# Window 2: second stop signal arrives while except BaseException runs killpg cleanup
+orphan2 = os.path.join(work, "ww-win2-orphan")
+hb2 = os.path.join(work, "ww-win2-hb")
+open(hb2, "w").write(f"#!/bin/sh\nsh -c 'sleep 1.2; touch \"{orphan2}\"' & wait\n")
+os.chmod(hb2, 0o755)
+mod.STOP = {"starting": False, "exiting": False, "held": 0}
+def test_stop(signum, _frame):
+    if mod.STOP["exiting"]:
+        return
+    if mod.STOP["starting"]:
+        if not mod.STOP["held"]:
+            mod.STOP["held"] = signum
+        return
+    mod.STOP["exiting"] = True
+    raise SystemExit(128 + signum)
+prev_handler = signal.signal(signal.SIGTERM, test_stop)
+orig_killpg = os.killpg
+fired_second = [False]
+def hooked_killpg(pid, sig):
+    if not fired_second[0]:
+        fired_second[0] = True
+        os.kill(os.getpid(), signal.SIGTERM)
+    return orig_killpg(pid, sig)
+os.killpg = hooked_killpg
+orig_popen = mod.subprocess.Popen
+def hooked_popen(*a, **kw):
+    p = orig_popen(*a, **kw)
+    orig_comm = p.communicate
+    def comm_timeout(*ca, **ckw):
+        raise mod.subprocess.TimeoutExpired(a[0], 1)
+    p.communicate = comm_timeout
+    return p
+mod.subprocess.Popen = hooked_popen
+try:
+    try:
+        mod.check(hb2, work, False)
+        raise AssertionError("expected TimeoutExpired or SystemExit")
+    except (mod.subprocess.TimeoutExpired, SystemExit):
+        pass
+finally:
+    mod.subprocess.Popen = orig_popen
+    os.killpg = orig_killpg
+    signal.signal(signal.SIGTERM, prev_handler)
+    mod.STOP = orig_stop
+time.sleep(1.5)
+assert not os.path.exists(orphan2), "window 2 left detached heartbeat running"
+EOF
 printf '%s\n' '{"finished": "2026-11-26T02:00:00Z", "tasks": {}}' > "$ww/watch.json"
 out=$("$scripts/watch-wait" "$ww" --every 0.2 --max 5)
 case "$out" in "watch-wait: the run is finished; nothing to watch") ;; *) echo "watch-wait finished: $out"; exit 1;; esac
@@ -5461,6 +5556,38 @@ status=0
 "$scripts/watch-wait" "$ww" --every 0 >/dev/null 2>&1 || status=$?
 test "$status" -eq 2
 unset WATCH_WAIT_HEARTBEAT
+# id 34: a watcher stopped after run-watch saves its state (while heartbeat is still assembling output) never loses a one-time settings alert
+ww_lost="$work/ww-id34"
+mkdir -p "$ww_lost/owner" "$ww_lost/usage"
+printf '# ledger\n' > "$ww_lost.md"
+python3 -I - "$ww_lost/owner/app.plist" "$work/id34-cur.plist" <<'EOF'
+import plistlib, sys
+plistlib.dump({"readingSpeed": 1.4}, open(sys.argv[1], "wb"))
+plistlib.dump({"readingSpeed": 1.1}, open(sys.argv[2], "wb"))
+EOF
+cat > "$work/id34-defaults" <<EOF
+#!/bin/sh
+cat "$work/id34-cur.plist"
+EOF
+cat > "$work/id34-slow-usage" <<EOF
+#!/bin/sh
+touch "$work/id34-rw-saved"
+sleep 10
+EOF
+chmod +x "$work/id34-defaults" "$work/id34-slow-usage"
+printf '%s\n' '{"started": "2026-11-26T01:00:00+02:00", "owner_defaults": [{"domain": "com.example.app", "snapshot": "owner/app.plist"}], "tasks": {}}' > "$ww_lost/watch.json"
+RUN_WATCH_DEFAULTS="$work/id34-defaults" HEARTBEAT_PROVIDER_USAGE="$work/id34-slow-usage" "$scripts/watch-wait" "$ww_lost" --every 60 --max 600 --now --live > /dev/null &
+id34_pid=$!
+background="$background $id34_pid"
+for _ in $(seq 1 150); do test -e "$work/id34-rw-saved" && break; sleep 0.1; done
+test -e "$work/id34-rw-saved" || { echo "id34 marker not created"; exit 1; }
+kill "$id34_pid"
+wait "$id34_pid" 2>/dev/null || true
+# Next watch-wait delivers the unacknowledged settings alert once, then stays quiet after ack.
+out=$(RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
+case "$out" in *"act on heartbeat's lines below (1 new of 1)"*"settings com.example.app: readingSpeed 1.4→1.1"*) ;; *) echo "id34 replay failed: $out"; exit 1;; esac
+out=$(RUN_WATCH_DEFAULTS="$work/id34-defaults" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 0.5 --now)
+case "$out" in *"nothing new to act on"*) ;; *) echo "id34 post-ack quiet failed: $out"; exit 1;; esac
 # End-to-end watch-wait + real heartbeat + 5.20.0 backward-compatibility check:
 # Seed a 5.20.0-format run directory (watch.json, run-watch.state.json, flat watch-wait.seen.json with a legacy usage
 # key and a non-usage quiet key, and no heartbeat.state.json or watch-wait.state.json): 5.20.0 seen.json lacks reading

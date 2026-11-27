@@ -870,10 +870,38 @@ try:
     again = subprocess.run([sys.executable, "-I", script, o_run, "--forget-session", "B"], capture_output=True, text=True, env=o_env)
     assert again.returncode == 0 and "none was remembered" in again.stdout, again
     assert open(os.path.join(o_run, "run-watch.state.json")).read() == before_forget   # nothing to forget: nothing written
-    for extra in (["--as", "den-mac"], ["--watch", "-"], []):
+    for extra in (["--as", "den-mac"], ["--as", ""], ["--watch", "-"], ["--watch", ""], ["--ack-once", "1-1"], []):
         bad_use = subprocess.run([sys.executable, "-I", script, o_run, *extra, "--forget-session", "" if not extra else "C"],
                                  capture_output=True, text=True, env=o_env)
         assert bad_use.returncode == 2, (extra, bad_use)
+    assert json.load(open(os.path.join(o_run, "run-watch.state.json")))["sessions"] == {"C": "/c.jsonl"}
+    # deferred ack for local one-time lines (id 34): unacknowledged settings drift replays until --ack-once removes its ID
+    ack_file = os.path.join(work, "rw-ack.json")
+    plistlib.dump({"readingSpeed": 1.5, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
+                   "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"))
+    def1 = [l for l in own(RUN_WATCH_DEFER_ACK=ack_file) if l.startswith("settings ")]
+    assert def1 == ["settings com.example.app: readingSpeed 1.4→1.5"], def1
+    pending_ids = [p[0] for p in json.load(open(ack_file))]
+    assert len(pending_ids) == 1, pending_ids
+    # Without acking, the next run replays the same settings line (even though settings_told already has the digest).
+    def2 = [l for l in own(RUN_WATCH_DEFER_ACK=ack_file) if l.startswith("settings ")]
+    assert def2 == ["settings com.example.app: readingSpeed 1.4→1.5"], def2
+    # Bad --ack-once invocations exit 2 without touching state.
+    for bad_ack in ([o_run, "--ack-once", ""], [o_run, "--ack-once", "bad-id"], [o_run, "--as", "", "--ack-once", pending_ids[0]]):
+        res_bad = subprocess.run([sys.executable, "-I", script, *bad_ack], capture_output=True, text=True, env=o_env)
+        assert res_bad.returncode == 2, (bad_ack, res_bad)
+    # Acknowledging the pending ID clears local_once so the next run stays quiet.
+    ack_ok = subprocess.run([sys.executable, "-I", script, o_run, "--ack-once", ",".join(pending_ids)],
+                            capture_output=True, text=True, env=o_env)
+    assert ack_ok.returncode == 0, ack_ok
+    assert not any(l.startswith("settings ") for l in own(RUN_WATCH_DEFER_ACK=ack_file))
+    # Standalone run-watch (without RUN_WATCH_DEFER_ACK) also delivers any leftover pending one-time line and clears it.
+    plistlib.dump({"readingSpeed": 1.55, "windowSection": "highlight", "notch": {"x": 2}, "apiToken": "b",
+                   "long": "y" * 60, "same": True, "added": "k3Jd8sLq0Zp2Xv7Rt5Yw9"}, open(current, "wb"))
+    assert [l for l in own(RUN_WATCH_DEFER_ACK=ack_file) if l.startswith("settings ")] == ["settings com.example.app: readingSpeed 1.4→1.55"]
+    assert [l for l in own() if l.startswith("settings ")] == ["settings com.example.app: readingSpeed 1.4→1.55"]
+    assert not any(l.startswith("settings ") for l in own())
+    before_forget = open(os.path.join(o_run, "run-watch.state.json")).read()
     open(os.path.join(o_run, "run-watch.state.json"), "w").write("[1]")
     broken = subprocess.run([sys.executable, "-I", script, o_run, "--forget-session", "C"], capture_output=True, text=True, env=o_env)
     assert broken.returncode == 1 and "can't be read" in broken.stderr, broken

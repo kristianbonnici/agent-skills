@@ -45,17 +45,19 @@ if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's 
     sys.exit(69)
 
 import fcntl
+import hashlib
 import json
 import os
 import re
 import signal
 import subprocess
+import tempfile
 import time
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 LIVE_EVERY_S = 900
-STOP = {"starting": False, "held": 0}
+STOP = {"starting": False, "exiting": False, "held": 0}
 REMIND_S = 1800          # a lasting non-usage line already delivered comes again after this long
 READ_EVERY_S = 900       # blind tasks or tasks on another computer: their threads are read this often
 CARRIED_CAP = 200
@@ -63,6 +65,7 @@ RESET_TOLERANCE_S = 300
 IDLE = re.compile(r"^heartbeat \d\d:\d\d: nothing to act on\.")
 REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
 COMMIT = re.compile(r"^commit ")
+APPROVAL_ID = re.compile(r" \(id ([^)\s]+)\)$")
 # said once by run-watch (as its one_time() says, here or "on <computer>"), or once a value: always new
 ONCE = re.compile(r"^((merged|report|settings|blind|hog|vm|leftover) |disk(?: on \S+)?: free disk fell |"
                   r"slept \S+(?: on \S+)? (?!- )\S+ \()")
@@ -179,36 +182,95 @@ def live_needed(watch: dict) -> bool:
 def line_key(line: str) -> str:
     """A line as it stays while its condition lasts: the readings that change from one check to the next (minutes,
     sizes, a usage reading, low disk's folder sizing) taken out, and every name, number and time that tells one
-    finding from another (a task, a thread, a request's time, a mark) kept."""
+    finding from another (a task, a thread, a request's ID or time, a mark) kept."""
     if line.startswith(("approval-task ", "approval-subagent ")):
-        return line[:300]   # one request: its task, thread, kind and time
+        m = APPROVAL_ID.search(line)
+        if m:
+            return f"approval-id:{m.group(1)}"
+        return line if len(line) <= 300 else f"{line[:240]}#{hashlib.sha256(line.encode('utf-8')).hexdigest()[:16]}"
     if re.match(r"disk(?: on \S+)?: [\d.]+ GB free, below ", line):
         line = line.split(";", 1)[0]
     line = re.sub(r"\bat [\d.]+%", "at #%", line)   # usage: the reading, never the mark
     return re.sub(r"\b[\d.]+ ?(min|GB|MB|KB|s)\b", r"# \1", line)[:300]
 
 
-def check(heartbeat: str, run_dir: str, live: bool) -> subprocess.CompletedProcess:
-    """One heartbeat, in a process group of its own: a stop or a timeout ends run-watch with it, before run-watch
-    saves a state it read earlier (over a change made meanwhile) or marks lines told that nobody saw."""
-    STOP["starting"] = True   # a stop while it starts is held until it can be cleaned up (stop() below)
+def kill_proc_group(proc) -> None:
+    if proc is None:
+        return
+    prev = STOP["starting"]
+    STOP["starting"] = True
     try:
-        proc = subprocess.Popen([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
-    finally:
-        STOP["starting"] = False
-    try:
-        if STOP["held"]:
-            raise SystemExit(128 + STOP["held"])
-        out, err = proc.communicate(timeout=300)
-    except BaseException:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except OSError:
             pass
-        proc.wait()
-        raise
+        try:
+            proc.wait()
+        except OSError:
+            pass
+    finally:
+        STOP["starting"] = prev
+
+
+def check(heartbeat: str, run_dir: str, live: bool, env=None) -> subprocess.CompletedProcess:
+    """One heartbeat, in a process group of its own: a stop or a timeout ends run-watch with it, before run-watch
+    saves a state it read earlier (over a change made meanwhile) or marks lines told that nobody saw."""
+    proc = None
+    completed = False
+    STOP["starting"] = True   # a stop while it starts is held until cleanup is active (stop() below)
+    try:
+        try:
+            proc = subprocess.Popen([heartbeat, run_dir, "--no-ledger", "--live" if live else "--no-live"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                    start_new_session=True, env=env)
+            STOP["starting"] = False
+            if STOP["held"]:
+                STOP["exiting"] = True
+                raise SystemExit(128 + STOP["held"])
+            out, err = proc.communicate(timeout=300)
+            completed = True
+        except BaseException:
+            STOP["starting"] = True
+            try:
+                kill_proc_group(proc)
+                proc = None
+            finally:
+                STOP["starting"] = False
+            if STOP["held"] and not STOP["exiting"]:
+                STOP["exiting"] = True
+                raise SystemExit(128 + STOP["held"])
+            raise
+    finally:
+        if not completed and proc is not None:
+            kill_proc_group(proc)
+            proc = None
+        STOP["starting"] = False
+    if STOP["held"]:
+        STOP["exiting"] = True
+        raise SystemExit(128 + STOP["held"])
     return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+def read_pending_ack(path: str) -> list:
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+        if not isinstance(data, list):
+            return []
+        return [(p[0], p[1]) for p in data if isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p)]
+    except (OSError, ValueError):
+        return []
+
+
+def ack_once(run_dir: str, ids: list) -> None:
+    if not ids:
+        return
+    try:
+        subprocess.run([os.path.join(HERE, "run-watch"), run_dir, "--ack-once", ",".join(ids)],
+                       capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def ledger_line(run_dir: str, text: str) -> None:
@@ -248,14 +310,24 @@ def main(argv: list) -> int:
         fh.write(f"{os.getpid()}\n")
 
     def stop(signum, _frame):
-        if STOP["starting"]:
-            STOP["held"] = signum
+        if STOP["exiting"]:
             return
+        if STOP["starting"]:
+            if not STOP["held"]:
+                STOP["held"] = signum
+            return
+        STOP["exiting"] = True
         raise SystemExit(128 + signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, stop)
     heartbeat = os.environ.get("WATCH_WAIT_HEARTBEAT", os.path.join(HERE, "heartbeat"))
+    ack_fd, ack_path = tempfile.mkstemp(prefix="watch-wait-ack-", suffix=".json")
+    os.close(ack_fd)
+    try:
+        os.remove(ack_path)
+    except OSError:
+        pass
     t0 = time.time()
     deadline = t0 + most
     checks, last_live, first = 0, None, ""
@@ -266,15 +338,21 @@ def main(argv: list) -> int:
             watch = load_json(os.path.join(run_dir, "watch.json"))
             if watch.get("finished"):
                 print("watch-wait: the run is finished; nothing to watch")
+                STOP["exiting"] = True
                 return 0
             live = (live_wanted or live_needed(watch)) and (last_live is None or time.time() - last_live >= LIVE_EVERY_S)
             if live:
                 last_live = time.time()
             try:
-                done = check(heartbeat, run_dir, live)
+                os.remove(ack_path)
+            except OSError:
+                pass
+            try:
+                done = check(heartbeat, run_dir, live, env=dict(os.environ, HEARTBEAT_DEFER_ACK=ack_path))
             except (OSError, subprocess.TimeoutExpired) as e:
                 print(f"watch-wait {time.strftime('%H:%M')}: heartbeat didn't run ({e}): run it yourself, then start watch-wait again")
                 ledger_line(run_dir, f"heartbeat didn't run ({e})")
+                STOP["exiting"] = True
                 return 1
             checks += 1
             out = [l for l in done.stdout.splitlines() if l.strip()]
@@ -282,7 +360,9 @@ def main(argv: list) -> int:
                 print(f"watch-wait {time.strftime('%H:%M')}: heartbeat failed (exit {done.returncode}): "
                       f"{done.stderr.strip()[-200:]}; run it yourself, then start watch-wait again")
                 ledger_line(run_dir, f"heartbeat failed (exit {done.returncode})")
+                STOP["exiting"] = True
                 return 1
+            pending_ack = read_pending_ack(ack_path)
             first = out[0]
             summary = first.split(". ", 1)[1] if ". " in first else first
             minutes = (time.time() - t0) / 60
@@ -387,10 +467,16 @@ def main(argv: list) -> int:
                         emit.append(f"note: couldn't save watch-wait.state.json ({save_err})")
                 why = (f"act on heartbeat's lines below ({len(new)} new of {len(act)})" if new
                        else "read the threads heartbeat names (blind, or on another computer)")
-                print(f"watch-wait {time.strftime('%H:%M')}: {why}, after {minutes:.0f} min and {checks} checks; "
-                      "then start watch-wait again")
-                print("\n".join(emit))
+                try:
+                    print(f"watch-wait {time.strftime('%H:%M')}: {why}, after {minutes:.0f} min and {checks} checks; "
+                          "then start watch-wait again")
+                    print("\n".join(emit), flush=True)
+                except OSError:
+                    STOP["exiting"] = True
+                    return 1
+                ack_once(run_dir, [oid for oid, _ in pending_ack])
                 ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
+                STOP["exiting"] = True
                 return 0
             if commits:
                 for c in commits:
@@ -402,19 +488,33 @@ def main(argv: list) -> int:
                 saved, save_err = save_json_atomic(state_path, {"carried_commits": carried, "usage": usage_state})
                 if not saved and carried:
                     note = f"note: couldn't save watch-wait.state.json ({save_err})"
-                    print(f"watch-wait {time.strftime('%H:%M')}: act on heartbeat's lines below (1 new of 1), "
-                          f"after {minutes:.0f} min and {checks} checks; then start watch-wait again")
-                    print("\n".join([out[0], note] + carried))
+                    try:
+                        print(f"watch-wait {time.strftime('%H:%M')}: act on heartbeat's lines below (1 new of 1), "
+                              f"after {minutes:.0f} min and {checks} checks; then start watch-wait again")
+                        print("\n".join([out[0], note] + carried), flush=True)
+                    except OSError:
+                        STOP["exiting"] = True
+                        return 1
+                    ack_once(run_dir, [oid for oid, _ in pending_ack])
                     ledger_line(run_dir, f"woke after {minutes:.0f} min, {checks} checks: {summary}")
+                    STOP["exiting"] = True
                     return 0
+            # Commits buffered by heartbeat or watch-wait are now durable; never ack undelivered non-commit one-time lines.
+            ack_once(run_dir, [oid for oid, line in pending_ack if COMMIT.match(line)])
             left = deadline - time.time()
             if left <= 0:
                 print(f"watch-wait {time.strftime('%H:%M')}: nothing new to act on in {minutes:.0f} min ({checks} checks): "
                       f"start it again. {first}")
                 ledger_line(run_dir, f"nothing new to act on in {minutes:.0f} min, {checks} checks: {summary}")
+                STOP["exiting"] = True
                 return 0
             time.sleep(min(every, left))
     finally:
+        STOP["exiting"] = True
+        try:
+            os.remove(ack_path)
+        except OSError:
+            pass
         try:
             if open(pid_path).read().split()[:1] == [str(os.getpid())]:
                 os.remove(pid_path)
