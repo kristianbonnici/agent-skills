@@ -10,10 +10,10 @@ SKILL.md ("Ledger") says where the ledger and the run directory are, and what is
   - any other active run: its ledger, the notes you exchanged and what you agreed.
 - **Orchestrator identity:** your own thread or session ID; your harness, model and reasoning level as the host reports them; the versions of this skill and `review-gate`, and this skill's folder; and the IDs of the heartbeat, the warm-up wake and any resume wake.
 - **One row per task:**
-  - ID, title, dependencies;
+  - ID, title, dependencies, and (for any task changing visible UI) its effective `Live UI check` classification (`required`, `rendered is enough`, or `waived`, updated immediately if upgraded by the task or reviewer);
   - host, provider, model and effort, as the host reports them after launch;
   - thread or agent ID (plus any approval-stuck, unsettled handoff, or finish-sweep helper thread IDs), branch, worktree path, ports;
-  - status (`pending`, `running`, `paused`, `merged`, `ready`, `blocked`, `failed`, `stopped`, `parked`); a `paused` task also names the blocking provider and window/bucket (so a resume wake continues only tasks paused on that window), and a `ready` task notes why it isn't merged ("leave on branch", "narrow miss", "review didn't converge", "no reviewer available", "checkout dirty");
+  - status (`pending`, `running`, `paused`, `merged`, `ready`, `blocked`, `failed`, `stopped`, `parked`); a `paused` task also names the blocking provider and window/bucket (so a resume wake continues only tasks paused on that window), and a `ready` task notes why it isn't merged ("leave on branch", "narrow miss", "review didn't converge", "no reviewer available", "live UI check pending", "waiting on pending prerequisite", "checkout dirty");
   - launch and finish times taken from the host's timestamps, never estimated; merged commits; notes;
   - the harness, model and reasoning level of every agent that worked on it, including a relaunched attempt;
   - helper hand-offs (which harness, model and reasoning level, for what, how many times), and any limit a helper hit and what its work switched to;

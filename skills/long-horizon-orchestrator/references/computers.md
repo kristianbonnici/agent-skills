@@ -14,7 +14,7 @@ Tasks run on your computer unless the contract places one elsewhere and says why
 
 Read what each computer can do from its `## Machine` section in the profile before placing anything: its role, what is installed and signed in there, and what can't run there. A preference that names a tool ("computer use on Codex") applies only on a computer where that tool exists.
 
-- **Keep a task that uses the real screen** on a computer whose warm-up you ran with the owner at it. The warm-up needs them at that computer's keyboard ([machine.md](machine.md#3-the-warm-up)), so a screen task on a computer they won't sit at before they leave stays off it.
+- **Keep a task that uses the real screen** (including any desktop task with `Live UI check: required`) on a computer with a usable screen whose warm-up you ran with the owner at it. The warm-up needs them at that computer's keyboard ([machine.md](machine.md#3-the-warm-up)), so never place a live-UI-required desktop task on a headless machine or on a computer the owner won't sit at before they leave.
 - **A weak computer** (an older chip, little memory or free disk, on battery) takes fewer tasks at once, and no task whose builds or installs are heavy there: on an Intel Mac, for example, some package installs compile from source and take far longer.
 - **A computer that doesn't answer now** (`t3_environment_links` shows its `status`), or whose link expires before the run's estimate plus a day (`expiresAt`), gets no task. Ask the owner to link it again before they leave, or place its tasks on your computer.
 

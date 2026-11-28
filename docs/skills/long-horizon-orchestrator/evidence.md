@@ -290,6 +290,10 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
   live reading (`scripts/provider-usage --only <provider>` with a live `source`, not a cached fallback)
   confirms the recovery; a sampled reading alone never withdraws one.*
 
+### Live UI verification and visual review (2026-11-28)
+
+- **Offscreen capture masking an overlay collision on system chrome:** in an overnight run, a desktop UI task placed a custom overlay control directly over a system-drawn control. Four layers missed it: (1) the task's offscreen capture rendered an unmounted state where the system-drawn control never appeared, and its offscreen window check never triggered interactive hover chrome; (2) a concurrent run dropped the `screen` lease to avoid sharing it, and the skill told tasks to prefer offscreen renders and merge anyway under "Couldn't check" when a real-screen check could not run; (3) `review-gate` was code-only and never showed captures to multimodal reviewers; (4) `pictures/` was framed as report decoration ("prefer pictures your checks already made") rather than a verification gate. → *`long-horizon-orchestrator 5.21.0` paired with `review-gate 8.8.0`: invert the default for visible UI changes to `Live UI check: required` classified in the contract (offscreen allowed only when all pixels are project-drawn, no input/time is needed, and the shipped view tree is rendered); define live by the running build, real input, and compositor/browser capture; keep evening-run review-before-screen ordering with a post-capture `"visual look"`; share `screen` across concurrent runs rather than dropping it; gate merges (including clean rebases that touch window-drawing files and stacked dependents) on `"live UI check pending"` (retrying lease contention once, never scheduling waits for a locked screen) and verify recorded handoff facts on merge with orchestrator inspection before merge only as fallback when no eligible reviewer could open the captures.*
+
 ## Outside sources
 
 - **Anthropic, [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)**

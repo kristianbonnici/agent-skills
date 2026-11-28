@@ -12,11 +12,11 @@ flowchart TD
   contract -->|one approval| prep["Prepare: ledger, warm-up,<br/>leases, usage sampler, common file"]
   prep --> launch["Launch a wave: one agent per task,<br/>own worktree, own brief"]
   launch --> work["Task works; may hand research and<br/>simple steps to Hydrogen-first helpers"]
-  work --> gate["review-gate: level by what the diff touches,<br/>reviewers of another family"]
+  work --> gate["review-gate: level by what the diff touches,<br/>reviewers of another family (+ visual review)"]
   gate -->|review stopped converging| ready([Report ready: orchestrator decides])
-  gate --> checks["Rebase, full checks"]
+  gate --> checks["Rebase, full checks, live UI check"]
   checks -->|pass| merge["Fast-forward the integration branch"]
-  checks -->|narrow miss| ready
+  checks -->|"narrow miss or live UI check pending"| ready
   merge --> report["Report back to the orchestrator"]
   report --> wake{"Orchestrator wakes:<br/>report, watcher, heartbeat or resume wake"}
   wake -->|dependents now unblocked| launch

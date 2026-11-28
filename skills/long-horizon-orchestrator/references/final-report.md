@@ -43,6 +43,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 <Only if some tasks are blocked, parked or failed, merged with a narrow miss, or merged with review follow-ups no task fixed.>
 - **<Task>:** what's missing, why, and what it needs from you<; for a review that didn't converge, Fable's view if you asked for one>.
 - **<Task>, parked:** when it last worked, that nothing continued it after that, and what remains for the next run. Its thread is settled; its worktree, `KEEP` and saved patch are kept.
+- **<Task>, ready (live UI check pending):** why the live capture could not run (such as a locked screen) and the one-step scene to check or run when back. Its worktree and branch are kept.
 - **<Task> merged one check short:** <the check, its result against its threshold>; <the follow-up task> carries it<, and how that ended>.
 - **<Task> merged with review follow-ups:** each open one in a line: what goes wrong and when, and the fix it needs<; then the follow-up task that carries them>.
 
@@ -77,7 +78,7 @@ The reader is returning after hours away, and probably after several tasks' wort
 A task that changes something you can see leaves one to three pictures of it with captions, listed under "Pictures" in its handoff ([task-brief.md](task-brief.md)).
 
 - Show them under the task's item in "What was built", and list them in the task's `pictures` in the facts file, so the run map shows them on its card too.
-- Use them as they are. Don't open them to check them: each task took them from its own build with sample content, and looking costs your context. Open one only when its caption is missing or unclear.
+- Use them as they are. Don't open them by default: the task agent and multimodal `review-gate` reviewers already inspected them, and opening every picture costs your context. Open a picture only when its caption is missing or unclear, or as the fallback eye when no other-family reviewer could open it or a UI task merged under a waiver.
 - They stay in the run directory. Never copy them into a repository, and never link to `/tmp`.
 - A task with nothing visible to show leaves none.
 - A task that made options for the user to choose between (icons, designs, names, layouts) shows every one, numbered, in one overview image. The report shows that one image per set of options (plus one picture per different subject), never a gallery of the same options in other sizes or layouts. A recommendation is a line of text, never a filter on what is shown: never a shortlist. Twice the owner's pick was on no shortlist. A task on an older brief that left several sheets of the same options: show the one sheet that holds every option, or, if none does, the fewest that together hold them all.

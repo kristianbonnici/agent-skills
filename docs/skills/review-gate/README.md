@@ -12,8 +12,8 @@ Version and history: [CHANGELOG.md](CHANGELOG.md). Why it works this way: [evide
 ```mermaid
 flowchart TD
   start([Change committed, its checks pass]) --> level{What does the diff touch?}
-  level -->|"only docs, wording, styling"| light["Light<br/>Gemini: Sonnet (high) while Claude has room,<br/>else one free reviewer, else Sol<br/>Others: Hydrogen while Gemini 5h &lt; ~85%,<br/>else one free reviewer, else cross reviewer"]
-  level -->|ordinary code| standard["Standard<br/>Claude/free: Sol + Neon (xhigh)<br/>(Codex reserved for Deep on Claude: Neon + free)<br/>Codex: Sonnet + Neon (xhigh)<br/>Gemini: Sol + Sonnet (no Neon)"]
+  level -->|"only docs, wording,<br/>static styling/assets"| light["Light<br/>Gemini: Sonnet (high) while Claude has room,<br/>else one free reviewer, else Sol<br/>Others: Hydrogen while Gemini 5h &lt; ~85%,<br/>else one free reviewer, else cross reviewer"]
+  level -->|"ordinary code,<br/>UI layout/overlays"| standard["Standard<br/>Claude/free: Sol + Neon (xhigh)<br/>(Codex reserved for Deep on Claude: Neon + free)<br/>Codex: Sonnet + Neon (xhigh)<br/>Gemini: Sol + Sonnet (no Neon)"]
   level -->|"outside input, security, the user's files,<br/>processes, concurrency, release machinery,<br/>or an extra-high task"| deep["Deep<br/>Claude/free: Sol + Opus + Neon + free<br/>Codex: Opus + Sonnet + Neon + free<br/>Gemini: Sol + Opus + fresh Neon (open look) + free"]
   standard -.->|Codex or Claude short| sub["Fallback cross-family pair + free<br/>(no Neon for Gemini Standard;<br/>no independent reviewer left -&gt; stop)"]
   light & standard & sub & deep --> sort["Check every finding:<br/>blocker · follow-up · nit · pre-existing · rejected"]
@@ -21,8 +21,8 @@ flowchart TD
   second --> sort
   sort -->|"the author rejects a reviewer's blocker,<br/>or tags it lower"| reply["That reviewer:<br/>agree or hold?"]
   reply -->|"recorded; the author's tag stands"| sort
-  sort -->|a fix changed logic| rereview["Re-review the fix's diff only,<br/>paid reviewers, no repeated findings"]
-  rebase["Rebase: a conflict resolution<br/>that changed logic"] --> rereview
+  sort -->|"a fix changed logic<br/>or what is drawn where"| rereview["Re-review the fix's diff<br/>(+ fresh captures for UI fixes),<br/>paid reviewers, no repeated findings"]
+  rebase["Rebase logic conflict<br/>or post-R1 visual captures"] --> rereview
   rereview -->|"no fewer blockers two rounds in a row,<br/>the approach in dispute, or a blocker in round 5"| stop([Stop: report not converging,<br/>don't merge])
   rereview --> sort
   sort -->|"no blocker left;<br/>follow-ups fixed or listed"| record([Save the record: the reports and review.json.<br/>Print the Review section's first lines from it,<br/>go to the merge gate])

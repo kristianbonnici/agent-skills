@@ -13,7 +13,7 @@ Never inside the repository under review: the reports quote its code, and the re
 
 ## The reports
 
-Save each reviewer's report when it arrives, whole and unedited, as `round-<n>-<reviewer>.md` (`round-1-terra.md`, `round-2-terra.md`). A supplemental pass covering an uncovered Deep focus in the same round (SKILL.md, section 2) is saved as `round-<n>-<reviewer>-supplemental.md` and listed beside its first report under the same reviewer's `reports` (never as a second reviewer entry). A second opinion, or a look after a rebase, is `look-<n>-<reviewer>.md`. Save its final report only, not its commands or the files it read. In T3 the folder also holds `wake.txt`, the ID of the gate's wake while it is set, and `threads.txt`, the thread IDs the gate launched (one per line, settled when the gate ends) ([launching.md](launching.md#in-t3)). A reviewer that was limited and reported nothing has no file: it goes under `skipped`. A reviewer's reply about a blocker you tagged lower is `reply-<the finding's id>-<reviewer>.md`, and one about the same finding in a later round `reply-<id>-<reviewer>-round-<n>.md`: never write over a saved reply.
+Save each reviewer's report when it arrives, whole and unedited, as `round-<n>-<reviewer>.md` (`round-1-terra.md`, `round-2-terra.md`). A supplemental pass covering an uncovered Deep focus in the same round (SKILL.md, section 2) is saved as `round-<n>-<reviewer>-supplemental.md` and listed beside its first report under the same reviewer's `reports` (never as a second reviewer entry). A second opinion, a look after a rebase, or a visual look is `look-<n>-<reviewer>.md`. Save its final report only, not its commands or the files it read. In T3 the folder also holds `wake.txt`, the ID of the gate's wake while it is set, and `threads.txt`, the thread IDs the gate launched (one per line, settled when the gate ends) ([launching.md](launching.md#in-t3)). A reviewer that was limited and reported nothing has no file: it goes under `skipped`. A reviewer's reply about a blocker you tagged lower is `reply-<the finding's id>-<reviewer>.md`, and one about the same finding in a later round `reply-<id>-<reviewer>-round-<n>.md`: never write over a saved reply.
 
 ## review.json
 
@@ -21,7 +21,7 @@ Add each finding as you settle it, and finish the file before you write the Revi
 
 ```json
 {
-  "gate": "8.7.1",
+  "gate": "8.8.0",
   "date": "2026-11-14",
   "repository": "notes-app",
   "base": "3f2a91c",
@@ -65,14 +65,14 @@ The gate:
 - `repository`: the repository's folder name. `base` and `head`: the commits the gate reviewed between, `head` being the last one after the fixes.
 - `author`: the model that made the change, with its reasoning level.
 - `level`: `light`, `standard` or `deep`.
-- `result`: `passed` (no blocker left), `stopped` (the review didn't converge), `no reviewer` (none had room; `reviewers` and `findings` are then empty), or `reported` (the user asked for a review only, and you changed nothing).
-- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`). `reports` lists its files in the folder, its replies about tags among them. A reviewer launched only to answer about a tag has `"rounds": ["reply"]`: it reviewed nothing, so it gets no row in the table and no review in the totals, and no finding is its own. If it reports a defect while answering, give it the round it did that in.
+- `result`: `passed` (no blocker left and all required visual evidence verified — or cleared by a recorded orchestrator fallback inspection when every eligible reviewer could not open the captures or had its verdict voided, noted in `note`), `stopped` (the review didn't converge, or stopped on a visual-evidence gap / unable-to-open pictures / visual-look reviewer limit — explain in `note`, such as `"live UI check pending: <why>"`), `no reviewer` (none had room; `reviewers` and `findings` are then empty), or `reported` (the user asked for a review only, and you changed nothing).
+- `reviewers`: every reviewer that reported, named as the Review table names them. `rounds` lists the rounds it reviewed, and by name any look outside the count of rounds (`"second opinion"`, `"rebase look"`, `"visual look"`). `reports` lists its files in the folder, its replies about tags among them. A reviewer launched only to answer about a tag has `"rounds": ["reply"]`: it reviewed nothing, so it gets no row in the table and no review in the totals, and no finding is its own. If it reports a defect while answering, give it the round it did that in.
 - `skipped`: every model that was skipped or that a reviewer moved on from, and why; a reviewer stopped on an approval prompt and relaunched is listed too, with why "asked for approval, relaunched" ([launching.md](launching.md#in-t3)).
 - `note`: optional, one line on what a reader of the record must know and no field holds. When no reviewer had room and you read the diff yourself in a fresh pass, say that here and what you found: your own pass isn't a review, so it has no reviewer and no findings.
 
 Each finding:
 
-- **One entry per finding per reviewer who raised it.** Two reviewers raising the same finding are two entries with the same `id`, and the same `tag`. A finding that comes back "not fixed" is another entry with its `id` and the later round.
+- **One entry per finding per reviewer who raised it.** Two reviewers raising the same finding are two entries with the same `id`, and the same `tag`. A finding that comes back "not fixed" is another entry with its `id` and the later round. A finding raised or marked "not fixed" during a named look (`"visual look"` or `"rebase look"`) keeps the look's name in `reviewers[].rounds` (leaving the printed round count unchanged) and uses the next chronological integer `round` (`max(all existing finding rounds and reviewer numbered rounds) + 1`), so it never collides with an earlier round and blocks `result: "passed"` until fixed by a commit. Any subsequent numbered re-review round triggered by fixing a look finding uses a strictly higher round integer (`look finding's round + 1`) in both `reviewers[].rounds` and `findings[].round`, so a `"not fixed"` recurrence from either the same or a fallback reviewer is always recorded cleanly without colliding with the look finding's fix commit.
 - `reviewer_tag`: the tag that reviewer gave it (`blocker`, `follow-up`, `nit`, `pre-existing`), or `none` if it gave none.
 - `tag`: yours (`blocker`, `follow-up`, `nit`, `pre-existing`, `rejected`).
 - `checked`: how you settled whether it is real. `test`: a test that fails on it, or passes where it said one would fail. `run`: you ran the case. `read`: you traced it through the code. `second opinion`: Deep's yes or no from another paid reviewer.

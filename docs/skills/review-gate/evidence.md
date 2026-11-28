@@ -625,6 +625,19 @@ In orchestrated runs with multi-round gates, each reviewer launch, relaunch, tag
 
 → *review-gate 8.7.0 (owner, 2026-11-23): in T3, record launched reviewer thread IDs in `threads.txt` inside the record folder, settle non-running threads (terminal and `idle`) one call at a time with explicit `threadId` when the gate ends, and list any unsettled IDs in the handoff or reply.*
 
+## Visual review of UI changes (2026-11-28)
+
+In an overnight run, a desktop UI change placed a custom overlay control directly over a system-drawn control. Four Deep-level code-only reviewers read the diff without seeing captures and missed the overlap, while the task's offscreen capture rendered an unmounted state where the system-drawn control never appeared.
+
+**Live vision-capability probe (2026-11-28):** before documenting which reviewers can inspect pictures, each T3 reviewer launcher was probed on a newly generated local PNG holding a random word and number (read-only file tool, no shell commands or OCR):
+- `claudeAgent` / `claude-sonnet-5-5` (`high`): read the exact text directly via `Read` (no approval prompt).
+- `codex` / `gpt-6.2-sol` (`medium`): read the exact text directly via its read tool (no approval prompt). CLI `codex exec --help` also exposes `-i, --image <FILE>...` for initial-prompt attachments (separated from the prompt with `--`).
+- `antigravity` / `gemini-4-neon` (`xhigh`, `interactionMode: "plan"`): read the exact text directly via its read tool (no approval prompt).
+- `antigravity` / `gemini-4-hydrogen` (`high`, `interactionMode: "plan"`): read the exact text directly via its read tool (no approval prompt).
+- Free/Go OpenCode reviewers (`DeepSeek V4.1 Flash`, `GLM-5.3 Flash`) and free-order Haiku receive no picture paths so out-of-worktree reads never trigger OpenCode plan-mode approval prompts or fail on text-only models.
+
+→ *review-gate 8.8.0 (owner, 2026-11-28, paired with `long-horizon-orchestrator 5.21.0`): narrow Light to exclude layout/placement/overlay changes; pass the UI-check classification unconditionally to all reviewers and pass UI captures to multimodal reviewers (including Light when its reviewer can open pictures, or via a visual look otherwise) with a mandatory `Pictures:` proof-of-sight line; require at least one eligible reviewer's affirmative, non-voided visual verdict on final captures before passing; treat missing/unrepresentative evidence, false `rendered is enough` claims, or unreadable pictures as a gate-level condition (`result: "stopped"` with `note`) rather than a `blocker` tag; define "changed logic" in §5 to include changing what is drawn where so visual fixes are re-reviewed with fresh captures.*
+
 ## Left out
 
 Weighed and not cited, so later checks don't weigh them again unless they change:

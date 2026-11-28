@@ -84,6 +84,55 @@ assert "**Review: Deep, 2 rounds.**" in done.stdout
 assert "| Claude Sonnet 5.5, high | 1, second opinion | **1** |" in done.stdout, done.stdout
 assert "| Codex GPT-6.1 Terra, high | 1, 2 | **1** | 1 |" in done.stdout, done.stdout
 
+# A visual look keeps the printed round count unchanged, an unresolved blocker from the look
+# (recorded at next chronological integer round) prevents "passed" until it carries a commit, and a
+# subsequent re-review at a strictly higher round (look round + 1) returning "not fixed" — whether
+# from the same reviewer or a fallback reviewer — stays recordable and refuses "passed".
+visual = copy.deepcopy(example)
+visual["reviewers"] = [
+    {"name": "Codex GPT-6.2 Sol, medium", "rounds": [1, "visual look"],
+     "reports": ["round-1-sol.md", "look-1-sol.md"]},
+    {"name": "Claude Sonnet 5.5, high", "rounds": [1], "reports": ["round-1-sonnet.md"]},
+]
+visual["findings"] = [
+    {"id": 1, "round": 1, "reviewer": "Codex GPT-6.2 Sol, medium", "reviewer_tag": "blocker", "tag": "blocker",
+     "checked": "run", "commit": "9c4e2aa", "title": "Overlay covers native control"},
+    {"id": 1, "round": 2, "reviewer": "Codex GPT-6.2 Sol, medium", "reviewer_tag": "blocker", "tag": "blocker",
+     "checked": "run", "title": "Overlay covers native control"},
+]
+visual["skipped"], visual["level"] = [], "standard"
+done = run("table", save(os.path.join(work, "visual-open"), visual))
+assert done.returncode == 64 and done.stdout == "", (done.returncode, done.stdout)
+assert 'finding 1 is a blocker with no "commit" in round 2, its latest, and "result" is "passed"' in done.stderr, done.stderr
+visual["findings"][1]["commit"] = "b81d7e4"
+done = run("table", save(os.path.join(work, "visual-fixed"), visual))
+assert done.returncode == 0, done.stderr
+assert "**Review: Standard, 1 round.**" in done.stdout, done.stdout
+assert "| Codex GPT-6.2 Sol, medium | 1, visual look | **1** |" in done.stdout, done.stdout
+# Same-reviewer "not fixed" in subsequent re-review (round 3 > look finding round 2) refuses "passed".
+same_recur = copy.deepcopy(visual)
+same_recur["reviewers"][0]["rounds"].append(3)
+same_recur["reviewers"][0]["reports"].append("round-3-sol.md")
+same_recur["findings"].append(
+    {"id": 1, "round": 3, "reviewer": "Codex GPT-6.2 Sol, medium", "reviewer_tag": "blocker", "tag": "blocker",
+     "checked": "run", "title": "Overlay covers native control"})
+done = run("table", save(os.path.join(work, "visual-recur-same"), same_recur))
+assert done.returncode == 64 and done.stdout == "", (done.returncode, done.stdout)
+assert 'finding 1 is a blocker with no "commit" in round 3, its latest, and "result" is "passed"' in done.stderr, done.stderr
+# Fallback-reviewer "not fixed" in subsequent re-review (round 3) also refuses "passed" (round 2 commit cannot mask it).
+other_recur = copy.deepcopy(visual)
+other_recur["reviewers"][1]["rounds"].append(3)
+other_recur["reviewers"][1]["reports"].append("round-3-sonnet.md")
+other_recur["findings"].append(
+    {"id": 1, "round": 3, "reviewer": "Claude Sonnet 5.5, high", "reviewer_tag": "blocker", "tag": "blocker",
+     "checked": "run", "title": "Overlay covers native control"})
+done = run("table", save(os.path.join(work, "visual-recur-other"), other_recur))
+assert done.returncode == 64 and done.stdout == "", (done.returncode, done.stdout)
+assert 'finding 1 is a blocker with no "commit" in round 3, its latest, and "result" is "passed"' in done.stderr, done.stderr
+other_recur["findings"][-1]["commit"] = "c0ffee1"
+done = run("table", save(os.path.join(work, "visual-recur-fixed"), other_recur))
+assert done.returncode == 0, done.stderr
+
 # No reviewer had room: a record with no reviewers, when it says so.
 none = copy.deepcopy(example)
 none["reviewers"], none["findings"], none["result"] = [], [], "no reviewer"
