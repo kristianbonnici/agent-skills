@@ -246,8 +246,8 @@ def read_json(path):
 
 
 def round_count(record):
-    numbers = [r for reviewer in record["reviewers"] for r in reviewer["rounds"] if is_int(r)]
-    return max(numbers, default=0)
+    numbers = {r for reviewer in record["reviewers"] for r in reviewer["rounds"] if is_int(r)}
+    return len(numbers)
 
 
 def counts(record, canonical=False):
