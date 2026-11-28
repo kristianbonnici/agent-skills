@@ -1,5 +1,11 @@
 # long-horizon-orchestrator changelog
 
+## 5.20.3 (2026-11-28)
+
+- **Separate lease owner names for concurrent uses of one resource (`L-ZYFL`):** `references/task-brief.md`'s common-file template now tells tasks that two concurrent uses of the same resource (such as a soak and a measurement) each take their own owner name (`<owner prefix><your task ID>-<use>`), because a second acquire under the same owner counts as the same turn and can release the first; `scripts/run-watch`'s `next_run_line()` now matches `-<use>` suffixed owner names (`(^|[^A-Za-z0-9])<task>($|-)`) so a waiting run does not start while a suffixed lease is still held, with regression tests in `tests/run-watch-test` ([evidence](evidence.md)).
+- **Confirm review-gate flag recovery live before withdrawing (`L-XHYZ`):** `references/routing.md`, `SKILL.md` steps 2 and 5, and `references/host-t3.md`'s heartbeat prompt now require a live reading (`scripts/provider-usage --only <provider>` with a live `source`, not a cached fallback) before withdrawing or stepping down a `common.md` review-gate state; a sampled reading alone never withdraws one ([evidence](evidence.md)).
+- **Bound `watch-wait` `clear_hb_carried()` lock acquisition (5.20.2 review follow-up id 23):** `scripts/watch-wait`'s `clear_hb_carried()` now takes `heartbeat.lock` with non-blocking `LOCK_EX | LOCK_NB` and a short bounded retry (1.5 s, bailing out early if a stop signal arrives while exiting), skipping the clear when the lock stays busy or cannot be opened (the commit then stays buffered and replays once on the next actionable wake) so cleanup never hangs ignoring `SIGTERM`/`SIGINT` or writes `heartbeat.state.json` unlocked. Added regression tests in `tests/orchestrator-scripts-test`.
+
 ## 5.20.2 (2026-11-27)
 
 - **Key T3 approval alerts by `runtime_request_id`, keep local one-time lines pending until acknowledged, close `watch-wait` signal windows, and reject empty `--as`/`--watch` with `--forget-session`** (5.19.0 review follow-ups):

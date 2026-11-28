@@ -44,6 +44,7 @@ if sys.version_info < (3, 9):    # the oldest Python its checks run on: macOS's 
           "python3 (on a Mac, Homebrew's)", file=sys.stderr)
     sys.exit(69)
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -58,11 +59,13 @@ from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 LIVE_EVERY_S = 900
-STOP = {"starting": False, "exiting": False, "held": 0}
+STOP = {"starting": False, "exiting": False, "held": 0, "interrupted": 0}
 REMIND_S = 1800          # a lasting non-usage line already delivered comes again after this long
 READ_EVERY_S = 900       # blind tasks or tasks on another computer: their threads are read this often
 CARRIED_CAP = 200
 RESET_TOLERANCE_S = 300
+HB_LOCK_WAIT_S = 1.5
+HB_LOCK_POLL_S = 0.05
 IDLE = re.compile(r"^heartbeat \d\d:\d\d: nothing to act on\.")
 REMINDER = re.compile(r"^(vm|leftover) \d+ .*: still running")
 COMMIT = re.compile(r"^commit ")
@@ -276,22 +279,38 @@ def ack_once(run_dir: str, ids: list) -> None:
 
 
 def clear_hb_carried(run_dir: str, delivered: list) -> None:
-    """Remove commits watch-wait has printed or buffered from heartbeat.state.json under heartbeat.lock."""
+    """Remove commits watch-wait has printed or buffered from heartbeat.state.json under heartbeat.lock.
+    Uses a non-blocking lock with a short bounded retry and skips clearing if the lock stays busy, so
+    cleanup never hangs ignoring stop signals (the commit then replays once on the next actionable wake)."""
     if not delivered:
         return
     hb_state_path = os.path.join(run_dir, "heartbeat.state.json")
     if not os.path.isfile(hb_state_path):
         return
     done_set = set(delivered)
-    hb_lock = None
     try:
         hb_lock = open(os.path.join(run_dir, "heartbeat.lock"), "a+")
-        fcntl.flock(hb_lock, fcntl.LOCK_EX)
     except OSError:
-        if hb_lock is not None:
-            hb_lock.close()
-            hb_lock = None
+        return
+    locked = False
     try:
+        deadline = time.monotonic() + HB_LOCK_WAIT_S
+        while True:
+            try:
+                fcntl.flock(hb_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                pass
+            except OSError as e:
+                if e.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK, errno.EINTR):
+                    return
+            if STOP.get("interrupted"):
+                return
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(HB_LOCK_POLL_S, left))
         raw = load_json(hb_state_path)
         prev = raw.get("carried_commits")
         if not isinstance(prev, list) or not prev:
@@ -302,8 +321,12 @@ def clear_hb_carried(run_dir: str, delivered: list) -> None:
         raw["carried_commits"] = remaining
         save_json_atomic(hb_state_path, raw)
     finally:
-        if hb_lock is not None:
-            hb_lock.close()
+        if locked:
+            try:
+                fcntl.flock(hb_lock, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        hb_lock.close()
 
 
 def ledger_line(run_dir: str, text: str) -> None:
@@ -342,8 +365,15 @@ def main(argv: list) -> int:
     with open(pid_path, "w") as fh:
         fh.write(f"{os.getpid()}\n")
 
+    STOP["starting"] = False
+    STOP["exiting"] = False
+    STOP["held"] = 0
+    STOP["interrupted"] = 0
+
     def stop(signum, _frame):
         if STOP["exiting"]:
+            if not STOP.get("interrupted"):
+                STOP["interrupted"] = signum
             return
         if STOP["starting"]:
             if not STOP["held"]:

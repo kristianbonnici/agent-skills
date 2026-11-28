@@ -5622,6 +5622,253 @@ python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1])).get("carried_c
 out=$(HEARTBEAT_RUN_WATCH="$work/id34-quiet-flag" "$scripts/watch-wait" "$ww_lost" --every 0.15 --max 5 --now)
 case "$out" in *"commit A 2026-11-26T01:09:00+02:00 feedcafe carried-hb"*) ;; *) echo "id34 ww deliver carried: $out"; exit 1;; esac
 python3 -I -c 'import json, sys; c = json.load(open(sys.argv[1])).get("carried_commits", []); assert c == [], c' "$ww_lost/heartbeat.state.json"
+# id 23: clear_hb_carried() takes heartbeat.lock with LOCK_EX | LOCK_NB and a short bounded retry (1-2 s),
+# skipping the clear if busy or unopenable so watch-wait never hangs ignoring SIGTERM/SIGINT while exiting,
+# and safely replaying/clearing the carried commit on the next actionable wake once the lock frees.
+python3 -I - "$scripts/watch-wait" "$work" <<'EOF'
+import importlib.machinery, importlib.util, json, os, signal, subprocess, sys, time
+
+ww_path, work = sys.argv[1:3]
+commit_a = "commit A 2026-11-28T01:00:00+02:00 aaa111 first"
+commit_b = "commit B 2026-11-28T01:05:00+02:00 bbb222 second"
+holder_code = (
+    'import fcntl, os, signal, sys, time\n'
+    'fh = open(sys.argv[1], "a+")\n'
+    'fcntl.flock(fh, fcntl.LOCK_EX)\n'
+    'open(sys.argv[2], "w").write(str(os.getpid()))\n'
+    'signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n'
+    'time.sleep(float(sys.argv[3]))\n'
+)
+
+def load_ww(name):
+    loader = importlib.machinery.SourceFileLoader(name, ww_path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+def start_holder(lock_path, ready_path, dur):
+    if os.path.exists(ready_path):
+        os.remove(ready_path)
+    proc = subprocess.Popen([sys.executable, "-I", "-c", holder_code, lock_path, ready_path, str(dur)],
+                            start_new_session=True)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not os.path.exists(ready_path):
+        time.sleep(0.02)
+    assert os.path.exists(ready_path), "id23 lock holder did not acquire heartbeat.lock"
+    return proc
+
+def stop_holder(proc):
+    if proc is None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
+
+mod = load_ww("ww_id23_test")
+
+# 1. Permanently busy heartbeat.lock -> bounded ~1-2 s wait, skips clear, leaves carried_commits intact.
+d1 = os.path.join(work, "ww-id23-busy")
+os.makedirs(d1)
+s1 = os.path.join(d1, "heartbeat.state.json")
+json.dump({"carried_commits": [commit_a], "usage_delivered": {}, "usage_observed": {}}, open(s1, "w"))
+h1 = start_holder(os.path.join(d1, "heartbeat.lock"), os.path.join(d1, "ready"), 8.0)
+try:
+    t0 = time.monotonic()
+    p = subprocess.Popen([
+        sys.executable, "-I", "-c",
+        "import importlib.machinery, importlib.util, sys; "
+        "l = importlib.machinery.SourceFileLoader('m', sys.argv[1]); "
+        "s = importlib.util.spec_from_loader('m', l); m = importlib.util.module_from_spec(s); l.exec_module(m); "
+        "m.clear_hb_carried(sys.argv[2], [sys.argv[3]])",
+        ww_path, d1, commit_a,
+    ])
+    try:
+        rc = p.wait(timeout=3.5)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+        raise AssertionError("id23 clear_hb_carried blocked past 3.5s on busy heartbeat.lock")
+    dt = time.monotonic() - t0
+    assert rc == 0 and 0.8 <= dt <= 3.0, (rc, dt)
+    assert json.load(open(s1)).get("carried_commits") == [commit_a]
+finally:
+    stop_holder(h1)
+
+# 2. Brief contention (~0.25 s) -> retries, acquires lock, clears only delivered commit.
+d2 = os.path.join(work, "ww-id23-brief")
+os.makedirs(d2)
+s2 = os.path.join(d2, "heartbeat.state.json")
+json.dump({"carried_commits": [commit_a, commit_b], "usage_delivered": {}, "usage_observed": {}}, open(s2, "w"))
+h2 = start_holder(os.path.join(d2, "heartbeat.lock"), os.path.join(d2, "ready"), 0.25)
+try:
+    t0 = time.monotonic()
+    mod.clear_hb_carried(d2, [commit_a])
+    assert time.monotonic() - t0 < 2.0
+    assert json.load(open(s2)).get("carried_commits") == [commit_b]
+finally:
+    stop_holder(h2)
+
+# 3. Unopenable heartbeat.lock -> skips clearing rather than writing heartbeat.state.json unlocked.
+d3 = os.path.join(work, "ww-id23-unopenable")
+os.makedirs(os.path.join(d3, "heartbeat.lock"))
+s3 = os.path.join(d3, "heartbeat.state.json")
+json.dump({"carried_commits": [commit_a], "usage_delivered": {}, "usage_observed": {}}, open(s3, "w"))
+mod.clear_hb_carried(d3, [commit_a])
+assert json.load(open(s3)).get("carried_commits") == [commit_a]
+
+# 4a. Deterministic early-bailout check: SIGTERM during busy-lock retry cuts a 5.0 s wait short (< 1.0 s).
+d4a = os.path.join(work, "ww-id23-sig-early")
+os.makedirs(d4a)
+s4a = os.path.join(d4a, "heartbeat.state.json")
+json.dump({"carried_commits": [commit_a], "usage_delivered": {}, "usage_observed": {}}, open(s4a, "w"))
+h4a = start_holder(os.path.join(d4a, "heartbeat.lock"), os.path.join(d4a, "ready"), 8.0)
+try:
+    sig_early_script = (
+        "import fcntl, importlib.machinery, importlib.util, os, signal, sys, time\n"
+        "l = importlib.machinery.SourceFileLoader('m', sys.argv[1])\n"
+        "s = importlib.util.spec_from_loader('m', l); m = importlib.util.module_from_spec(s); l.exec_module(m)\n"
+        "m.HB_LOCK_WAIT_S = 5.0\n"
+        "m.STOP = {'starting': False, 'exiting': True, 'held': 0, 'interrupted': 0}\n"
+        "def stop_h(signum, _):\n"
+        "    if m.STOP['exiting']:\n"
+        "        if not m.STOP.get('interrupted'):\n"
+        "            m.STOP['interrupted'] = signum\n"
+        "        return\n"
+        "signal.signal(signal.SIGTERM, stop_h)\n"
+        "orig_flock = m.fcntl.flock\n"
+        "sent = [False]\n"
+        "def hooked_flock(fh, op):\n"
+        "    try:\n"
+        "        return orig_flock(fh, op)\n"
+        "    except BlockingIOError:\n"
+        "        if not sent[0]:\n"
+        "            sent[0] = True\n"
+        "            os.kill(os.getpid(), signal.SIGTERM)\n"
+        "        raise\n"
+        "m.fcntl.flock = hooked_flock\n"
+        "t0 = time.monotonic()\n"
+        "m.clear_hb_carried(sys.argv[2], [sys.argv[3]])\n"
+        "dt = time.monotonic() - t0\n"
+        "assert sent[0] and m.STOP['interrupted'] == signal.SIGTERM and dt < 1.0, (sent[0], m.STOP, dt)\n"
+    )
+    res_early = subprocess.run([sys.executable, "-I", "-c", sig_early_script, ww_path, d4a, commit_a],
+                               capture_output=True, text=True, timeout=4.0)
+    assert res_early.returncode == 0, (res_early.returncode, res_early.stdout, res_early.stderr)
+    assert json.load(open(s4a)).get("carried_commits") == [commit_a]
+finally:
+    stop_holder(h4a)
+
+# 4b. End-to-end watch-wait: busy heartbeat.lock during post-print exit + SIGTERM (synchronized after
+# watch-wait.seen.json is written, i.e., after STOP["exiting"] = True) exits promptly (< 1.0 s, below
+# HB_LOCK_WAIT_S=1.5 s), preserves carried_commits across an idle heartbeat, and replays + clears it
+# on the next actionable wake without deleting watch-wait.seen.json.
+d4 = os.path.join(work, "ww-id23-e2e")
+os.makedirs(d4)
+open(d4 + ".md", "w").write("# ledger\n")
+json.dump({"tasks": {"A": {"worktree": "/nowhere", "status": "running"}}}, open(os.path.join(d4, "watch.json"), "w"))
+s4 = os.path.join(d4, "heartbeat.state.json")
+json.dump({"carried_commits": [commit_a], "usage_delivered": {}, "usage_observed": {}}, open(s4, "w"))
+hb_stub = os.path.join(work, "ww-id23-hb-stub")
+holder_pid_file = os.path.join(d4, "holder.pid")
+open(hb_stub, "w").write(
+    "#!/usr/bin/env python3\n"
+    "import os, subprocess, sys, time\n"
+    "run_dir = sys.argv[1]\n"
+    "lock_path = os.path.join(run_dir, 'heartbeat.lock')\n"
+    "ready_path = os.path.join(run_dir, 'holder.ready')\n"
+    f"p = subprocess.Popen([sys.executable, '-I', '-c', {holder_code!r}, lock_path, ready_path, '8.0'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)\n"
+    f"open({holder_pid_file!r}, 'w').write(str(p.pid))\n"
+    "deadline = time.monotonic() + 5.0\n"
+    "while time.monotonic() < deadline and not os.path.exists(ready_path):\n"
+    "    time.sleep(0.02)\n"
+    "print('heartbeat 01:00: act on the lines below. running A.')\n"
+    "print('quiet A: nothing changed for 25 min')\n"
+    f"print({commit_a!r})\n"
+)
+os.chmod(hb_stub, 0o755)
+ww = subprocess.Popen([ww_path, d4, "--every", "0.15", "--max", "30", "--now"],
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                      env=dict(os.environ, WATCH_WAIT_HEARTBEAT=hb_stub))
+seen_path = os.path.join(d4, "watch-wait.seen.json")
+try:
+    t_out = None
+    while True:
+        line = ww.stdout.readline()
+        if not line:
+            break
+        if commit_a in line and t_out is None:
+            t_out = time.monotonic()
+            wait_seen = t_out + 1.0
+            while time.monotonic() < wait_seen and not os.path.exists(seen_path):
+                time.sleep(0.01)
+            assert os.path.exists(seen_path), "watch-wait.seen.json not written before SIGTERM"
+            assert ww.poll() is None, f"watch-wait exited ({ww.returncode}) before SIGTERM was sent"
+            ww.send_signal(signal.SIGTERM)
+            break
+    assert t_out is not None, "id23 e2e missing commit output"
+    try:
+        rc = ww.wait(timeout=3.0)
+    except subprocess.TimeoutExpired:
+        ww.kill()
+        ww.wait()
+        raise AssertionError("id23 e2e watch-wait hung ignoring SIGTERM while heartbeat.lock was busy")
+    dt_out = time.monotonic() - t_out
+    assert rc == 0 and dt_out < 1.0, (rc, dt_out)
+    assert not os.path.exists(os.path.join(d4, "watch-wait.pid"))
+    assert json.load(open(s4)).get("carried_commits") == [commit_a]
+finally:
+    if ww.poll() is None:
+        ww.kill()
+        ww.wait()
+    if ww.stdout:
+        ww.stdout.close()
+    if ww.stderr:
+        ww.stderr.close()
+    if os.path.exists(holder_pid_file):
+        hpid = int(open(holder_pid_file).read().strip())
+        try:
+            os.killpg(hpid, signal.SIGTERM)
+        except OSError:
+            pass
+        h_deadline = time.monotonic() + 3.0
+        while time.monotonic() < h_deadline:
+            try:
+                os.kill(hpid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.02)
+# With watch-wait.seen.json preserved, an idle heartbeat keeps carried_commits buffered, and a fresh
+# actionable alert replays commit_a once and clears heartbeat.state.json.
+idle_env = dict(os.environ, HEARTBEAT_RUN_WATCH=os.path.join(work, "hb-watch-quiet"))
+idle_env.pop("WATCH_WAIT_HEARTBEAT", None)
+idle_res = subprocess.run([ww_path, d4, "--every", "0.15", "--max", "0.4", "--now"],
+                          capture_output=True, text=True, env=idle_env, timeout=10)
+assert idle_res.returncode == 0 and "nothing new to act on" in idle_res.stdout, (idle_res.returncode, idle_res.stdout)
+assert json.load(open(s4)).get("carried_commits") == [commit_a]
+fresh_rw = os.path.join(work, "ww-id23-fresh-rw")
+open(fresh_rw, "w").write("#!/bin/sh\necho 'report A 2026-11-28T01:10:00+02:00 ready'\n")
+os.chmod(fresh_rw, 0o755)
+replay_env = dict(os.environ, HEARTBEAT_RUN_WATCH=fresh_rw)
+replay_env.pop("WATCH_WAIT_HEARTBEAT", None)
+replay = subprocess.run([ww_path, d4, "--every", "0.15", "--max", "5", "--now"],
+                        capture_output=True, text=True, env=replay_env, timeout=10)
+assert (replay.returncode == 0
+        and "report A 2026-11-28T01:10:00+02:00 ready" in replay.stdout
+        and replay.stdout.count(commit_a) == 1), (
+    replay.returncode, replay.stdout, replay.stderr
+)
+assert json.load(open(s4)).get("carried_commits") == []
+EOF
 # Unwritable temp dir (mkdtemp OSError) degrades cleanly with a note instead of crashing heartbeat or watch-wait.
 python3 -I - "$scripts/heartbeat" "$scripts/watch-wait" "$ww_lost" "$work/hb-watch-quiet" <<'EOF'
 import contextlib, importlib.machinery, importlib.util, io, os, sys

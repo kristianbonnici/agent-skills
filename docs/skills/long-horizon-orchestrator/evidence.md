@@ -275,6 +275,21 @@ Verified read-only against Antigravity `1.5.14` across 232 local conversation da
   (`high`, or `xhigh` with a named benefit) takes all Antigravity primary tasks; `gemini-pro-orchestrator-neon`
   is retired from task routing (`long-horizon-orchestrator 5.20.0`).*
 
+### Leases and live flag-recovery checks (2026-11-27)
+
+- **Two concurrent uses of one resource under one lease owner:** when a task holds one slot of a shared
+  resource for a long-running check and queues a whole-resource measurement under the same owner name while
+  another task waits, `lease` treats the second acquire as that owner's turn ending and releases the first
+  slot, allowing the waiter onto the resource while the first check is still active and forcing repeated
+  measurements. → *concurrent uses of one resource by the same task each take their own owner name
+  (`<owner prefix><your task ID>-<use>`), and `run-watch`'s `next-run` lease check matches that suffix.*
+- **Review-gate flag withdrawn on a stale sampled reading:** when the usage sampler reports a provider's
+  window well below a live reading across multiple heartbeats, withdrawing a review-gate state such as
+  `Codex is short` on the sampled figure alone causes the flag to flap back on shortly after, adding extra
+  steers and risking reviews against the reserve. → *withdraw or step down a review-gate state only after a
+  live reading (`scripts/provider-usage --only <provider>` with a live `source`, not a cached fallback)
+  confirms the recovery; a sampled reading alone never withdraws one.*
+
 ## Outside sources
 
 - **Anthropic, [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)**

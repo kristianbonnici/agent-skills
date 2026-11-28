@@ -1040,7 +1040,7 @@ def next_run_line(watch: dict, run_dir: str) -> str | None:
                 if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires <= t_now:
                     continue   # over (one whose end can't be read counts as held)
                 owner = str(lease.get("owner", ""))
-                if any(re.search(rf"(^|[^A-Za-z0-9]){re.escape(t)}$", owner) for t in active):
+                if any(re.search(rf"(^|[^A-Za-z0-9]){re.escape(t)}($|-)", owner) for t in active):
                     return None
     return say.format(left=", ".join(active)) + " (none in its repository, none holding what it needs)"
 
